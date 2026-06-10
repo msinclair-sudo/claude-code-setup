@@ -1,0 +1,13 @@
+{
+  "_comment": "Copy to permissions.json (gitignored) and edit. install.sh merges the 'allow' list into the permissions.allow of ~/.claude/settings.json. Rules use Claude Code's permission syntax. Absolute paths are machine-specific; keep them out of version control. If permissions.json is absent, install.sh skips the merge and leaves existing permissions untouched.",
+  "allow": [
+    "Bash(python3:*)",
+    "Bash(git:*)",
+    "Bash(ls:*)",
+    "Bash(grep:*)",
+    "Bash(cat:*)",
+    "WebSearch",
+    "Bash(claude mcp:*)",
+    "Read(//home/USER/.claude/skills/**)"
+  ]
+}

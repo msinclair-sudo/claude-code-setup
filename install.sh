@@ -266,12 +266,14 @@ settings["statusLine"] = {
     "command": "~/.claude/statusline.sh"
 }
 
-# Permissions — merge from permissions.json
-with open(permissions_file) as f:
-    perms = json.load(f)
-
+# Permissions — merge from permissions.json if present (gitignored,
+# machine-specific). When absent, leave existing permissions untouched.
 existing_allow = settings.get("permissions", {}).get("allow", [])
-new_rules = [r for r in perms["allow"] if r not in existing_allow]
+new_rules = []
+if os.path.exists(permissions_file):
+    with open(permissions_file) as f:
+        perms = json.load(f)
+    new_rules = [r for r in perms.get("allow", []) if r not in existing_allow]
 merged_allow = existing_allow + new_rules
 
 if "permissions" not in settings:

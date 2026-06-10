@@ -1,6 +1,9 @@
 # Machine-specific config (contains local vault paths)
 config.yaml
 
+# Machine-specific permission rules (may contain absolute home paths)
+permissions.json
+
 # Python
 __pycache__/
 *.py[cod]

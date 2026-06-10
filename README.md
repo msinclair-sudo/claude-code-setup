@@ -41,8 +41,10 @@ Running `bash install.sh` (no flags) installs, on every machine:
   registered in `~/.claude/settings.json`.
 - **Hooks** — `hooks/strip_cd.py` copied to `~/.claude/hooks/` and registered as a
   `PreToolUse` hook for Bash.
-- **Permissions** — rules from `permissions.json` merged into the `allow` list in
-  `~/.claude/settings.json`.
+- **Permissions** — if `permissions.json` exists (gitignored, machine-specific;
+  copy from `permissions.example.json`), its `allow` rules are merged into the
+  `allow` list in `~/.claude/settings.json`. If the file is absent, this step is
+  skipped and existing permissions are left untouched.
 - **Global CLAUDE.md** — `global_claude.md` copied to `~/.claude/CLAUDE.md`.
 
 No Obsidian MCP server, no vault skills, and no `uv` are involved in this mode.
@@ -123,10 +125,10 @@ other `~/.claude/` paths directly — `install.sh` is the only deployment mechan
 ## Layout
 
 ```
-install.sh            Installer
-permissions.json      Permission rules merged into ~/.claude/settings.json
-global_claude.md      Deployed to ~/.claude/CLAUDE.md
-config.example.yaml   Template for machine-specific vault paths (copy to config.yaml)
+install.sh               Installer
+permissions.example.json Template for permission rules (copy to permissions.json)
+global_claude.md         Deployed to ~/.claude/CLAUDE.md
+config.example.yaml      Template for machine-specific vault paths (copy to config.yaml)
 hooks/                strip_cd.py PreToolUse hook
 shell/                statusline.sh
 skills/               General + vault skills (auto-discovered by install.sh)

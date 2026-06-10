@@ -1,0 +1,8 @@
+# Machine-specific paths — copy to config.yaml and fill in
+# config.yaml is gitignored; this template is committed
+#
+# List all vault_root paths for your machines.
+# install.sh picks the first one that exists on the current machine.
+
+vault_root1: "/path/on/machine1/Obsidian Vault/MyVault"
+vault_root2: "/path/on/machine2/Obsidian Vault/MyVault"

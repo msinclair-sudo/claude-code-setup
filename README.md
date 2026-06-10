@@ -45,7 +45,6 @@ Running `bash install.sh` (no flags) installs, on every machine:
   copy from `permissions.example.json`), its `allow` rules are merged into the
   `allow` list in `~/.claude/settings.json`. If the file is absent, this step is
   skipped and existing permissions are left untouched.
-- **Global CLAUDE.md** — `global_claude.md` copied to `~/.claude/CLAUDE.md`.
 
 No Obsidian MCP server, no vault skills, and no `uv` are involved in this mode.
 
@@ -127,7 +126,6 @@ other `~/.claude/` paths directly — `install.sh` is the only deployment mechan
 ```
 install.sh               Installer
 permissions.example.json Template for permission rules (copy to permissions.json)
-global_claude.md         Deployed to ~/.claude/CLAUDE.md
 config.example.yaml      Template for machine-specific vault paths (copy to config.yaml)
 hooks/                strip_cd.py PreToolUse hook
 shell/                statusline.sh

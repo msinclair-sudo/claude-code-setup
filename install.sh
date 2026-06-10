@@ -235,12 +235,6 @@ cp "$SCRIPT_DIR/shell/statusline.sh" "$STATUSLINE_SCRIPT"
 chmod +x "$STATUSLINE_SCRIPT"
 echo "  Copied statusline script to $STATUSLINE_SCRIPT"
 
-# ── Install global CLAUDE.md ─────────────────────────────────────────────────
-
-echo "Installing global CLAUDE.md..."
-cp "$SCRIPT_DIR/global_claude.md" "$HOME/.claude/CLAUDE.md"
-echo "  Copied to $HOME/.claude/CLAUDE.md"
-
 # ── Merge settings.json (statusline + permissions + additionalDirectories) ───
 
 echo "Updating global settings..."

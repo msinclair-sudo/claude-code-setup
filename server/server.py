@@ -7,8 +7,9 @@
 # ///
 """
 Obsidian Vault MCP Server
-Provides guarded read/write access to the Obsidian vault with enforced naming,
-tagging, and placement conventions.
+A lightweight, general-purpose bridge to an Obsidian vault: unrestricted reads
+plus unguarded writes (create/overwrite, append, rename). No naming, tagging, or
+placement enforcement — tags are suggested via tool descriptions, never required.
 """
 
 from fastmcp import FastMCP
@@ -18,15 +19,18 @@ from tools import read, write
 mcp = FastMCP(
     "obsidian-vault",
     instructions=(
-        "Use these tools to read from and write to the Obsidian vault. "
-        "Read tools (vault_search, vault_read, vault_list, vault_tags) are unrestricted. "
-        "Write tools (vault_create_note, vault_append, vault_rename) are guarded — all writes "
-        "go to claude_doc_dump/ directories only and require at least one primary tag and at "
-        "least one destination wikilink. Use vault_rename to rename a note and propagate the "
-        "change to all wikilinks across the vault. "
-        "Every new note body should include a > [!abstract] Note Role callout with four fields "
-        "in this order: Contains, Cannot contain, Points to, Pointed to by. "
-        "The callout title must be 'Note Role' — never 'Summary'."
+        "Use these tools to read from and write to the Obsidian vault. All tools "
+        "operate relative to VAULT_ROOT — you never need the absolute vault path.\n\n"
+        "Read tools are unrestricted. Write tools (vault_write, vault_append, "
+        "vault_rename) can write anywhere in the vault. When creating a new note, "
+        "include YAML frontmatter with at least one tag so it is discoverable:\n\n"
+        "    ---\n"
+        "    tags:\n"
+        "      - MyTag\n"
+        "    ---\n\n"
+        "Use vault_search_tags for boolean tag filtering, vault_wikilinks to inspect "
+        "a note's link graph, and vault_rename to rename/move a note and propagate "
+        "all wikilinks across the vault."
     ),
 )
 

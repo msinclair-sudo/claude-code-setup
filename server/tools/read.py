@@ -1,50 +1,146 @@
 """
 Read tools for the Obsidian Vault MCP Server.
+
+General-purpose, unrestricted reads: full-text search, boolean tag search,
+note reading, directory listing, wikilink graph inspection, and recency.
 """
 
 import re
 from datetime import date
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Optional
 
 from fastmcp import FastMCP
 
-from config import VAULT_ROOT, ALLOWED_PRIMARY_TAGS
-from helpers import abs_path, discover_trackers, parse_tracker_items
+from config import VAULT_ROOT
+
+
+# ---------------------------------------------------------------------------
+# Private helpers (inlined — helpers.py has been removed)
+# ---------------------------------------------------------------------------
+
+_FM_RE = re.compile(r"^---\n(.*?)\n---", re.DOTALL)
+_WIKILINK_RE = re.compile(r"\[\[([^\]\n]+?)\]\]")
+
+
+def _abs(rel: str) -> Path:
+    """Resolve a vault-relative path to an absolute path."""
+    return VAULT_ROOT / rel
+
+
+def _frontmatter(content: str) -> str:
+    """Return the YAML frontmatter block (between the leading --- fences), or ''."""
+    m = _FM_RE.match(content)
+    return m.group(1) if m else ""
+
+
+def _clean_tag(s: str) -> str:
+    return s.strip().strip('"').strip("'").lstrip("#").strip()
+
+
+def _extract_tags(content: str) -> list[str]:
+    """
+    Extract tags from YAML frontmatter, scoped to the `tags:` key only.
+    Handles list form (- Foo), inline form (tags: [A, B] / tags: A B), and
+    a single scalar (tags: Foo). Other YAML lists (e.g. destinations:) are
+    NOT treated as tags.
+    """
+    fm = _frontmatter(content)
+    if not fm:
+        return []
+
+    lines = fm.splitlines()
+    tags: list[str] = []
+    for i, line in enumerate(lines):
+        m = re.match(r"^tags:\s*(.*)$", line)
+        if not m:
+            continue
+        inline = m.group(1).strip()
+        if inline:
+            inline = inline.strip("[]")
+            parts = re.split(r"[,\s]+", inline)
+            tags.extend(_clean_tag(p) for p in parts if p.strip())
+        else:
+            # Block list form on the following indented lines.
+            for nxt in lines[i + 1:]:
+                lm = re.match(r"^\s*-\s+(.*)$", nxt)
+                if lm:
+                    t = _clean_tag(lm.group(1))
+                    if t:
+                        tags.append(t)
+                elif nxt.strip() == "":
+                    continue
+                else:
+                    break  # a new top-level key — end of the tags block
+        break  # only the first tags: key
+
+    return [t for t in tags if t]
+
+
+def _iter_md(path_prefix: str = ""):
+    """Yield (md_file, rel_str) for every .md file, optionally scoped to a prefix."""
+    for md_file in VAULT_ROOT.rglob("*.md"):
+        rel = str(md_file.relative_to(VAULT_ROOT))
+        if path_prefix and not rel.startswith(path_prefix):
+            continue
+        yield md_file, rel
+
+
+def _fuzzy_resolve(path: str) -> tuple[Optional[Path], Optional[str]]:
+    """
+    Resolve a vault-relative path or bare stem to a concrete file.
+    Returns (Path, None) on success, or (None, error_message) on failure.
+    """
+    target = _abs(path)
+    if target.exists():
+        return target, None
+
+    stem = Path(path).stem
+    matches = list(VAULT_ROOT.rglob(f"{stem}.md"))
+    if not matches:
+        matches = list(VAULT_ROOT.rglob(Path(path).name))
+    if len(matches) == 1:
+        return matches[0], None
+    if len(matches) > 1:
+        paths_str = "\n".join(str(m.relative_to(VAULT_ROOT)) for m in matches)
+        return None, (
+            f"Ambiguous: multiple files match '{path}':\n{paths_str}\n"
+            "Please provide the full relative path."
+        )
+    return None, f"File not found: '{path}'"
+
+
+def _link_target_stem(raw: str) -> str:
+    """From a wikilink inner string 'folder/Name#Heading|Alias' return 'Name'."""
+    target = raw.split("|", 1)[0].split("#", 1)[0].strip()
+    if "/" in target:
+        target = target.rsplit("/", 1)[1]
+    return target.strip()
 
 
 def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def vault_search(
-        query: Annotated[str, "Space-separated search terms (case-insensitive). Each term is matched independently across the file — a file matches if it contains ALL terms anywhere in its content. Pass empty string to search by tag only."],
-        tag: Annotated[str, "Filter results to notes containing this tag (exact match, case-sensitive). e.g. 'PhD', 'Methods'. Optional."] = "",
+        query: Annotated[str, "Space-separated search terms (case-insensitive). A file matches if it contains ALL terms anywhere in its content. Pass empty string to search by tag only."],
+        tag: Annotated[str, "Filter results to notes carrying this frontmatter tag (exact match, case-sensitive). Optional."] = "",
+        path_prefix: Annotated[str, "Restrict the search to notes whose vault-relative path starts with this prefix, e.g. 'PhD/mtDNA'. Optional."] = "",
     ) -> str:
         """
-        Search the vault for notes matching a text query and/or tag.
-        Query is split into individual terms; a file matches if it contains ALL terms
-        (each term may appear on any line). Returns FILE path, TAGS, and an EXCERPT
-        showing the first line that contains any of the search terms.
+        Full-text AND search across the vault.
+        Query is split into terms; a file matches if it contains every term.
+        Returns FILE path, TAGS, and an EXCERPT (first line containing a term).
         """
         results = []
         terms = query.lower().split() if query.strip() else []
 
-        for md_file in VAULT_ROOT.rglob("*.md"):
+        for md_file, rel in _iter_md(path_prefix):
             try:
                 content = md_file.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
 
-            rel = md_file.relative_to(VAULT_ROOT)
-
-            file_tags: list[str] = []
-            fm_match = re.match(r'^---\n(.*?)\n---', content, re.DOTALL)
-            if fm_match:
-                for line in fm_match.group(1).splitlines():
-                    t = re.match(r'\s*-\s+(\S+)', line)
-                    if t:
-                        file_tags.append(t.group(1))
-
+            file_tags = _extract_tags(content)
             if tag and tag not in file_tags:
                 continue
 
@@ -52,10 +148,9 @@ def register(mcp: FastMCP) -> None:
                 content_lower = content.lower()
                 if not all(term in content_lower for term in terms):
                     continue
-                # Excerpt: first line containing any search term
                 excerpt_line = next(
-                    (ln for ln in content.splitlines() if any(term in ln.lower() for term in terms)),
-                    ""
+                    (ln for ln in content.splitlines() if any(t in ln.lower() for t in terms)),
+                    "",
                 )
                 excerpt = excerpt_line.strip()[:200]
             else:
@@ -68,32 +163,60 @@ def register(mcp: FastMCP) -> None:
             )
 
         if not results:
-            return f"No results found for query='{query}' tag='{tag}'."
+            return f"No results found for query='{query}' tag='{tag}' path_prefix='{path_prefix}'."
         return "\n\n".join(results)
 
     @mcp.tool()
+    def vault_search_tags(
+        must_have: Annotated[list[str], "AND — every tag listed must be present on the note."],
+        any_of: Annotated[list[str], "OR — at least one of these tags must be present (ignored if empty)."] = [],
+        exclude: Annotated[list[str], "NOT — a note is dropped if it carries any of these tags."] = [],
+        path_prefix: Annotated[str, "Restrict to notes whose vault-relative path starts with this prefix. Optional."] = "",
+    ) -> str:
+        """
+        Boolean search over YAML-frontmatter tags.
+        Only the `tags:` frontmatter key is consulted (list, inline, or scalar form).
+        Example: must_have=['PhD'], any_of=['Methods','Code'], exclude=['doc_dump'].
+        """
+        results = []
+        for md_file, rel in _iter_md(path_prefix):
+            try:
+                content = md_file.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+
+            tags = _extract_tags(content)
+            if not tags:
+                continue
+            tagset = set(tags)
+
+            if must_have and not all(t in tagset for t in must_have):
+                continue
+            if any_of and not any(t in tagset for t in any_of):
+                continue
+            if exclude and any(t in tagset for t in exclude):
+                continue
+
+            results.append(f"FILE: {rel}\nTAGS: {', '.join(tags)}")
+
+        if not results:
+            return (
+                f"No notes match must_have={must_have} any_of={any_of} "
+                f"exclude={exclude} path_prefix='{path_prefix}'."
+            )
+        return f"{len(results)} note(s):\n\n" + "\n\n".join(results)
+
+    @mcp.tool()
     def vault_read(
-        path: Annotated[str, "Vault-relative path (e.g. 'PhD/Literature Review/01-Introduction.md') or bare filename stem (e.g. '01-Introduction'). Searches recursively if no directory given."],
+        path: Annotated[str, "Vault-relative path (e.g. 'PhD/mtDNA/01-Introduction.md') or a bare filename stem (e.g. '01-Introduction'). Searched recursively if no directory is given."],
     ) -> str:
         """
         Read a note's full content including frontmatter.
         If multiple files share the same stem, the full relative path is required.
         """
-        target = abs_path(path)
-
-        if not target.exists():
-            stem = Path(path).stem
-            matches = list(VAULT_ROOT.rglob(f"{stem}.md"))
-            if not matches:
-                matches = list(VAULT_ROOT.rglob(f"{Path(path).name}"))
-            if len(matches) == 1:
-                target = matches[0]
-            elif len(matches) > 1:
-                paths_str = "\n".join(str(m.relative_to(VAULT_ROOT)) for m in matches)
-                return f"Ambiguous: multiple files match '{path}':\n{paths_str}\nPlease provide the full relative path."
-            else:
-                return f"File not found: '{path}'"
-
+        target, err = _fuzzy_resolve(path)
+        if err:
+            return err
         try:
             return target.read_text(encoding="utf-8", errors="replace")
         except OSError as e:
@@ -101,14 +224,15 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def vault_list(
-        directory: Annotated[str, "Vault-relative directory path, e.g. 'PhD/Literature Review'. Defaults to vault root if omitted."] = "",
+        directory: Annotated[str, "Vault-relative directory path, e.g. 'PhD/mtDNA'. Defaults to vault root."] = "",
+        all_files: Annotated[bool, "If True, also list non-.md files (assets, images, scripts). Default lists only .md files and subdirectories."] = False,
     ) -> str:
         """
         List files and subdirectories within a vault directory.
-        Directories are marked with a trailing '/'. Only .md files are shown.
+        Directories are marked with a trailing '/'. By default only .md files are
+        shown; pass all_files=True to include every file.
         """
-        target = abs_path(directory) if directory else VAULT_ROOT
-
+        target = _abs(directory) if directory else VAULT_ROOT
         if not target.is_dir():
             return f"Not a directory: '{directory}'"
 
@@ -118,7 +242,7 @@ def register(mcp: FastMCP) -> None:
                 rel = item.relative_to(VAULT_ROOT)
                 if item.is_dir():
                     entries.append(f"  {rel}/")
-                elif item.suffix == ".md":
+                elif all_files or item.suffix == ".md":
                     entries.append(f"  {rel}")
         except OSError as e:
             return f"Error listing directory: {e}"
@@ -128,87 +252,85 @@ def register(mcp: FastMCP) -> None:
         return f"Contents of '{directory or 'vault root'}':\n" + "\n".join(entries)
 
     @mcp.tool()
-    def vault_tags() -> str:
+    def vault_wikilinks(
+        path: Annotated[str, "Vault-relative path or bare stem of the note whose link graph you want, e.g. 'Phase_Pipeline'."],
+    ) -> str:
         """
-        Return all tags used across the vault, grouped by primary vs secondary, with usage counts.
-        Primary tags are the controlled set; secondary tags are unrestricted.
+        Inspect a note's wikilink graph.
+        OUTWARD: every [[link]] the note itself contains.
+        INBOUND: every note elsewhere in the vault that links to this note's stem
+        (handles [[Name]], [[Name|Alias]], [[Name#Header]], and [[folder/Name]]).
         """
-        primary_counts: dict[str, int] = {}
-        secondary_counts: dict[str, int] = {}
+        target, err = _fuzzy_resolve(path)
+        if err:
+            return err
 
-        for md_file in VAULT_ROOT.rglob("*.md"):
+        stem = target.stem
+        try:
+            content = target.read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            return f"Error reading file: {e}"
+
+        outward = sorted({m.group(1).strip() for m in _WIKILINK_RE.finditer(content)})
+
+        inbound = []
+        stem_lower = stem.lower()
+        for md_file, rel in _iter_md():
+            if md_file == target:
+                continue
             try:
-                content = md_file.read_text(encoding="utf-8", errors="replace")
+                other = md_file.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
+            for m in _WIKILINK_RE.finditer(other):
+                if _link_target_stem(m.group(1)).lower() == stem_lower:
+                    inbound.append(rel)
+                    break
 
-            fm_match = re.match(r'^---\n(.*?)\n---', content, re.DOTALL)
-            if not fm_match:
-                continue
-
-            for line in fm_match.group(1).splitlines():
-                t = re.match(r'\s*-\s+(\S+)', line)
-                if t:
-                    tag = t.group(1)
-                    if tag in ALLOWED_PRIMARY_TAGS:
-                        primary_counts[tag] = primary_counts.get(tag, 0) + 1
-                    else:
-                        secondary_counts[tag] = secondary_counts.get(tag, 0) + 1
-
-        def _fmt(counts: dict[str, int]) -> str:
-            if not counts:
-                return "  (none)"
-            return "\n".join(
-                f"  {tag}: {n}" for tag, n in sorted(counts.items(), key=lambda x: -x[1])
-            )
-
+        out_block = "\n".join(f"  [[{l}]]" for l in outward) if outward else "  (none)"
+        in_block = "\n".join(f"  {r}" for r in sorted(inbound)) if inbound else "  (none)"
         return (
-            "PRIMARY TAGS:\n" + _fmt(primary_counts) +
-            "\n\nSECONDARY TAGS:\n" + _fmt(secondary_counts)
+            f"Wikilinks for '{target.relative_to(VAULT_ROOT)}' (stem: {stem})\n\n"
+            f"OUTWARD ({len(outward)}):\n{out_block}\n\n"
+            f"INBOUND ({len(inbound)}):\n{in_block}"
         )
 
     @mcp.tool()
     def vault_recent(
         n: Annotated[int, "Number of recently updated notes to return (default 20)."] = 20,
-        tag: Annotated[str, "Filter to notes containing this tag (exact match, case-sensitive). Optional."] = "",
+        tag: Annotated[str, "Filter to notes carrying this frontmatter tag (exact match, case-sensitive). Optional."] = "",
     ) -> str:
         """
-        Return the N most recently updated notes in the vault, ranked by the
-        'updated:' field in their YAML frontmatter. Notes without an 'updated:'
-        field are excluded. Returns path, updated date, and tags for each note.
-        """
-        _FM = re.compile(r'^---\n(.*?)\n---', re.DOTALL)
-        _UPDATED = re.compile(r'^updated:\s*(\S+)', re.MULTILINE)
-        _TAG_LINE = re.compile(r'^\s*-\s+(\S+)', re.MULTILINE)
+        Return the N most recently updated notes, ranked by the 'updated:' field in
+        their YAML frontmatter. Notes without an 'updated:' field are excluded.
 
+        Note: ranking deliberately uses frontmatter, not filesystem mtime — on this
+        OneDrive/WSL setup sync and re-touch operations rewrite mtimes, so mtime is
+        not a reliable signal of genuine edits.
+        """
+        _UPDATED = re.compile(r"^updated:\s*(\S+)", re.MULTILINE)
         results: list[tuple[date, str, list[str]]] = []
 
-        for md_file in VAULT_ROOT.rglob("*.md"):
+        for md_file, rel in _iter_md():
             try:
                 content = md_file.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
 
-            fm_match = _FM.match(content)
-            if not fm_match:
+            fm = _frontmatter(content)
+            if not fm:
                 continue
-            fm_body = fm_match.group(1)
-
-            updated_match = _UPDATED.search(fm_body)
-            if not updated_match:
+            um = _UPDATED.search(fm)
+            if not um:
                 continue
-
             try:
-                updated_date = date.fromisoformat(updated_match.group(1))
+                updated_date = date.fromisoformat(um.group(1))
             except ValueError:
                 continue
 
-            file_tags = _TAG_LINE.findall(fm_body)
-
+            file_tags = _extract_tags(content)
             if tag and tag not in file_tags:
                 continue
-
-            rel = str(md_file.relative_to(VAULT_ROOT))
             results.append((updated_date, rel, file_tags))
 
         results.sort(key=lambda x: x[0], reverse=True)
@@ -218,66 +340,9 @@ def register(mcp: FastMCP) -> None:
             hint = f" with tag '{tag}'" if tag else ""
             return f"No notes with 'updated:' frontmatter found{hint}."
 
-        lines = [f"{'DATE':<12}  FILE"]
-        lines.append("-" * 72)
+        lines = [f"{'DATE':<12}  FILE", "-" * 72]
         for updated_date, rel, file_tags in results:
             tag_str = ", ".join(file_tags) if file_tags else "(none)"
             lines.append(f"{str(updated_date):<12}  {rel}")
             lines.append(f"{'':12}  tags: {tag_str}")
         return "\n".join(lines)
-
-    @mcp.tool()
-    def vault_list_projects() -> str:
-        """
-        Discover all projects in the vault by scanning for tracker files
-        at PhD/<project>/*_Tracker.md. Returns project names and their
-        tracker file paths.
-        """
-        trackers = discover_trackers()
-        if not trackers:
-            return "No tracker files found at PhD/<project>/*_Tracker.md."
-        lines = []
-        for name, path in trackers.items():
-            rel = path.relative_to(VAULT_ROOT)
-            lines.append(f"  {name}  ->  {rel}")
-        return f"Projects ({len(trackers)}):\n" + "\n".join(lines)
-
-    @mcp.tool()
-    def vault_read_tracker(
-        project: Annotated[str, "Project name as returned by vault_list_projects (e.g. 'Literature Review', 'mtDNA')."],
-        item_type: Annotated[str, "Filter by callout type: 'data-pull', 'task', 'decision', 'blocker', or 'all' for everything."] = "all",
-        status: Annotated[str, "Filter by status: 'pending', 'in-progress', 'complete', or 'all'."] = "pending",
-    ) -> str:
-        """
-        Read a project's tracker file and return structured items parsed from
-        typed callouts ([!data-pull], [!task], [!decision], [!blocker]).
-        Supports filtering by type and status. Returns machine-readable output.
-        """
-        trackers = discover_trackers()
-        if project not in trackers:
-            available = ", ".join(sorted(trackers.keys())) or "(none)"
-            return f"Project '{project}' not found. Available: {available}"
-
-        try:
-            content = trackers[project].read_text(encoding="utf-8", errors="replace")
-        except OSError as e:
-            return f"Error reading tracker: {e}"
-
-        items = parse_tracker_items(content)
-
-        if item_type != "all":
-            items = [i for i in items if i["type"] == item_type]
-        if status != "all":
-            items = [i for i in items if i.get("status", "") == status]
-
-        if not items:
-            return f"No items matching type='{item_type}' status='{status}' in {project} tracker."
-
-        lines = []
-        for i in items:
-            parts = [f"[{i['type']}] {i['title']}"]
-            for key in ("status", "source", "target", "blocks", "detail"):
-                if key in i:
-                    parts.append(f"  {key}: {i[key]}")
-            lines.append("\n".join(parts))
-        return f"{project} tracker — {len(items)} items:\n\n" + "\n\n".join(lines)

@@ -17,7 +17,7 @@ SETTINGS_FILE="$HOME/.claude/settings.json"
 #   - GENERAL_SKILLS: every other skill dir under skills/, auto-discovered and
 #     installed on every machine. Drop a new skill folder into skills/ and it
 #     is picked up automatically — no need to edit this list.
-VAULT_SKILLS=(make-note process-notes explore-vault tracker request-task)
+VAULT_SKILLS=(vault)
 
 GENERAL_SKILLS=()
 for SKILL_PATH in "$SCRIPT_DIR/skills"/*/; do
@@ -45,9 +45,13 @@ Options:
   --vault_root [PATH]   Install the Obsidian vault MCP server and vault-specific
                         skills (make-note, process-notes, explore-vault,
                         tracker, request-task).
-                          - With PATH: use the given vault path directly.
+                          - With PATH: use the given vault path directly
+                            (must exist).
                           - Without PATH: read vault_root* from config.yaml
                             and pick the first existing path.
+                        A valid vault root is REQUIRED to install the MCP: if
+                        config.yaml specifies none that exists on this machine,
+                        PATH must be given here or the install aborts.
                         Omit this flag entirely to skip vault installation
                         (useful on machines without Obsidian).
 
@@ -103,28 +107,27 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# ── Resolve vault root (only if --vault_root was supplied) ───────────────────
+# ── Resolve vault root (required when installing the MCP) ────────────────────
+#
+# A valid vault root is REQUIRED to install the MCP. It is satisfied by, in order:
+#   1. an explicit --vault_root PATH on the command line (must exist on disk), or
+#   2. an internally specified path in config.yaml (first vault_root* that exists).
+# If neither yields an existing directory, the vault root is required and the
+# install aborts — the MCP is never registered without one.
 
 VAULT_ROOT=""
 
 if [[ "$INSTALL_VAULT" == true ]]; then
     if [[ -n "$VAULT_ROOT_ARG" ]]; then
-        # Explicit path provided on the command line
+        # Explicit path provided on the command line — must exist.
         if [[ ! -d "$VAULT_ROOT_ARG" ]]; then
             echo "ERROR: --vault_root path does not exist: $VAULT_ROOT_ARG" >&2
             exit 1
         fi
         VAULT_ROOT="$VAULT_ROOT_ARG"
-    else
-        # Fall back to config.yaml lookup
-        if [[ ! -f "$CONFIG_FILE" ]]; then
-            echo "ERROR: config.yaml not found and no path given to --vault_root." >&2
-            echo "  cp michaels_setup/config.example.yaml michaels_setup/config.yaml" >&2
-            echo "  Then edit config.yaml with your local paths," >&2
-            echo "  or pass the path directly: --vault_root /path/to/vault" >&2
-            exit 1
-        fi
-
+    elif [[ -f "$CONFIG_FILE" ]]; then
+        # No explicit path — fall back to the internally specified config path,
+        # selecting the first vault_root* candidate that exists on this machine.
         VAULT_ROOT=$(python3 -c "
 import os
 candidates = []
@@ -138,12 +141,19 @@ for path in candidates:
         print(path)
         break
 ")
+    fi
 
-        if [[ -z "$VAULT_ROOT" ]]; then
-            echo "ERROR: No valid vault_root path found in config.yaml" >&2
-            echo "  None of the vault_root* paths exist on this machine." >&2
-            exit 1
+    # Required: if no existing vault root was resolved from flag or config, abort.
+    if [[ -z "$VAULT_ROOT" ]]; then
+        echo "ERROR: A vault root is required to install the MCP, but none was found." >&2
+        if [[ ! -f "$CONFIG_FILE" ]]; then
+            echo "  config.yaml does not exist, and no path was given to --vault_root." >&2
+            echo "    cp michaels_setup/config.example.yaml michaels_setup/config.yaml  (then edit it)" >&2
+        else
+            echo "  config.yaml specifies no vault_root* path that exists on this machine." >&2
         fi
+        echo "  Pass the path explicitly:  --vault_root /path/to/vault" >&2
+        exit 1
     fi
 fi
 
@@ -177,14 +187,17 @@ if [[ "$INSTALL_VAULT" == true ]]; then
     mkdir -p "$INSTALL_DIR/tools"
     cp "$SCRIPT_DIR/server/server.py"        "$INSTALL_DIR/server.py"
     cp "$SCRIPT_DIR/server/config.py"        "$INSTALL_DIR/config.py"
-    cp "$SCRIPT_DIR/server/helpers.py"       "$INSTALL_DIR/helpers.py"
-    cp "$SCRIPT_DIR/server/rename_note.py"   "$INSTALL_DIR/rename_note.py"
-    cp "$SCRIPT_DIR/server/resolve_links.py" "$INSTALL_DIR/resolve_links.py"
     cp "$SCRIPT_DIR/server/touch_vault.py"   "$INSTALL_DIR/touch_vault.py"
     cp "$SCRIPT_DIR/server/tools/__init__.py" "$INSTALL_DIR/tools/__init__.py"
     cp "$SCRIPT_DIR/server/tools/read.py"     "$INSTALL_DIR/tools/read.py"
     cp "$SCRIPT_DIR/server/tools/write.py"    "$INSTALL_DIR/tools/write.py"
     echo "Copied server files to $INSTALL_DIR"
+
+    # Deploy the rename_note.py script into the vault. The repo is the source of
+    # truth; vault_rename invokes the deployed copy at <VAULT_ROOT>/scripts/.
+    mkdir -p "$VAULT_ROOT/scripts"
+    cp "$SCRIPT_DIR/server/rename_note.py" "$VAULT_ROOT/scripts/rename_note.py"
+    echo "Deployed rename_note.py to $VAULT_ROOT/scripts/"
 
     echo "Registering MCP server with Claude Code..."
     claude mcp remove obsidian-vault --scope user 2>/dev/null || true
@@ -209,6 +222,12 @@ if [[ "$INSTALL_VAULT" == true ]]; then
 fi
 
 for SKILL in "${SKILLS_TO_INSTALL[@]}"; do
+    # Vault skills are delivered with the vault itself, so their source may not
+    # live in the repo. Skip (don't abort under set -e) when the source is absent.
+    if [[ ! -d "$SCRIPT_DIR/skills/$SKILL" ]]; then
+        echo "  WARNING: skill source not found, skipping: $SKILL"
+        continue
+    fi
     SKILL_DIR="$HOME/.claude/skills/$SKILL"
     echo "Installing $SKILL skill..."
     rm -rf "$SKILL_DIR"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Claude Code environment installer
-# Sets up: skills, statusline, global permissions, CLAUDE.md, hooks
+# Sets up: skills, statusline, global permissions, CLAUDE.md
 # Optionally sets up the Obsidian vault MCP server and vault-specific skills.
 
 set -e
@@ -37,7 +37,7 @@ show_help() {
     cat <<'EOF'
 Usage: bash michaels_setup/install.sh [OPTIONS]
 
-Installs Claude Code configuration: general skills, statusline, hooks,
+Installs Claude Code configuration: general skills, statusline,
 global permissions, and CLAUDE.md. The Obsidian vault MCP server and its
 related skills are installed only when --vault_root is supplied.
 
@@ -59,7 +59,7 @@ Options:
 
 Examples:
   bash michaels_setup/install.sh
-      Install general skills + statusline + hooks. No vault MCP.
+      Install general skills + statusline. No vault MCP.
 
   bash michaels_setup/install.sh --vault_root
       Full install. Resolves vault path from config.yaml.
@@ -116,6 +116,18 @@ done
 # install aborts — the MCP is never registered without one.
 
 VAULT_ROOT=""
+
+# The Obsidian vault MCP server was archived to
+# skill_inspiration/archived-obsidian-vault-mcp/. Vault access is now provided
+# by the obsidian-cli skill (a general skill). If the MCP source is absent,
+# disable the vault-MCP install path and fall back to a general install.
+if [[ "$INSTALL_VAULT" == true && ! -d "$SCRIPT_DIR/server" ]]; then
+    echo "NOTE: --vault_root was requested, but the vault MCP server source is" >&2
+    echo "      archived (skill_inspiration/archived-obsidian-vault-mcp/)." >&2
+    echo "      The Obsidian vault MCP is no longer installed; vault access is" >&2
+    echo "      now via the obsidian-cli skill. Proceeding with general install." >&2
+    INSTALL_VAULT=false
+fi
 
 if [[ "$INSTALL_VAULT" == true ]]; then
     if [[ -n "$VAULT_ROOT_ARG" ]]; then
@@ -235,16 +247,6 @@ for SKILL in "${SKILLS_TO_INSTALL[@]}"; do
     echo "  Installed skill to $SKILL_DIR"
 done
 
-# ── Install hooks ─────────────────────────────────────────────────────────────
-
-HOOKS_DIR="$HOME/.claude/hooks"
-mkdir -p "$HOOKS_DIR"
-
-echo "Installing hooks..."
-cp "$SCRIPT_DIR/hooks/strip_cd.py" "$HOOKS_DIR/strip_cd.py"
-chmod +x "$HOOKS_DIR/strip_cd.py"
-echo "  Copied strip_cd.py to $HOOKS_DIR"
-
 # ── Install statusline ────────────────────────────────────────────────────────
 
 STATUSLINE_SCRIPT="$HOME/.claude/statusline.sh"
@@ -299,27 +301,25 @@ if repo_dir not in dirs:
     dirs.append(repo_dir)
 settings["additionalDirectories"] = dirs
 
-# Hooks — register strip_cd as PreToolUse hook for Bash
+# Hooks — strip out any previously-registered strip_cd PreToolUse hook
 hooks = settings.get("hooks", {})
 pre_tool = hooks.get("PreToolUse", [])
-
-# Check if strip_cd hook already registered
-strip_cd_exists = any(
-    any("strip_cd.py" in h.get("command", "") for h in entry.get("hooks", []))
-    for entry in pre_tool
-    if entry.get("matcher") == "Bash"
-)
-
-if not strip_cd_exists:
-    pre_tool.append({
-        "matcher": "Bash",
-        "hooks": [{
-            "type": "command",
-            "command": "python3 ~/.claude/hooks/strip_cd.py"
-        }]
-    })
-    hooks["PreToolUse"] = pre_tool
+cleaned_pre_tool = []
+for entry in pre_tool:
+    entry["hooks"] = [
+        h for h in entry.get("hooks", [])
+        if "strip_cd.py" not in h.get("command", "")
+    ]
+    if entry["hooks"]:
+        cleaned_pre_tool.append(entry)
+if cleaned_pre_tool:
+    hooks["PreToolUse"] = cleaned_pre_tool
+elif "PreToolUse" in hooks:
+    del hooks["PreToolUse"]
+if hooks:
     settings["hooks"] = hooks
+elif "hooks" in settings:
+    del settings["hooks"]
 
 hooks_count = sum(len(entries) for entries in settings.get("hooks", {}).values())
 

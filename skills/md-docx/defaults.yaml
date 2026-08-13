@@ -1,6 +1,7 @@
+# reference-doc and csl are supplied on the command line by convert.sh
+# (resolved from the skill directory), so this file stays location-independent.
 from: markdown+yaml_metadata_block+pipe_tables+footnotes+tex_math_dollars
 to: docx
-reference-doc: "_style/reference.docx"
 citeproc: true
 standalone: true
 metadata:

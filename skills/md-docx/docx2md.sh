@@ -1,24 +1,47 @@
 #!/usr/bin/env bash
-# Usage: ./docx2md.sh input.docx [output.md]
+# Usage: ./docx2md.sh input.docx [output.md] [--bib /path/to/Refs.bib]
 # Converts a .docx to Obsidian-flavoured markdown:
 #   - pandoc docx -> gfm (pipe tables, footnotes, $math$), no line wrapping
 #   - embedded images extracted to <output>.media/
 #   - internal [text](note.md) links rewritten to [[note]] wikilinks
-#   - APA in-text citations matched against Refs.bib -> [@citekey]
+#   - APA in-text citations matched against a .bib -> [@citekey]
+#
+# The BibTeX file is NOT defaulted to any location. Point at your own reference
+# file with --bib /path/to/Refs.bib (or the BIB env var). Without one, citation
+# matching is skipped and APA cites are left untouched.
 # Per-document tweaks: edit the pandoc line below.
 
 set -euo pipefail
 
+# Citation database: from the BIB env var, overridable by --bib below.
+BIB="${BIB:-}"
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --bib)
+            BIB="${2:?--bib requires a path to a .bib file}"
+            shift 2
+            ;;
+        --bib=*)
+            BIB="${1#--bib=}"
+            shift
+            ;;
+        *)
+            POSITIONAL+=("$1")
+            shift
+            ;;
+    esac
+done
+set -- "${POSITIONAL[@]}"
+
 if [[ $# -lt 1 ]]; then
-    echo "Usage: $0 input.docx [output.md]" >&2
+    echo "Usage: $0 input.docx [output.md] [--bib /path/to/Refs.bib]" >&2
     exit 1
 fi
 
 INPUT="$1"
 OUTPUT="${2:-${INPUT%.docx}.md}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VAULT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-BIB="$VAULT_ROOT/PhD/Proposal/Refs/Refs.bib"
 MEDIA="${OUTPUT%.md}.media"
 
 # 1. docx -> markdown
@@ -108,11 +131,15 @@ open(p, "w", encoding="utf-8").write(t)
 PY
 
 # 3. APA citations -> pandoc keys (report to stderr)
-if [[ -f "$BIB" ]]; then
+if [[ -z "$BIB" ]]; then
+    echo "NOTE: no .bib supplied; skipping citation matching." >&2
+    echo "      Point at a reference file with --bib /path/to/Refs.bib (or the BIB env var) to enable it." >&2
+    mv "$OUTPUT.tmp" "$OUTPUT"
+elif [[ -f "$BIB" ]]; then
     python3 "$SCRIPT_DIR/apa2pandoc.py" "$BIB" < "$OUTPUT.tmp" > "$OUTPUT"
     rm -f "$OUTPUT.tmp"
 else
-    echo "WARNING: $BIB not found; skipping citation matching" >&2
+    echo "WARNING: --bib '$BIB' not found; skipping citation matching" >&2
     mv "$OUTPUT.tmp" "$OUTPUT"
 fi
 

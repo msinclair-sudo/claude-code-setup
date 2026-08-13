@@ -18,9 +18,11 @@ This directory holds the Pandoc pipeline that moves notes between Obsidian Markd
 | --- | --- |
 | `convert.sh` | **md → docx.** Wraps Pandoc with `defaults.yaml` + `reference.docx` styling. Normalises callouts so they survive the round trip. |
 | `docx2md.sh` | **docx → md.** Pandoc to Obsidian-flavoured Markdown, plus media extraction, wikilink rewriting, callout reconstruction, and APA→Pandoc citation matching. |
-| `apa2pandoc.py` | Citation matcher used by `docx2md.sh`. Rewrites APA in-text cites and Zotero hyperlink cites to `[@citekey]` against `Refs.bib`; strips the rendered reference list. |
-| `defaults.yaml` | Pandoc defaults for `convert.sh` (input extensions, `reference-doc`, `citeproc`, `lang`). |
+| `apa2pandoc.py` | Citation matcher used by `docx2md.sh`. Rewrites APA in-text cites and Zotero hyperlink cites to `[@citekey]` against a `.bib` you supply; strips the rendered reference list. |
+| `defaults.yaml` | Pandoc defaults for `convert.sh` (input extensions, `citeproc`, `lang`). `reference-doc` and `csl` are passed on the command line from the skill dir, keeping the file location-independent. |
 | `reference.docx` | Word style template — defines heading/body/blockquote styles for the `.docx` output. |
+| `apa.csl` | Bundled APA 7th-edition citation style used by `convert.sh`; override per run with `--csl /path/to/style.csl`. |
+| `sectionbreak.lua` | Pandoc filter used by `convert.sh`. Converts a Markdown thematic break (`---`) into a Word "next page" section break, replicating the template's page geometry. |
 
 ## Usage
 
@@ -30,11 +32,35 @@ _style/convert.sh PhD/Proposal/Proposal.md            # -> Proposal.docx
 _style/convert.sh input.md custom_name.docx
 
 # Word -> Markdown (bringing a reviewed doc back in)
-_style/docx2md.sh PhD/Proposal/Proposal_reviewed.docx # -> Proposal_reviewed.md
+_style/docx2md.sh Proposal_reviewed.docx                  # -> Proposal_reviewed.md (no citation matching)
 _style/docx2md.sh input.docx out.md
+_style/docx2md.sh input.docx --bib PhD/Proposal/Refs/Refs.bib   # match APA cites against your .bib
 ```
 
+`docx2md.sh` does **not** assume a default `.bib` location: point it at your own
+reference file with `--bib /path/to/Refs.bib` (or the `BIB` env var). Without one,
+citation matching is skipped and APA cites are left untouched.
+
+`convert.sh` styles citations with the bundled **APA 7th-edition** `apa.csl` by
+default (resolved from the skill dir, so it works from any directory). A
+document's frontmatter `csl:` is overridden by this default; pass
+`--csl /path/to/style.csl` (or set `CSL`) to use a different style.
+
 Per-document overrides (`bibliography`, `csl`, `toc`, …) go in the Markdown file's YAML frontmatter, not in these scripts.
+
+### Section breaks
+
+`convert.sh` runs `sectionbreak.lua`, which turns every standalone Markdown
+thematic break (`---`) into a Word **"next page" section break**. Because a
+paragraph-level `<w:sectPr>` defines the geometry of the section it *ends*,
+`convert.sh` extracts `pgSz`/`pgMar` from the active `reference.docx` and feeds
+them to the filter (`MDDOCX_PGSZ`/`MDDOCX_PGMAR`) so every section keeps the
+same page size and margins. Pandoc has already separated a real `---` break from
+YAML frontmatter and setext heading underlines, so only true breaks convert.
+
+The break is **not** recovered on the way back: Pandoc's docx reader discards
+section breaks, so `docx2md.sh` cannot re-emit `---`. Re-graft section breaks
+from the prior `.md` if you round-trip.
 
 ## What `docx2md.sh` does, in order
 
@@ -65,7 +91,7 @@ Pandoc has no native concept of an Obsidian callout, so the two scripts cooperat
 apa2pandoc.py PhD/Proposal/Refs/Refs.bib < in.md > out.md   # report on stderr
 ```
 
-Resolves cites to Pandoc keys against `Refs.bib` by **accent-folded first-author surname + year** (unique for ~all entries in this project). Handles:
+Resolves cites to Pandoc keys against the supplied `.bib` by **accent-folded first-author surname + year** (unique for ~all entries in this project). Handles:
 
 - **Plain APA** — `(Averill et al., 2021)`, narrative `Averill et al. (2021)`, multi-cite `(A, 2019; B, 2020)`, `&`/`and`, compound names (`van`, `de`), accents.
 - **Zotero hyperlink cites** — Word/Zotero field cites land as links: `#ref-<citekey>` (key read straight from the anchor) or opaque `#X<hash>` (recovered from the visible surname+year).

@@ -6,10 +6,36 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/config.yaml"
 PERMISSIONS_FILE="$SCRIPT_DIR/permissions.json"
 INSTALL_DIR="$HOME/.claude/mcp/obsidian_vault"
 SETTINGS_FILE="$HOME/.claude/settings.json"
+
+# ~/.env — THE single source of truth for host-specific paths/values (vault
+# roots, biblion locations, etc.) plus the user's API keys. Per machine; not in
+# the repo. Copy/append the keys from .env.example. We read ONLY our own
+# allowlisted keys (VAULT_*/OBSIDIAN_*; biblion's config.sh reads BIBLION_*
+# itself) — parsed, not sourced, so unrelated entries like API keys are never
+# pulled into this process. MCP_ENV is exported so the installed skill copies
+# (e.g. ~/.claude/skills/biblion/config.sh) resolve back to this same file.
+ENV_FILE="$HOME/.env"
+if [[ -f "$ENV_FILE" ]]; then
+    while IFS= read -r _line || [[ -n "$_line" ]]; do
+        case "$_line" in
+            VAULT_ROOT=*|VAULT_ROOT[0-9]=*|OBSIDIAN_BIN=*) ;;
+            *) continue ;;
+        esac
+        _key=${_line%%=*}; _val=${_line#*=}
+        case "$_val" in
+            \"*\") _val=${_val#\"}; _val=${_val%\"} ;;
+            \'*\') _val=${_val#\'}; _val=${_val%\'} ;;
+        esac
+        export "$_key=$_val"
+    done < "$ENV_FILE"
+    unset _line _key _val
+    export MCP_ENV="$ENV_FILE"
+fi
 
 # Skills are split into two groups:
 #   - VAULT_SKILLS: depend on the obsidian-vault MCP server; installed only
@@ -55,6 +81,15 @@ Options:
                         Omit this flag entirely to skip vault installation
                         (useful on machines without Obsidian).
 
+  --biblion             Register the biblion MCP server after installing skills.
+                        The biblion skill itself is always installed (it is a
+                        general skill); this flag additionally runs the skill's
+                        own scripts/check.sh and, if checks pass, scripts/
+                        register.sh to register the biblion MCP at user scope.
+                        Machine-specific paths come from the skill's config.sh.
+                        If checks fail (e.g. biblion absent on this machine) the
+                        MCP is skipped without aborting the install.
+
   -h, --help            Show this help message and exit.
 
 Examples:
@@ -67,6 +102,9 @@ Examples:
   bash michaels_setup/install.sh --vault_root "/mnt/c/Users/Me/Vault"
       Full install using the explicit vault path.
 
+  bash michaels_setup/install.sh --biblion
+      Install skills, then register the biblion MCP server (user scope).
+
 Requirements:
   - claude CLI (always)
   - uv         (only when installing the vault MCP server)
@@ -77,12 +115,17 @@ EOF
 
 INSTALL_VAULT=false
 VAULT_ROOT_ARG=""
+INSTALL_BIBLION=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help)
             show_help
             exit 0
+            ;;
+        --biblion)
+            INSTALL_BIBLION=true
+            shift
             ;;
         --vault_root)
             INSTALL_VAULT=true
@@ -137,6 +180,13 @@ if [[ "$INSTALL_VAULT" == true ]]; then
             exit 1
         fi
         VAULT_ROOT="$VAULT_ROOT_ARG"
+    elif [[ -n "$VAULT_ROOT" && -d "$VAULT_ROOT" ]]; then
+        : # already resolved from .env (VAULT_ROOT set and exists)
+    elif [[ -n "${VAULT_ROOT1:-}${VAULT_ROOT2:-}${VAULT_ROOT3:-}" ]]; then
+        # No explicit path — pick the first VAULT_ROOT* from .env that exists.
+        for cand in "${VAULT_ROOT1:-}" "${VAULT_ROOT2:-}" "${VAULT_ROOT3:-}"; do
+            if [[ -n "$cand" && -d "$cand" ]]; then VAULT_ROOT="$cand"; break; fi
+        done
     elif [[ -f "$CONFIG_FILE" ]]; then
         # No explicit path — fall back to the internally specified config path,
         # selecting the first vault_root* candidate that exists on this machine.
@@ -180,6 +230,9 @@ if [[ "$INSTALL_VAULT" == true ]]; then
 else
     echo "Mode       : General install only (no Obsidian vault MCP)"
     echo "             Pass --vault_root to also install vault tools."
+fi
+if [[ "$INSTALL_BIBLION" == true ]]; then
+    echo "biblion MCP : will register after skills (--biblion)"
 fi
 echo ""
 
@@ -247,6 +300,29 @@ for SKILL in "${SKILLS_TO_INSTALL[@]}"; do
     echo "  Installed skill to $SKILL_DIR"
 done
 
+# ── Register biblion MCP (opt-in, --biblion) ─────────────────────────────────
+#
+# The biblion skill is self-contained: it carries its own config.sh and
+# scripts/{check,register,unregister}.sh that register the read-only biblion MCP
+# at user scope. The skill is always installed above (general skill); this block
+# only runs its registration when --biblion is passed. check.sh validates the
+# machine-specific paths in the *installed* config.sh first, so an install on a
+# machine without biblion skips the MCP cleanly instead of aborting under set -e.
+
+if [[ "$INSTALL_BIBLION" == true ]]; then
+    BIBLION_SKILL_DIR="$HOME/.claude/skills/biblion"
+    echo "Registering biblion MCP server..."
+    if [[ ! -d "$BIBLION_SKILL_DIR" ]]; then
+        echo "  WARNING: biblion skill not installed; cannot register MCP."
+    elif bash "$BIBLION_SKILL_DIR/scripts/check.sh"; then
+        bash "$BIBLION_SKILL_DIR/scripts/register.sh"
+    else
+        echo "  WARNING: biblion check.sh failed — MCP not registered." >&2
+        echo "           Fix the paths in skills/biblion/config.sh and re-run" >&2
+        echo "           install.sh --biblion (or scripts/register.sh directly)." >&2
+    fi
+fi
+
 # ── Install statusline ────────────────────────────────────────────────────────
 
 STATUSLINE_SCRIPT="$HOME/.claude/statusline.sh"
@@ -259,8 +335,6 @@ echo "  Copied statusline script to $STATUSLINE_SCRIPT"
 # ── Merge settings.json (statusline + permissions + additionalDirectories) ───
 
 echo "Updating global settings..."
-
-REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 python3 - "$SETTINGS_FILE" "$PERMISSIONS_FILE" "$REPO_DIR" <<'PYEOF'
 import json, sys, os
@@ -339,5 +413,9 @@ echo "Installation complete."
 if [[ "$INSTALL_VAULT" != true ]]; then
     echo "Note: Obsidian vault MCP was NOT installed."
     echo "      Re-run with --vault_root to enable vault tools."
+fi
+if [[ "$INSTALL_BIBLION" != true ]]; then
+    echo "Note: biblion MCP was NOT registered."
+    echo "      Re-run with --biblion to register it (the skill is installed)."
 fi
 echo "Restart Claude Code for changes to take effect."

@@ -9,32 +9,43 @@ Use the `obsidian` CLI to interact with a running Obsidian instance. Requires Ob
 
 ## Setup (this machine: WSL → Windows Obsidian)
 
-This vault is driven by **Obsidian on Windows**; Claude Code runs in **WSL**. The CLI talks to the app over IPC on the *same OS*, so the Linux binary in `~/.local/bin` is useless here — it would target a (nonexistent) Linux Obsidian, not the Windows app. Drive the **Windows** CLI from WSL via interop instead.
+**Just run `obsidian …` directly — it is already on PATH and works from any
+directory.** A WSL wrapper at `~/.local/bin/obsidian` (on PATH) forwards to the
+Windows redirector, so every `obsidian …` example in this skill runs verbatim:
+
+```bash
+obsidian vault                 # -> name=Michael.md, path=A:\Obsidian Vault\Michael.md
+obsidian read file="My Note"
+```
+
+This vault is driven by **Obsidian on Windows**; Claude Code runs in **WSL**. The
+CLI talks to the app over IPC on the *same OS*, so the Linux binary is useless
+here — the wrapper forwards to the **Windows** `Obsidian.com` redirector, which
+reaches the running app over IPC. **The skill cannot operate while Obsidian is
+closed** — fall back to direct file edits under the vault root in that case.
+
+**Confirmed working (2026-06-20):** `obsidian vault` returns the open vault
+`Michael.md` (`A:\Obsidian Vault\Michael.md`, 440 files).
+
+### If `obsidian` is not found (fresh machine)
 
 Prerequisites (one-time, on the Windows side):
 1. Obsidian **≥ 1.12.4** installed and running on Windows.
 2. In Obsidian: **Settings → General → Command line interface → Register CLI**.
 
-Invoke the Windows redirector by **full path** from WSL (it is *not* on PATH here):
+Then either invoke the Windows redirector by full path:
 
 ```bash
 "/mnt/c/Users/Owner/AppData/Local/Programs/Obsidian/Obsidian.com" read file="My Note"
 ```
 
-**Confirmed reachable (2026-06-15):** `Obsidian.com vault` returns the open vault
-`Michael.md` (`A:\Obsidian Vault\Michael.md`, ~397 files). The `.com` redirector
-reaches the running app over IPC. **The skill cannot operate while Obsidian is
-closed** — fall back to direct file edits under the vault root in that case.
-
-Optional convenience — a WSL wrapper so commands read as plain `obsidian …`:
+…or (preferred) install the wrapper once so `obsidian …` works on PATH:
 
 ```bash
 mkdir -p ~/.local/bin
 printf '#!/usr/bin/env bash\nexec "/mnt/c/Users/Owner/AppData/Local/Programs/Obsidian/Obsidian.com" "$@"\n' > ~/.local/bin/obsidian
 chmod +x ~/.local/bin/obsidian   # ensure ~/.local/bin is on your PATH
 ```
-
-With the wrapper installed, the rest of this skill's `obsidian …` examples work verbatim.
 
 ## Known quirks (this machine, verified 2026-06-15)
 
@@ -80,7 +91,7 @@ CLI does unreliably here. They operate directly on the vault files, so they work
 even when Obsidian is closed or its index is stale.
 
 ```bash
-VAULT="/mnt/a/Obsidian Vault/Michael.md"          # this machine's vault root
+VAULT="/path/to/your/Obsidian Vault"              # this machine's vault root (see project-root .env: VAULT_ROOT)
 SK="$HOME/.claude/skills/obsidian-cli/scripts"
 ```
 

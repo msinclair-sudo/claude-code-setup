@@ -300,6 +300,30 @@ for SKILL in "${SKILLS_TO_INSTALL[@]}"; do
     echo "  Installed skill to $SKILL_DIR"
 done
 
+# ── Install harness runtime + workflows ──────────────────────────────────────
+#
+# The four harness skills (harness, -upward, -downward, -root) are installed
+# above, auto-discovered under skills/. This block installs what those skills
+# call: the `harness` CLI and the guard-hook templates it scaffolds into a repo.
+#
+# Nothing is enrolled by default. A session takes a role only in a project that
+# has BOTH a committed .harness/tree.json and a local binding under
+# ~/.claude/harness/<slug>/ — so installing this changes no existing behaviour.
+# Per-project bindings and locks live beside the CLI and are never touched here.
+
+if [[ -d "$SCRIPT_DIR/harness" ]]; then
+    echo "Installing harness runtime..."
+    mkdir -p "$HOME/.claude/harness/bin"
+    cp "$SCRIPT_DIR/harness/bin/harness" "$HOME/.claude/harness/bin/harness"
+    chmod +x "$HOME/.claude/harness/bin/harness"
+    rm -rf "$HOME/.claude/harness/templates"
+    cp -r "$SCRIPT_DIR/harness/templates" "$HOME/.claude/harness/templates"
+    chmod +x "$HOME/.claude/harness/templates/hooks/"*
+    echo "  Installed harness CLI to $HOME/.claude/harness/bin/harness"
+    echo "  Installed guard templates to $HOME/.claude/harness/templates/"
+fi
+
+
 # ── Register biblion MCP (opt-in, --biblion) ─────────────────────────────────
 #
 # The biblion skill is self-contained: it carries its own config.sh and

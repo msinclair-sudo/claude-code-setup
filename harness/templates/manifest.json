@@ -1,0 +1,35 @@
+{
+  "docs": [
+    "docs/**",
+    "*.md",
+    "rulings.md"
+  ],
+  "code": [
+    "src/**",
+    "tests/**"
+  ],
+  "checks": [
+    {
+      "name": "example",
+      "command": "echo ok",
+      "blindSpot": "REQUIRED: state what this check cannot see"
+    }
+  ],
+  "never_travels": [],
+  "_globs": [
+    "'*' does NOT cross '/'. '**' does. Ordinary gitignore semantics.",
+    "  design/*.md      -> design/A.md only",
+    "  design/**/*.md   -> any depth",
+    "  plans/**         -> everything under plans/"
+  ],
+  "_never_travels": [
+    "Empty by default, and think hard before filling it.",
+    "A path here is refused even when it ARRIVES BY MERGE, which aborts the whole",
+    "merge rather than skipping the path \u2014 git hooks can only allow or abort.",
+    "It is NOT needed to protect .harness/: hooks and config are read from the",
+    "document node's checkout via core.hooksPath and --git-common-dir, so a copy on",
+    "any other branch is never read and never executed. Verified by giving a code",
+    "node its own manifest saying nothing is a document: the guard used main's and",
+    "refused anyway."
+  ]
+}

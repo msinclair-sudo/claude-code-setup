@@ -1,0 +1,3 @@
+{"project": "CHANGEME",
+ "nodes": {"main": {"branch": "main", "parent": null, "kind": "doc"},
+           "dev":  {"branch": "dev",  "parent": "main", "kind": "code"}}}

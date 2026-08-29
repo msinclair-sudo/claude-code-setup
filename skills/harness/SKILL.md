@@ -1,0 +1,97 @@
+---
+name: harness
+description: Resolve this session's position in an Agent Workstream Harness role tree, claim or release its git node, and load the role-appropriate harness skills. Applies ONLY in repositories enrolled in the harness — both a committed .harness/tree.json and a local binding. Use when starting work in an enrolled worktree, when claiming or releasing a node, or when the user mentions the harness, the role tree, ranks, leads and members, or workstream nodes. In any project that is not enrolled this skill establishes that in one step and stops.
+---
+
+# Harness — position and occupancy
+
+Spec: `ref/spec.md` (`R1`–`R11`) — the single copy. The role skills carry no
+spec of their own and point back here, so read it at most once per session.
+Diagram: `ref/tree.canvas`.
+CLI: `~/.claude/harness/bin/harness` — stdlib Python, no daemon, no server.
+
+## First: are we even in this?
+
+```bash
+~/.claude/harness/bin/harness whoami
+```
+
+**Exit 3 means not enrolled.** Say so in one line and stop. Do not offer to enrol
+unless asked. Enrolment takes two keys (`R9`) and both are deliberate:
+
+| key | where | meaning |
+| --- | --- | --- |
+| `.harness/tree.json` | in the repo, committed | this project defines a role tree |
+| `binding.json` | `~/.claude/harness/<slug>/` | *and this machine has joined it* |
+
+## Then: prove position, then take it
+
+Position is derived, never declared (`R1`). The CLI reads it from
+`git rev-parse` — you cannot claim a role, only stand in one.
+
+1. `harness whoami` — derives the node from git, checks the platform contract,
+   and asserts the session name against the branch.
+2. `harness claim`
+3. `harness doctor` — proves this worktree is actually guarded by demanding a
+   refusal, rather than reading config and trusting it. Non-zero means unguarded;
+   stop and report which arm failed.
+4. Load exactly the skills `whoami` names under `skills`. Nothing else.
+
+You do **not** gather a roster. The CLI calls `claude agents --json` itself, which
+lists every live session including this one, so it learns its own name and every
+peer's liveness without being told. `--roster FILE` exists only to feed it a
+recorded roster for testing.
+
+```
+leaf      → harness + harness-upward
+mid-lead  → harness + harness-upward + harness-downward
+top lead  → harness + harness-downward + harness-root
+```
+
+## Exit codes are the contract
+
+| code | meaning | what to do |
+| --- | --- | --- |
+| 2 | platform contract failed (`C1`–`C5`) | **Stop.** Report which check failed. Claude's internals have changed; do not work around it. |
+| 3 | not enrolled | one line, stop |
+| 4 | refused | the harness declined: a live session holds the node, a recycle would strand work, or a measurement was asked for that cannot be derived. Not a fault — read the line and do what it says |
+| 5 | name/position mismatch | the session is misnamed — rename it, never rename the node |
+
+`C1`–`C5` assert the undocumented Claude state this harness reads (`R8`). A
+failure means refuse, not degrade: a mis-identified session is how two of them
+end up holding one node, which is the failure the lock exists to prevent.
+
+## Forcing a stale claim
+
+`harness claim --force` is allowed only when the holder's ref is **absent from
+ListAgents**. It records who forced it. It refuses outright if the stale claim
+was made on another host — absence from a local roster does not prove death.
+
+## Propagating a tree
+
+From the rank-0 session, once the tree and worktrees exist:
+
+```bash
+harness spawn --dry-run     # check what it would launch, where, and as what
+harness spawn               # claude --bg -n <project>-<node>, one per node
+```
+
+Each node carries the model and effort it should be run as (`R12`). By default
+`opus[1m]` at `high` for rank 0 and `medium` for a lead — context follows the
+view, and a lead is where reports, conflicts and climbing documents accumulate —
+and plain `opus` at `medium` for a leaf — coding is the one workload where the
+effort curve is steep, and a leaf holds one task and is then recycled (`R13`). Set `model`/`effort` on a node in `tree.json` to override, or
+`--model`/`--effort` to override every node in one launch. `whoami` prints the
+pair under `run as`, so a session can see what it was meant to be.
+
+Each is a real session that derives its own position and claims it. Occupied
+nodes are skipped. View with `claude agents`, join with `claude attach <id>`.
+
+A subagent cannot hold a node — no session id, no lock, no row in the session
+table (`R6`). You may still spawn one for a bounded lookup and use its answer;
+what you cannot do is give it a node, a claim or a transaction.
+
+## Releasing
+
+`harness release` at the end of a task. The ledger row is closed, never deleted:
+an ancestor resolving a deep conflict (`T8`) reads closed rows.

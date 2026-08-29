@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+"""Shared guard: refuse documents AUTHORED on a node that does not own them.
+
+Reads candidate paths on stdin. Exit 0 allows, exit 1 refuses.
+
+The distinction this makes is authorship, not path. A document that ARRIVED by
+merge from the node that owns it must pass — that downward flow is the point of
+the tree. A document EDITED here must not. Those are told apart by blob identity
+against the document node's history: if this exact blob was ever the document
+node's content at that path, it came from there.
+
+Not the document node's CURRENT blob — that rule is wrong. The document node
+moves while a change traverses the tree (measured: one commit per 105s against a
+three-hop journey), so a legitimately merged copy routinely fails to match the
+tip. The history form is the correct one and is made affordable by caching the
+blob set against the document node's tip and extending it incrementally.
+
+FAILS CLOSED. If the tree or manifest is missing or unreadable, this guard is
+running inside a repository configured to use it, and absence is a defect rather
+than permission. Only a branch that is not a node in the tree is passed over.
+"""
+import fnmatch, json, os, re, subprocess, sys
+from pathlib import Path
+
+def git(*a):
+    r = subprocess.run(["git", *a], capture_output=True, text=True)
+    return r.returncode, r.stdout.strip(), r.stderr.strip()
+
+def refuse(msg, detail=()):
+    print(f"harness-guard: {msg}", file=sys.stderr)
+    for d in detail:
+        print(f"  {d}", file=sys.stderr)
+    sys.exit(1)
+
+# ── glob semantics: '*' does NOT cross '/', '**' does ────────────────────────
+# fnmatch's '*' crosses separators, which made `dir/*.md` silently capture every
+# depth (measured: 23 of 53 tracked paths in one repo) while `dir/**/*.md` failed
+# open at depth 1. Both are gone; these are ordinary gitignore-style semantics.
+def _norm(glob):
+    """Collapse redundant wildcards before translating.
+
+    `(?:.*/)?(?:.*/)?` and `.*.*` are ambiguous alternations: the engine can
+    split a non-matching path between them in exponentially many ways. Measured
+    against a 140-character path: six `**/` took 221 ms, eight did not finish in
+    five seconds, and 200 consecutive `*` did not finish either. A manifest is a
+    document that travels to every node, and _guard runs on reference-transaction
+    — every ref update — so one careless glob would stall git on every node with
+    no message at all. Worse than a refusal, because nothing says why.
+
+    `**/**/x` matches exactly what `**/x` matches and `***` is `**`, so this
+    changes no result. It only removes the ambiguity the backtracking feeds on.
+    """
+    prev = None
+    while prev != glob:
+        prev = glob
+        glob = glob.replace("***", "**").replace("**/**/", "**/")
+    return glob
+
+
+def _rx(glob):
+    glob = _norm(glob)
+    if glob.count("*") > 40:
+        # Belt and braces: refuse loudly rather than spend the time. A guard that
+        # hangs is indistinguishable from a guard that is thinking.
+        sys.stderr.write(f"harness-guard: glob {glob[:40]!r} has too many wildcards "
+                         f"to match safely — simplify it in manifest.json\n")
+        sys.exit(1)
+    out, i = [], 0
+    while i < len(glob):
+        c = glob[i]
+        if glob.startswith("**/", i):
+            out.append("(?:.*/)?"); i += 3
+        elif glob.startswith("**", i):
+            out.append(".*"); i += 2
+        elif c == "*":
+            out.append("[^/]*"); i += 1
+        elif c == "?":
+            out.append("[^/]"); i += 1
+        else:
+            out.append(re.escape(c)); i += 1
+    return re.compile("^" + "".join(out) + "$")
+
+_cache = {}
+def matches(path, globs):
+    for g in globs:
+        rx = _cache.get(g) or _cache.setdefault(g, _rx(g))
+        if rx.match(path):
+            return True
+        if g.endswith("/**") and path.startswith(g[:-3] + "/"):
+            return True
+    return False
+
+# ── locate the repo and its config ───────────────────────────────────────────
+rc, common, _ = git("rev-parse", "--path-format=absolute", "--git-common-dir")
+if rc:
+    sys.exit(0)                      # not a git repo at all
+common = Path(common)
+repo = common.parent
+tree_p, man_p = repo / ".harness/tree.json", repo / ".harness/manifest.json"
+
+for p, what in ((tree_p, "tree"), (man_p, "manifest")):
+    if not p.exists():
+        refuse(f"{what} missing at {p} — refusing.",
+               ["This guard only runs where the harness is configured, so a",
+                "missing file is a defect, not permission."])
+try:
+    tree = json.loads(tree_p.read_text())
+    man = json.loads(man_p.read_text())
+    docs = man["docs"]
+    never = man.get("never_travels", [])
+except Exception as e:
+    refuse(f"tree or manifest unreadable ({e}) — refusing.")
+
+# --classify exists so nothing else has to reimplement this matcher. `doctor`
+# reimplemented it once, drifted to the old semantics, and its code-path arm
+# silently selected a document as a result.
+#
+# It sits ABOVE the branch checks deliberately. Classification is a pure question
+# about the manifest — "is this path a document?" — and does not depend on which
+# branch is allowed to write one. Below them it returned nothing on the document
+# node and on any branch outside the tree, and a caller could not tell that
+# silence from "no documents here". `review` diagnosed it as a guard too old to
+# support the flag, which was wrong.
+if "--classify" in sys.argv:
+    # Reads stdin itself: the shared read happens far below, after the branch
+    # checks this block deliberately precedes.
+    for p in (l.strip() for l in sys.stdin):
+        if p:
+            print(("doc " if matches(p, docs) else "code ") + p)
+    sys.exit(0)
+
+branch = os.environ.get("HARNESS_BRANCH") or git("rev-parse", "--abbrev-ref", "HEAD")[1]
+node = next((n for n, s in tree["nodes"].items() if s.get("branch") == branch), None)
+if node is None:
+    sys.exit(0)                      # a branch outside the tree is not our business
+if tree["nodes"][node].get("kind") == "doc":
+    sys.exit(0)                      # the document node may write documents
+
+doc_node = next((s for s in tree["nodes"].values() if s.get("kind") == "doc"), None)
+if doc_node is None:
+    refuse("no node of kind 'doc' in the tree — refusing.")
+doc_branch = doc_node["branch"]
+
+# ── the blob set: everything the document node has ever held, per path ───────
+def load_blobset():
+    cache_f = common / "harness-docblobs.json"
+    rc, tip, _ = git("rev-parse", doc_branch)
+    if rc:
+        refuse(f"cannot resolve document branch '{doc_branch}' — refusing.")
+    cached = {}
+    if cache_f.exists():
+        try:
+            cached = json.loads(cache_f.read_text())
+        except Exception:
+            cached = {}
+    if cached.get("tip") == tip:
+        return {k: set(v) for k, v in cached.get("blobs", {}).items()}
+    blobs = {k: set(v) for k, v in cached.get("blobs", {}).items()}
+    since = cached.get("tip")
+    rng = [f"{since}..{tip}"] if since else [tip]
+    rc, revs, _ = git("rev-list", *rng)
+    if rc:                                   # cached tip is gone; full rebuild
+        blobs, _, revs = {}, None, git("rev-list", tip)[1]
+    if revs:
+        pr = subprocess.run(["git", "-C", str(repo), "diff-tree", "-r", "--stdin",
+                             "--no-commit-id", "--root"],
+                            input=revs + "\n", capture_output=True, text=True)
+        for line in pr.stdout.splitlines():
+            if not line.startswith(":"):
+                continue
+            parts = line.split("\t")
+            if len(parts) < 2:
+                continue
+            f = parts[0].split()
+            if len(f) >= 4 and f[3] != "0" * 40:
+                blobs.setdefault(parts[-1], set()).add(f[3])
+    cache_f.write_text(json.dumps({"tip": tip,
+                                   "blobs": {k: sorted(v) for k, v in blobs.items()}}))
+    return blobs
+
+def blob_at(path):
+    rev = os.environ.get("HARNESS_REV", "")
+    spec = f"{rev}:{path}" if rev else f":{path}"
+    rc, out, _ = git("rev-parse", spec)
+    return out if rc == 0 else None
+
+paths = [p for p in (l.strip() for l in sys.stdin) if p]
+candidates = [p for p in paths if matches(p, docs)]
+if not candidates:
+    sys.exit(0)
+
+blocked = [p for p in candidates if matches(p, never)]
+if blocked:
+    refuse(f"'{node}' ({branch}) may not carry these at all:",
+           [f"refused: {p}" for p in blocked[:10]] +
+           ["These are configured never_travels: they live only on the document node."])
+
+blobs = load_blobset()
+authored = []
+for p in candidates:
+    b = blob_at(p)
+    if b is None:                     # deletion: legitimate only if the doc node
+        rc, _, _ = git("rev-parse", f"{doc_branch}:{p}")   # has also dropped it
+        if rc != 0:
+            continue
+        authored.append(f"{p}  (deleted here, still present on {doc_branch})")
+    elif b not in blobs.get(p, ()):
+        authored.append(f"{p}  (content differs from every version {doc_branch} has held)")
+
+if authored:
+    refuse(f"'{node}' ({branch}) may not author documents.",
+           [f"refused: {a}" for a in authored[:10]] +
+           ["Documents travel up as requests (T5) and down by merge (T6).",
+            "A copy arriving from the document node passes; an edit made here does not."])
+sys.exit(0)

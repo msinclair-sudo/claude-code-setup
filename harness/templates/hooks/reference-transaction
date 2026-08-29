@@ -1,0 +1,18 @@
+#!/bin/sh
+# Primary guard: every upward integration is a fast-forward, so pre-merge-commit
+# is silent on the path a document would take. POSIX sh, explicit exit 0 --
+# a non-zero exit here aborts ALL ref updates.
+[ "$1" = "prepared" ] || exit 0
+. "$(git rev-parse --path-format=absolute --git-common-dir)/../.harness/hooks/_lib.sh" || exit 1
+G="$(harness_guard)" || exit 1
+Z=0000000000000000000000000000000000000000
+while read -r old new ref; do
+  case "$ref" in refs/heads/*) ;; *) continue ;; esac
+  [ "$new" = "$Z" ] && continue
+  HARNESS_BRANCH="${ref#refs/heads/}"; export HARNESS_BRANCH
+  HARNESS_REV="$new"; export HARNESS_REV
+  if [ "$old" != "$Z" ]; then
+    git diff --name-only "$old" "$new" | "$G" || exit 1
+  fi
+done
+exit 0

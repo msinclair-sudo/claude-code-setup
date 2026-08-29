@@ -1,0 +1,1366 @@
+#!/usr/bin/env python3
+"""harness — position and occupancy for the Agent Workstream Harness.
+
+Reads Claude's internal state; never writes it. Every dependency on that state
+is asserted before anything else runs (R8), and a failed assertion refuses to
+operate rather than degrading: a mis-identified session is how two of them end
+up holding one node, which is the failure the lock exists to prevent.
+
+This tool does no reasoning. The agent gathers liveness with ListAgents and
+passes it in; this only asserts, derives and writes atomically.
+"""
+import argparse, json, os, re, shutil, socket, subprocess, sys, time
+from pathlib import Path
+
+OK, CONTRACT, NOT_ENROLLED, REFUSED, MISMATCH = 0, 2, 3, 4, 5
+
+HOME_STATE = Path.home() / ".claude" / "harness"
+TEMPLATES = Path.home() / ".claude" / "harness" / "templates"
+PROJECTS = Path.home() / ".claude" / "projects"
+SESSIONS = Path.home() / ".claude" / "sessions"
+UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+SLUG_RE = re.compile(r"^[A-Za-z0-9-]+$")
+
+
+QUIET = False
+
+
+def die(code, msg):
+    if not QUIET:
+        print(f"harness: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def slug(p):
+    return re.sub(r"[^A-Za-z0-9]", "-", str(p))
+
+
+def git(*args, cwd=None):
+    r = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+    return r.returncode, r.stdout.strip(), r.stderr.strip()
+
+
+# ── R8: the platform contract ────────────────────────────────────────────────
+
+def agents_json(override=None):
+    """`claude agents --json` — the supported session query.
+
+    Returns cwd, kind, name, pid, sessionId and status for every live session,
+    including this one. Preferred over globbing ~/.claude/sessions/ wherever
+    correctness matters; that directory is internal and undocumented.
+    """
+    if override is not None:
+        try:
+            return json.loads(override)
+        except json.JSONDecodeError:
+            raise ValueError("roster override is not valid JSON")
+    r = subprocess.run(["claude", "agents", "--json"], capture_output=True,
+                       text=True, timeout=20)
+    if r.returncode != 0:
+        raise ValueError(f"`claude agents --json` failed: {r.stderr.strip()[:120]}")
+    try:
+        d = json.loads(r.stdout)
+    except json.JSONDecodeError:
+        raise ValueError("`claude agents --json` did not return JSON — "
+                         "its output format has changed")
+    if not isinstance(d, list):
+        raise ValueError("`claude agents --json` no longer returns a JSON array")
+    return d
+
+
+def self_row(rows):
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    return next((a for a in rows if a.get("sessionId") == sid), None)
+
+
+def transcript_for(sid):
+    if not PROJECTS.is_dir():
+        return None
+    hits = list(PROJECTS.glob(f"*/{sid}.jsonl"))
+    return hits[0] if len(hits) == 1 else None
+
+
+def check_contract(roster_text=None):
+    """Returns a list of (id, reason). Empty means the contract holds."""
+    f = []
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if not UUID_RE.fullmatch(sid):
+        f.append(("C1", "CLAUDE_CODE_SESSION_ID is unset or not a UUID"))
+        return f  # everything downstream keys off it
+
+    t = transcript_for(sid)
+    if t is None:
+        f.append(("C2", f"no unique transcript ~/.claude/projects/*/{sid}.jsonl"))
+
+    pid = os.environ.get("CLAUDE_PID", "")
+    if not pid.isdigit():
+        f.append(("C3", "CLAUDE_PID is unset or not numeric"))
+    else:
+        try:
+            os.kill(int(pid), 0)
+        except (OSError, ProcessLookupError):
+            f.append(("C3", f"CLAUDE_PID {pid} is not live"))
+
+    if t is not None and not SLUG_RE.fullmatch(t.parent.name.lstrip("-")):
+        f.append(("C4", f"project dir '{t.parent.name}' no longer matches the slug rule"))
+
+    try:
+        rows = agents_json(roster_text)
+        me = self_row(rows)
+        if me is None:
+            f.append(("C5", "`claude agents --json` does not list this session"))
+        elif not {"cwd", "name", "pid", "status", "sessionId"} <= set(me):
+            f.append(("C5", "`claude agents --json` is missing expected fields"))
+    except Exception as e:
+        f.append(("C5", str(e)))
+    return f
+
+
+def require_contract(roster_text=None):
+    f = check_contract(roster_text)
+    if f:
+        cid, why = f[0]
+        die(CONTRACT, f"platform contract {cid} failed: {why}\n"
+                      f"           refusing to operate. Claude's internals may have changed.")
+
+
+# ── liveness roster (ListAgents output, verbatim) ────────────────────────────
+
+def read_roster(path):
+    if path is None:
+        return None
+    return sys.stdin.read() if path == "-" else Path(path).read_text()
+
+
+# ── R1: position, derived from git ───────────────────────────────────────────
+
+class Ctx:
+    def __init__(self):
+        rc, common, _ = git("rev-parse", "--path-format=absolute", "--git-common-dir")
+        if rc:
+            die(NOT_ENROLLED, "not inside a git worktree")
+        self.repo = Path(common).parent
+        rc, wt, _ = git("rev-parse", "--show-toplevel")
+        self.worktree = Path(wt)
+        rc, br, _ = git("rev-parse", "--abbrev-ref", "HEAD")
+        self.branch = br
+        self.slug = slug(self.repo)
+        self.state = HOME_STATE / self.slug
+        self.binding_path = self.state / "binding.json"
+        self.tree_path = self.repo / ".harness" / "tree.json"
+
+    # R9 — enrolment takes two keys
+    def require_enrolled(self):
+        if not self.tree_path.exists():
+            die(NOT_ENROLLED, f"no role tree at {self.tree_path} — this project defines none")
+        if not self.binding_path.exists():
+            die(NOT_ENROLLED, f"this machine has not joined {self.repo.name} "
+                              f"(run: harness enrol {self.repo})")
+        self.tree = json.loads(self.tree_path.read_text())
+        validate_tree(self.tree, self.tree_path)
+        self.binding = json.loads(self.binding_path.read_text())
+
+    def node(self):
+        for name, spec in self.tree["nodes"].items():
+            if spec.get("branch") == self.branch:
+                return name, spec
+        die(NOT_ENROLLED, f"branch '{self.branch}' is not a node in the role tree")
+
+    def rank(self, name):
+        r, seen = 0, set()
+        while True:
+            p = self.tree["nodes"][name].get("parent")
+            if p is None or p in seen:
+                return r
+            seen.add(name); name = p; r += 1
+
+    def children(self, name):
+        return sorted(n for n, s in self.tree["nodes"].items() if s.get("parent") == name)
+
+    def state_file(self, kind, name, ext):
+        """A name from a tree, a task record or argv becomes a FILENAME here, so
+        it is sanitised in exactly one place. `mark` skipped this and could write
+        into a sibling directory — `mark '../locks/main'` overwrote a live node
+        lock, exit 0, silently. Collisions after sanitising are possible and
+        surface as 'already marked', which is the safe direction."""
+        return self.state / kind / (re.sub(r"[^A-Za-z0-9]", "_", name) + ext)
+
+    def lock_path(self, node):
+        return self.state_file("locks", node, ".lock")
+
+
+def validate_tree(tree, path):
+    """Git refs are files, so 'dev' and 'dev/ui' cannot both exist:
+    fatal: cannot lock ref 'refs/heads/dev/ui': 'refs/heads/dev' exists.
+    Catch it in the tree rather than at the first worktree add."""
+    branches = {n: s.get("branch") for n, s in tree.get("nodes", {}).items() if s.get("branch")}
+    for na, ba in branches.items():
+        for nb, bb in branches.items():
+            if na != nb and bb.startswith(ba + "/"):
+                die(CONTRACT,
+                    f"tree is not constructible: branch '{ba}' ({na}) is a path prefix of "
+                    f"'{bb}' ({nb}).\n           Git refs are files — 'refs/heads/{ba}' "
+                    f"blocks 'refs/heads/{bb}'.\n           Use a separator that is not '/', "
+                    f"e.g. '{bb.replace('/', '_')}'.  Fix {path}")
+    # A misspelt effort would be passed to `claude` and rejected there, after the
+    # session had already been spawned detached — refuse it here instead.
+    for n, sp in tree.get("nodes", {}).items():
+        e = sp.get("effort")
+        if e is not None and e not in EFFORTS:
+            die(CONTRACT, f"node '{n}' has effort '{e}', which is not one of "
+                          f"{', '.join(EFFORTS)}.  Fix {path}")
+        m = sp.get("model")
+        if m is not None and (not isinstance(m, str) or not m.strip()):
+            die(CONTRACT, f"node '{n}' has an empty model.  Fix {path}")
+
+
+def skills_for(ctx, name):
+    s = ["harness"]
+    if ctx.tree["nodes"][name].get("parent"):
+        s.append("harness-upward")
+    if ctx.children(name):
+        s.append("harness-downward")
+    if ctx.rank(name) == 0:
+        s.append("harness-root")
+    return s
+
+
+# ── R12: a node's model and effort travel with the tree ──────────────────────
+
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+
+# Defaults by role, not by name — a tree can rename every node and still get
+# these. Overridden per node in tree.json with "model"/"effort".
+#
+# Context follows the view, not the rank. A lead accumulates: every child's
+# report, both sides of a conflict it did not create, the seams between siblings.
+# That is the whole reason a document climbs through ranks instead of jumping to
+# rank 0, so a lead is exactly where a wide window earns its cost. A member is
+# the opposite by construction — one short task ([[#I8]]) in one worktree, ending
+# at a commit — and it is recycled rather than allowed to accumulate ([[#R13]]).
+#
+# Effort falls with rank because the judgement falls with rank, by design: a
+# leaf is handed its scope ([[#T1]]), has its approach approved before the first
+# commit ([[#T11]]), does not own the seams ([[#I9]]) and escalates conflicts
+# rather than resolving them ([[#T7]]). What is left is bounded work and honest
+# reporting. The lead carries what was taken out.
+# Levels are Anthropic's measured curves, not taste (cost-optimization guide,
+# "Effort and budgets"). Long-horizon coding is the ONE workload where the curve
+# is steep: Opus 5 gives up ~2 points of pass rate at `medium` for half the cost,
+# but ~8 points at `low` for a quarter. A member is a long-horizon coder whose
+# output nothing reviews, so `low` spends the wrong currency — see R12.
+# Review and diagnosis behave like knowledge work, where the curve is nearly
+# flat and `medium` matches the default at 70-85% of its cost.
+ROLE_DEFAULTS = {
+    "root":     ("opus[1m]", "high"),    # rank 0: applies documents, writes rulings
+    "lead":     ("opus[1m]", "medium"),  # review/diagnosis: flat curve, medium matches default
+    "member":   ("opus",     "medium"),  # coding: the one steep curve; `low` costs ~8 points
+}
+
+
+def escalate(effort):
+    """The next level up, for re-running a failure. Anthropic's cheapest measured
+    configuration is not a lower effort but a retried one, so this is the dial a
+    lead reaches for when a child's check set fails ([[#I5]]). Saturates at max
+    rather than wrapping — a third attempt is a finding, not a budget problem."""
+    try:
+        return EFFORTS[min(EFFORTS.index(effort) + 1, len(EFFORTS) - 1)]
+    except ValueError:
+        return effort
+
+
+def role_of(ctx, name):
+    if ctx.rank(name) == 0:
+        return "root"
+    return "lead" if ctx.children(name) else "member"
+
+
+def assignment_for(ctx, name):
+    """(model, effort) for a node. tree.json wins; role default otherwise."""
+    spec = ctx.tree["nodes"][name]
+    model, effort = ROLE_DEFAULTS[role_of(ctx, name)]
+    return spec.get("model", model), spec.get("effort", effort)
+
+
+# ── R7: the name asserts, git proves ─────────────────────────────────────────
+
+def check_name(ctx, node, self_name, strict=False):
+    """A warning, not a gate. Claude Code owns the name: it derives one from the
+    directory, auto-titles from content, and reissues it on resume. Position
+    comes from git and occupancy from the worktree; neither needs the name."""
+    expected = f"{ctx.tree.get('project', ctx.repo.name)}-{node}"
+    if self_name == expected:
+        return
+    msg = (f"session is named '{self_name}' but stands in '{node}' "
+           f"(expected '{expected}')")
+    if strict:
+        die(MISMATCH, msg + ".\n           --strict-name was given, so this is a refusal.")
+    print(f"harness: {msg} — cosmetic only; Claude Code owns the name and "
+          f"reissues it on resume.", file=sys.stderr)
+
+
+# ── commands ─────────────────────────────────────────────────────────────────
+
+def cmd_contract(a):
+    f = check_contract(read_roster(a.roster))
+    if f:
+        for cid, why in f:
+            print(f"  {cid}  FAIL  {why}")
+        sys.exit(CONTRACT)
+    print("contract holds (C1 C2 C3 C4 C5)")
+
+
+def cmd_whoami(a):
+    """--quiet is the hook contract: in a project that is not enrolled, print
+    nothing, write nothing to stderr, and exit 0 — so a SessionStart hook injects
+    no context at all rather than injecting an error."""
+    if not a.quiet:
+        return _whoami(a)
+    global QUIET
+    QUIET = True
+    try:
+        _whoami(a)
+    except SystemExit as e:
+        if e.code not in (0, None):
+            sys.exit(0)
+    except Exception:
+        sys.exit(0)
+
+
+def _whoami(a):
+    ctx = Ctx(); ctx.require_enrolled()
+    node, spec = ctx.node()
+    if not a.no_check:
+        try:
+            me = self_row(agents_json(read_roster(a.roster)))
+            if me and me.get("name"):
+                check_name(ctx, node, me["name"])
+        except Exception:
+            pass
+    parent = spec.get("parent")
+    kids = ctx.children(node)
+    print(f"node     {node}")
+    print(f"branch   {ctx.branch}")
+    print(f"worktree {ctx.worktree}")
+    print(f"rank     {ctx.rank(node)}")
+    print(f"parent   {parent or '—'}")
+    print(f"children {', '.join(kids) or '—'}")
+    model, effort = assignment_for(ctx, node)
+    print(f"skills   {', '.join(skills_for(ctx, node))}")
+    print(f"run as   {model}, effort {effort}   ({role_of(ctx, node)})")
+
+
+def cmd_behind(a):
+    ctx = Ctx(); ctx.require_enrolled()
+    node, spec = ctx.node()
+    parent = spec.get("parent")
+    if not parent:
+        print("0  (rank 0 has no parent)"); return
+    pb = ctx.tree["nodes"][parent]["branch"]
+    rc, out, err = git("rev-list", "--count", f"HEAD..{pb}")
+    if rc:
+        die(1, f"could not count against {pb}: {err}")
+    print(f"{out}  commits behind {parent} ({pb})")
+
+
+def cmd_claim(a):
+    roster = read_roster(a.roster)
+    require_contract(roster)
+    rows = agents_json(roster)
+    me = self_row(rows)
+    self_name = me.get("name") or ""
+    self_ref = me["sessionId"]
+    peers = {r["sessionId"]: {"name": r.get("name") or "?"} for r in rows}
+    ctx = Ctx(); ctx.require_enrolled()
+    node, _ = ctx.node()
+    check_name(ctx, node, self_name, strict=a.strict_name)
+    lock = ctx.lock_path(node)
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    rec = {"node": node, "ref": self_ref, "name": self_name,
+           "session_id": self_ref,
+           "pid": int(os.environ.get("CLAUDE_PID") or 0), "worktree": str(ctx.worktree),
+           "host": socket.gethostname(), "claimed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
+    # Who is actually standing in this worktree right now? A session id does not
+    # survive a resume — it is reissued, along with the pid, name and kind — so
+    # occupancy is derived from cwd, which does.
+    here = [r for r in rows if r.get("cwd") == str(ctx.worktree)]
+    others = [r for r in here if r["sessionId"] != self_ref]
+    if others:
+        names = ", ".join((r.get("name") or "?") for r in others)
+        die(REFUSED, f"{len(others)} other live session(s) are in this worktree: {names}.\n"
+                     f"           One session per worktree — that is the invariant.")
+    try:
+        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        held = json.loads(lock.read_text())
+        if held["ref"] == self_ref:
+            print(f"already held by this session ({node})"); return
+        if held["ref"] in peers:
+            die(REFUSED, f"'{node}' is held by {held['name']} [{held['ref']}], "
+                         f"which is live elsewhere. Not taking it.")
+        # The recorded holder is gone and nobody else is here: this is the same
+        # conversation after a resume, not a takeover.
+        rec["resumed_from"] = {"ref": held["ref"], "name": held.get("name"),
+                               "claimed_at": held.get("claimed_at")}
+        lock.write_text(json.dumps(rec, indent=2))
+        print(f"reclaimed {node} after a resume "
+              f"(session id changed {held['ref'][:8]} → {self_ref[:8]})")
+        return
+        if not a.force:
+            die(REFUSED, f"'{node}' is held by {held['name']} [{held['ref']}], "
+                         f"absent from the roster — stale.\n"
+                         f"           Re-run with --force to take it.")
+        if held.get("host") != socket.gethostname():
+            die(REFUSED, f"'{node}' was claimed on host '{held.get('host')}'. "
+                         f"Absence from a local roster does not prove it is dead.")
+        rec["forced_from"] = {"ref": held["ref"], "name": held["name"],
+                              "claimed_at": held.get("claimed_at")}
+        lock.write_text(json.dumps(rec, indent=2))
+        print(f"claimed {node} (forced from stale {held['name']} [{held['ref']}])"); return
+    with os.fdopen(fd, "w") as fh:
+        json.dump(rec, fh, indent=2)
+    print(f"claimed {node} as {self_name} [{self_ref}]")
+
+
+def cmd_release(a):
+    ctx = Ctx(); ctx.require_enrolled()
+    node, _ = ctx.node()
+    lock = ctx.lock_path(node)
+    if not lock.exists():
+        print(f"{node} was not claimed"); return
+    held = json.loads(lock.read_text())
+    mine = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if held.get("session_id") != mine and not a.force:
+        die(REFUSED, f"'{node}' is held by another session ({held['name']}). "
+                     f"Use --force only after checking liveness.")
+    lock.unlink()
+    print(f"released {node}")
+
+
+def cmd_status(a):
+    ctx = Ctx(); ctx.require_enrolled()
+    peers = {}
+    try:
+        rows = agents_json(read_roster(a.roster))
+        peers = {r["sessionId"]: {"name": r.get("name") or "?"} for r in rows}
+        roster = True
+    except Exception:
+        peers, roster = {}, None
+    d = ctx.state / "locks"
+    locks = sorted(d.glob("*.lock")) if d.is_dir() else []
+    if not locks:
+        print("no nodes claimed"); return
+    for p in locks:
+        h = json.loads(p.read_text())
+        live = "live" if h["ref"] in peers else ("stale" if roster else "unknown")
+        print(f"  {h['node']:<12} {h['name']:<22} [{h['ref']}]  {live}")
+
+
+def cmd_enrol(a):
+    repo = Path(a.repo).resolve()
+    rc, common, _ = git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=repo)
+    if rc:
+        die(NOT_ENROLLED, f"{repo} is not a git repository")
+    repo = Path(common).parent
+    state = HOME_STATE / slug(repo)
+    (state / "locks").mkdir(parents=True, exist_ok=True)
+    (state / "binding.json").write_text(json.dumps(
+        {"repo": str(repo), "host": socket.gethostname(),
+         "enrolled_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}, indent=2))
+    print(f"enrolled {repo.name} on this machine")
+    if not (repo / ".harness" / "tree.json").exists():
+        print(f"note: {repo}/.harness/tree.json does not exist yet — "
+              f"enrolment takes two keys, and this is only one.")
+
+
+def live_sessions():
+    """The on-disk session table, filtered to live pids.
+
+    ~/.claude/sessions/<pid>.json carries name, cwd, kind and status. Unlike
+    ListAgents it has cwd, which is what maps a session to a worktree. Dead
+    files accumulate, so every pid is checked; procStart guards against reuse.
+    """
+    out = []
+    if not SESSIONS.is_dir():
+        return out
+    for f in SESSIONS.glob("*.json"):
+        try:
+            d = json.loads(f.read_text())
+            os.kill(d["pid"], 0)
+        except Exception:
+            continue
+        out.append(d)
+    return out
+
+
+def build_index(ctx):
+    nodes, by_branch, by_wt = {}, {}, {}
+    rc, porc, _ = git("worktree", "list", "--porcelain", cwd=ctx.repo)
+    wt_of = {}
+    cur = None
+    for line in porc.splitlines():
+        if line.startswith("worktree "):
+            cur = line.split(" ", 1)[1]
+        elif line.startswith("branch ") and cur:
+            wt_of[line.split(" ", 1)[1].replace("refs/heads/", "")] = cur
+    for name, spec in ctx.tree["nodes"].items():
+        br = spec.get("branch")
+        parent = spec.get("parent")
+        sibs = sorted(n for n, s in ctx.tree["nodes"].items()
+                      if s.get("parent") == parent and n != name) if parent else []
+        nodes[name] = {"branch": br, "worktree": wt_of.get(br), "parent": parent,
+                       "rank": ctx.rank(name), "siblings": sibs,
+                       "children": ctx.children(name), "kind": spec.get("kind"),
+                       "model": assignment_for(ctx, name)[0],
+                       "effort": assignment_for(ctx, name)[1]}
+        if br:
+            by_branch[br] = name
+        if wt_of.get(br):
+            by_wt[wt_of[br]] = name
+    idx = {"generated": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "repo": str(ctx.repo),
+           "project": ctx.tree.get("project", ctx.repo.name),
+           "nodes": nodes, "byBranch": by_branch, "byWorktree": by_wt}
+    ctx.state.mkdir(parents=True, exist_ok=True)
+    (ctx.state / "index.json").write_text(json.dumps(idx, indent=2))
+    return idx
+
+
+def load_index(ctx, refresh=False):
+    p = ctx.state / "index.json"
+    if refresh or not p.exists() or p.stat().st_mtime < ctx.tree_path.stat().st_mtime:
+        return build_index(ctx)
+    return json.loads(p.read_text())
+
+
+def cmd_index(a):
+    ctx = Ctx(); ctx.require_enrolled()
+    idx = build_index(ctx)
+    print(f"indexed {len(idx['nodes'])} nodes → {ctx.state / 'index.json'}")
+    for n, s in sorted(idx["nodes"].items(), key=lambda kv: (kv[1]["rank"], kv[0])):
+        held = "  (no worktree)" if not s["worktree"] else ""
+        print(f"  r{s['rank']}  {n:<12} {s['branch']:<14} ↑{s['parent'] or '—':<10} "
+              f"⇄{','.join(s['siblings']) or '—':<14} ↓{','.join(s['children']) or '—'}{held}")
+
+
+MARK = {"busy": "•", "idle": "◦", None: "·"}
+
+
+def cmd_position(a):
+    """--quiet is the statusline contract: never speak, never fail, in a project
+    that is not enrolled. Absence of a segment must cost the caller nothing."""
+    if not a.quiet:
+        return _position(a)
+    global QUIET
+    QUIET = True
+    try:
+        _position(a)
+    except SystemExit as e:
+        if e.code not in (0, None):
+            sys.exit(0)
+    except Exception:
+        sys.exit(0)
+
+
+def _position(a):
+    ctx = Ctx(); ctx.require_enrolled()
+    idx = load_index(ctx, refresh=a.refresh)
+    node = idx["byBranch"].get(ctx.branch)
+    if node is None:
+        die(NOT_ENROLLED, f"branch '{ctx.branch}' is not a node")
+    me = idx["nodes"][node]
+    occ = {}
+    for s in live_sessions():
+        n = idx["byWorktree"].get(s.get("cwd", ""))
+        if n:
+            occ.setdefault(n, []).append(s)
+    def mark(n):
+        ss = occ.get(n, [])
+        if not ss:
+            return f"{n}·"
+        if len(ss) > 1:
+            return f"{n}!{len(ss)}"     # more than one session in one worktree
+        return f"{n}{MARK.get(ss[0].get('status'), '?')}"
+    parent = me["parent"]
+    sibs = " ".join(mark(s) for s in me["siblings"]) or "—"
+    kids = " ".join(mark(c) for c in me["children"])
+    if a.format == "json":
+        print(json.dumps({"node": node, **me, "occupancy":
+              {k: [{"name": s.get("name"), "status": s.get("status")} for s in v]
+               for k, v in occ.items()}}, indent=2))
+        return
+    bits = []
+    if parent:
+        bits.append(f"↑{mark(parent)}")
+    own = occ.get(node, [])
+    bits.append(f"[{node}]" + (f"!{len(own)}" if len(own) > 1 else ""))
+    if me["siblings"]:
+        bits.append(f"⇄ {sibs}")
+    if me["children"]:
+        bits.append(f"↓ {kids}")
+    line = "  ".join(bits)
+    if a.behind and parent:
+        pb = idx["nodes"][parent]["branch"]
+        rc, out, _ = git("rev-list", "--count", f"HEAD..{pb}")
+        if rc == 0 and out != "0":
+            line += f"   ⇩{out}"
+    print(line)
+
+
+def cmd_spawn(a):
+    """Launch one correctly-named background session per unoccupied node.
+
+    Uses `claude --bg -n <project>-<node>`: a real session with its own id and
+    lock, not a subagent. Each one derives its own position from git — nothing
+    is told where it is. Attach later with `claude attach <id>`.
+    """
+    ctx = Ctx(); ctx.require_enrolled()
+    idx = load_index(ctx, refresh=True)
+    rows = agents_json()
+    by_wt = idx["byWorktree"]
+    occupied = {}
+    for r in rows:
+        n = by_wt.get(r.get("cwd", ""))
+        if n:
+            occupied.setdefault(n, []).append(r)
+    here = idx["byBranch"].get(ctx.branch)
+    targets = a.node or sorted(n for n, sp in idx["nodes"].items() if sp["worktree"])
+    launched = skipped = 0
+    for n in targets:
+        sp = idx["nodes"].get(n)
+        if sp is None:
+            print(f"  skip {n:<12} not a node"); skipped += 1; continue
+        if not sp["worktree"]:
+            print(f"  skip {n:<12} no worktree — create one first"); skipped += 1; continue
+        if n == here:
+            print(f"  skip {n:<12} this session"); skipped += 1; continue
+        if n in occupied:
+            who = occupied[n][0].get("name") or "?"
+            print(f"  skip {n:<12} occupied by {who}"); skipped += 1; continue
+        name = f"{idx['project']}-{n}"
+        model, effort = assignment_for(ctx, n)
+        model, effort = a.model or model, a.effort or effort
+        cmd = ["claude", "--bg", "-n", name]
+        if model:
+            cmd += ["--model", model]
+        if effort:
+            cmd += ["--effort", effort]
+        cmd.append(a.prompt)
+        if a.dry_run:
+            print(f"  would spawn {name:<18} {model}/{effort:<7} in {sp['worktree']}")
+        else:
+            subprocess.Popen(cmd, cwd=sp["worktree"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print(f"  spawned {name:<18} {model}/{effort:<7} in {sp['worktree']}")
+        launched += 1
+    verb = "would spawn" if a.dry_run else "spawned"
+    print(f"{verb} {launched}, skipped {skipped}"
+          + ("" if a.dry_run else "   —  `claude agents` to view, `claude attach <id>` to join"))
+
+
+def cmd_doctor(a):
+    """Prove the guard refuses, rather than reading config and trusting it.
+
+    Config that looks right and hooks that ARE right are different claims. This
+    demands the behaviour: a known document must be refused and a known code path
+    must be allowed, run through the same file git would execute.
+    """
+    ctx = Ctx(); ctx.require_enrolled()
+    node, spec = ctx.node()
+    fails = []
+
+    def arm(label, ok, detail=""):
+        print(f"  {'ok  ' if ok else 'FAIL'} {label}{('  ' + detail) if detail else ''}")
+        if not ok:
+            fails.append(label)
+
+    # 1. wiring — necessary, not sufficient
+    rc, hp, _ = git("config", "--get", "core.hooksPath")
+    guard = Path(hp) / "_guard" if hp else None
+    arm("core.hooksPath is set", bool(hp), hp or "")
+    arm("hooksPath is absolute", bool(hp) and hp.startswith("/"),
+        "" if (hp or "").startswith("/") else "relative paths vanish on branches lacking the dir")
+    arm("_guard exists and is executable", bool(guard and guard.exists() and os.access(guard, os.X_OK)))
+    for h in ("pre-commit", "pre-merge-commit", "reference-transaction"):
+        f = Path(hp) / h if hp else None
+        arm(f"{h} present", bool(f and f.exists() and os.access(f, os.X_OK)))
+    # the fileMode trap: git records the index mode, not the disk mode
+    rel = os.path.relpath(hp, ctx.repo) if hp else ""
+    rc, modes, _ = git("ls-files", "-s", "--", rel)
+    tracked = [l for l in modes.splitlines() if l.strip()]
+    if tracked:
+        bad = [l.split("\t")[-1] for l in tracked if not l.startswith("100755")]
+        arm("hooks are 100755 in git's index", not bad,
+            "" if not bad else f"{len(bad)} at 100644 — inert in every fresh clone")
+
+    if fails and not (guard and guard.exists()):
+        die(CONTRACT, "hooksPath does not contain a usable _guard — this worktree is "
+                      "UNGUARDED.\n           Failed: " + ", ".join(fails))
+    if spec.get("kind") == "doc":
+        print(f"\n  '{node}' is the document node; there is nothing for the guard to refuse here.")
+        return
+
+    # 2. behaviour — the part that matters
+    doc_branch = next((v["branch"] for v in ctx.tree["nodes"].values()
+                       if v.get("kind") == "doc"), None)
+
+    def classify(paths):
+        """Ask _guard. Never reimplement its matcher — that drift is what made
+        the code-path arm select a document and pass for the wrong reason."""
+        r = subprocess.run([str(guard), "--classify"], input="\n".join(paths) + "\n",
+                           capture_output=True, text=True,
+                           env=dict(os.environ, HARNESS_BRANCH=ctx.branch),
+                           cwd=str(ctx.worktree))
+        out = {"doc": [], "code": []}
+        for line in r.stdout.splitlines():
+            k, _, v = line.partition(" ")
+            if k in out:
+                out[k].append(v)
+        return out
+
+    # Documents come from the document node. CODE MUST COME FROM THIS WORKTREE:
+    # the document node may track no code at all, and drawing the code sample
+    # from it means the arm can never fail.
+    doc_cls = classify(git("ls-tree", "-r", "--name-only", doc_branch)[1].splitlines() or [""])
+    own_cls = classify(git("ls-tree", "-r", "--name-only", "HEAD")[1].splitlines() or [""])
+    doc_sample = doc_cls["doc"][0] if doc_cls["doc"] else None
+    code_sample = next((c for c in own_cls["code"] if not c.startswith(".harness/")), None)
+
+    def run_guard(path, rev=""):
+        env = dict(os.environ, HARNESS_BRANCH=ctx.branch, HARNESS_REV=rev)
+        try:
+            r = subprocess.run([str(guard)], input=path + "\n", capture_output=True,
+                               text=True, env=env, cwd=str(ctx.worktree))
+        except OSError as e:
+            return 127, str(e)
+        return r.returncode, (r.stderr or "").strip()
+
+    def probe(path, content):
+        """Stage novel content in a THROWAWAY index and ask the guard."""
+        blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], input=content,
+                              capture_output=True, text=True, cwd=str(ctx.worktree)).stdout.strip()
+        tmp = ctx.state / "doctor.index"
+        env = dict(os.environ, GIT_INDEX_FILE=str(tmp))
+        subprocess.run(["git", "read-tree", "HEAD"], env=env, cwd=str(ctx.worktree), capture_output=True)
+        subprocess.run(["git", "update-index", "--add", "--cacheinfo", f"100644,{blob},{path}"],
+                       env=env, cwd=str(ctx.worktree), capture_output=True)
+        try:
+            r = subprocess.run([str(guard)], input=path + "\n", capture_output=True, text=True,
+                               env=dict(env, HARNESS_BRANCH=ctx.branch, HARNESS_REV=""),
+                               cwd=str(ctx.worktree))
+            rc = r.returncode
+        except OSError:
+            rc = 127
+        tmp.unlink(missing_ok=True)
+        return rc
+
+    if doc_sample:
+        # same path in both arms, different blob — that IS authorship semantics
+        rc_ok, _ = run_guard(doc_sample, doc_branch)
+        arm(f"allows a document holding {doc_branch}'s content", rc_ok == 0, doc_sample)
+        # A genuine negative: synthesise content the document node has never held
+        # and stage it in a THROWAWAY index, so the real index is untouched.
+        blob = subprocess.run(["git", "hash-object", "-w", "--stdin"],
+                              input=f"harness doctor probe {time.time()}\n",
+                              capture_output=True, text=True, cwd=str(ctx.worktree)).stdout.strip()
+        tmp_index = ctx.state / "doctor.index"
+        env = dict(os.environ, GIT_INDEX_FILE=str(tmp_index))
+        subprocess.run(["git", "read-tree", "HEAD"], env=env, cwd=str(ctx.worktree),
+                       capture_output=True)
+        subprocess.run(["git", "update-index", "--add", "--cacheinfo",
+                        f"100644,{blob},{doc_sample}"], env=env, cwd=str(ctx.worktree),
+                       capture_output=True)
+        genv = dict(env, HARNESS_BRANCH=ctx.branch, HARNESS_REV="")
+        try:
+            r = subprocess.run([str(guard)], input=doc_sample + "\n", capture_output=True,
+                               text=True, env=genv, cwd=str(ctx.worktree))
+            rc_bad = r.returncode
+        except OSError:
+            rc_bad = 127
+        tmp_index.unlink(missing_ok=True)
+        arm("refuses that same document with content it has never held", rc_bad != 0,
+            doc_sample if rc_bad != 0 else "GUARD ALLOWED IT — this worktree is unguarded")
+    else:
+        arm("found a document to test with", False, "no manifest doc glob matches any tracked path")
+    # The arm most worth having on a code node: novel code must pass. A guard
+    # that over-refuses would block every commit here and, drawn from the
+    # document node's tree, this arm could never have caught it.
+    if code_sample:
+        rc_code = probe(code_sample, f"# harness doctor probe {time.time()}\n")
+        arm("allows NOVEL content on a code path", rc_code == 0,
+            code_sample if rc_code == 0 else f"{code_sample} — guard over-refuses code")
+    else:
+        arm("found a code path in this worktree to test with", False,
+            "nothing here classifies as code")
+
+    print()
+    if fails:
+        die(CONTRACT, f"{len(fails)} check(s) failed — this worktree is NOT guarded as configured.\n"
+                      f"           Do not trust config that looks right. Failed: {', '.join(fails)}")
+    print(f"guarded: {node} ({ctx.branch}) — refusal demonstrated, not inferred")
+
+
+def cmd_stop(a):
+    """Stop the sessions occupying given nodes. `claude stop` is a full teardown:
+    the process dies, the session file is removed, and it leaves the table."""
+    ctx = Ctx(); ctx.require_enrolled()
+    idx = load_index(ctx)
+    rows = agents_json()
+    by_wt = idx["byWorktree"]
+    mine = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    here = idx["byBranch"].get(ctx.branch)
+    if a.children:
+        if here is None:
+            die(NOT_ENROLLED, "not standing in a node, so --children has no meaning")
+        targets = idx["nodes"][here]["children"]
+        if not targets:
+            print(f"'{here}' has no children"); return
+    else:
+        targets = a.node
+    if not targets:
+        die(REFUSED, "name at least one node, or pass --children")
+    occ = {}
+    for r in rows:
+        n = by_wt.get(r.get("cwd", ""))
+        if n:
+            occ.setdefault(n, []).append(r)
+    stopped = 0
+    for n in targets:
+        if n not in idx["nodes"]:
+            print(f"  skip {n:<12} not a node"); continue
+        sessions = occ.get(n, [])
+        if not sessions:
+            print(f"  skip {n:<12} nobody there"); continue
+        for r in sessions:
+            if r["sessionId"] == mine:
+                print(f"  skip {n:<12} that is this session"); continue
+            label = f"{r.get('name') or '?'} [{r['sessionId'][:8]}]"
+            if a.dry_run:
+                print(f"  would stop {n:<12} {label}")
+            else:
+                rc, out, err = 0, "", ""
+                res = subprocess.run(["claude", "stop", r["sessionId"][:8]],
+                                     capture_output=True, text=True)
+                if res.returncode:
+                    print(f"  FAILED {n:<12} {label}: {res.stderr.strip()[:80]}"); continue
+                print(f"  stopped {n:<12} {label}")
+            stopped += 1
+    verb = "would stop" if a.dry_run else "stopped"
+    print(f"{verb} {stopped}")
+    if not a.dry_run and stopped:
+        print("  their locks remain until each node is claimed again — "
+              "`harness status` shows them as stale")
+
+
+# ── I10: the denominator, measured rather than apportioned ───────────────────
+
+# Opus 5 list rates, $/MTok. Cache writes bill at 1.25x input, reads at 0.1x.
+RATES = {"input": 5.0, "cache_write": 6.25, "cache_read": 0.5, "output": 25.0}
+
+
+def read_spend(sid):
+    """Cumulative billed tokens for a session, from its own transcript.
+
+    Every assistant record carries a `usage` object; summing them gives what was
+    billed, which is NOT the same quantity as context occupancy. A session that
+    reports "339,295 tokens" is almost certainly reporting the latter. Recording
+    both under one word in a ledger is how a figure acquires an owner it never
+    had, so this function names its unit and refuses to emit a single number.
+
+    Fails loud (R8): no transcript, or a usage shape it does not recognise, is a
+    contract failure — never a zero.
+    """
+    if not UUID_RE.fullmatch(sid):
+        die(CONTRACT, f"CLAUDE_CODE_SESSION_ID is not a UUID (C1) — refusing to use "
+                      f"it as a path component")
+    t = transcript_for(sid)
+    if t is None:
+        die(CONTRACT, f"no transcript for session {sid} — cannot measure spend (C2)")
+    tot = {"input": 0, "cache_write": 0, "cache_read": 0, "output": 0}
+    seen = 0
+    last = None
+    for line in t.open(errors="replace"):
+        try:
+            d = json.loads(line)
+        except Exception:
+            continue
+        u = (d.get("message") or {}).get("usage")
+        if not u:
+            continue
+        seen += 1
+        last = d.get("timestamp") or last
+        tot["input"] += u.get("input_tokens", 0)
+        tot["cache_write"] += u.get("cache_creation_input_tokens", 0)
+        tot["cache_read"] += u.get("cache_read_input_tokens", 0)
+        tot["output"] += u.get("output_tokens", 0)
+    if seen == 0:
+        die(CONTRACT, f"{t.name} carries no usage records — the transcript format "
+                      f"has changed; refusing to report 0 as a measurement (R8)")
+    tot["_records"] = seen
+    tot["_at"] = last
+    tot["_session"] = sid
+    return tot
+
+
+def usd(t):
+    return sum(t[k] * RATES[k] for k in RATES) / 1e6
+
+
+def cmd_mark(a):
+    """Record the token position when a T1 is accepted, so the actual at T10 is a
+    subtraction rather than an apportionment."""
+    ctx = Ctx(); ctx.require_enrolled()
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if not sid:
+        die(CONTRACT, "CLAUDE_CODE_SESSION_ID is unset — cannot mark (C1)")
+    tot = read_spend(sid)
+    f = ctx.state_file("marks", a.task, ".json")
+    f.parent.mkdir(parents=True, exist_ok=True)
+    if f.exists() and not a.force:
+        die(REFUSED, f"{a.task} is already marked at {json.loads(f.read_text()).get('_at')} "
+                     f"— use --force to re-mark, which discards the earlier position")
+    tot["_note"] = a.note or ""
+    f.write_text(json.dumps(tot, indent=2) + "\n")
+    print(f"marked {a.task} at {tot['_at']}  ({tot['_records']} records, ~${usd(tot):.2f} so far)")
+
+
+def cmd_spend(a):
+    """The delta since the mark, in components. Never one number."""
+    ctx = Ctx(); ctx.require_enrolled()
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if not sid:
+        die(CONTRACT, "CLAUDE_CODE_SESSION_ID is unset — cannot measure (C1)")
+    now = read_spend(sid)
+    base = None
+    if a.task:
+        f = ctx.state_file("marks", a.task, ".json")
+        if not f.exists():
+            die(REFUSED, f"no mark for '{a.task}'. Nothing recorded where it began, so "
+                         f"its share cannot be measured — report the session total and "
+                         f"say so, rather than apportioning (I10)")
+        base = json.loads(f.read_text())
+        if base.get("_session") != sid:
+            # REFUSED, not CONTRACT: the platform is fine. Exit 2 means Claude's
+            # internals changed and you must not work around it; this is the
+            # harness declining to subtract two incomparable numbers, which is
+            # the mechanism working. Reporting it as platform drift would send
+            # the reader hunting a fault that is not there.
+            die(REFUSED,
+                f"'{a.task}' was marked in session {str(base.get('_session'))[:8]}, this is "
+                f"{sid[:8]}.\n           A recycled session (R13) starts a new transcript, so "
+                f"the difference is not a measurement of anything. Report both totals "
+                f"separately.")
+    label = f"since mark '{a.task}'" if base else "whole session"
+    print(f"{label}   session {sid[:8]}   {now['_records']} usage records")
+    print(f"{'':14}{'tokens':>14}{'$/MTok':>10}{'USD':>10}")
+    d = {}
+    for k in ("input", "cache_write", "cache_read", "output"):
+        d[k] = now[k] - (base[k] if base else 0)
+        print(f"  {k:<12}{d[k]:>14,}{RATES[k]:>10.2f}{d[k]*RATES[k]/1e6:>10.2f}")
+    print(f"  {'':<12}{sum(d.values()):>14,}{'':>10}{usd(d):>10.2f}")
+    print()
+    print("  Units: BILLED tokens, summed across turns — each turn resends the")
+    print("  conversation, so this is not context occupancy and the two must not")
+    print("  share a column in a ledger. Cache reads dominate and bill at 0.1x, so")
+    print("  the token sum overstates cost; read the USD column.")
+    if not base:
+        print("  No mark: this is the whole session, not a task's share (I10).")
+
+
+def cmd_review(a):
+    """T4-review: the diff a lead reads before integrating, built from local git.
+
+    This is the review a pull request would give, minus the platform. It exists
+    because nothing else in the tree reads a member's diff — `T4` integrates by
+    fast-forward, which is mechanical; `T11` reviewed the approach, not the code;
+    the checks test behaviour, not quality. That was the one unreviewed seam.
+
+    It reports one thing no PR can: which files a sibling also touched. Seams
+    between children belong to the lead ([[#I9]]), so an overlap is the lead's
+    business by definition and nobody else is positioned to see it.
+    """
+    ctx = Ctx(); ctx.require_enrolled()
+    idx = load_index(ctx, refresh=True)
+    here = idx["byBranch"].get(ctx.branch)
+    if a.children:
+        if here is None:
+            die(NOT_ENROLLED, "not standing in a node, so --children has no meaning")
+        targets = idx["nodes"][here]["children"]
+        if not targets:
+            print(f"'{here}' has no children"); return
+    else:
+        targets = a.node or ([here] if here else [])
+    if not targets:
+        die(REFUSED, "name a node, or pass --children")
+
+    guard = ctx.repo / ".harness/hooks/_guard"
+
+    def classify(branch, paths):
+        """Ask the guard. Never reimplement its matcher — that drift is what made
+        doctor's code-path arm select a document and pass for the wrong reason.
+
+        Returns (kinds, problem). A missing or broken guard yields a PROBLEM, not
+        an empty dict: 'I could not check' must never render as 'nothing wrong'.
+        """
+        if not paths:
+            return {}, None
+        if not guard.exists():
+            return {}, f"no guard at {guard.relative_to(ctx.repo)} on this branch — not checked"
+        r = subprocess.run([str(guard), "--classify"], input="\n".join(paths) + "\n",
+                           capture_output=True, text=True,
+                           env=dict(os.environ, HARNESS_BRANCH=branch), cwd=str(ctx.repo))
+        if r.returncode != 0:
+            return {}, f"guard --classify exited {r.returncode} — not checked"
+        out = {}
+        for line in r.stdout.splitlines():
+            kind, _, path = line.partition(" ")
+            if path:
+                out[path] = kind
+        if not out:
+            return {}, "guard --classify returned nothing — is it older than --classify?"
+        return out, None
+
+    for n in targets:
+        sp = idx["nodes"].get(n)
+        if sp is None:
+            print(f"skip {n}: not a node"); continue
+        parent = sp["parent"]
+        if not parent:
+            print(f"skip {n}: rank 0 has nothing to present"); continue
+        pb, cb = idx["nodes"][parent]["branch"], sp["branch"]
+
+        rc, ahead, _ = git("rev-list", "--count", f"{pb}..{cb}", cwd=ctx.repo)
+        rc2, behind, _ = git("rev-list", "--count", f"{cb}..{pb}", cwd=ctx.repo)
+        ahead, behind = ahead.strip() or "0", behind.strip() or "0"
+
+        print(f"\n── {n}  ({cb} → {parent}/{pb})  {sp['model']}/{sp['effort']}")
+        if ahead == "0":
+            print("   nothing to present"); continue
+
+        # T2: a lead's merge is only a fast-forward if the child caught up.
+        if behind != "0":
+            print(f"   ⚠ {behind} commit(s) behind {parent} — T4 will refuse this "
+                  f"until it catches up (T2)")
+        else:
+            print(f"   caught up — `git merge --ff-only {cb}` will fast-forward")
+
+        print(f"   {ahead} commit(s):")
+        rc, log, _ = git("log", "--reverse",
+                         "--format=%h %s%x09%(trailers:key=Task,valueonly,separator=;)",
+                         f"{pb}..{cb}", cwd=ctx.repo)
+        untrailered = 0
+        for line in log.splitlines():
+            body, _, tr = line.partition("\t")
+            tr = tr.strip()
+            if not tr and "Merge branch" not in body:
+                untrailered += 1
+                print(f"     {body}   ← no Task: trailer")
+            else:
+                print(f"     {body}" + (f"   [{tr}]" if tr else ""))
+        if untrailered:
+            print(f"   ⚠ {untrailered} commit(s) carry no Task: trailer — an ancestor "
+                  f"holding a conflicted hunk would have names and no route to a ledger")
+
+        rc, names, _ = git("diff", "--name-only", f"{pb}..{cb}", cwd=ctx.repo)
+        files = [f for f in names.splitlines() if f]
+        rc, stat, _ = git("diff", "--shortstat", f"{pb}..{cb}", cwd=ctx.repo)
+        print(f"   {stat.strip() or 'no file changes'}")
+
+        # A code node touching a document is the guard's business, and the lead's.
+        kinds, problem = classify(cb, files)
+        if problem:
+            print(f"   ⚠ document check UNAVAILABLE: {problem}")
+        docs = [f for f in files if kinds.get(f) == "doc"]
+        if docs and sp.get("kind") == "code":
+            print(f"   ⚠ touches {len(docs)} document(s) from a code node — "
+                  f"documents are requested upward (T5), not committed:")
+            for d in docs[:5]:
+                print(f"       {d}")
+
+        # I9: the seams are the lead's, so an overlap with a sibling is the point.
+        overlaps = {}
+        for sib in sp["siblings"]:
+            sb = idx["nodes"][sib]["branch"]
+            rc, sn, _ = git("diff", "--name-only", f"{pb}..{sb}", cwd=ctx.repo)
+            shared = sorted(set(files) & {f for f in sn.splitlines() if f})
+            if shared:
+                overlaps[sib] = shared
+        if overlaps:
+            for sib, shared in overlaps.items():
+                print(f"   ⚠ SEAM with {sib} — {len(shared)} file(s) both changed:")
+                for f in shared[:5]:
+                    print(f"       {f}")
+            print("   Seams are yours (I9). Neither child can judge this; you can.")
+        else:
+            print("   no files shared with a sibling")
+
+        if a.diff:
+            rc, d, _ = git("diff", f"{pb}..{cb}", cwd=ctx.repo)
+            print("\n" + d)
+    print()
+
+
+def cmd_recycle(a):
+    """R13: end a member's session and start a fresh one on the same node.
+
+    A member is stateless by design — position comes from git, orientation from
+    the SessionStart hook, scope from the task record. So there is nothing in its
+    context worth carrying past the commit that ends its task, and plenty worth
+    dropping. This is a full teardown and relaunch, not `/clear`: a background
+    session cannot clear itself, and a session that stopped itself could not
+    start its own replacement.
+
+    Never `claude rm` — that deletes the worktree, and on a node the worktree IS
+    the node.
+    """
+    ctx = Ctx(); ctx.require_enrolled()
+    idx = load_index(ctx, refresh=True)
+    rows = agents_json()
+    by_wt = idx["byWorktree"]
+    mine = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    here = idx["byBranch"].get(ctx.branch)
+    if a.children:
+        if here is None:
+            die(NOT_ENROLLED, "not standing in a node, so --children has no meaning")
+        targets = idx["nodes"][here]["children"]
+        if not targets:
+            print(f"'{here}' has no children"); return
+    else:
+        targets = a.node
+    if not targets:
+        die(REFUSED, "name at least one node, or pass --children")
+
+    occ = {}
+    for r in rows:
+        n = by_wt.get(r.get("cwd", ""))
+        if n:
+            occ.setdefault(n, []).append(r)
+
+    done = 0
+    for n in targets:
+        sp = idx["nodes"].get(n)
+        if sp is None:
+            print(f"  skip {n:<12} not a node"); continue
+        if sp["rank"] == 0:
+            print(f"  skip {n:<12} rank 0 is never recycled — it holds the rulings"); continue
+        if not sp["worktree"]:
+            print(f"  skip {n:<12} no worktree"); continue
+
+        # Uncommitted work would be stranded in a context nobody can read again.
+        rc, out, _ = git("status", "--porcelain", cwd=sp["worktree"])
+        if rc == 0 and out.strip() and not a.force:
+            print(f"  skip {n:<12} worktree is dirty — commit or stash first"); continue
+
+        # "At the end of commits" means the commits have LANDED. Work sitting
+        # unintegrated is work whose author is about to be replaced.
+        parent = sp["parent"]
+        if parent and not a.force:
+            pb = idx["nodes"][parent]["branch"]
+            rc, ahead, _ = git("rev-list", "--count", f"{pb}..{sp['branch']}", cwd=ctx.repo)
+            if rc == 0 and ahead.strip().isdigit() and int(ahead.strip()) > 0:
+                print(f"  skip {n:<12} {ahead.strip()} commit(s) not yet in {parent} — "
+                      f"present them first"); continue
+
+        holders = []
+        for r in occ.get(n, []):
+            if r["sessionId"] == mine:
+                print(f"  skip {n:<12} that is this session"); continue
+            if r.get("status") == "busy" and not a.force:
+                print(f"  skip {n:<12} busy — it may be mid-task or awaiting a reply"); continue
+            label = f"{r.get('name') or '?'} [{r['sessionId'][:8]}]"
+            holders.append(label)
+            if not a.dry_run:
+                res = subprocess.run(["claude", "stop", r["sessionId"][:8]],
+                                     capture_output=True, text=True)
+                if res.returncode:
+                    print(f"  FAILED {n:<12} {label}: {res.stderr.strip()[:80]}"); continue
+
+        # Resolved BEFORE the dry-run branch: a dry run that cannot show the
+        # effort it would use cannot check the flag you ran it to check.
+        model, effort = assignment_for(ctx, n)
+        model, effort = a.model or model, a.effort or effort
+        if a.escalate:
+            was = effort
+            effort = escalate(effort)
+            if effort == was:
+                print(f"  note {n:<12} already at '{was}' — a retry here buys nothing; "
+                      f"read the failure instead")
+            else:
+                print(f"  escalating {n:<12} {was} -> {effort}")
+
+        if a.dry_run:
+            who = ", ".join(holders) if holders else "nobody there — would just start one"
+            print(f"  would recycle {n:<12} {model}/{effort:<7} {who}")
+            done += 1
+            continue
+
+        name = f"{idx['project']}-{n}"
+        cmd = ["claude", "--bg", "-n", name]
+        if model:
+            cmd += ["--model", model]
+        if effort:
+            cmd += ["--effort", effort]
+        cmd.append(a.prompt)
+        subprocess.Popen(cmd, cwd=sp["worktree"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print(f"  recycled {n:<12} {model}/{effort:<7} fresh context")
+        done += 1
+
+    verb = "would recycle" if a.dry_run else "recycled"
+    print(f"{verb} {done}")
+
+
+def cmd_scaffold(a):
+    repo = Path(a.repo).resolve()
+    rc, common, _ = git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=repo)
+    if rc:
+        die(NOT_ENROLLED, f"{repo} is not a git repository")
+    repo = Path(common).parent
+    dst = repo / ".harness"
+    if dst.exists() and not a.force:
+        die(REFUSED, f"{dst} already exists (use --force to overwrite hooks only)")
+    rc, prior, _ = git("config", "--get", "core.hooksPath", cwd=repo)
+    target = str(dst / "hooks")
+    if rc == 0 and prior and prior != target and not a.force:
+        die(REFUSED,
+            f"core.hooksPath is already set to '{prior}'.\n"
+            f"           Scaffolding would replace it, disabling whatever guards it "
+            f"points at.\n           Re-run with --force to replace it deliberately.")
+    (dst / "hooks").mkdir(parents=True, exist_ok=True)
+    for h in (TEMPLATES / "hooks").iterdir():
+        shutil.copy2(h, dst / "hooks" / h.name)
+        os.chmod(dst / "hooks" / h.name, 0o755)
+    for f in ("tree.json", "manifest.json"):
+        if not (dst / f).exists():
+            shutil.copy2(TEMPLATES / f, dst / f)
+    # Absolute, never relative: a relative hooksPath missing on a branch runs no
+    # hook and exits 0 silently. Absolute also makes every worktree resolve to
+    # the same guards, so no branch is ever naked.
+    # The chmod above touches the filesystem; git records the mode from its
+    # index. Where core.fileMode is false — any Windows-backed mount — the two
+    # disagree, and hooks committed at 100644 are inert in every fresh clone and
+    # after every `git reset --hard`. Set the mode git will actually store.
+    hook_files = [str((dst / "hooks" / h.name).relative_to(repo)) for h in (TEMPLATES / "hooks").iterdir()]
+    git("add", "--", *hook_files, cwd=repo)
+    rc, _, err = git("update-index", "--chmod=+x", "--", *hook_files, cwd=repo)
+    if rc:
+        print(f"WARNING: could not set the executable bit in git's index: {err}", file=sys.stderr)
+        print("         Commit these and the hooks will be inert in fresh clones.", file=sys.stderr)
+    else:
+        modes = git("ls-files", "-s", "--", *hook_files, cwd=repo)[1].splitlines()
+        bad = [m for m in modes if not m.startswith("100755")]
+        print("hooks staged 100755 in the index" if not bad
+              else f"WARNING: {len(bad)} hook(s) still not executable in the index")
+    git("config", "core.hooksPath", str(dst / "hooks"), cwd=repo)
+    # Orientation hook, scoped to THIS repo. Anthropic documents three scopes:
+    # ~/.claude/settings.json is every project; .claude/settings.json is this one
+    # and is committable. A harness hook has no business existing outside an
+    # enrolled repo, so it goes here and travels with the tree.
+    cs = repo / ".claude" / "settings.json"
+    cs.parent.mkdir(parents=True, exist_ok=True)
+    conf = {}
+    if cs.exists():
+        try:
+            conf = json.loads(cs.read_text())
+        except json.JSONDecodeError:
+            die(REFUSED, f"{cs} exists but is not valid JSON — refusing to overwrite it")
+    hooks = conf.setdefault("hooks", {})
+    ss = hooks.setdefault("SessionStart", [])
+    for e in ss:
+        e["hooks"] = [h for h in e.get("hooks", []) if "harness" not in h.get("command", "")]
+    ss[:] = [e for e in ss if e["hooks"]]
+    ss.append({"matcher": "startup|resume|compact",
+               "hooks": [{"type": "command", "timeout": 10,
+                          "command": "~/.claude/harness/bin/harness whoami --quiet --no-check",
+                          "statusMessage": "Resolving harness position..."}]})
+    cs.write_text(json.dumps(conf, indent=2) + "\n")
+    print(f"scaffolded {dst}")
+    print(f"orientation hook → {cs}  (this repo only; commit it)")
+    if rc == 0 and prior and prior != target:
+        print(f"core.hooksPath REPLACED: {prior}  ->  {target}")
+        print(f"  whatever guards '{prior}' provided are no longer running.")
+    else:
+        print(f"core.hooksPath = {target}  (absolute, shared by every worktree)")
+    print("next: edit .harness/tree.json, commit it, then: harness enrol " + str(repo))
+
+
+def cmd_unenrol(a):
+    ctx = Ctx()
+    if ctx.binding_path.exists():
+        ctx.binding_path.unlink()
+        print(f"unenrolled {ctx.repo.name} on this machine (repo untouched)")
+    else:
+        print("this machine was not enrolled")
+
+
+def main():
+    p = argparse.ArgumentParser(prog="harness", description=__doc__.splitlines()[0])
+    sub = p.add_subparsers(dest="cmd", required=True)
+    def add(name, fn, roster=False, force=False):
+        s = sub.add_parser(name); s.set_defaults(fn=fn)
+        if roster: s.add_argument("--roster", metavar="FILE", help="ListAgents output, or - for stdin")
+        if force: s.add_argument("--force", action="store_true")
+        return s
+    add("contract", cmd_contract, roster=True)
+    wh = add("whoami", cmd_whoami, roster=True)
+    wh.add_argument("--no-check", action="store_true", help="skip the R7 name assertion")
+    wh.add_argument("--quiet", action="store_true",
+                    help="print nothing and exit 0 when not enrolled (for SessionStart hooks)")
+    add("behind", cmd_behind)
+    cl = add("claim", cmd_claim, roster=True, force=True)
+    cl.add_argument("--strict-name", action="store_true",
+                    help="refuse when the session name does not match <project>-<node>")
+    add("release", cmd_release, force=True)
+    add("status", cmd_status, roster=True)
+    add("enrol", cmd_enrol).add_argument("repo")
+    sc = add("scaffold", cmd_scaffold, force=True); sc.add_argument("repo")
+    add("doctor", cmd_doctor)
+    mk = add("mark", cmd_mark)
+    mk.add_argument("task", help="task id, as recorded at T1")
+    mk.add_argument("--note", help="what this task is")
+    mk.add_argument("--force", action="store_true", help="re-mark, discarding the earlier position")
+    spd = add("spend", cmd_spend)
+    spd.add_argument("task", nargs="?", help="task id to measure since; omit for the session total")
+    rv = add("review", cmd_review)
+    rv.add_argument("node", nargs="*", help="nodes to review (default: this one)")
+    rv.add_argument("--children", action="store_true", help="every child of this node")
+    rv.add_argument("--diff", action="store_true", help="also print the full diff")
+    rcy = add("recycle", cmd_recycle)
+    rcy.add_argument("node", nargs="*", help="nodes to restart with fresh context")
+    rcy.add_argument("--children", action="store_true", help="every child of this node")
+    rcy.add_argument("--dry-run", action="store_true")
+    rcy.add_argument("--force", action="store_true",
+                     help="recycle despite dirty worktree, unintegrated commits or busy session")
+    rcy.add_argument("--model", help="override the model")
+    rcy.add_argument("--effort", choices=list(EFFORTS), help="override the effort")
+    rcy.add_argument("--escalate", action="store_true",
+                     help="restart one effort level above this node's own assignment "
+                          "(for re-running a failed check set)")
+    rcy.add_argument("--prompt", default="Use the harness skill: establish your "
+                     "position from git, verify the platform contract, and claim your node.")
+    st = add("stop", cmd_stop)
+    st.add_argument("node", nargs="*", help="nodes whose sessions to stop")
+    st.add_argument("--children", action="store_true", help="every child of this node")
+    st.add_argument("--dry-run", action="store_true")
+    sp = add("spawn", cmd_spawn)
+    sp.add_argument("node", nargs="*", help="nodes to spawn (default: all unoccupied)")
+    sp.add_argument("--dry-run", action="store_true")
+    sp.add_argument("--roster", metavar="FILE")
+    sp.add_argument("--model", help="override the model for every node spawned")
+    sp.add_argument("--effort", choices=list(EFFORTS),
+                    help="override the effort for every node spawned")
+    sp.add_argument("--prompt", default="Use the harness skill: establish your "
+                    "position from git, verify the platform contract, and claim your node.")
+    add("index", cmd_index)
+    ps = add("position", cmd_position)
+    ps.add_argument("--format", choices=["line", "json"], default="line")
+    ps.add_argument("--refresh", action="store_true")
+    ps.add_argument("--behind", action="store_true")
+    ps.add_argument("--quiet", action="store_true",
+                    help="print nothing and exit 0 when not enrolled")
+    add("unenrol", cmd_unenrol)
+    a = p.parse_args()
+    a.fn(a)
+
+
+if __name__ == "__main__":
+    main()

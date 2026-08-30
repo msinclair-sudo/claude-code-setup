@@ -475,6 +475,29 @@ Prefer this over reading `~/.claude/sessions/` wherever correctness matters — 
 directory is internal. It is used only on the statusline's hot path, where 0.02s
 against 0.57s justifies it.
 
+
+**A declared node is not a filled position.** `tree.json` names the tree; a
+position exists only when a live session stands in it and derives it from git
+([[#R1 — Position is derived, never declared]]). The statusline therefore renders
+only occupied nodes — a lead with no children running shows no children, which is
+the true statement, and `harness index` is where the declared tree is listed.
+Rendering an empty node with a marker asserted a position that nobody held.
+
+**The fast occupancy read is an approximation, and it raised a false alarm.**
+`claude agents --json` is authoritative but costs ~0.6s, which a statusline
+rendering every turn cannot pay, so it reads `~/.claude/sessions/*.json` and
+filters by live pid. The daemon parks a warm spare process which also writes a
+session file with the repo as its cwd — so it was counted as a second occupant
+of the document node and displayed `!2`, the I1-violation marker, with no
+violation behind it. A false alarm on the invariant the marker exists to report
+is worse than no marker. Spares are auto-named after their own job id while every
+harness session is named `<project>-<node>` by `spawn`, so they are filtered on
+that; after filtering the two sources agree exactly. `harness status` remains
+authoritative and the statusline says nothing it cannot support.
+
+A live session in a worktree that is **not** a declared node — a branch someone
+created outside the tree — maps to nothing and stays invisible to both. That is
+the inverse gap and it is not currently reported.
 ### R3 — State is split by whether it travels
 
 | in the repository, versioned | on the machine, never committed |

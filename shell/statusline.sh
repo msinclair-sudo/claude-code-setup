@@ -87,27 +87,46 @@ def harness_segment(cdir):
                 os.kill(sd['pid'], 0)
             except Exception:
                 continue
+            # The daemon parks a warm spare process which also writes a session
+            # file with cwd set to the repo. Counting it raised a false !2 on
+            # main -- an I1 alarm with no violation behind it. A spare is
+            # auto-named after its own jobId; harness sessions are named
+            # project-node by spawn. NOTE: no backticks in this block; the
+            # python is inside a double-quoted shell string and they would be
+            # run as command substitution.
+            if not sd.get('name') or sd.get('name') == sd.get('jobId'):
+                continue
             n = by_wt.get(sd.get('cwd', ''))
             if n:
                 occ.setdefault(n, []).append(sd)
 
         mark_glyph = {'busy': '•', 'idle': '◦'}
+        # A node named in tree.json is a DECLARATION. A position exists only when
+        # a live session stands in it and derives it from git (R1), so an
+        # unoccupied node is not rendered at all. A lead with no children running
+        # shows no children, which is the true statement. Use harness index to
+        # see the declared tree.
         def mark(n):
             ss = occ.get(n, [])
             if not ss:
-                return f'{n}·'
+                return None
             if len(ss) > 1:
                 return f'{n}{RED}!{len(ss)}{RST}'
             return n + mark_glyph.get(ss[0].get('status'), '?')
 
+        def group(glyph, names):
+            held = [m for m in (mark(n) for n in names) if m]
+            return glyph + ' ' + ' '.join(held) if held else None
+
         bits = []
-        if me.get('parent'):
-            bits.append('↑' + mark(me['parent']))
+        up = mark(me['parent']) if me.get('parent') else None
+        if up:
+            bits.append('↑' + up)
         bits.append(f'[{node}]')
-        if me.get('siblings'):
-            bits.append('⇄ ' + ' '.join(mark(s) for s in me['siblings']))
-        if me.get('children'):
-            bits.append('↓ ' + ' '.join(mark(c) for c in me['children']))
+        for glyph, key in (('⇄', 'siblings'), ('↓', 'children')):
+            g = group(glyph, me.get(key) or [])
+            if g:
+                bits.append(g)
         return '  '.join(bits)
     except Exception:
         return ''

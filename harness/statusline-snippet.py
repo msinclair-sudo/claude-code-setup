@@ -49,26 +49,42 @@ def harness_segment(cdir):
                 os.kill(d["pid"], 0)
             except Exception:
                 continue
+            # `claude bg-spare` — the warm spare the daemon parks — also writes a
+            # session file, with cwd set to the repo. Counting it raised `!2` on
+            # main: a FALSE alarm on I1, the invariant this marker exists to
+            # report. A spare is auto-named after its own jobId; every harness
+            # session is named <project>-<node> by `spawn`. `claude agents --json`
+            # excludes it correctly but costs ~0.6s, which a statusline that
+            # renders every turn cannot pay — so this file-read is an
+            # approximation, and `harness status` remains authoritative.
+            if not d.get("name") or d.get("name") == d.get("jobId"):
+                continue
             n = by_wt.get(d.get("cwd", ""))
             if n:
                 occ.setdefault(n, []).append(d)
 
         def mark(n):
+            """None when nobody is there. A node named in tree.json is a DECLARATION. A position exists only when a live session stands in it and derives it from git (R1), so an unoccupied node is not rendered at all — not even as an empty marker. A lead with no children running shows no children, which is the true statement. `harness index` is where the declared tree is listed."""
             ss = occ.get(n, [])
             if not ss:
-                return f"{n}·"
+                return None
             if len(ss) > 1:
                 return f"{n}!{len(ss)}"     # more than one session in one worktree
             return n + _MARK.get(ss[0].get("status"), "?")
 
+        def group(glyph, names):
+            held = [m for m in (mark(n) for n in names) if m]
+            return glyph + " " + " ".join(held) if held else None
+
         bits = []
-        if me.get("parent"):
-            bits.append("↑" + mark(me["parent"]))
-        bits.append(f"[{node}]")
-        if me.get("siblings"):
-            bits.append("⇄ " + " ".join(mark(s) for s in me["siblings"]))
-        if me.get("children"):
-            bits.append("↓ " + " ".join(mark(c) for c in me["children"]))
+        up = mark(me["parent"]) if me.get("parent") else None
+        if up:
+            bits.append("↑" + up)
+        bits.append(f"[{node}]")            # always: you are standing in it
+        for glyph, key in (("⇄", "siblings"), ("↓", "children")):
+            g = group(glyph, me.get(key) or [])
+            if g:
+                bits.append(g)
         return "  ".join(bits)
     except Exception:
         return ""

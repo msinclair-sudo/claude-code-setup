@@ -86,3 +86,33 @@ running unguarded while it waits for a merge.
 The cost is that you cannot test a guard change on one node first: an edit here
 takes effect everywhere the moment you save it, and a broken manifest stops every
 worktree at once. **Test every change against a scratch clone before saving it.**
+
+## Shrinking the tree (`R3`)
+
+A node is recorded in three places: `.harness/tree.json`, which travels;
+`index.json`, which is derived and can be thrown away; and `locks/*.lock`, the
+claims, which are closed rather than deleted. Adding a node touches the first.
+Removing one touches all three, and only the first announces itself.
+
+```bash
+harness trim <node>... --dry-run   # the plan, and every refusal
+harness trim <node>...             # worktree, branch, tree, index, claims
+harness trim                       # no names: reconcile the stores only
+```
+
+It refuses before it deletes anything, and it collects **every** refusal first —
+an occupied node, a dirty worktree, a child you did not name, a commit the
+parent does not already hold, or a roster it could not read. A trim that removed
+three of six nodes and then stopped would leave a state no store describes.
+
+It is yours alone. `tree.json` is a document in your worktree, so a lead running
+this would write into your checkout and the guard would refuse the commit a
+moment later anyway.
+
+Two things it deliberately leaves you. The tree edit is **staged, not
+committed** — it prints the commit line, and the commit is a document change you
+make on purpose. And a worktree or branch belonging to no node is reported and
+not touched, because deleting one nobody declared is a guess.
+
+`--force` overrides the dirty and containment refusals and prints the sha it is
+about to orphan, which is the only route back. Nothing overrides occupancy.

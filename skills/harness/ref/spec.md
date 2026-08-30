@@ -527,6 +527,27 @@ only the first survives.
 
 Worktree paths are machine-specific, so the physical binding cannot live in the repo; the logical tree must, because it has to merge. Machine-local state lives at `~/.claude/harness/<slug>/`, where `<slug>` is the project root with every non-alphanumeric character replaced by `-`. Keep it on a native filesystem — atomic claims are not dependable on a mounted Windows drive.
 
+**The machine-local column is two stores, not one, and they have different status.** `index.json` is *derived*: a pure function of the tree and `git worktree list`, safe to delete and rebuild at any moment. `locks/*.lock` are *claims*, and by [[#I6 — The ledger is append-only]] a claim is closed rather than destroyed. So node state lives in three places, and only the first travels.
+
+**Adding a node touches one store; removing one touches all three, and nothing announces the second and third.** Measured 2026-08-31: a session asked to remove six nodes proved containment by hand, removed six worktrees and six branches, hand-edited `tree.json`, rebuilt the index on a guess, and then found `harness status` still naming all six — from the third store, which it had no reason to know existed. It ended by hand-archiving six `.lock` files into a directory it invented. Every step was correct. The cost was that each one had to be discovered.
+
+`harness trim <node>…` is that sequence, in order, as one instruction:
+
+| it does | because |
+| --- | --- |
+| collects **every** refusal before deleting anything | a trim that removes three of six nodes and stops leaves a state no store describes |
+| proves containment against each node's own parent | deleting the branch destroys the only reference to a commit the parent never took |
+| refuses an occupied node, a dirty worktree, an orphaned child, rank 0, and its own node | each is work or structure that a removal would silently take with it |
+| refuses when the roster is unreadable | every other reader of the roster can shrug and carry on with a worse answer; this one would delete a worktree somebody is standing in |
+| removes worktree, then branch, printing the sha it deleted | the sha is the only handle left, and under `--force` the only route back |
+| rewrites `tree.json`, **stages** it, and prints the commit line | the tree is a document, so the commit is rank 0's to make deliberately |
+| rebuilds the index and closes orphan claims | the two derived stores, in the order that leaves neither ahead of the tree |
+| reports stray worktrees and branches without touching them | deleting one nobody declared is a guess |
+
+Pre-flight refusals are the easy half. Git can still fail mid-way — a worktree on a mount that went away, a ref another process holds — and there the rule is that **partial is acceptable, partial and unrecorded is not**: the loop stops at the first failure, then writes the tree for what did go and reconciles anyway, so no store is left describing a node that no longer exists. It exits refused, naming where it stopped and how many went.
+
+Only rank 0 may run it, because `tree.json` is a document living in rank 0's worktree: editing it from a dev-side branch writes into another node's checkout, and the guard would refuse the commit a moment later anyway. Called with **no node names it only reconciles**, which is the repair path for a tree already trimmed by hand. `--force` overrides the dirty and containment refusals and prints what it is about to lose; nothing overrides occupancy.
+
 ### R4 — No arbiter process
 
 There is no daemon and no server. `ListAgents` supplies liveness and `SendMessage` supplies transport, which leaves only atomic claim — and that is a lock file.

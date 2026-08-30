@@ -198,3 +198,9 @@ to do. You are the only one who knows, which is why this is your call and not a
 timer's. Answer first, then recycle.
 
 Never `claude rm` — it deletes the worktree, and the worktree is the node.
+
+**Recycling ends a session; it never ends a node.** Removing a node from the
+tree is `harness trim`, which runs at rank 0 only, because `tree.json` is a
+document. If a child of yours should stop existing, present its work upward
+first and then ask for the trim as a `T5` request — naming the node, and the
+commit that proves you already hold everything it did.

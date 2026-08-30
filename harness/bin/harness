@@ -1294,6 +1294,241 @@ def cmd_recycle(a):
     print(f"{verb} {done}")
 
 
+def _close_lock(ctx, path, why):
+    """I6: a claim record is closed, never destroyed.
+
+    `status` globs `locks/*.lock` at the top level, so a record moved into a
+    subdirectory stops being reported without ceasing to exist.
+    """
+    try:
+        rec = json.loads(path.read_text())
+    except Exception:
+        rec = {"node": path.stem, "unreadable": True}
+    rec["closed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    rec["closed_because"] = why
+    dest_dir = ctx.state / "locks" / "_closed"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / f"{path.stem}-{time.strftime('%Y%m%dT%H%M%S')}.lock"
+    dest.write_text(json.dumps(rec, indent=2))
+    path.unlink()
+    return dest
+
+
+def _reconcile(ctx, dry_run=False):
+    """Make the two derived stores agree with the tree, and name every
+    disagreement that is not this command's to fix.
+
+    The tree is the truth. `index.json` is rebuilt from it outright; a claim
+    naming a node the tree no longer has is closed. Worktrees and branches are
+    only reported, because deleting one that nobody declared is a guess.
+    """
+    # The index is derived, not state: it is a pure function of the tree and git,
+    # so rebuilding it under a dry run changes no answer. Every other store here
+    # is real, and a dry run must leave all of them alone.
+    idx = build_index(ctx)
+    print(f"  index      {len(idx['nodes'])} node(s) -> {ctx.state / 'index.json'}"
+          + ("   (derived, so rebuilt either way)" if dry_run else ""))
+    d = ctx.state / "locks"
+    closed = 0
+    for p in (sorted(d.glob("*.lock")) if d.is_dir() else []):
+        try:
+            node = json.loads(p.read_text()).get("node") or p.stem
+        except Exception:
+            node = p.stem
+        if node in ctx.tree["nodes"]:
+            continue
+        closed += 1
+        if dry_run:
+            print(f"  would close lock for '{node}' — not in the tree")
+        else:
+            _close_lock(ctx, p, "node is not in the tree")
+            print(f"  closed     claim on '{node}' — not in the tree")
+    if not closed:
+        print("  locks      every claim names a node that exists")
+    rc, porc, _ = git("worktree", "list", "--porcelain", cwd=ctx.repo)
+    cur, stray = None, []
+    for line in porc.splitlines():
+        if line.startswith("worktree "):
+            cur = line.split(" ", 1)[1]
+        elif line.startswith("branch ") and cur:
+            br = line.split(" ", 1)[1].replace("refs/heads/", "")
+            if br not in idx["byBranch"]:
+                stray.append((br, cur))
+    for br, wt in stray:
+        print(f"  note       worktree {wt} is on '{br}', which is not a node")
+    orphan_br = []
+    rc, brs, _ = git("for-each-ref", "--format=%(refname:short)", "refs/heads", cwd=ctx.repo)
+    if rc == 0:
+        known = set(idx["byBranch"])
+        orphan_br = [b for b in brs.split() if b not in known]
+    if orphan_br:
+        print(f"  note       branch(es) that are not nodes: {', '.join(sorted(orphan_br))}")
+    empty = sorted(n for n, s in idx["nodes"].items() if not s["worktree"])
+    if empty:
+        print(f"  note       node(s) with no worktree: {', '.join(empty)}")
+    return idx
+
+
+def cmd_trim(a):
+    """Remove nodes from the tree, and make every store that records them agree.
+
+    Node state lives in THREE places and nothing tells you the second and third
+    exist: `.harness/tree.json` in the repo, which is the definition and travels
+    with it; `~/.claude/harness/<slug>/index.json`, a derived cache; and
+    `.../locks/*.lock`, the claims. A session asked to remove six nodes proved
+    containment by hand, removed six worktrees and six branches, hand-edited the
+    tree, rebuilt the index on a guess, and then found `status` still naming all
+    six from the third store. This command is that sequence, in order, with the
+    containment proof first and every refusal raised before anything is deleted.
+
+    Called with no nodes it only reconciles, which is the repair path for a tree
+    that was already trimmed by hand.
+
+    The tree is a document, so only rank 0 may shrink it — the same rule the
+    pre-commit guard would enforce a moment later, applied before the damage.
+    """
+    ctx = Ctx(); ctx.require_enrolled()
+    idx = load_index(ctx, refresh=True)
+    here = idx["byBranch"].get(ctx.branch)
+    targets = list(dict.fromkeys(a.node))
+
+    if not targets:
+        print(f"reconciling {ctx.tree.get('project', ctx.repo.name)} "
+              f"({len(ctx.tree['nodes'])} node(s) in the tree)")
+        _reconcile(ctx, dry_run=a.dry_run)
+        return
+
+    if here is None:
+        die(NOT_ENROLLED, f"branch '{ctx.branch}' is not a node, so there is no rank to check")
+    if idx["nodes"][here]["rank"] != 0:
+        die(REFUSED,
+            f"'{here}' is rank {idx['nodes'][here]['rank']}. The tree is a document and\n"
+            f"           {ctx.tree_path} lives in rank 0's worktree — editing it from here\n"
+            f"           writes into another node's checkout, and the guard would refuse the\n"
+            f"           commit anyway. Trim from rank 0.")
+
+    # Fail closed. Every other reader of the roster can shrug and carry on with a
+    # worse answer; this one would delete a worktree somebody is standing in.
+    try:
+        rows = live_rows(agents_json())
+    except Exception as e:
+        die(REFUSED, f"cannot read the session roster ({e}).\n"
+                     f"           Occupancy is unknown, and a trim that guesses wrong "
+                     f"deletes an occupied worktree.")
+    occ = {}
+    for r in rows:
+        n = idx["byWorktree"].get(r.get("cwd", ""))
+        if n:
+            occ.setdefault(n, []).append(r)
+
+    # Every refusal is collected before anything is deleted. A trim that removes
+    # three of six nodes and then stops leaves the tree in a state no store
+    # describes, which is the failure this command exists to end.
+    refusals, plan = [], []
+    for n in sorted(targets, key=lambda x: -idx["nodes"].get(x, {}).get("rank", 0)):
+        sp = idx["nodes"].get(n)
+        if sp is None:
+            refusals.append(f"{n}: not a node in {ctx.tree_path}"); continue
+        if sp["rank"] == 0:
+            refusals.append(f"{n}: rank 0 — the root is not removable"); continue
+        orphans = [c for c in sp["children"] if c not in targets]
+        if orphans:
+            refusals.append(f"{n}: would orphan {', '.join(orphans)} — name them too")
+            continue
+        if n in occ:
+            who = ", ".join((r.get("name") or "?") for r in occ[n])
+            refusals.append(f"{n}: occupied by {who} — `harness stop {n}` first"); continue
+
+        wt, br = sp["worktree"], sp["branch"]
+        if wt:
+            rc, out, _ = git("status", "--porcelain", cwd=wt)
+            if rc == 0 and out.strip() and not a.force:
+                refusals.append(f"{n}: worktree is dirty ({len(out.splitlines())} path(s)) — "
+                                f"commit, stash, or --force"); continue
+
+        # The proof. Every commit on this branch must already be reachable from
+        # the parent, or removing the branch destroys the only reference to it.
+        held = None
+        pb = idx["nodes"][sp["parent"]]["branch"] if sp["parent"] else None
+        if br and pb and git("rev-parse", "--verify", "--quiet", br, cwd=ctx.repo)[0] == 0:
+            rc, ahead, _ = git("rev-list", "--count", f"{pb}..{br}", cwd=ctx.repo)
+            if rc != 0 or not ahead.strip().isdigit():
+                # Not proven contained is not the same as proven empty, and the
+                # difference is somebody's work.
+                if not a.force:
+                    refusals.append(f"{n}: cannot count commits against {sp['parent']} — "
+                                    f"containment is unproven, not proven empty"); continue
+                held = "CONTAINMENT UNPROVEN"
+            else:
+                lost = int(ahead.strip())
+                if lost and not a.force:
+                    rc, log, _ = git("log", "--oneline", "-5", f"{pb}..{br}", cwd=ctx.repo)
+                    detail = "; ".join(log.splitlines()[:5]) if rc == 0 else "unreadable"
+                    refusals.append(f"{n}: {lost} commit(s) not in {sp['parent']} — {detail}")
+                    continue
+                held = f"held by {sp['parent']}" if not lost else f"LOSES {lost} commit(s)"
+        elif br:
+            held = "branch does not exist"
+        plan.append((n, wt, br, held))
+
+    if refusals:
+        print(f"refusing — nothing removed ({len(refusals)} of {len(targets)}):")
+        for r in refusals:
+            print(f"  {r}")
+        sys.exit(REFUSED)
+
+    print(f"trim {len(plan)} node(s) from {ctx.tree.get('project', ctx.repo.name)}:")
+    for n, wt, br, held in plan:
+        print(f"  {n:<12} branch {br or '—':<14} {held or ''}")
+        print(f"  {'':<12} worktree {wt or '— none registered'}")
+    if a.dry_run:
+        print("dry run — no worktree, branch, tree entry or claim was touched. "
+              "The reconcile pass would then:")
+        _reconcile(ctx, dry_run=True)
+        return
+
+    # A git operation can still fail here — a worktree on a mount that went away,
+    # a ref another process is holding. The loop stops at the first one, but the
+    # tree is written for what DID go, so no store is left describing a node that
+    # no longer exists. Partial is acceptable; partial and unrecorded is not.
+    done, stopped = [], None
+    for n, wt, br, held in plan:
+        if wt:
+            cmd = ["worktree", "remove"] + (["--force"] if a.force else []) + [wt]
+            rc, _, err = git(*cmd, cwd=ctx.repo)
+            print(f"  {'removed' if rc == 0 else 'FAILED '}    worktree {wt}"
+                  + ("" if rc == 0 else f"  {err.strip()[:120]}"))
+            if rc:
+                stopped = n; break
+        if br:
+            vrc, sha, _ = git("rev-parse", "--short", "--verify", "--quiet", br, cwd=ctx.repo)
+            if vrc == 0:
+                rc, _, err = git("branch", "-D", br, cwd=ctx.repo)
+                # The sha is the only handle left once the ref is gone. Under
+                # --force it is also the only route back to work the parent
+                # never took.
+                print(f"  {'deleted' if rc == 0 else 'FAILED '}    branch {br} "
+                      f"(was {sha.strip()})" + ("" if rc == 0 else f"  {err.strip()[:120]}"))
+                if rc:
+                    stopped = n; break
+        ctx.tree["nodes"].pop(n, None)
+        done.append(n)
+    git("worktree", "prune", cwd=ctx.repo)
+
+    ctx.tree_path.write_text(json.dumps(ctx.tree, indent=2) + "\n")
+    print(f"  wrote      {ctx.tree_path}  ({len(ctx.tree['nodes'])} node(s) remain)")
+    rel = str(ctx.tree_path.relative_to(ctx.repo))
+    git("add", "--", rel, cwd=ctx.repo)
+    _reconcile(ctx)
+    if done:
+        print(f"one step remains — the tree is a tracked document and this edit is staged, "
+              f"not committed:\n  git -C '{ctx.repo}' commit -m "
+              f"'Trim {', '.join(done)} from the tree'")
+    if stopped:
+        die(REFUSED, f"stopped at '{stopped}' — git refused above. "
+                     f"{len(done)} node(s) removed and recorded; nothing after it was touched.")
+
+
 def cmd_scaffold(a):
     repo = Path(a.repo).resolve()
     rc, common, _ = git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=repo)
@@ -1441,6 +1676,12 @@ def main():
                     help="override the effort for every node spawned")
     sp.add_argument("--prompt", default="Use the harness skill: establish your "
                     "position from git, verify the platform contract, and claim your node.")
+    tr = add("trim", cmd_trim)
+    tr.add_argument("node", nargs="*",
+                    help="nodes to remove; none means reconcile the stores only")
+    tr.add_argument("--dry-run", action="store_true")
+    tr.add_argument("--force", action="store_true",
+                    help="trim despite a dirty worktree or commits the parent does not hold")
     add("index", cmd_index)
     ps = add("position", cmd_position)
     ps.add_argument("--format", choices=["line", "json"], default="line")

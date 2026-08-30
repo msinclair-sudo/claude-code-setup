@@ -214,13 +214,9 @@ is inert by construction, not by convention.
 **Direction** terminal, member to lead.
 **Rule** Commit, integrate by [[#T4 — Integration (fast-forward up)]], close the
 ledger row, drop the worktree, and stop the session.
-**Enforcement** `harness release` frees the node. `harness stop <node>` ends the
-session that held it: `claude stop` is a full teardown — the process dies, the
-session file is removed, and it leaves `claude agents --json`. A lead can reap its
-whole layer with `harness stop --children`, and no session may stop itself.
-**Fails when** The row is deleted rather than closed — [[#T8 — Deep conflict]]
-depends on closed rows staying readable. Or the session is left running after its
-node is released: a lane nobody can shut down is not a lane, it is a leak.
+**Enforcement** `harness mark <task> --close` writes the record: the closing sha, the closing session, and the delta if it is subtractable. `harness release` frees the node. `harness stop <node>` ends the session that held it: `claude stop` is a full teardown — the process dies, the session file is removed, and it leaves `claude agents --json`. A lead can reap its whole layer with `harness stop --children`, and no session may stop itself.
+**The close is the point, and it had no record until 2026-08-31.** "Released" was a claim in a message rather than a fact in a store, so nothing could tell a node still working from a node finished and still standing there. `harness status` now names the difference — an open task, or `unassigned` — and `harness recycle --idle` sweeps exactly the children that have none. Closing is always permitted even when the measurement is not: a task closed in a different session than it opened records `_delta: null` and says why, because refusing the close over an unmeasurable cost would leave the task open forever and destroy the one signal this exists to give.
+**Fails when** The row is deleted rather than closed — [[#T8 — Deep conflict]] depends on closed rows staying readable. Or the session is left running after its node is released: a lane nobody can shut down is not a lane, it is a leak. `release` drops the claim and **does not end the session**, so that leak has a shape — a live session standing in a worktree it no longer claims, constrained by no rule in the tree. `status` reports it as `OCCUPIED but unclaimed`.
 
 ### T11 — Comprehension check
 
@@ -253,6 +249,8 @@ The owner of a node integrates contributors into it. Pushing to a checked-out br
 ### I3 — Scopes are globally disjoint
 
 No two open tasks anywhere in the tree may claim the same path, checked against a single registry. This makes textual conflicts rare rather than routine, and leaves semantic conflicts — a changed signature that a caller elsewhere depends on — which produce no merge conflict and are caught by checks at integration.
+
+**A record anyone may correct must be a document inside the tree.** Code has an owner, a scope and an instrument that goes red. A note kept outside the repository has none of the three, so a disagreement about it cannot be settled by a check, a diff or a ref — only by argument, and argument between two parties who both value catching errors alternates instead of converging. Inside the tree the same correction is a [[#T5 — Document request (upward)]] pair: applied once by the owner, no reply expected, terminal on an artefact. Outside it, the exchange has no terminal state at all, and nothing in the protocol can ever say which round is the last. Measured 2026-08-31: four rounds of mutual correction over records held outside any scope, each finding something genuine, each smaller than the last, no ref moving after the first.
 
 ### I4 — `reference-transaction` is the primary guard
 
@@ -562,6 +560,8 @@ There is no daemon and no server. `ListAgents` supplies liveness and `SendMessag
 | ledger, tree, bindings | plain JSON |
 
 A single small CLI performs atomic file operations and the checks in [[#R8 — The platform contract fails loud]]. It performs no reasoning: the agent gathers liveness and decides, the CLI only writes. Nothing here starts, supervises or recovers a process.
+
+**Transport is the agent's, which sets a hard limit on what can be guarded.** `SendMessage` does not pass through the CLI, so no instrument here can count exchanges, notice that a thread has stopped producing artefacts, or decline to send. A rule of the form "stop replying after n rounds with no ref moved" is therefore a *rule with a diagnostic*, never a guard — and a guard that depends on a participant staying alert is the thing this design exists to remove. Only two mechanisms actually terminate an exchange, and neither is a tripwire: making the artefact a document, so the correction becomes a [[#T5 — Document request (upward)]] pair with a terminal state; and [[#R13 — Members are recycled, not accumulated]], which ends it by the counterparty no longer existing in that context. The diagnostic half is real and worth having — `harness status` marks a live node with no open task as `unassigned`, and `harness spend` prices the exchange — but it informs a decision rather than making one.
 
 ### R7 — The name is cosmetic
 

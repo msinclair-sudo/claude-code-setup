@@ -473,14 +473,46 @@ def cmd_status(a):
         roster = True
     except Exception:
         peers, roster = {}, None
+    # A claim is not an assignment. A node can be claimed, live, and holding
+    # nothing to do — and an idle session with a live counterparty spends that
+    # capacity on elective correspondence, which no transaction terminates.
+    tasks = {}
+    for task, rec in open_marks(ctx).items():
+        tasks.setdefault(rec.get("_node") or "?", []).append(task)
+
     d = ctx.state / "locks"
     locks = sorted(d.glob("*.lock")) if d.is_dir() else []
-    if not locks:
-        print("no nodes claimed"); return
+    claimed, unassigned = set(), []
     for p in locks:
         h = json.loads(p.read_text())
         live = "live" if h["ref"] in peers else ("stale" if roster else "unknown")
-        print(f"  {h['node']:<12} {h['name']:<22} [{h['ref']}]  {live}")
+        claimed.add(h["node"])
+        open_here = tasks.get(h["node"], [])
+        work = ", ".join(sorted(open_here)) if open_here else "unassigned"
+        if live == "live" and not open_here:
+            unassigned.append(h["node"])
+        print(f"  {h['node']:<12} {h['name']:<22} [{h['ref']}]  {live:<8}{work}")
+
+    if not locks:
+        print("no nodes claimed")
+
+    # The state that follows a release: the lock is gone, the session is not.
+    # `release` drops a claim; it does not end a session, so a released node can
+    # still be standing there, addressable, constrained by no rule in the tree.
+    try:
+        idx = load_index(ctx, refresh=True)
+        for r in live_rows(agents_json(read_roster(a.roster))):
+            n = idx["byWorktree"].get(r.get("cwd", ""))
+            if n and n not in claimed:
+                print(f"  {n:<12} {(r.get('name') or '?'):<22} [{r['sessionId']}]  "
+                      f"OCCUPIED but unclaimed — released the node, kept the session")
+    except Exception:
+        pass
+
+    if unassigned:
+        print(f"\n  {len(unassigned)} live node(s) with no open task: {', '.join(sorted(unassigned))}")
+        print("  Capacity with no object. Close the task record at T10 and recycle,")
+        print("  or give it one:  harness recycle --idle")
 
 
 def cmd_enrol(a):
@@ -932,22 +964,89 @@ def usd(t):
     return sum(t[k] * RATES[k] for k in RATES) / 1e6
 
 
+def open_marks(ctx):
+    """Task records that were opened and never closed, keyed by task.
+
+    A mark with no `_closed_at` is an OPEN task. This is the only mechanical
+    answer to "does this node still have an object?", and without it a node that
+    has finished is indistinguishable from one still working — which is how a
+    session ends up holding capacity with nothing to spend it on.
+    """
+    d = ctx.state / "marks"
+    out = {}
+    for p in (sorted(d.glob("*.json")) if d.is_dir() else []):
+        try:
+            rec = json.loads(p.read_text())
+        except Exception:
+            continue
+        if rec.get("_closed_at"):
+            continue
+        out[p.stem] = rec
+    return out
+
+
 def cmd_mark(a):
     """Record the token position when a T1 is accepted, so the actual at T10 is a
-    subtraction rather than an apportionment."""
+    subtraction rather than an apportionment.
+
+    `--close` is T10's record, and it exists because T10 had none. "Released"
+    was a claim in a message rather than a fact in a store, so nothing could
+    distinguish a node still working from a node finished and still standing
+    there — and an idle session with a live counterparty fills the gap with
+    elective correspondence. Closing is always permitted; the MEASUREMENT may
+    not be, and the two are recorded separately.
+    """
     ctx = Ctx(); ctx.require_enrolled()
     sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     if not sid:
         die(CONTRACT, "CLAUDE_CODE_SESSION_ID is unset — cannot mark (C1)")
-    tot = read_spend(sid)
+    node, _ = ctx.node()
     f = ctx.state_file("marks", a.task, ".json")
     f.parent.mkdir(parents=True, exist_ok=True)
+
+    if a.close:
+        if not f.exists():
+            die(REFUSED, f"no mark for '{a.task}' — nothing to close")
+        rec = json.loads(f.read_text())
+        if rec.get("_closed_at") and not a.force:
+            die(REFUSED, f"'{a.task}' was closed at {rec['_closed_at']} — "
+                         f"--force to close it again")
+        now = read_spend(sid)
+        rec["_closed_at"] = now["_at"]
+        rec["_closed_by"] = sid
+        rec["_closed_sha"] = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
+        if rec.get("_session") == sid:
+            rec["_delta"] = {k: now[k] - rec.get(k, 0) for k in RATES}
+            cost = f"~${usd(rec['_delta']):.2f}"
+        else:
+            # A recycled session starts a new transcript, so the subtraction is
+            # not a measurement of anything. Refusing to CLOSE over that would
+            # leave the task open forever and break the signal this exists for.
+            rec["_delta"] = None
+            rec["_delta_unavailable"] = (f"opened in session {str(rec.get('_session'))[:8]}, "
+                                         f"closed in {sid[:8]} — not subtractable (I10)")
+            cost = "cost not measurable across a recycle"
+        f.write_text(json.dumps(rec, indent=2) + "\n")
+        print(f"closed {a.task} on {node} at {rec['_closed_at']}  {cost}")
+        still = sorted(t for t, r in open_marks(ctx).items() if r.get("_node") == node)
+        if still:
+            print(f"  {node} still has {len(still)} open task(s): {', '.join(still)}")
+        else:
+            print(f"  {node} has no open task — it is unassigned, which is not idle. "
+                  f"Its lead should recycle it or give it one.")
+        return
+
+    tot = read_spend(sid)
     if f.exists() and not a.force:
         die(REFUSED, f"{a.task} is already marked at {json.loads(f.read_text()).get('_at')} "
                      f"— use --force to re-mark, which discards the earlier position")
     tot["_note"] = a.note or ""
+    tot["_node"] = node
+    tot["_branch"] = ctx.branch
+    tot["_sha"] = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
     f.write_text(json.dumps(tot, indent=2) + "\n")
-    print(f"marked {a.task} at {tot['_at']}  ({tot['_records']} records, ~${usd(tot):.2f} so far)")
+    print(f"marked {a.task} on {node} at {tot['_at']}  "
+          f"({tot['_records']} records, ~${usd(tot):.2f} so far)")
 
 
 def cmd_spend(a):
@@ -1203,16 +1302,26 @@ def cmd_recycle(a):
     by_wt = idx["byWorktree"]
     mine = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     here = idx["byBranch"].get(ctx.branch)
-    if a.children:
+    if a.children or a.idle:
         if here is None:
             die(NOT_ENROLLED, "not standing in a node, so --children has no meaning")
         targets = idx["nodes"][here]["children"]
+        if a.idle:
+            # A node with no OPEN task record is unassigned, and an unassigned
+            # session with a live counterparty is what funds correspondence no
+            # transaction ends. This is the sweep at subtree close: it decides
+            # nothing, it removes the capacity.
+            busy = {r.get("_node") for r in open_marks(ctx).values()}
+            for n in [x for x in targets if x in busy]:
+                print(f"  keep {n:<12} has an open task record")
+            targets = [n for n in targets if n not in busy]
         if not targets:
-            print(f"'{here}' has no children"); return
+            print(f"every child of '{here}' has an open task" if a.idle
+                  else f"'{here}' has no children"); return
     else:
         targets = a.node
     if not targets:
-        die(REFUSED, "name at least one node, or pass --children")
+        die(REFUSED, "name at least one node, or pass --children / --idle")
 
     occ = {}
     for r in rows:
@@ -1638,6 +1747,8 @@ def main():
     mk.add_argument("task", help="task id, as recorded at T1")
     mk.add_argument("--note", help="what this task is")
     mk.add_argument("--force", action="store_true", help="re-mark, discarding the earlier position")
+    mk.add_argument("--close", action="store_true",
+                    help="T10: record that this task ended, and what it cost")
     spd = add("spend", cmd_spend)
     spd.add_argument("task", nargs="?", help="task id to measure since; omit for the session total")
     rv = add("review", cmd_review)
@@ -1653,6 +1764,8 @@ def main():
     rcy = add("recycle", cmd_recycle)
     rcy.add_argument("node", nargs="*", help="nodes to restart with fresh context")
     rcy.add_argument("--children", action="store_true", help="every child of this node")
+    rcy.add_argument("--idle", action="store_true",
+                     help="every child with no OPEN task record — the sweep at subtree close")
     rcy.add_argument("--dry-run", action="store_true")
     rcy.add_argument("--force", action="store_true",
                      help="recycle despite dirty worktree, unintegrated commits or busy session")

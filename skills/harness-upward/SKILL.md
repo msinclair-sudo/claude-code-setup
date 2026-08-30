@@ -53,11 +53,20 @@ check your own work, so your lead does. If you skipped catch-up 2 it also fails,
 with `fatal: Not possible to fast-forward, aborting.` Never push: a checked-out
 branch rejects pushes outright.
 
-**`T10` release** — `harness release`, then `harness spend <task-id>` for the
-measured actual against the estimated band (`I10`). That number is a subtraction
-only if you ran `harness mark <task-id>` when you accepted the task; without a
-mark, `spend` refuses to apportion and you should report the **session total with
-its coverage stated**, never a share you inferred.
+**`T10` release** — `harness mark <task-id> --close`, then `harness release`,
+then `harness spend <task-id>` for the measured actual against the estimated band
+(`I10`). That number is a subtraction only if you ran `harness mark <task-id>`
+when you accepted the task; without a mark, `spend` refuses to apportion and you
+should report the **session total with its coverage stated**, never a share you
+inferred.
+
+**Close the record even when you cannot measure it.** A task closed in a
+different session than it opened records no delta and says so. That is the
+correct outcome: an unmeasurable cost is a missing number, but an unclosed task
+makes your node read as still working forever, and your lead reads that as a node
+it must not recycle. `release` frees the claim; it does **not** end your session,
+so until your lead stops you, you are a live session in a worktree you no longer
+hold. Do not fill that gap with correspondence.
 
 Report the components it prints, not one figure. Billed tokens and context
 occupancy are different quantities that both get called "tokens", and cache reads

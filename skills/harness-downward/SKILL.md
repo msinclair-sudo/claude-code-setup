@@ -170,7 +170,20 @@ child, end its session and start a fresh one on the same node:
 ```bash
 harness recycle <node> --dry-run     # see what it would do, and what it refuses
 harness recycle --children           # every child of this node
+harness recycle --idle               # only children with no OPEN task record
 ```
+
+**`--idle` is the sweep at subtree close, and it is the one that matters.** A
+claimed node with no open task is not idle, it is capacity with no object, and
+capacity with no object gets spent on elective correspondence — messages nobody
+can terminate, because no transaction ends them and `SendMessage` passes through
+no instrument that could count them. Recycling ends such a thread mechanically:
+not by anyone deciding to stop, but by the counterparty no longer existing in
+that context. Close the task record first (`harness mark <task> --close`), or
+`--idle` will read the node as still working.
+
+`harness status` shows you which is which — an open task by name, or
+`unassigned`. Take `unassigned` on a live node as a standing prompt.
 
 It refuses by itself on a dirty worktree, on commits not yet in you, on a busy
 session, and on rank 0. Take those refusals at face value — each one means work

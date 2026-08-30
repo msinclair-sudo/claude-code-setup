@@ -498,6 +498,17 @@ authoritative and the statusline says nothing it cannot support.
 A live session in a worktree that is **not** a declared node — a branch someone
 created outside the tree — maps to nothing and stays invisible to both. That is
 the inverse gap and it is not currently reported.
+
+**`claude agents --json` is not a list of live sessions**, despite what the
+harness's own docstring claimed for most of its life. Exited sessions are
+retained with `pid` null. Counting them meant a node whose session had ended read
+as permanently occupied: `spawn` skipped it as *"occupied by"* a session that no
+longer existed, so it could never be refilled, and `status` reported its lock
+`live` — exactly backwards, since surfacing a stale lock so it can be forced is
+what that command is for. Every occupancy question now passes rows through
+`live_rows()`, which requires an integer pid belonging to a running process.
+Controlled against a real pid, a null pid, a dead pid and a row missing the key;
+only the first survives.
 ### R3 — State is split by whether it travels
 
 | in the repository, versioned | on the machine, never committed |

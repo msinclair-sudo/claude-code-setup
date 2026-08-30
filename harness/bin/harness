@@ -45,8 +45,10 @@ def git(*args, cwd=None):
 def agents_json(override=None):
     """`claude agents --json` — the supported session query.
 
-    Returns cwd, kind, name, pid, sessionId and status for every live session,
-    including this one. Preferred over globbing ~/.claude/sessions/ wherever
+    Returns cwd, kind, name, pid, sessionId and status for every session it
+    knows about — NOT only live ones. Exited sessions are retained with `pid`
+    null, so anything asking "is this node occupied?" must pass rows through
+    live_rows() first. Preferred over globbing ~/.claude/sessions/ wherever
     correctness matters; that directory is internal and undocumented.
     """
     if override is not None:
@@ -66,6 +68,27 @@ def agents_json(override=None):
     if not isinstance(d, list):
         raise ValueError("`claude agents --json` no longer returns a JSON array")
     return d
+
+
+def live_rows(rows):
+    """The subset that is actually running.
+
+    Occupancy has to mean a live process. `claude agents --json` keeps exited
+    sessions with a null pid, and counting them made a node whose session had
+    ended read as permanently occupied — `spawn` skipped it as "occupied by"
+    a session that no longer existed, so it could never be refilled.
+    """
+    out = []
+    for r in rows:
+        pid = r.get("pid")
+        if not isinstance(pid, int):
+            continue                      # exited, or not a local process
+        try:
+            os.kill(pid, 0)
+        except (OSError, ProcessLookupError):
+            continue
+        out.append(r)
+    return out
 
 
 def self_row(rows):
@@ -441,7 +464,11 @@ def cmd_status(a):
     ctx = Ctx(); ctx.require_enrolled()
     peers = {}
     try:
-        rows = agents_json(read_roster(a.roster))
+        # live_rows, not the raw list: an exited session is retained with a null
+        # pid, and a lock whose holder had exited still read "live" — which is
+        # exactly backwards, since a stale lock is the thing this command exists
+        # to surface so it can be forced.
+        rows = live_rows(agents_json(read_roster(a.roster)))
         peers = {r["sessionId"]: {"name": r.get("name") or "?"} for r in rows}
         roster = True
     except Exception:
@@ -615,7 +642,7 @@ def cmd_spawn(a):
     """
     ctx = Ctx(); ctx.require_enrolled()
     idx = load_index(ctx, refresh=True)
-    rows = agents_json()
+    rows = live_rows(agents_json())
     by_wt = idx["byWorktree"]
     occupied = {}
     for r in rows:
@@ -804,7 +831,7 @@ def cmd_stop(a):
     the process dies, the session file is removed, and it leaves the table."""
     ctx = Ctx(); ctx.require_enrolled()
     idx = load_index(ctx)
-    rows = agents_json()
+    rows = live_rows(agents_json())
     by_wt = idx["byWorktree"]
     mine = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     here = idx["byBranch"].get(ctx.branch)
@@ -1154,7 +1181,7 @@ def cmd_recycle(a):
     """
     ctx = Ctx(); ctx.require_enrolled()
     idx = load_index(ctx, refresh=True)
-    rows = agents_json()
+    rows = live_rows(agents_json())
     by_wt = idx["byWorktree"]
     mine = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     here = idx["byBranch"].get(ctx.branch)

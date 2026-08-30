@@ -1032,21 +1032,52 @@ def cmd_review(a):
         rc2, behind, _ = git("rev-list", "--count", f"{cb}..{pb}", cwd=ctx.repo)
         ahead, behind = ahead.strip() or "0", behind.strip() or "0"
 
+        # The option to read must always be there. A fast-forward integration
+        # leaves NO merge commit — parent and child end up on the same sha — so
+        # once work lands, `pb..cb` is empty and the diff a lead chose not to
+        # read becomes unreachable. Reading is not required here, but it must
+        # never be unavailable, so an integrated child falls back to a window of
+        # its own recent history.
+        rc, total, _ = git("rev-list", "--count", cb, cwd=ctx.repo)
+        total = int(total.strip() or 0)
+        if a.since:
+            base, mode = a.since, f"since {a.since}"
+        elif ahead != "0":
+            base, mode = pb, "pending integration"
+        else:
+            back = min(a.last, max(total - 1, 0))
+            # `~N` is N FIRST-PARENT steps, and the resulting range holds every
+            # commit merged in along the way — routinely more than N. The label
+            # says steps, and the count printed below says commits, because a
+            # header claiming "last 4 commits" above a list of 13 is the kind of
+            # number that gets quoted.
+            base, mode = (f"{cb}~{back}" if back else None), \
+                         f"already integrated — window of the last {back} first-parent step(s)"
+
         print(f"\n── {n}  ({cb} → {parent}/{pb})  {sp['model']}/{sp['effort']}")
-        if ahead == "0":
-            print("   nothing to present"); continue
+        if base is None:
+            print("   no history to show"); continue
+        if ahead == "0" and not a.since:
+            print(f"   {mode}")
+            print(f"   ⚠ a fast-forward leaves no boundary — this is a window of "
+                  f"history, not the exact set that was integrated")
 
         # T2: a lead's merge is only a fast-forward if the child caught up.
-        if behind != "0":
+        # Meaningless once the branches are identical — say nothing there.
+        if ahead == "0" and not a.since:
+            pass
+        elif behind != "0":
             print(f"   ⚠ {behind} commit(s) behind {parent} — T4 will refuse this "
                   f"until it catches up (T2)")
         else:
             print(f"   caught up — `git merge --ff-only {cb}` will fast-forward")
 
-        print(f"   {ahead} commit(s):")
+        rc, shown, _ = git("rev-list", "--count", f"{base}..{cb}", cwd=ctx.repo)
+        shown = shown.strip() or "0"
+        print(f"   {shown} commit(s) in this range:")
         rc, log, _ = git("log", "--reverse",
                          "--format=%h %s%x09%(trailers:key=Task,valueonly,separator=;)",
-                         f"{pb}..{cb}", cwd=ctx.repo)
+                         f"{base}..{cb}", cwd=ctx.repo)
         untrailered = 0
         for line in log.splitlines():
             body, _, tr = line.partition("\t")
@@ -1060,9 +1091,9 @@ def cmd_review(a):
             print(f"   ⚠ {untrailered} commit(s) carry no Task: trailer — an ancestor "
                   f"holding a conflicted hunk would have names and no route to a ledger")
 
-        rc, names, _ = git("diff", "--name-only", f"{pb}..{cb}", cwd=ctx.repo)
+        rc, names, _ = git("diff", "--name-only", f"{base}..{cb}", cwd=ctx.repo)
         files = [f for f in names.splitlines() if f]
-        rc, stat, _ = git("diff", "--shortstat", f"{pb}..{cb}", cwd=ctx.repo)
+        rc, stat, _ = git("diff", "--shortstat", f"{base}..{cb}", cwd=ctx.repo)
         print(f"   {stat.strip() or 'no file changes'}")
 
         # A code node touching a document is the guard's business, and the lead's.
@@ -1080,7 +1111,16 @@ def cmd_review(a):
         overlaps = {}
         for sib in sp["siblings"]:
             sb = idx["nodes"][sib]["branch"]
-            rc, sn, _ = git("diff", "--name-only", f"{pb}..{sb}", cwd=ctx.repo)
+            rc, sa, _ = git("rev-list", "--count", f"{pb}..{sb}", cwd=ctx.repo)
+            if sa.strip() != "0":
+                sbase = pb                       # sibling still pending
+            else:
+                rc, st, _ = git("rev-list", "--count", sb, cwd=ctx.repo)
+                sback = min(a.last, max(int(st.strip() or 0) - 1, 0))
+                if not sback:
+                    continue
+                sbase = f"{sb}~{sback}"          # same-size window as ours
+            rc, sn, _ = git("diff", "--name-only", f"{sbase}..{sb}", cwd=ctx.repo)
             shared = sorted(set(files) & {f for f in sn.splitlines() if f})
             if shared:
                 overlaps[sib] = shared
@@ -1094,7 +1134,7 @@ def cmd_review(a):
             print("   no files shared with a sibling")
 
         if a.diff:
-            rc, d, _ = git("diff", f"{pb}..{cb}", cwd=ctx.repo)
+            rc, d, _ = git("diff", f"{base}..{cb}", cwd=ctx.repo)
             print("\n" + d)
     print()
 
@@ -1324,6 +1364,10 @@ def main():
     rv.add_argument("node", nargs="*", help="nodes to review (default: this one)")
     rv.add_argument("--children", action="store_true", help="every child of this node")
     rv.add_argument("--diff", action="store_true", help="also print the full diff")
+    rv.add_argument("--since", metavar="REF",
+                    help="review against REF instead of the parent (read work already merged)")
+    rv.add_argument("--last", type=int, default=10, metavar="N",
+                    help="when nothing is pending, show the last N commits (default 10)")
     rcy = add("recycle", cmd_recycle)
     rcy.add_argument("node", nargs="*", help="nodes to restart with fresh context")
     rcy.add_argument("--children", action="store_true", help="every child of this node")

@@ -97,6 +97,23 @@ An unavailable check must never render as a clean one — the first draft of thi
 command returned an empty result in that case and silently read as "no
 violations".
 
+**Reading is optional; being able to read is not.** A lead may integrate without
+reading the diff — that is a judgement about pace, and the harness does not gate
+the merge on a review. But the view must never be unavailable, and there is a
+sharp reason it was: **a fast-forward leaves no boundary.** After `T4`, parent
+and child point at the same commit, no merge commit records where the
+contribution began, and `parent..child` is empty. Measured in a live tree, five
+of six children sat at zero ahead and `review` said *nothing to present* for
+every one — the diff a lead had chosen not to read had become unreachable.
+
+So an integrated child falls back to a window of its own history, labelled as a
+window rather than as the integrated set, because the exact set is genuinely
+unrecoverable from git alone. `--since <ref>` reads any explicit range. The
+window is `N` **first-parent steps**, and the commit count printed is the number
+of commits in the resulting range, which is routinely larger — a header reading
+"last 4 commits" above a list of thirteen is exactly the kind of figure that
+gets quoted later, so the two are named differently.
+
 **Why not actual pull requests.** The suggestion is sound and the gap it aims at
 is real: nothing else in the tree reads a member's diff. But a PR merged on a
 server runs none of this repository's hooks, and every guarantee in

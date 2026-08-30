@@ -11,6 +11,7 @@ while read -r old new ref; do
   [ "$new" = "$Z" ] && continue
   HARNESS_BRANCH="${ref#refs/heads/}"; export HARNESS_BRANCH
   HARNESS_REV="$new"; export HARNESS_REV
+  "$G" --gate "$HARNESS_BRANCH" "$new" </dev/null || exit 1
   if [ "$old" != "$Z" ]; then
     git diff --name-only "$old" "$new" | "$G" || exit 1
   fi

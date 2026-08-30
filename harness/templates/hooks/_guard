@@ -129,6 +129,58 @@ if "--classify" in sys.argv:
             print(("doc " if matches(p, docs) else "code ") + p)
     sys.exit(0)
 
+# ── the integration gate (T4) ────────────────────────────────────────────────
+#
+# A member cannot verify its own work: revisiting your own output without an
+# external check measurably degrades it, while the same procedure improves it
+# when an oracle is present. The lead is that oracle, so integration requires
+# that the lead has read the diff.
+#
+# Detection: a fast-forward integration moves the parent's ref to a commit that
+# IS the tip of one of its children. An ordinary commit on the parent is not,
+# and a T2 catch-up moves the child's own ref to a fresh merge commit, so
+# neither trips this.
+#
+# The record is keyed on the child's exact sha, so any new commit invalidates it
+# automatically. There is nothing to expire and nothing to remember to clear.
+if "--gate" in sys.argv:
+    i = sys.argv.index("--gate")
+    gbranch, gnew = sys.argv[i + 1], sys.argv[i + 2]
+    gnode = next((n for n, sp in tree["nodes"].items() if sp.get("branch") == gbranch), None)
+    if gnode is None:
+        sys.exit(0)                  # not a node in this tree
+    kids = [n for n, sp in tree["nodes"].items() if sp.get("parent") == gnode]
+    hit = None
+    for k in kids:
+        kb = tree["nodes"][k].get("branch")
+        if not kb:
+            continue
+        rc, tip, _ = git("rev-parse", kb)
+        if rc == 0 and tip.strip() == gnew:
+            hit = k
+            break
+    if hit is None:
+        sys.exit(0)                  # not an integration
+    slug = re.sub(r"[^A-Za-z0-9]", "-", str(repo))
+    # Same sanitiser as Ctx.state_file in the CLI. If these two ever disagree
+    # the gate looks for a file the recorder never wrote, and refuses forever.
+    stem = re.sub(r"[^A-Za-z0-9]", "_", f"{hit}-{gnew}")
+    rec = (Path.home() / ".claude" / "harness" / slug / "reviews" / (stem + ".json"))
+    if rec.exists():
+        sys.exit(0)
+    refuse(f"integrating '{hit}' into '{gnode}' without a recorded review — refusing.",
+           ["A member cannot check its own work, so the lead reads it (T4):",
+            f"    harness review {hit} --record",
+            "which records the read against this exact commit. A new commit on",
+            "the child invalidates it automatically.",
+            "",
+            "YOUR WORKING TREE HAS ALREADY BEEN UPDATED. git checks out the",
+            "fast-forward before the ref update this hook aborts, and there is",
+            "no earlier hook on that path. The branch is unmoved and safe; the",
+            "files are not. Recover with:",
+            "    git reset --hard HEAD"])
+    sys.exit(1)
+
 branch = os.environ.get("HARNESS_BRANCH") or git("rev-parse", "--abbrev-ref", "HEAD")[1]
 node = next((n for n, s in tree["nodes"].items() if s.get("branch") == branch), None)
 if node is None:

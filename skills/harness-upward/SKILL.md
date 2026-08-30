@@ -26,23 +26,32 @@ index and requires the guard to reject it, then requires a document that *arrive
 from the document node to pass. Non-zero exit means this worktree is not guarded —
 stop, and say which arm failed. Never work around it.
 
-**`T11` approach review** — before the first commit, state in a few lines what you
-will change, which seams you touch, and what you will deliberately not touch.
-Send it to your lead and wait. If it needs a page, the task is too big.
+**`T11` comprehension check** — before the first commit, restate the plan you were
+given in your own words: what you will change, which seams you touch, what you
+will deliberately not touch. One turn. You are not proposing an approach — your
+lead decided that at `T1` — you are proving you read it, so a misreading surfaces
+now rather than in the diff. If the restatement needs a page, the task is too big.
 
 **Work.** Stay inside your assigned scope. Seams between children belong to your
 lead (`I9`) — a changed signature another child depends on is not yours.
 
-**`T12` question** — ask your lead anything you cannot answer from your scope,
-intent and seams. That filter is the point; do not ask what you can derive.
+**`T12` question** — ask only about a **gap the plan could not have covered**,
+something your lead did not know when it wrote the plan. Do not ask for
+confirmation of what the plan already says: that is information arriving in
+pieces, which is the exact cost the plan exists to avoid. But do ask when the
+plan genuinely does not reach — roughly half of specifications contain an
+ambiguity their own author did not see, and work done on a guess is wrong far
+more often than it is right.
 
 **`T2` catch-up 2** — immediately before presenting. This is where a conflict
 surfaces, while your own work is still warm. It is also what makes your lead's
 merge a fast-forward.
 
-**`T4` present** — your lead runs `git merge --ff-only`. If you skipped catch-up 2
-it fails with `fatal: Not possible to fast-forward, aborting.` Never push: a
-checked-out branch rejects pushes outright.
+**`T4` present** — your lead reads your diff and records the read, then runs
+`git merge --ff-only`. The merge is **refused** without that record: you cannot
+check your own work, so your lead does. If you skipped catch-up 2 it also fails,
+with `fatal: Not possible to fast-forward, aborting.` Never push: a checked-out
+branch rejects pushes outright.
 
 **`T10` release** — `harness release`, then `harness spend <task-id>` for the
 measured actual against the estimated band (`I10`). That number is a subtraction

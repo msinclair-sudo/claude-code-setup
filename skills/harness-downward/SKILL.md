@@ -122,16 +122,38 @@ Do not force a mid-task recycle if you want the number: a recycled session start
 a new transcript and the mark no longer subtracts (`R13` against `I10`). Recycle
 at the end of commits, which is where it belongs anyway.
 
-## Read the diff before you integrate
+## Issue a plan, not a task
+
+Everything you know goes down at once (`T1`): scope, intent, the approach *you*
+have decided, the check set, the seams you are holding, and what done looks like.
+The same information delivered in pieces instead of up front costs a measured 39%
+across 15 models, and the penalty appears at **two** pieces — so a single
+follow-up detail is already the failure. Planning is your work. A lead that issues
+a stub and answers questions afterwards has chosen the 39%.
+
+Your child will restate the plan back to you once (`T11`). Read it and correct
+only a misreading; there is nothing to approve. It exists because models are
+unreliable at noticing they need to ask — one model in a published benchmark
+never asked at all — so a forced restatement is the cheapest detector for a
+misunderstanding that would otherwise stay silent.
+
+## Read the diff before you integrate — this is now a gate
 
 ```bash
+harness review <node> --record   # reads it AND records the read
 harness review --children        # every child: commits, diffstat, seams
 harness review <node> --diff     # plus the full patch
 ```
 
-Nothing else in the tree reads a member's code — `T4` is a mechanical
-fast-forward, `T11` reviewed the approach rather than the diff, and the checks
-test behaviour rather than quality. This is that missing read, and it is yours.
+**`git merge --ff-only` will be refused without a recorded review.** A member
+cannot verify its own work: measured, a model revisiting its own output without
+an external check gets worse in every configuration tested, and improves only
+when an oracle is present. You are the oracle.
+
+The record is keyed to the child's exact commit, so a new commit invalidates it
+automatically. If you meet the refusal, note that git checks out the fast-forward
+before the ref update it aborts: the branch is unmoved and safe, the working tree
+is not, and `git reset --hard HEAD` restores it.
 
 Attend to two lines in particular. **`SEAM with <sibling>`** means two of your
 children changed the same file: that is yours to judge under `I9`, neither of
@@ -161,12 +183,14 @@ harness recycle <node> --escalate --dry-run   # shows the level it would move to
 harness recycle <node> --escalate             # one level above that node's own setting
 ```
 
-Anthropic's cheapest measured configuration is not a lower effort setting but a
-retried one: failures re-run at a higher level solved more for less than running
-everything high. The manifest's check set (`I5`) is the failure signal that makes
-that legal here. Use it for the saving, not the lift, and expect roughly double
-the wall clock on the retry. If it fails a second time, that is a finding, not a
-budget problem — read it.
+**This is available, not recommended by default.** The figures behind the
+retry-cheap-then-escalate pattern are an unreproduced vendor claim, and a
+published study undercut its own retry method: a longer *first* attempt beat
+selective recovery on accuracy and total tokens together, by 28%. Prefer raising
+a node's starting effort in `tree.json` over retrying it higher. Reach for
+`--escalate` when you want the failure and the retry both on the record, not as
+the routine recovery. If it fails a second time, that is a finding, not a budget
+problem — read it.
 
 The one it cannot judge is whether you owe that child an answer. A member idling
 on an unanswered `T12` question looks exactly like a member idling with nothing

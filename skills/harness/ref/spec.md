@@ -39,7 +39,9 @@ Every node is checked out in exactly one worktree held by exactly one session.
 ### T1 — Task assignment
 
 **Direction** downward, lead to member.
-**Rule** A task record carries an id, a lane, a path scope, an intent, an acceptance check set, the seams the lead is holding for this task, and an estimated cost band — see [[#I9 — The lead owns the seams]]. No scope, no task. No intent, no task — see [[#T7 — Conflict escalation]].
+**Rule** A task record is a **plan**, complete at the moment it is issued. It carries an id, a lane, a path scope, an intent, the approach the lead has decided, an acceptance check set, the seams the lead is holding for this task, the definition of done, and an estimated cost band — see [[#I9 — The lead owns the seams]]. No scope, no task. No intent, no task — see [[#T7 — Conflict escalation]].
+**Everything the lead knows goes down at once.** Measured: the same information delivered in pieces instead of up front costs 39% of performance across 15 models and roughly 200,000 conversations, and concatenating the pieces back into one instruction recovers 95.1% — so the loss is caused by incremental arrival, not by anything missing. Degradation appears at **two** pieces, which makes a single follow-up detail already the failure. Restating everything on later turns recovers only 15 to 20%. This is the largest measured lever in the design and no model or effort setting recovers it.
+**The lead does the thinking.** Planning is the lead's work, not a negotiation held afterwards. A lead that issues a stub and answers questions has chosen the 39%.
 **Enforcement** The scope is checked against the global registry ([[#I3 — Scopes are globally disjoint]]) before the task is issued. Overlap is refused at issue time.
 **Fails when** Intent is recorded as a restatement of the scope. `src/parse/**` is a scope; *widen the parser signature for encoding support* is an intent.
 
@@ -80,7 +82,13 @@ its construction warns you about.
 **Enforcement** `git merge --ff-only <child>`. A contributor that has not completed T2 is refused with `fatal: Not possible to fast-forward, aborting.`
 **Fails when** Treated as a push. Pushing to a checked-out branch is rejected: `! [remote rejected] … (branch is currently checked out)`.
 
-**Read it first.** `harness review <node>` / `--children` builds what a pull
+**A review is required, and it is enforced.** `harness review <node> --record` reads the diff and records the read against the child's exact commit; `reference-transaction` refuses the parent's fast-forward without that record. A new commit on the child invalidates it automatically, so there is nothing to expire.
+
+Why enforced rather than expected: a member cannot verify its own work. Measured, a model revisiting its own output without an external check gets **worse** in every configuration tested, one case falling from 75.8 to 38.1, while the same procedure improves results when an oracle is available. The lead is that oracle. This reverses an earlier decision in this note that left the read optional.
+
+One consequence to know before meeting it: git checks out the fast-forward *before* the ref update the hook aborts, and no earlier hook fires on that path. A refused integration leaves the branch unmoved and correct, and the working tree already updated to the child's content. `git reset --hard HEAD` restores it, and the refusal says so.
+
+**What it shows.** `harness review <node>` / `--children` builds what a pull
 request would show, from local git: the commits ahead with their `Task:` trailers
 (and a warning for any that lack one), the diffstat, whether the child is caught
 up so the fast-forward will actually succeed, any document touched by a code node
@@ -214,18 +222,19 @@ whole layer with `harness stop --children`, and no session may stop itself.
 depends on closed rows staying readable. Or the session is left running after its
 node is released: a lane nobody can shut down is not a lane, it is a leak.
 
-### T11 — Approach review
+### T11 — Comprehension check
 
-**Direction** upward as a proposal, downward as an approval or a redirect. One round trip.
+**Direction** upward, one turn. Not a negotiation.
 **When** After the first T2, before the first commit.
-**Rule** The member states, in a few lines, what it intends to change, which seams it touches, and what it will deliberately not touch. The lead approves or redirects.
-**Why here** It is the cheapest moment to change direction, and it gives the lead a working model of the task while that model is still small enough to hold. The lead's understanding of its subtree is built here, not reconstructed later under [[#T7 — Conflict escalation]].
-**Fails when** It becomes a plan document. If the approach needs a page, the task is too large — see [[#I8 — Tasks are short]].
+**Rule** The member restates the plan in its own words: what it will change, which seams it touches, what it will deliberately not touch. The lead reads it and corrects only a misreading. There is nothing to approve, because the approach was decided at [[#T1 — Task assignment]].
+**Why it survives at all.** An earlier draft made this a proposal the lead approved, which is a round trip and therefore the 39% penalty in miniature. It is kept, inverted, because models are unreliable at noticing they need to ask: on a benchmark built by stripping detail from real issues, interaction recovered up to 74% of lost performance, but detection swung wildly with prompt phrasing and one model never asked at all, a 100% false-negative rate. A forced restatement is the cheapest available detector for a misunderstanding the member would not otherwise raise.
+**Fails when** It becomes a proposal again, or a plan document. If the restatement needs a page, the task is too large — see [[#I8 — Tasks are short]].
 
 ### T12 — Question
 
 **Direction** upward during work, answered downward.
-**Rule** A member may ask its lead anything it cannot answer from its scope, intent and seams. That filter is the whole design: without it the channel is unbounded and members will over-ask.
+**Rule** A member may ask its lead about a **gap the plan could not have covered** — something the lead did not know at [[#T1 — Task assignment]]. It may not ask for confirmation of what the plan already says; that is the incremental-arrival penalty arriving through a side door.
+**Why it is not removed.** Workers given ambiguous instructions with no channel to ask were correct about 39% of the time, so roughly 61% of submitted work was wrong. And specifications are incomplete more often than their authors believe: 46.7% of flagged ambiguities in freshly written specifications were confirmed by the authors themselves, about 2.6 per specification, and 38.3% of a curated software benchmark was judged underspecified. A complete plan is the goal; a channel for the gaps is the admission that the goal is missed about half the time.
 **Enforcement** The lead answers, or escalates under [[#T5 — Document request (upward)]] and [[#T9 — Ruling]].
 **Fails when** The lead answers from guesswork. *I don't know, escalating* is a correct answer, on the same principle as an unrecorded intent under T7.
 
@@ -707,17 +716,25 @@ rename every node and still get them:
 
 | role | model | effort | why |
 | --- | --- | --- | --- |
-| root (rank 0) | `opus[1m]` | `high` | applies every document change, writes rulings, holds the widest view |
-| lead (parent *and* children) | `opus[1m]` | `medium` | holds every child's report and both sides of a conflict it did not create |
+| root (rank 0) | `opus` | `high` | applies every document change, writes rulings, holds the widest view |
+| lead (parent *and* children) | `opus` | `medium` | holds every child's report and both sides of a conflict it did not create |
 | member (leaf) | `opus` | `medium` | one task, one worktree, then recycled — but coding is the one steep effort curve |
 
-**Context follows the view, not the rank.** A lead accumulates: every child's
-report under [[#I5 — Checks run to completion]], both sides of a conflict it did
-not create ([[#T7 — Conflict escalation]]), the seams between siblings
+**No node uses a 1M window, and an earlier version of this note was wrong to.**
+The argument was that context follows the view: a lead accumulates every child's
+report ([[#I5 — Checks run to completion]]), both sides of a conflict it did not
+create ([[#T7 — Conflict escalation]]), the seams between siblings
 ([[#I9 — The lead owns the seams]]), and every document climbing past it. That
-accumulation is the entire reason a document travels rank by rank instead of
-jumping to rank 0 — each hop is a review by a wider context. A lead is therefore
-exactly where a wide window earns its cost.
+accumulation is real and it is why documents travel rank by rank. It is not an
+argument for a larger window.
+
+The direct measurement is a null. Same model family at two window sizes, on
+inputs that fit both, performed **"nearly identical"** — tested across three
+pairs. A larger maximum *permits* higher occupancy; it does not improve
+behaviour at a given occupancy. And occupancy itself is what costs: holding
+retrieval perfect and masking irrelevant tokens still degraded performance 13.9
+to 85% as input grew. The wide window buys headroom, and headroom is the thing
+that hurts.
 
 **A member is the opposite by construction.** One short task
 ([[#I8 — Tasks are short]]) in one worktree, ending at a commit. It is not given
@@ -735,11 +752,20 @@ first commit ([[#T11 — Approach review]]), does not own the seams
 still sound; the conclusion was not, because effort does not track judgement. It
 tracks *workload shape*, and Anthropic has measured those curves:
 
-| workload | measured |
+| workload | claimed |
 | --- | --- |
-| research / knowledge work | nearly flat — `low` gives up 1–3 points for a third to a half off; `medium` matches the default at 70–85% of its cost |
-| long-horizon **coding** | **steep** — Opus 5 gives up ~2 points at `medium` for half the cost, but **~8 points at `low`** for a quarter |
+| research / knowledge work | nearly flat: `low` gives up 1–3 points for a third to a half off; `medium` matches the default at 70–85% of its cost |
+| long-horizon **coding** | steep: ~2 points at `medium` for half the cost, but ~8 points at `low` for a quarter |
 | reasoning-ceiling work | every step buys ~2.4 rubric points; no free cut |
+
+> [!warning] These figures are an unreproduced vendor claim, not a measurement
+> They come from a guide bundled with the tooling, which is not publicly
+> published and has never been independently reproduced. A literature search
+> found **no** published accuracy-per-effort-level or tokens-per-level figures
+> from any vendor or independent party. They may be correct; their status is a
+> claim. Treat the direction as informative and the numbers as unverified, and
+> replace them from closed ledger rows under
+> [[#I10 — Cost is estimated, then measured]].
 
 A member is a long-horizon coder. It sits on the one curve where `low` is
 expensive, and it is the one role whose output nothing reviews — `T4` integrates
@@ -788,6 +814,31 @@ It is a teardown and relaunch, not a clear. A background session cannot clear
 itself, and a session that stopped itself could not start its replacement — so
 the parent does both. **Never `claude rm`:** that deletes the session *and its
 worktree*, and on a node the worktree is the node.
+
+**Recycling is the best-evidenced thing in this design.** A persistent worker
+accumulates its own errors: measured, per-step accuracy falls as steps grow, and
+the cause is not only long context but self-conditioning on its own earlier
+mistakes, which scale does not fix. What does fix it is explicitly removing prior
+history. Separately, a worker revisiting its own output without an external check
+degrades in every configuration tested, and improves only when an oracle is
+present, which is the same finding that makes the lead's read at
+[[#T4 — Integration (fast-forward up)]] a gate rather than a courtesy.
+
+**Recycle rather than compact.** The alternative to ending a worker is summarising
+it in place, and that is worse on the evidence available. Of 2,495 fixed-interval
+summarisation calls in one measured run, 1,009 flipped a correct answer to wrong:
+40.4% of transitions degraded. No compaction threshold is empirically grounded —
+no study sweeps a trigger against quality with enough resolution to locate one,
+the widely repeated "70 to 80% of the window" traces to blog posts, and deployed
+defaults span 50% to 99% while all claiming the same benefit. A content-conditioned
+rule beat a fixed trigger in 11 of 12 settings at 30 to 70% lower cost, and the
+gain came from the rule rather than from compacting at all.
+
+So this note sets **no fixed compaction threshold**. Where compaction happens
+anyway, the plan issued at [[#T1 — Task assignment]] is pinned: summarisation is
+measurably biased against the earliest material in its input, and in a
+plan-then-delegate design the earliest thing in a worker's context is the plan it
+is executing.
 
 Nothing is lost, because a member holds nothing that is not written down. Its
 position comes from git ([[#R1 — Position is derived, never declared]]), its

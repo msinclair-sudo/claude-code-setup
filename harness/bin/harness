@@ -275,8 +275,8 @@ EFFORTS = ("low", "medium", "high", "xhigh", "max")
 # Review and diagnosis behave like knowledge work, where the curve is nearly
 # flat and `medium` matches the default at 70-85% of its cost.
 ROLE_DEFAULTS = {
-    "root":     ("opus[1m]", "high"),    # rank 0: applies documents, writes rulings
-    "lead":     ("opus[1m]", "medium"),  # review/diagnosis: flat curve, medium matches default
+    "root":     ("opus", "high"),        # rank 0: applies documents, writes rulings
+    "lead":     ("opus", "medium"),      # no 1M: a wider window is a measured null at equal occupancy
     "member":   ("opus",     "medium"),  # coding: the one steep curve; `low` costs ~8 points
 }
 
@@ -1163,6 +1163,24 @@ def cmd_review(a):
         if a.diff:
             rc, d, _ = git("diff", f"{base}..{cb}", cwd=ctx.repo)
             print("\n" + d)
+
+        if a.record:
+            rc, tip, _ = git("rev-parse", cb, cwd=ctx.repo)
+            tip = tip.strip()
+            f = ctx.state_file("reviews", f"{n}-{tip}", ".json")
+            f.parent.mkdir(parents=True, exist_ok=True)
+            me = ""
+            try:
+                row = self_row(live_rows(agents_json())) or {}
+                me = row.get("name") or ""
+            except Exception:
+                pass
+            f.write_text(json.dumps({"node": n, "branch": cb, "sha": tip,
+                                     "reviewed_by": me,
+                                     "session": os.environ.get("CLAUDE_CODE_SESSION_ID", ""),
+                                     "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}, indent=2) + "\n")
+            print(f"   recorded review of {n} at {tip[:8]} — integration unblocked")
+            print(f"   any new commit on {cb} invalidates this, by design")
     print()
 
 
@@ -1391,6 +1409,8 @@ def main():
     rv.add_argument("node", nargs="*", help="nodes to review (default: this one)")
     rv.add_argument("--children", action="store_true", help="every child of this node")
     rv.add_argument("--diff", action="store_true", help="also print the full diff")
+    rv.add_argument("--record", action="store_true",
+                    help="record that you read it, which is what unblocks T4 integration")
     rv.add_argument("--since", metavar="REF",
                     help="review against REF instead of the parent (read work already merged)")
     rv.add_argument("--last", type=int, default=10, metavar="N",

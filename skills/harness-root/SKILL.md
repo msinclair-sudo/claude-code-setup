@@ -181,6 +181,10 @@ Every tree on the machine as one indented list: busy, idle, or no session; the
 open task or `unassigned`; and a clickable attention panel that expands to the
 exact `grant` and `recycle` lines.
 
+**It serves the page it loaded at startup.** After the viewer is updated, a
+browser reload changes nothing — stop it and start it again. It says so itself:
+a red banner appears when the file on disk is newer than the running process.
+
 It is a **viewer**. It never claims, writes or decides, so killing it changes
 nothing — which is what keeps `R4` true. It is also a prototype with no
 authentication, so it binds loopback only; it shows worktree paths, session

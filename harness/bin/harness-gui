@@ -50,6 +50,20 @@ CLI = load_cli()
 # means the viewer is the thing that fails to start.
 DEFAULT_PORT = 8791
 
+# A long-running server hands out the page it loaded at startup, so editing the
+# source and reloading the browser changes nothing at all -- and there is no
+# symptom, which is worse. Both files are stat'd on every state read so the page
+# can say "the server is older than the code" instead of quietly lying.
+STARTED = time.time()
+SOURCES = [Path(__file__).resolve(), Path(__file__).resolve().with_name("harness")]
+
+
+def stale_server():
+    try:
+        return max(p.stat().st_mtime for p in SOURCES if p.exists()) > STARTED
+    except Exception:
+        return False
+
 
 def _rank(tree, name):
     r, seen = 0, set()
@@ -160,7 +174,8 @@ def read_state():
         projects.append({"project": Path(repo).name, "repo": repo, "nodes": nodes,
                          "blocks": blocks, "indexed_at": idx.get("generated")})
     return {"generated": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-            "roster_error": roster_error,
+            "roster_error": roster_error, "stale_server": stale_server(),
+            "started": time.strftime("%H:%M:%S", time.localtime(STARTED)),
             "projects": projects, "needs": needs}
 
 
@@ -334,6 +349,12 @@ async function tick() {
   document.getElementById('ct').innerHTML = d.needs.length
     ? '<span style="color:var(--warn)">' + d.needs.length + ' need you</span>' : '';
   let h = '';
+  if (d.stale_server) {
+    h += '<div class="banner"><b>This server is older than the code on disk</b> ' +
+         '&mdash; it started at ' + esc(d.started) + ' and the page you are looking ' +
+         'at was loaded then. Reloading the browser will not change it.<br>' +
+         'Stop it (ctrl-c) and run <code>harness gui</code> again.</div>';
+  }
   if (d.roster_error) {
     h += '<div class="banner"><b>Occupancy unknown</b> &mdash; the session roster ' +
          'could not be read, so every node below is shown as unknown rather than ' +
@@ -357,6 +378,9 @@ class H(BaseHTTPRequestHandler):
         b = body.encode()
         self.send_response(200)
         self.send_header("Content-Type", ctype)
+        # The page is a prototype that changes often; a cached copy of it is a
+        # bug report waiting to happen.
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(b)))
         self.end_headers()
         self.wfile.write(b)

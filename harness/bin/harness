@@ -2087,7 +2087,19 @@ def cmd_unenrol(a):
 
 
 def main():
-    p = argparse.ArgumentParser(prog="harness", description=__doc__.splitlines()[0])
+    # `gui` is handed off before argparse sees anything. The viewer has its own
+    # flags and argparse.REMAINDER does not reliably pass a leading `--flag`
+    # through a subparser, so the choice is a wrapper that silently drops
+    # arguments or one that never inspects them. This never inspects them.
+    if len(sys.argv) > 1 and sys.argv[1] == "gui":
+        exe = Path(__file__).resolve().with_name("harness-gui")
+        if not exe.exists():
+            die(CONTRACT, f"{exe} is missing — re-run install.sh")
+        os.execv(sys.executable, [sys.executable, str(exe)] + sys.argv[2:])
+    p = argparse.ArgumentParser(
+        prog="harness", description=__doc__.splitlines()[0],
+        epilog="gui  a read-only viewer of every tree on this machine; "
+               "its own flags are passed straight through (harness gui --help)")
     sub = p.add_subparsers(dest="cmd", required=True)
     def add(name, fn, roster=False, force=False):
         s = sub.add_parser(name); s.set_defaults(fn=fn)

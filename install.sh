@@ -314,12 +314,15 @@ done
 if [[ -d "$SCRIPT_DIR/harness" ]]; then
     echo "Installing harness runtime..."
     mkdir -p "$HOME/.claude/harness/bin"
-    cp "$SCRIPT_DIR/harness/bin/harness" "$HOME/.claude/harness/bin/harness"
-    chmod +x "$HOME/.claude/harness/bin/harness"
+    # Every executable in bin/, not just the CLI: harness-gui is a second one,
+    # and naming them individually is how the next one gets forgotten.
+    cp "$SCRIPT_DIR/harness/bin/"* "$HOME/.claude/harness/bin/"
+    chmod +x "$HOME/.claude/harness/bin/"*
     rm -rf "$HOME/.claude/harness/templates"
     cp -r "$SCRIPT_DIR/harness/templates" "$HOME/.claude/harness/templates"
     chmod +x "$HOME/.claude/harness/templates/hooks/"*
     echo "  Installed harness CLI to $HOME/.claude/harness/bin/harness"
+    echo "  Installed harness viewer  (harness gui)"
     echo "  Installed guard templates to $HOME/.claude/harness/templates/"
 fi
 

@@ -163,3 +163,20 @@ If they have no notifier, say so once and move on — the record is written eith
 way, and the badge shows it. The hook is theirs to write, not yours to install:
 it is run with `HARNESS_SUMMARY`, `HARNESS_COUNT` and `HARNESS_JSON` in the
 environment, and what it does with them depends on a machine you are not on.
+
+## Seeing all of it at once
+
+```bash
+harness gui                    # 127.0.0.1:8787, opens a browser
+harness gui --port 9000 --no-open
+harness gui --once             # the JSON it would serve
+```
+
+Every tree on the machine as one indented list: busy, idle, or no session; the
+open task or `unassigned`; and a clickable attention panel that expands to the
+exact `grant` and `recycle` lines.
+
+It is a **viewer**. It never claims, writes or decides, so killing it changes
+nothing — which is what keeps `R4` true. It is also a prototype with no
+authentication, so it binds loopback only; it shows worktree paths, session
+names and every open block, and none of that should leave the machine.

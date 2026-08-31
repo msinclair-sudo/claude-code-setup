@@ -1,0 +1,281 @@
+#!/usr/bin/env python3
+"""harness-gui — a read-only window onto every harness tree on this machine.
+
+A VIEWER, not a participant. It never claims, never writes, never decides, and
+holds no authority over anything it shows, so [[R4]]'s "no arbiter process" is
+untouched: this can be closed at any moment and nothing in the harness notices.
+Everything it renders is already on disk; the only thing it adds is that a human
+can see all of it at once without running a command per project.
+
+Served on 127.0.0.1 only. Stdlib only, one file, no build step.
+
+    harness-gui               # serve and open a browser
+    harness-gui --port 9000 --no-open
+    harness-gui --once        # print the JSON it would serve, and exit
+"""
+import argparse, importlib.util, json, os, socket, sys, time, webbrowser
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+
+
+def load_cli():
+    """Reuse the CLI's readers rather than restating them.
+
+    `live_rows` and `scan_needs` are the definitions of "actually running" and
+    "open block". A viewer with its own second copy of either would drift, and
+    would drift silently, since nothing compares them.
+    """
+    p = Path(__file__).resolve().with_name("harness")
+    spec = importlib.util.spec_from_loader("harness_cli", SourceFileLoader("harness_cli", str(p)))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+CLI = load_cli()
+
+
+def _rank(tree, name):
+    r, seen = 0, set()
+    while True:
+        p = tree.get(name, {}).get("parent")
+        if p is None or p in seen or p not in tree:
+            return r
+        seen.add(name); name = p; r += 1
+
+
+def read_state():
+    try:
+        rows = CLI.live_rows(CLI.agents_json())
+    except Exception:
+        rows = []
+    by_cwd = {r.get("cwd"): r for r in rows}
+    needs = CLI.scan_needs()
+    projects = []
+    for pdir in sorted(p for p in CLI.HOME_STATE.glob("*") if p.is_dir()):
+        b = pdir / "binding.json"
+        if not b.exists():
+            continue
+        try:
+            repo = json.loads(b.read_text()).get("repo", "")
+        except Exception:
+            continue
+        # tree.json is the truth; index.json only supplies worktree paths, and a
+        # node the index has not caught up with is shown rather than hidden.
+        tp = Path(repo) / ".harness" / "tree.json"
+        if not tp.exists():
+            continue
+        try:
+            tree = json.loads(tp.read_text()).get("nodes", {})
+        except Exception:
+            continue
+        idx = {}
+        ip = pdir / "index.json"
+        if ip.exists():
+            try:
+                idx = json.loads(ip.read_text())
+            except Exception:
+                idx = {}
+        wt_of = {n: s.get("worktree") for n, s in idx.get("nodes", {}).items()}
+        locks = {}
+        ld = pdir / "locks"
+        for lf in (sorted(ld.glob("*.lock")) if ld.is_dir() else []):
+            try:
+                h = json.loads(lf.read_text()); locks[h.get("node")] = h
+            except Exception:
+                pass
+        tasks = {}
+        md = pdir / "marks"
+        for mf in (sorted(md.glob("*.json")) if md.is_dir() else []):
+            try:
+                r = json.loads(mf.read_text())
+            except Exception:
+                continue
+            if not r.get("_closed_at"):
+                tasks.setdefault(r.get("_node"), []).append(mf.stem)
+        blocks = [x for x in needs if x.get("_repo") == repo]
+        nodes = []
+        for name, spec in tree.items():
+            wt = wt_of.get(name)
+            se = by_cwd.get(wt) if wt else None
+            nb = [x for x in blocks if x.get("node") == name]
+            nodes.append({
+                "name": name, "branch": spec.get("branch"), "parent": spec.get("parent"),
+                "kind": spec.get("kind"), "rank": _rank(tree, name), "worktree": wt,
+                "indexed": name in idx.get("nodes", {}),
+                "session": ({"name": se.get("name"), "status": se.get("status"),
+                             "id": (se.get("sessionId") or "")[:8]} if se else None),
+                "claimed": name in locks,
+                "tasks": sorted(tasks.get(name, [])),
+                "blocks": nb,
+            })
+        nodes.sort(key=lambda n: (n["rank"], n["name"]))
+        projects.append({"project": Path(repo).name, "repo": repo, "nodes": nodes,
+                         "blocks": blocks, "indexed_at": idx.get("generated")})
+    return {"generated": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "projects": projects, "needs": needs}
+
+
+PAGE = """<!doctype html><html><head><meta charset="utf-8">
+<title>harness</title><style>
+:root{--bg:#12150f;--panel:#1a1e16;--line:#2b3123;--ink:#e8ece0;--dim:#98a288;
+--busy:#8fbf5f;--idle:#6aa3c8;--none:#5a6350;--warn:#e0894a;--warnbg:#3a2313}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 ui-monospace,
+SFMono-Regular,Menlo,Consolas,monospace}
+header{display:flex;align-items:baseline;gap:1rem;padding:14px 20px;
+border-bottom:1px solid var(--line)}
+h1{font-size:15px;margin:0;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+#age{color:var(--none);font-size:12px;margin-left:auto}
+main{padding:16px 20px 60px;max-width:1100px}
+.proj{margin-bottom:26px}
+.proj>h2{font-size:14px;margin:0 0 2px;color:var(--ink)}
+.proj>.repo{color:var(--none);font-size:12px;margin-bottom:10px;word-break:break-all}
+.node{display:flex;align-items:center;gap:10px;padding:5px 10px;border-radius:7px}
+.node:hover{background:#ffffff08}
+.dot{width:9px;height:9px;border-radius:50%;flex:none;background:var(--none)}
+.busy .dot{background:var(--busy);box-shadow:0 0 0 3px #8fbf5f28}
+.idle .dot{background:var(--idle)}
+.nm{min-width:150px}
+.br{color:var(--none);min-width:130px;font-size:12px}
+.st{color:var(--dim);font-size:12px}
+.un{color:var(--none);font-style:italic}
+.bell{margin-left:auto;background:var(--warnbg);color:var(--warn);border:1px solid #5a3a1e;
+border-radius:20px;padding:1px 11px;font-size:12px;cursor:pointer}
+.bell:hover{background:#4a2d17}
+.needs{background:var(--warnbg);border:1px solid #5a3a1e;border-radius:10px;
+padding:12px 14px;margin:0 0 18px}
+.needs h3{margin:0 0 8px;font-size:13px;color:var(--warn);text-transform:uppercase;
+letter-spacing:.08em}
+.need{padding:7px 0;border-top:1px solid #4a2d17;cursor:pointer}
+.need:first-of-type{border-top:0}
+.need .hd{display:flex;gap:10px}
+.need .who{color:var(--warn);min-width:220px}
+.need .wh{color:var(--dim)}
+.detail{display:none;margin:8px 0 2px;padding:10px;background:#00000030;border-radius:7px}
+.detail.on{display:block}
+.detail dt{color:var(--none);font-size:11px;text-transform:uppercase;letter-spacing:.07em}
+.detail dd{margin:2px 0 9px}
+pre{margin:0;white-space:pre-wrap;word-break:break-all;color:var(--busy);font-size:12px}
+button.cp{margin-top:5px;background:#00000040;color:var(--dim);border:1px solid var(--line);
+border-radius:6px;padding:3px 9px;font:inherit;font-size:11px;cursor:pointer}
+.empty{color:var(--none);padding:30px 0}
+</style></head><body>
+<header><h1>harness</h1><span id="ct"></span><span id="age"></span></header>
+<main id="root"><div class="empty">loading...</div></main>
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function needBlock(n, i) {
+  const g = "(cd " + n._repo + " && harness grant " + n.node + " '" + n.need +
+            "' --reason '" + (n.why || 'see the block record').replace(/'/g, '') + "')";
+  const r = "(cd " + n._repo + " && harness recycle " + n.node + ")";
+  return '<div class="need" onclick="this.querySelector(\\'.detail\\').classList.toggle(\\'on\\')">' +
+    '<div class="hd"><span class="who">' + esc(n._project) + ' / ' + esc(n.node) + '</span>' +
+    '<span class="wh">' + esc(n.why || n.need) + '</span></div>' +
+    '<div class="detail"><dl>' +
+      '<dt>needs</dt><dd>' + esc(n.need) + '</dd>' +
+      '<dt>for</dt><dd>' + esc(n.why || '-') + '</dd>' +
+      (n.still_moving ? '<dt>still moving</dt><dd>' + esc(n.still_moving) + '</dd>' : '') +
+      '<dt>raised</dt><dd>' + esc((n.raised_at || '').slice(0, 19).replace('T', ' ')) + '</dd>' +
+      '<dt>grant, then recycle</dt><dd><pre id="c' + i + '">' + esc(g) + '\\n' + esc(r) + '</pre>' +
+      '<button class="cp" onclick="event.stopPropagation();' +
+      'navigator.clipboard.writeText(document.getElementById(\\'c' + i + '\\').textContent);' +
+      'this.textContent=\\'copied\\'">copy</button></dd>' +
+    '</dl></div></div>';
+}
+
+function nodeRow(n) {
+  const cls = n.session ? (n.session.status === 'busy' ? 'busy' : 'idle') : '';
+  const st = n.tasks.length ? n.tasks.join(', ')
+           : (n.session ? '<span class="un">unassigned</span>' : '');
+  const who = n.session ? esc(n.session.name) : (n.claimed ? 'claimed, no session' : '-');
+  return '<div class="node ' + cls + '" style="margin-left:' + (n.rank * 22) + 'px">' +
+    '<span class="dot"></span><span class="nm">' + esc(n.name) + '</span>' +
+    '<span class="br">' + esc(n.branch || '') + '</span>' +
+    '<span class="st">' + who + '</span><span class="st">' + st + '</span>' +
+    (n.blocks.length ? '<span class="bell" onclick="document.querySelector(\\'.needs\\')' +
+      '.scrollIntoView({behavior:\\'smooth\\'})">' + n.blocks.length + ' needs you</span>' : '') +
+    '</div>';
+}
+
+async function tick() {
+  let d;
+  try { d = await (await fetch('/api/state')).json(); }
+  catch (e) { document.getElementById('age').textContent = 'disconnected'; return; }
+  document.getElementById('age').textContent = new Date().toLocaleTimeString();
+  document.getElementById('ct').innerHTML = d.needs.length
+    ? '<span style="color:var(--warn)">' + d.needs.length + ' need you</span>' : '';
+  let h = '';
+  if (d.needs.length) {
+    h += '<div class="needs"><h3>attention</h3>' +
+         d.needs.map(needBlock).join('') + '</div>';
+  }
+  h += d.projects.map(p =>
+    '<div class="proj"><h2>' + esc(p.project) + '</h2>' +
+    '<div class="repo">' + esc(p.repo) + '</div>' +
+    p.nodes.map(nodeRow).join('') + '</div>').join('');
+  if (!d.projects.length) h = '<div class="empty">no enrolled projects on this machine</div>';
+  document.getElementById('root').innerHTML = h;
+}
+tick(); setInterval(tick, 3000);
+</script></body></html>"""
+
+
+class H(BaseHTTPRequestHandler):
+    def _send(self, body, ctype):
+        b = body.encode()
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(b)))
+        self.end_headers()
+        self.wfile.write(b)
+
+    def do_GET(self):
+        if self.path.startswith("/api/state"):
+            try:
+                self._send(json.dumps(read_state()), "application/json")
+            except Exception as e:
+                self._send(json.dumps({"error": str(e), "projects": [], "needs": []}),
+                           "application/json")
+        elif self.path in ("/", "/index.html"):
+            self._send(PAGE, "text/html; charset=utf-8")
+        else:
+            self.send_error(404)
+
+    def log_message(self, *a):
+        pass          # a poll every 3 seconds would bury anything worth reading
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="harness-gui", description=__doc__.splitlines()[0])
+    ap.add_argument("--port", type=int, default=8787)
+    ap.add_argument("--no-open", action="store_true")
+    ap.add_argument("--once", action="store_true", help="print the JSON and exit")
+    a = ap.parse_args()
+    if a.once:
+        print(json.dumps(read_state(), indent=2)); return
+    try:
+        # 127.0.0.1, never 0.0.0.0: this exposes worktree paths, session names and
+        # every open block, and it is a prototype with no authentication at all.
+        srv = ThreadingHTTPServer(("127.0.0.1", a.port), H)
+    except OSError as e:
+        print(f"harness-gui: cannot bind 127.0.0.1:{a.port} — {e}", file=sys.stderr)
+        sys.exit(4)
+    url = f"http://127.0.0.1:{a.port}/"
+    print(f"harness-gui  {url}   (read-only; ctrl-c to stop)")
+    if not a.no_open:
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        print("\nstopped")
+
+
+if __name__ == "__main__":
+    main()

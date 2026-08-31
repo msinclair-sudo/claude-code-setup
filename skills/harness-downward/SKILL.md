@@ -252,6 +252,27 @@ down, so that request is a request to skip writing a document. If a lane learned
 something that outlives its commit, it belongs in the close record at `T10`, the
 commit message, or your report — before the lane ends.
 
+## You sign off your children's tasks
+
+```bash
+harness mark <task> --close       # sign it off; the task leaves that node
+```
+
+A child presents with `--done` and cannot close its own — same rule as `T4`,
+where it cannot check its own work either. `whoami` tells you at every start
+what is waiting on you, and `status` shows those tasks as `awaiting sign-off`.
+
+**Read the diff before you sign.** `harness review <node> --record` is the same
+act at the other end of the same task, and the merge refuses without it.
+
+An unsigned task is not free. It sits on the node, so the next session to hold
+that node inherits a list of tasks nobody said were finished and cannot tell
+which are live. Sign them off or say what is still wrong; leaving them is the
+one option that costs someone else.
+
+The cost was measured when the child presented, not when you sign. Closing it
+does not lose the number.
+
 ## A blocked child is unblocked by the operator, not by you
 
 `harness status` lists every open block. You cannot clear one, and running the

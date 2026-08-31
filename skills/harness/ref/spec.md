@@ -214,6 +214,18 @@ is inert by construction, not by convention.
 **Direction** terminal, member to lead.
 **Rule** Commit, integrate by [[#T4 — Integration (fast-forward up)]], close the
 ledger row, drop the worktree, and stop the session.
+**A task has three states, and the member owns only the first transition.** `--done` presents it; the **lead** closes it, on the same rule as the brief — the node above sets the task and the node above says it is finished. A member closing its own task is a member marking its own homework, which [[#T4 — Integration (fast-forward up)]] already refuses in the other direction.
+
+| | who | what it records |
+| --- | --- | --- |
+| open | the member, at `mark` | the starting position |
+| **presented** | the member, at `--done` | the **cost**, and that it believes the work finished |
+| **signed off** | the lead, at `--close` | that the work is accepted, and the task leaves the node |
+
+**The measurement is taken at presentation, not at sign-off, and that is why the split works.** A lead closing a member's task is by definition a different session, so a subtraction there would be across two transcripts and mean nothing ([[#I10 — Cost is estimated, then measured]]). Taking it when the member presents keeps the one number that was ever real.
+
+Presented work does **not** hold the node: `recycle --idle` sweeps it, because the member has finished and measured, and only the lead's sign-off is outstanding. Waiting for that would idle a session with nothing left to do. The lead is told at orientation — `whoami` prints what is waiting on it — and `status` shows the task as `awaiting sign-off` rather than merely open, because those are different facts about who is holding things up.
+
 **Enforcement** `harness mark <task> --close` writes the record: the closing sha, the closing session, and the delta if it is subtractable. `harness release` frees the node. `harness stop <node>` ends the session that held it: `claude stop` is a full teardown — the process dies, the session file is removed, and it leaves `claude agents --json`. A lead can reap its whole layer with `harness stop --children`, and no session may stop itself.
 **The close is the point, and it had no record until 2026-08-31.** "Released" was a claim in a message rather than a fact in a store, so nothing could tell a node still working from a node finished and still standing there. `harness status` now names the difference — an open task, or `unassigned` — and `harness recycle --idle` sweeps exactly the children that have none. Closing is always permitted even when the measurement is not: a task closed in a different session than it opened records `_delta: null` and says why, because refusing the close over an unmeasurable cost would leave the task open forever and destroy the one signal this exists to give.
 **Fails when** The row is deleted rather than closed — [[#T8 — Deep conflict]] depends on closed rows staying readable. Or the session is left running after its node is released: a lane nobody can shut down is not a lane, it is a leak. `release` drops the claim and **does not end the session**, so that leak has a shape — a live session standing in a worktree it no longer claims, constrained by no rule in the tree. `status` reports it as `OCCUPIED but unclaimed`.

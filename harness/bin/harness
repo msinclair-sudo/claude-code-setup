@@ -376,6 +376,15 @@ def _whoami(a):
     # start, resume and compact, so a line that is usually absent costs nothing
     # and a line that appears is worth the tokens. Unclaimed task records and
     # open blocks are rank 0's housekeeping, and nothing else tells it they exist.
+    try:
+        kids = set(ctx.children(node))
+        waiting = sorted(t for t, r in open_marks(ctx).items()
+                         if r.get("_presented_at") and r.get("_node") in kids)
+        if waiting:
+            print(f"sign off {len(waiting)} presented task(s) waiting on you: "
+                  f"{', '.join(waiting)}")
+    except Exception:
+        pass
     if ctx.rank(node) == 0:
         try:
             stale_m, unattr_m = orphan_marks(ctx)
@@ -511,7 +520,14 @@ def cmd_status(a):
         live = "live" if h["ref"] in peers else ("stale" if roster else "unknown")
         claimed.add(h["node"])
         open_here = tasks.get(h["node"], [])
-        work = ", ".join(sorted(open_here)) if open_here else "no task record"
+        pres = [x for x in open_here if tasks_rec.get(x, {}).get("_presented_at")]
+        run = [x for x in open_here if x not in pres]
+        bits = []
+        if run:
+            bits.append(", ".join(sorted(run)))
+        if pres:
+            bits.append(f"{', '.join(sorted(pres))} (awaiting sign-off)")
+        work = "   ".join(bits) if bits else "no task record"
         nc = sum(len(tasks_rec.get(x, {}).get("_comments") or []) for x in open_here)
         if nc:
             work += f"   ({nc} comment(s) — harness note <task>)"
@@ -1081,6 +1097,41 @@ def cmd_mark(a):
     f = ctx.state_file("marks", a.task, ".json")
     f.parent.mkdir(parents=True, exist_ok=True)
 
+    if a.done:
+        # The MEMBER presents, and the measurement is taken here rather than at
+        # sign-off. Its own transcript is the only place the subtraction is real,
+        # and the lead closing later is by definition a different session (I10).
+        if not f.exists():
+            die(REFUSED, f"no mark for '{a.task}' — nothing to present")
+        rec = json.loads(f.read_text())
+        if rec.get("_closed_at"):
+            die(REFUSED, f"'{a.task}' is already closed")
+        if rec.get("_node") and rec["_node"] != node:
+            die(REFUSED, f"'{a.task}' belongs to '{rec['_node']}', not '{node}'")
+        now = read_spend(sid)
+        rec["_presented_at"] = now["_at"]
+        rec["_presented_by"] = f"{node} (session {sid[:8]})"
+        rec["_presented_sha"] = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
+        if rec.get("_session") == sid:
+            rec["_delta"] = {k: now[k] - rec.get(k, 0) for k in RATES}
+            cost = f"~${usd(rec['_delta']):.2f}"
+        else:
+            rec["_delta"] = None
+            rec["_delta_unavailable"] = (f"opened in session {str(rec.get('_session'))[:8]}, "
+                                         f"presented in {sid[:8]} — not subtractable (I10)")
+            cost = "cost not measurable across a recycle"
+        if a.note:
+            rec.setdefault("_comments", []).append(
+                {"at": rec["_presented_at"], "by": rec["_presented_by"],
+                 "text": a.note})
+        f.write_text(json.dumps(rec, indent=2) + "\n")
+        parent = ctx.tree["nodes"].get(node, {}).get("parent")
+        print(f"presented {a.task}  {cost}")
+        print(f"  It is NOT closed. {parent or 'your lead'} signs it off: "
+              f"harness mark {a.task} --close")
+        print(f"  You cannot close your own work — you cannot check it either (T4).")
+        return
+
     if a.close:
         if not f.exists():
             die(REFUSED, f"no mark for '{a.task}' — nothing to close")
@@ -1088,29 +1139,34 @@ def cmd_mark(a):
         if rec.get("_closed_at") and not a.force:
             die(REFUSED, f"'{a.task}' was closed at {rec['_closed_at']} — "
                          f"--force to close it again")
-        now = read_spend(sid)
-        rec["_closed_at"] = now["_at"]
-        rec["_closed_by"] = sid
+        # Sign-off belongs to the lead, on the same rule as the brief: the node
+        # above sets the task and the node above says it is finished. A member
+        # closing its own is a member marking its own homework, and T4 already
+        # says it cannot check its own work.
+        owner = rec.get("_node") or node
+        parent = ctx.tree["nodes"].get(owner, {}).get("parent")
+        own_root = (owner == node and ctx.rank(node) == 0)
+        if parent != node and not own_root and not a.force:
+            die(REFUSED,
+                f"'{node}' does not sign off '{a.task}', which belongs to '{owner}'.\n"
+                + (f"           Its lead is '{parent}'.\n" if parent else "")
+                + f"           Present it instead:  harness mark {a.task} --done\n"
+                  f"           Rank 0 closes its own; nobody else closes their own.")
+        if not rec.get("_presented_at"):
+            print(f"note: '{a.task}' was never presented — closing work nobody said "
+                  f"was finished")
+        rec["_closed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        rec["_closed_by"] = f"{node} (session {sid[:8]})" if sid else f"{node} (operator)"
         rec["_closed_sha"] = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
-        if rec.get("_session") == sid:
-            rec["_delta"] = {k: now[k] - rec.get(k, 0) for k in RATES}
-            cost = f"~${usd(rec['_delta']):.2f}"
-        else:
-            # A recycled session starts a new transcript, so the subtraction is
-            # not a measurement of anything. Refusing to CLOSE over that would
-            # leave the task open forever and break the signal this exists for.
-            rec["_delta"] = None
-            rec["_delta_unavailable"] = (f"opened in session {str(rec.get('_session'))[:8]}, "
-                                         f"closed in {sid[:8]} — not subtractable (I10)")
-            cost = "cost not measurable across a recycle"
+        d = rec.get("_delta")
+        cost = f"~${usd(d):.2f}" if d else "cost recorded at presentation, if at all"
         f.write_text(json.dumps(rec, indent=2) + "\n")
-        print(f"closed {a.task} on {node} at {rec['_closed_at']}  {cost}")
-        still = sorted(t for t, r in open_marks(ctx).items() if r.get("_node") == node)
+        print(f"signed off {a.task} for {owner} at {rec['_closed_at']}  {cost}")
+        still = sorted(t for t, r in open_marks(ctx).items() if r.get("_node") == owner)
         if still:
-            print(f"  {node} still has {len(still)} open task(s): {', '.join(still)}")
+            print(f"  {owner} still has {len(still)} open task(s): {', '.join(still)}")
         else:
-            print(f"  {node} has no open task — it is unassigned, which is not idle. "
-                  f"Its lead should recycle it or give it one.")
+            print(f"  {owner} has no open task record left — recycle it, or brief it again.")
         return
 
     tot = read_spend(sid)
@@ -1388,7 +1444,12 @@ def cmd_recycle(a):
             # session with a live counterparty is what funds correspondence no
             # transaction ends. This is the sweep at subtree close: it decides
             # nothing, it removes the capacity.
-            busy = {r.get("_node") for r in open_marks(ctx).values()}
+            # Presented work does not hold a node. The member has finished and
+            # measured it; the record stays open only because its LEAD has not
+            # signed off yet, and waiting for that would idle a session that has
+            # nothing left to do.
+            busy = {r.get("_node") for r in open_marks(ctx).values()
+                    if not r.get("_presented_at")}
             for n in [x for x in targets if x in busy]:
                 print(f"  keep {n:<12} has an open task record")
             targets = [n for n in targets if n not in busy]
@@ -2420,8 +2481,10 @@ def main():
     mk.add_argument("task", help="task id, as recorded at T1")
     mk.add_argument("--note", help="what this task is")
     mk.add_argument("--force", action="store_true", help="re-mark, discarding the earlier position")
+    mk.add_argument("--done", action="store_true",
+                    help="present it as finished and record what it cost; your lead closes it")
     mk.add_argument("--close", action="store_true",
-                    help="T10: record that this task ended, and what it cost")
+                    help="sign it off — a lead closes its children's, rank 0 its own")
     spd = add("spend", cmd_spend)
     spd.add_argument("task", nargs="?", help="task id to measure since; omit for the session total")
     rv = add("review", cmd_review)

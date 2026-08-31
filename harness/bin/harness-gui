@@ -145,13 +145,17 @@ def read_state():
                 h = json.loads(lf.read_text()); locks[h.get("node")] = h
             except Exception:
                 pass
-        tasks, orphans = {}, []
+        tasks, orphans, ever_marked = {}, [], set()
         md = pdir / "marks"
         for mf in (sorted(md.glob("*.json")) if md.is_dir() else []):
             try:
                 r = json.loads(mf.read_text())
             except Exception:
                 continue
+            # Every mark, open or closed. A brief whose task was done and signed
+            # off is not work waiting to be started, and showing it as such put
+            # finished work back on the board.
+            ever_marked.add(mf.stem)
             if r.get("_closed_at"):
                 continue
             n = r.get("_node")
@@ -161,7 +165,8 @@ def read_state():
                 orphans.append({"task": mf.stem, "named": n,
                                 "at": (r.get("_at") or "")[:19].replace("T", " ")})
             else:
-                tasks.setdefault(n, []).append(mf.stem)
+                tasks.setdefault(n, []).append(
+                    {"task": mf.stem, "presented": bool(r.get("_presented_at"))})
         # A brief exists BEFORE its mark: the lead writes it, then the member
         # accepts. Without this the handed-out work is invisible until someone
         # picks it up, which is exactly the window a lead needs to see.
@@ -191,10 +196,10 @@ def read_state():
                              [{"name": r.get("name"), "status": r.get("status"),
                                "id": (r.get("sessionId") or "")[:8]} for r in here]),
                 "claimed": name in locks,
-                "tasks": sorted(tasks.get(name, [])),
+                "tasks": sorted(tasks.get(name, []), key=lambda x: x["task"]),
                 # Briefed but not yet marked: handed out, not started.
                 "briefed": sorted((b for b in briefs.get(name, [])
-                                   if b["task"] not in tasks.get(name, [])),
+                                   if b["task"] not in ever_marked),
                                   key=lambda b: b["task"]),
                 "blocks": [x for x in blocks if x.get("node") == name],
             })
@@ -292,6 +297,7 @@ border-radius:6px;padding:3px 9px;font:inherit;font-size:11px;cursor:pointer}
 border-radius:5px;padding:0 6px;margin:1px 2px 1px 0;cursor:pointer}
 .chip:hover{border-color:var(--busy);color:var(--busy)}
 .chip.pending{border-style:dashed;color:var(--dim)}
+.chip.presented{border-color:#40562e;color:var(--busy);background:#1c2614}
 .veil{position:fixed;inset:0;background:#000000b0;display:flex;align-items:flex-start;
 justify-content:center;padding:60px 16px;z-index:20;overflow-y:auto}
 .sheet{background:var(--panel);border:1px solid var(--line);border-radius:12px;
@@ -371,10 +377,16 @@ async function openTask(slug, task) {
         '<dt>node</dt><dd>' + (d.node ? esc(d.node) +
             (d.branch ? ' <span class="q">(' + esc(d.branch) + ')</span>' : '')
           : '<span class="dup">names no node &mdash; it predates the field</span>') + '</dd>' +
-        '<dt>opened</dt><dd>' + esc(String(d.opened || '').slice(0, 19).replace('T', ' ')) +
-          ' <span class="q">session ' + esc(d.session) + '</span>' +
-          (d.closed ? ' <span class="q">&middot; closed ' +
-            esc(String(d.closed).slice(0, 19).replace('T', ' ')) + '</span>' : '') + '</dd>' +
+        '<dt>state</dt><dd>' + (
+            d.closed ? '<b>signed off</b> <span class="q">by ' + esc(d.closed_by || '?') +
+              ' &middot; ' + esc(String(d.closed).slice(0, 19).replace('T', ' ')) + '</span>'
+          : d.presented_at ? '<b class="dup">presented &mdash; waiting on its lead</b> ' +
+              '<span class="q">by ' + esc(d.presented_by || '?') + ' &middot; ' +
+              esc(String(d.presented_at).slice(0, 19).replace('T', ' ')) + '</span>'
+          : d.marked ? 'open' : '<span class="q">briefed, not started</span>') + '</dd>' +
+        (d.opened ? '<dt>opened</dt><dd>' +
+          esc(String(d.opened).slice(0, 19).replace('T', ' ')) +
+          ' <span class="q">session ' + esc(d.session) + '</span></dd>' : '') +
         '<dt>brief' + (d.brief_rev ? ' <span class="q">rev ' + esc(d.brief_rev) +
             '</span>' : '') + '</dt><dd>' +
           (d.brief ? '<div class="brief">' + esc(d.brief) + '</div>' +
@@ -462,9 +474,12 @@ function card(n) {
   // "unassigned" read as "nothing is there", which is the opposite of what it
   // means: the session is working, the HARNESS just has no record of on what.
   const task = n.tasks.length ? '<div class="ln">' + n.tasks.map(x =>
-                 '<span class="chip" data-task="' + esc(x) + '" data-slug="' +
-                 esc(n._slug) + '">' + esc(x) + '</span>').join(' ') + '</div>'
-             + briefedChips(n)
+                 '<span class="chip' + (x.presented ? ' presented' : '') +
+                 '" data-task="' + esc(x.task) + '" data-slug="' + esc(n._slug) +
+                 '" title="' + (x.presented ? 'presented — waiting on its lead to sign off'
+                                            : 'open') + '">' +
+                 (x.presented ? '&#10003; ' : '') + esc(x.task) + '</span>').join(' ') +
+                 '</div>' + briefedChips(n)
              : (!unknown && ss.length
                 ? '<div class="ln q" title="no harness mark — run harness mark ' +
                   '&lt;task&gt; in that session">no task record</div>' + briefedChips(n)
@@ -575,6 +590,9 @@ def task_detail(slug, task):
             "opened": rec.get("_at"), "closed": rec.get("_closed_at"),
             "session": (rec.get("_session") or "")[:8],
             "marked": hit is not None,
+            "presented_at": rec.get("_presented_at"),
+            "presented_by": rec.get("_presented_by"),
+            "closed_by": rec.get("_closed_by"),
             "brief": (brief or {}).get("text") or "",
             "brief_by": (brief or {}).get("written_by") or "",
             "brief_rev": (brief or {}).get("revision"),
@@ -608,23 +626,35 @@ def add_comment(slug, task, text):
 
 class H(BaseHTTPRequestHandler):
     def _send(self, body, ctype):
+        # A page polling every 3s abandons requests routinely: navigate away, or
+        # reload, and the socket is gone before the response lands. That is the
+        # CLIENT's business, not an error here. Swallowing it also stops the
+        # second, uglier failure -- the old handler caught the write error and
+        # then tried to report it down the same dead socket, so one closed tab
+        # printed two tracebacks.
         b = body.encode()
-        self.send_response(200)
-        self.send_header("Content-Type", ctype)
-        # The page is a prototype that changes often; a cached copy of it is a
-        # bug report waiting to happen.
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Length", str(len(b)))
-        self.end_headers()
-        self.wfile.write(b)
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            # The page is a prototype that changes often; a cached copy of it is
+            # a bug report waiting to happen.
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
+        except (BrokenPipeError, ConnectionResetError):
+            self.close_connection = True
 
     def do_GET(self):
         if self.path.startswith("/api/state"):
+            # Built before it is sent, so a failure to READ the state and a
+            # failure to WRITE the response stay distinguishable.
             try:
-                self._send(json.dumps(read_state()), "application/json")
+                body = json.dumps(read_state())
             except Exception as e:
-                self._send(json.dumps({"error": str(e), "projects": [], "needs": []}),
-                           "application/json")
+                body = json.dumps({"error": f"{type(e).__name__}: {e}",
+                                   "projects": [], "needs": []})
+            self._send(body, "application/json")
         elif self.path.startswith("/api/task?"):
             q = parse_qs(urlparse(self.path).query)
             d = task_detail((q.get("p") or [""])[0], (q.get("t") or [""])[0])

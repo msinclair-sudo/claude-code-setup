@@ -167,10 +167,15 @@ environment, and what it does with them depends on a machine you are not on.
 ## Seeing all of it at once
 
 ```bash
-harness gui                    # 127.0.0.1:8787, opens a browser
-harness gui --port 9000 --no-open
+harness gui                    # 127.0.0.1:8791, opens a browser
+harness gui --port 9000        # a port of your own: honoured exactly, or refused
 harness gui --once             # the JSON it would serve
 ```
+
+The default walks upward if 8791 is busy and says which port it landed on. An
+**explicit** `--port` never wanders — if you named one, being quietly moved is
+worse than being told. 8787 is RStudio Server's and 8888 is Jupyter's, which is
+why neither is the default.
 
 Every tree on the machine as one indented list: busy, idle, or no session; the
 open task or `unassigned`; and a clickable attention panel that expands to the

@@ -10,8 +10,13 @@ can see all of it at once without running a command per project.
 Served on 127.0.0.1 only. Stdlib only, one file, no build step.
 
     harness-gui               # serve and open a browser
-    harness-gui --port 9000 --no-open
+    harness-gui --port 9000   # a port of your own; refused rather than moved
+    harness-gui --no-open
     harness-gui --once        # print the JSON it would serve, and exit
+
+The default port is 8791 and it walks upward if that is taken. 8787 is RStudio
+Server's, 8888 is Jupyter's, and a viewer that refuses to start because someone
+else's long-running service got there first is a viewer nobody opens.
 """
 import argparse, importlib.util, json, os, subprocess, sys, time, webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -39,6 +44,11 @@ def load_cli():
 
 
 CLI = load_cli()
+
+# Not 8787 (RStudio Server) and not 8888 (Jupyter). Both are long-running
+# services someone starts once and forgets, so losing a coin-toss with either
+# means the viewer is the thing that fails to start.
+DEFAULT_PORT = 8791
 
 
 def _rank(tree, name):
@@ -286,21 +296,39 @@ def open_browser(url):
 
 def main():
     ap = argparse.ArgumentParser(prog="harness-gui", description=__doc__.splitlines()[0])
-    ap.add_argument("--port", type=int, default=8787)
+    ap.add_argument("--port", type=int, default=DEFAULT_PORT,
+                    help=f"default {DEFAULT_PORT}, walking upward if taken; "
+                         f"an explicit --port is honoured exactly or refused")
     ap.add_argument("--no-open", action="store_true")
     ap.add_argument("--once", action="store_true", help="print the JSON and exit")
     a = ap.parse_args()
     if a.once:
         print(json.dumps(read_state(), indent=2)); return
-    try:
-        # 127.0.0.1, never 0.0.0.0: this exposes worktree paths, session names and
-        # every open block, and it is a prototype with no authentication at all.
-        srv = ThreadingHTTPServer(("127.0.0.1", a.port), H)
-    except OSError as e:
-        print(f"harness-gui: cannot bind 127.0.0.1:{a.port} — {e}", file=sys.stderr)
+    # An explicit --port is honoured exactly: if you named one, being quietly
+    # moved somewhere else is worse than being told. Only the DEFAULT wanders.
+    wander = a.port == DEFAULT_PORT
+    srv, port = None, a.port
+    for cand in range(a.port, a.port + (12 if wander else 1)):
+        try:
+            # 127.0.0.1, never 0.0.0.0: this exposes worktree paths, session names
+            # and every open block, and it is a prototype with no authentication.
+            srv, port = ThreadingHTTPServer(("127.0.0.1", cand), H), cand
+            break
+        except OSError:
+            continue
+    if srv is None:
+        where = (f"127.0.0.1:{a.port}-{a.port + 11}" if wander else f"127.0.0.1:{a.port}")
+        print(f"harness-gui: nothing free on {where}.\n"
+              f"             `ss -ltn` will show what has it; --port picks another.",
+              file=sys.stderr)
         sys.exit(4)
-    url = f"http://127.0.0.1:{a.port}/"
-    print(f"harness-gui  {url}   (read-only; ctrl-c to stop)")
+    # flush: the next call blocks forever in serve_forever, and stdout to a pipe
+    # or a log file is block-buffered, so without this the URL never appears at
+    # all for anyone who redirected it.
+    if port != a.port:
+        print(f"harness-gui: {a.port} was taken, using {port}", flush=True)
+    url = f"http://127.0.0.1:{port}/"
+    print(f"harness-gui  {url}   (read-only; ctrl-c to stop)", flush=True)
     if not a.no_open:
         open_browser(url)
     try:

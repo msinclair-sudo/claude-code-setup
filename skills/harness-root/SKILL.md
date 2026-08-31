@@ -116,3 +116,33 @@ not touched, because deleting one nobody declared is a guess.
 
 `--force` overrides the dirty and containment refusals and prints the sha it is
 about to orphan, which is the only route back. Nothing overrides occupancy.
+
+## Grants (`I11`)
+
+A member writes inside its worktree and nowhere else. When one needs a path
+outside the repository it raises a record, and clearing that record is yours or
+the operator's — never a lead's, and never by doing the write on the member's
+behalf.
+
+```bash
+harness blocked --list                     # every open block
+harness grant <node> <path> --reason "..."  # append-only, records who and why
+harness grant --list                        # live and revoked
+harness grant <node> <path> --revoke        # stays on the record
+```
+
+Grants live in `~/.claude/harness/<slug>/grants.json`, beside the binding.
+**Never in `tree.json`** — the tree is a document you edit, so permissions there
+would be permissions you could widen for yourself, and they would travel by merge
+to machines whose owner never agreed to them.
+
+They take effect at the next spawn or recycle, as `--settings` and `--add-dir` on
+the `claude` command line. A running session keeps what it started with, so a
+grant never changes what a lane can do mid-task, and a revoke does not either.
+
+Two things worth holding onto. The CLI cannot tell you from the operator: your
+grants and a human's differ only in the `granted_by` field, which is why every
+one carries it. And a grant made quickly for one task outlives that task — it
+persists for everything that node does afterwards, and once nobody remembers why
+it exists, nobody removes it. Grant the **path**, record the reason, and revoke
+it when the task that needed it closes.

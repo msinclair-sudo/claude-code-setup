@@ -212,6 +212,31 @@ timer's. Answer first, then recycle.
 
 Never `claude rm` — it deletes the worktree, and the worktree is the node.
 
+## What you send down is already done
+
+There is no recall. By the time a message reaches a child it has been acted on,
+so do not send anything whose value depends on it *not* having been acted on —
+and if you must, say what the child should do if it already has. A standing rule
+and a late exception cannot be reconciled by the party holding the rule; it was
+following the rule, correctly, before your exception existed.
+
+The specific one to never send: *hold this member so it can carry its context
+into the next task.* `R13` is that a member knows nothing that is not written
+down, so that request is a request to skip writing a document. If a lane learned
+something that outlives its commit, it belongs in the close record at `T10`, the
+commit message, or your report — before the lane ends.
+
+## A blocked child is unblocked by the operator, not by you
+
+`harness status` lists every open block. You cannot clear one, and running the
+write yourself is not helping — it is the operator's decision being routed
+around by whichever session happens to have looser settings. `harness grant`
+refuses you by rank, deliberately.
+
+What you can do is make the ask good: name the exact path, say what it is for in
+one line, and say what is still moving without it. Then keep the lane working on
+everything the block does not stop.
+
 **Recycling ends a session; it never ends a node.** Removing a node from the
 tree is `harness trim`, which runs at rank 0 only, because `tree.json` is a
 document. If a child of yours should stop existing, present its work upward

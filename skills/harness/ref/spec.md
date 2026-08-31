@@ -250,6 +250,8 @@ The owner of a node integrates contributors into it. Pushing to a checked-out br
 
 No two open tasks anywhere in the tree may claim the same path, checked against a single registry. This makes textual conflicts rare rather than routine, and leaves semantic conflicts — a changed signature that a caller elsewhere depends on — which produce no merge conflict and are caught by checks at integration.
 
+**A member writes only inside its own worktree.** An artefact outside the repository has no owner, no path scope and no instrument that can go red on it: nothing reviews it at [[#T4 — Integration (fast-forward up)]], no guard refuses it, and no ref records that it changed. A member producing one is producing something the tree cannot see, check or undo. Outputs outside the repository are rank 0's or the operator's, unless the machine's owner declared otherwise — see [[#I11 — Reach beyond the worktree is granted at enrolment]]. This is not a restriction added on top of the permission system; it is the same rule I3 already states, applied to the one direction it had not been.
+
 **A record anyone may correct must be a document inside the tree.** Code has an owner, a scope and an instrument that goes red. A note kept outside the repository has none of the three, so a disagreement about it cannot be settled by a check, a diff or a ref — only by argument, and argument between two parties who both value catching errors alternates instead of converging. Inside the tree the same correction is a [[#T5 — Document request (upward)]] pair: applied once by the owner, no reply expected, terminal on an artefact. Outside it, the exchange has no terminal state at all, and nothing in the protocol can ever say which round is the last. Measured 2026-08-31: four rounds of mutual correction over records held outside any scope, each finding something genuine, each smaller than the last, no ref moving after the first.
 
 ### I4 — `reference-transaction` is the primary guard
@@ -330,6 +332,22 @@ Under I3 conflict rate stops driving the choice, and fan-out is set by what a le
 Integration load is not the constraint: every T4 is `--ff-only`, which cannot conflict and costs nothing. The load that scales with subtree size is T5 — every document request from anywhere below climbs through this node and is reviewed here. That cost is not overhead; it is the review the hierarchy exists to perform. The one lever against it is batching: a lead that collects requests before passing them up also deduplicates them, and two members asking for the same document change become one request for every ancestor above.
 
 Leads write no code, so their context stays shallow — a ledger, a set of intents, and a request queue — however wide it gets.
+
+### I11 — Reach beyond the worktree is granted at enrolment
+
+A node that must touch a path outside the repository gets it from `grants.json` in `~/.claude/harness/<slug>/`, beside `binding.json`. **Not from `tree.json`.** The tree is a document and rank 0 edits documents, so a permission set living there is one the tree can widen for itself; and it would travel by merge to machines whose owner never agreed to it. Enrolment is where a machine consents to participate ([[#R9 — Enrolment takes two keys]]), so it is where its owner says how far. Same key, same scope, never committed.
+
+| act | who | what it is |
+| --- | --- | --- |
+| `harness blocked <need> --why` | the member | a **record**, not a message: it survives the recycle that ends the session which raised it, and `status` prints every open one together |
+| `harness grant <node> <path>` | rank 0, or a shell with no session | append-only; carries the reason and who made it |
+| `harness grant … --revoke` | same | sets `revoked_at`; the record stays readable ([[#I6 — The ledger is append-only]]) |
+
+Grants become two documented, additive `claude` flags at the next spawn or recycle — `--settings` with a `permissions.allow` list, and `--add-dir` for reach — so a running session keeps exactly what it started with and a grant never takes effect mid-task.
+
+**Two things this deliberately does not do.** It cannot authenticate an operator: `harness grant` from rank 0 and from a human shell are indistinguishable except in the record, which is why every grant carries `granted_by`. And it does not let a lead unblock a member. A session with looser settings performing a write another session was refused is the operator's decision being routed around rather than implemented, and it is refused by rank, not by trust.
+
+**Why a grant is not automatic.** A grant made under time pressure for one task persists for every later task on that node, and once nobody can reconstruct why it exists, nobody removes it. So a grant names a **path**, not a node, and records what asked for it. Being blocked and being unblocked are different acts by different parties, on purpose.
 
 ### I10 — Cost is estimated, then measured
 
@@ -560,6 +578,10 @@ There is no daemon and no server. `ListAgents` supplies liveness and `SendMessag
 | ledger, tree, bindings | plain JSON |
 
 A single small CLI performs atomic file operations and the checks in [[#R8 — The platform contract fails loud]]. It performs no reasoning: the agent gathers liveness and decides, the CLI only writes. Nothing here starts, supervises or recovers a process.
+
+**A downward message is executed on receipt, and there is no recall.** Two rules follow, and the second is the one that costs money when it is missing. *Sender*: by the time you send, assume it is done — do not send anything whose value depends on it not yet having been acted on, unless you also say what to do if it has. *Recipient*: an instruction that arrives after the state it depended on has changed is **reported, not reconstructed**. Say what the state is and stop.
+
+Measured 2026-08-31: rank 0 told a lead to hold a member so it could carry its context into the next task; the lead had already recycled it, correctly, on the standing rule. The lead could not have avoided receiving that message. It could have avoided trying to satisfy it, and the attempt is where the tokens went. The instruction was also **wrong on its merits** — [[#R13 — Members are recycled, not accumulated]] says nothing a member knows survives unless it is in a commit, a report or the ledger, so a request to preserve a session for its context is a request to skip writing a document. The coordination failure was downstream of a documentation one, and [[#T10 — Release]]'s close record is where that document belongs.
 
 **Transport is the agent's, which sets a hard limit on what can be guarded.** `SendMessage` does not pass through the CLI, so no instrument here can count exchanges, notice that a thread has stopped producing artefacts, or decline to send. A rule of the form "stop replying after n rounds with no ref moved" is therefore a *rule with a diagnostic*, never a guard — and a guard that depends on a participant staying alert is the thing this design exists to remove. Only two mechanisms actually terminate an exchange, and neither is a tripwire: making the artefact a document, so the correction becomes a [[#T5 — Document request (upward)]] pair with a terminal state; and [[#R13 — Members are recycled, not accumulated]], which ends it by the counterparty no longer existing in that context. The diagnostic half is real and worth having — `harness status` marks a live node with no open task as `unassigned`, and `harness spend` prices the exchange — but it informs a decision rather than making one.
 

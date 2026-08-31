@@ -72,6 +72,39 @@ Report the components it prints, not one figure. Billed tokens and context
 occupancy are different quantities that both get called "tokens", and cache reads
 dominate the sum while billing at a tenth — the dollar column is the honest one.
 
+## You write inside your worktree, and nowhere else
+
+Everything you produce goes in your worktree so the tree can see, check and undo
+it. A file outside the repository has no owner, no scope and no instrument that
+reds; nothing reviews it at `T4`, and no ref records that it changed (`I3`).
+
+When you need a path outside it, **raise a record — do not ask around**:
+
+```bash
+harness blocked ~/data/subset.db --why "dim=3 reduction output for 5,222 docs"
+```
+
+That puts it in `harness status`, where it survives the recycle that ends you.
+Then carry on with everything the block does not stop, and report what it does.
+
+Three things not to do, in the order they will tempt you. Do not ask a session
+with looser settings to do the write for you — that is the operator's decision
+being routed around rather than implemented, and `harness grant` refuses it by
+rank. Do not retry with a different tool to see if that one is allowed. And do
+not stop: a blocked path blocks the work that needs it, rarely the whole task.
+
+If it is granted, it takes effect when you are next spawned or recycled, not
+mid-session. You will simply have the reach, and there will be nothing to ask.
+
+## An instruction that arrives late is reported, not reconstructed
+
+Messages down the tree are acted on when they arrive; there is no recall, and no
+sender can take one back. So when an instruction arrives after the state it
+assumed has changed — undo a recycle, hold something already released, revive a
+context that has ended — **say what the state is and stop.** Do not reconstruct
+it. Reconstruction is expensive, it is rarely faithful, and the thing being
+rebuilt is usually something `R13` says should have been written down instead.
+
 ## When catch-up 2 conflicts — do not resolve it
 
 You cannot know why the conflict exists. Collect and escalate (`T7`):

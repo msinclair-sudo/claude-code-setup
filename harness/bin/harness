@@ -509,6 +509,14 @@ def cmd_status(a):
     except Exception:
         pass
 
+    blocked = open_blocks(ctx)
+    if blocked:
+        print(f"\n  {len(blocked)} blocked:")
+        for r in blocked.values():
+            print(f"    {r.get('node', '?'):<12} {r.get('need')}   {r.get('why') or ''}")
+        print("  Nobody is unblocked by a session with looser settings:")
+        print("  `harness grant <node> <path>` from rank 0 or a shell, then recycle it.")
+
     if unassigned:
         print(f"\n  {len(unassigned)} live node(s) with no open task: {', '.join(sorted(unassigned))}")
         print("  Capacity with no object. Close the task record at T10 and recycle,")
@@ -698,18 +706,20 @@ def cmd_spawn(a):
         name = f"{idx['project']}-{n}"
         model, effort = assignment_for(ctx, n)
         model, effort = a.model or model, a.effort or effort
-        cmd = ["claude", "--bg", "-n", name]
+        gr = grants_for(ctx, n)
+        reach = f"  +{len(gr)} grant(s)" if gr else ""
+        cmd = ["claude", "--bg", "-n", name] + grant_flags(gr, model, effort)
         if model:
             cmd += ["--model", model]
         if effort:
             cmd += ["--effort", effort]
         cmd.append(a.prompt)
         if a.dry_run:
-            print(f"  would spawn {name:<18} {model}/{effort:<7} in {sp['worktree']}")
+            print(f"  would spawn {name:<18} {model}/{effort:<7} in {sp['worktree']}{reach}")
         else:
             subprocess.Popen(cmd, cwd=sp["worktree"],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            print(f"  spawned {name:<18} {model}/{effort:<7} in {sp['worktree']}")
+            print(f"  spawned {name:<18} {model}/{effort:<7} in {sp['worktree']}{reach}")
         launched += 1
     verb = "would spawn" if a.dry_run else "spawned"
     print(f"{verb} {launched}, skipped {skipped}"
@@ -1388,7 +1398,8 @@ def cmd_recycle(a):
             continue
 
         name = f"{idx['project']}-{n}"
-        cmd = ["claude", "--bg", "-n", name]
+        gr = grants_for(ctx, n)
+        cmd = ["claude", "--bg", "-n", name] + grant_flags(gr, model, effort)
         if model:
             cmd += ["--model", model]
         if effort:
@@ -1396,7 +1407,8 @@ def cmd_recycle(a):
         cmd.append(a.prompt)
         subprocess.Popen(cmd, cwd=sp["worktree"],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        print(f"  recycled {n:<12} {model}/{effort:<7} fresh context")
+        print(f"  recycled {n:<12} {model}/{effort:<7} fresh context"
+              + (f"  +{len(gr)} grant(s)" if gr else ""))
         done += 1
 
     verb = "would recycle" if a.dry_run else "recycled"
@@ -1638,6 +1650,190 @@ def cmd_trim(a):
                      f"{len(done)} node(s) removed and recorded; nothing after it was touched.")
 
 
+# ── I11: reach beyond the worktree is granted at enrolment, never in the tree ─
+
+def load_grants(ctx):
+    p = ctx.state / "grants.json"
+    if not p.exists():
+        return {"nodes": {}}
+    try:
+        return json.loads(p.read_text())
+    except json.JSONDecodeError:
+        die(REFUSED, f"{p} is not valid JSON — refusing to guess at a permission set")
+
+
+def grants_for(ctx, node):
+    """What this machine's owner declared this node may reach outside its worktree.
+
+    Machine-local by decision. A grant in the repository would be a document, and
+    rank 0 edits documents, so the tree could widen its own permissions — and the
+    grant would travel to machines whose owner never agreed to it. Enrolment is
+    where a machine consents to participate, so it is where its owner says how
+    far. Same key, same scope, and it cannot arrive by merge.
+    """
+    return [r for r in load_grants(ctx).get("nodes", {}).get(node, [])
+            if not r.get("revoked_at")]
+
+
+def grant_flags(rows, model, effort):
+    """Grants -> `claude` flags, using documented additive flags only.
+
+    `--settings` takes a JSON string and is documented as ADDITIONAL settings, so
+    it widens without replacing what the machine already allows. `--add-dir` is
+    variadic, which means a bare list before a positional argument can swallow
+    the prompt; it is therefore emitted only when a `--model`/`--effort` flag is
+    guaranteed to follow it and stop the greed. No invented settings schema:
+    `permissions.allow` is the same key `install.sh` merges into.
+    """
+    dirs, rules = [], []
+    for r in rows:
+        if r.get("rule"):
+            rules.append(r["rule"]); continue
+        p = "//" + r["path"].lstrip("/")
+        rules += [f"Read({p})", f"Write({p})"]
+        d = str(Path(r["path"]).parent)
+        if d not in dirs:
+            dirs.append(d)
+    out = []
+    if rules:
+        out += ["--settings", json.dumps({"permissions": {"allow": rules}})]
+    if dirs and (model or effort):
+        for d in dirs:
+            out += ["--add-dir", d]
+    elif dirs:
+        print("  WARNING: grants need --add-dir but this node sets neither model nor "
+              "effort, so nothing would stop the flag consuming the prompt. Reach not "
+              "applied; the permission rules were.", file=sys.stderr)
+    return out
+
+
+def cmd_grant(a):
+    """Record what a node may reach outside its worktree. Append-only.
+
+    The CLI cannot authenticate an operator, so it does not pretend to. What it
+    can do is refuse the one case that is laundering rather than administration —
+    a session widening its own or a sibling's permissions — and record who made
+    every grant so a self-grant is discoverable afterwards. Rank 0 already holds
+    arbitrary code execution on every node (I4), so a grant it makes gives it
+    nothing it did not have; a member granting itself is a different act.
+    """
+    ctx = Ctx(); ctx.require_enrolled()
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    p = ctx.state / "grants.json"
+    g = load_grants(ctx)
+
+    if a.list or not a.node:
+        rows = [(n, r) for n, rs in sorted(g.get("nodes", {}).items()) for r in rs]
+        if not rows:
+            print("no grants — every node is confined to its worktree"); return
+        for n, r in rows:
+            state = f"revoked {r['revoked_at'][:10]}" if r.get("revoked_at") else "live"
+            by = r.get("granted_by") or "?"
+            print(f"  {n:<12} {state:<18} {r.get('rule') or r.get('path')}")
+            print(f"  {'':<12} by {by}   {r.get('reason') or '(no reason recorded)'}")
+        return
+
+    if a.node not in ctx.tree["nodes"]:
+        die(REFUSED, f"'{a.node}' is not a node in {ctx.tree_path}")
+    if not a.what:
+        die(REFUSED, "name a path or a permission rule to grant")
+
+    if sid:
+        node, _ = ctx.node()
+        if ctx.rank(node) != 0:
+            die(REFUSED,
+                f"'{node}' is rank {ctx.rank(node)}. A session cannot widen its own or a\n"
+                f"           sibling's permissions — that is the operator's decision being\n"
+                f"           routed around, not implemented. Ask for it with "
+                f"`harness blocked`, or\n           have the operator run this from a shell.")
+
+    rec = {"granted_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+           "granted_by": (f"session {sid[:8]}" if sid else "shell"),
+           "reason": a.reason or "", "for": a.__dict__.get("for_block") or ""}
+    if "(" in a.what:
+        rec["rule"] = a.what
+    else:
+        rec["path"] = str(Path(a.what).expanduser().resolve())
+    rows = g.setdefault("nodes", {}).setdefault(a.node, [])
+
+    key = rec.get("rule") or rec.get("path")
+    if a.revoke:
+        hit = [r for r in rows if (r.get("rule") or r.get("path")) == key
+               and not r.get("revoked_at")]
+        if not hit:
+            die(REFUSED, f"no live grant on '{a.node}' for {key}")
+        for r in hit:
+            r["revoked_at"] = rec["granted_at"]
+            r["revoked_by"] = rec["granted_by"]
+        p.write_text(json.dumps(g, indent=2) + "\n")
+        print(f"revoked {key} on {a.node} — it applies at the next spawn or recycle, "
+              f"not to a session already running")
+        return
+
+    if any((r.get("rule") or r.get("path")) == key and not r.get("revoked_at") for r in rows):
+        print(f"already granted: {key} on {a.node}"); return
+    rows.append(rec)
+    p.write_text(json.dumps(g, indent=2) + "\n")
+    print(f"granted {key}\n  to {a.node}, by {rec['granted_by']}"
+          + (f"\n  reason: {rec['reason']}" if rec["reason"] else ""))
+    print("  applies at the next spawn or recycle; a running session keeps what it had")
+
+
+def open_blocks(ctx):
+    d = ctx.state / "blocks"
+    out = {}
+    for f in (sorted(d.glob("*.json")) if d.is_dir() else []):
+        try:
+            r = json.loads(f.read_text())
+        except Exception:
+            continue
+        if not r.get("resolved_at"):
+            out[f.stem] = r
+    return out
+
+
+def cmd_blocked(a):
+    """A member raises a block as a RECORD, not a message.
+
+    A message carrying a blocked lane arrives in a transcript, out of order,
+    behind whatever else is in it, and terminates on nothing. A record sits in
+    one place, survives the recycle that ends the session which raised it, and
+    `status` prints every one of them together. It grants nothing: raising a
+    block and being unblocked are deliberately different acts, performed by
+    different parties.
+    """
+    ctx = Ctx(); ctx.require_enrolled()
+    node, _ = ctx.node()
+    if a.list or not a.need:
+        rows = open_blocks(ctx)
+        if not rows:
+            print("nothing blocked"); return
+        for k, r in sorted(rows.items()):
+            print(f"  {r.get('node', '?'):<12} {r.get('need', k)}")
+            print(f"  {'':<12} {r.get('why') or '(no reason recorded)'}   "
+                  f"raised {str(r.get('raised_at'))[:19]}")
+        return
+    f = ctx.state_file("blocks", f"{node}-{a.need}", ".json")
+    f.parent.mkdir(parents=True, exist_ok=True)
+    if a.resolve:
+        if not f.exists():
+            die(REFUSED, f"no block recorded for '{a.need}' on {node}")
+        r = json.loads(f.read_text())
+        r["resolved_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        f.write_text(json.dumps(r, indent=2) + "\n")
+        print(f"resolved: {a.need}"); return
+    if f.exists() and not json.loads(f.read_text()).get("resolved_at"):
+        print(f"already raised: {a.need} on {node}"); return
+    f.write_text(json.dumps(
+        {"node": node, "need": a.need, "why": a.why or "",
+         "raised_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+         "session": os.environ.get("CLAUDE_CODE_SESSION_ID", "")}, indent=2) + "\n")
+    print(f"raised on {node}: {a.need}")
+    print("  It is in `harness status` now. Do not route around it, do not ask a")
+    print("  session with looser settings to do it for you, and do not stop work —")
+    print("  carry on with everything this does not block, and report what it does.")
+
+
 def cmd_scaffold(a):
     repo = Path(a.repo).resolve()
     rc, common, _ = git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=repo)
@@ -1795,6 +1991,18 @@ def main():
     tr.add_argument("--dry-run", action="store_true")
     tr.add_argument("--force", action="store_true",
                     help="trim despite a dirty worktree or commits the parent does not hold")
+    gt = add("grant", cmd_grant)
+    gt.add_argument("node", nargs="?", help="node the grant applies to")
+    gt.add_argument("what", nargs="?", help="a path, or a permission rule if it contains '('")
+    gt.add_argument("--reason", help="why this node needs it — recorded, and read later")
+    gt.add_argument("--for-block", dest="for_block", help="the `harness blocked` need this answers")
+    gt.add_argument("--revoke", action="store_true", help="end a grant; it stays on the record")
+    gt.add_argument("--list", action="store_true", help="every grant, live and revoked")
+    bk = add("blocked", cmd_blocked)
+    bk.add_argument("need", nargs="?", help="what you need — a path, a command, a permission")
+    bk.add_argument("--why", help="what it is for, in one line")
+    bk.add_argument("--resolve", action="store_true", help="close a block you raised")
+    bk.add_argument("--list", action="store_true", help="every open block")
     add("index", cmd_index)
     ps = add("position", cmd_position)
     ps.add_argument("--format", choices=["line", "json"], default="line")

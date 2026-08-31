@@ -260,6 +260,7 @@ def read_state():
                 "do": f"(cd {shlex.quote(repo)} && harness grant {b.get('node')} "
                       f"{shlex.quote(b.get('need') or '')} --reason "
                       f"{shlex.quote((b.get('why') or 'see the block record')[:60])})",
+                "project": pname,
                 "slug": pdir.name, "node": b.get("node"), "need": b.get("need"),
                 "root": next((n for n, sp in tree.items()
                               if sp.get("parent") is None), "rank 0"),
@@ -272,6 +273,7 @@ def read_state():
     v = install_drift()
     if v:
         att.append({"kind": "stale install", "owner": "operator", "where": "this machine",
+                    "project": None,
                     "what": v,
                     "why": "The harness CLI and the four skills under ~/.claude/skills are "
                            "copies. Their source has moved since they were installed, so "
@@ -298,7 +300,14 @@ header{display:flex;align-items:baseline;gap:1rem;padding:13px 20px;
 border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:5}
 h1{font-size:14px;margin:0;letter-spacing:.09em;text-transform:uppercase;color:var(--dim)}
 #age{color:var(--none);font-size:12px;margin-left:auto}
-main{padding:16px 20px 70px}
+main{padding:16px 20px 70px;max-width:1500px}
+.cols{display:flex;gap:20px;align-items:flex-start}
+.treecol{flex:1;min-width:0;overflow-x:auto}
+.attncol{width:min(430px,44%);flex:none}
+@media (max-width:960px){.cols{flex-direction:column}.attncol{width:100%}}
+.collapse{margin-left:auto;font-size:10px;letter-spacing:.04em;text-transform:none;
+color:var(--dim);cursor:pointer;border-bottom:1px dotted var(--none)}
+.collapse:hover{color:var(--ink)}
 .proj{margin-bottom:34px}
 .proj>h2{font-size:14px;margin:0 0 2px}
 .proj>.repo{color:var(--none);font-size:11px;margin-bottom:6px;word-break:break-all}
@@ -350,7 +359,7 @@ padding:9px 13px;margin-bottom:16px}
 .needs{background:var(--warnbg);border:1px solid #5a3a1e;border-radius:10px;
 padding:12px 14px;margin:0 0 20px}
 .needs h3{margin:0 0 8px;font-size:12px;color:var(--warn);text-transform:uppercase;
-letter-spacing:.09em}
+letter-spacing:.09em;display:flex;align-items:baseline}
 .needs .who.mine{color:#ffd08a;font-weight:700}
 .kd2{color:var(--none);font-size:10px;text-transform:uppercase;letter-spacing:.07em;
 min-width:110px}
@@ -359,8 +368,8 @@ min-width:110px}
 padding:9px 13px;margin-bottom:18px}
 .need{padding:7px 0;border-top:1px solid #4a2d17;cursor:pointer}
 .need:first-of-type{border-top:0}
-.need .hd{display:flex;gap:10px;flex-wrap:wrap}
-.need .who{color:var(--warn);min-width:210px}
+.need .hd{display:flex;gap:8px;flex-wrap:wrap;align-items:baseline}
+.need .who{color:var(--warn);min-width:96px}
 .need .wh{color:var(--dim)}
 .detail{display:none;margin:8px 0 2px;padding:10px;background:#00000030;border-radius:7px}
 .detail.on{display:block}
@@ -432,6 +441,17 @@ document.addEventListener('click', e => {
   if (e.target.dataset.close) { closeModal(); return; }
   const tk = e.target.closest('[data-task]');
   if (tk) { openTask(tk.dataset.slug, tk.dataset.task); return; }
+  const col = e.target.closest('.collapse');
+  if (col) {
+    e.stopPropagation();
+    // Scoped to the column it sits in, so collapsing one project leaves the
+    // others as you left them.
+    col.closest('.attncol').querySelectorAll('.need').forEach(nd => {
+      nd.querySelector('.detail').classList.remove('on');
+      if (nd.dataset.key) OPEN.delete(nd.dataset.key);
+    });
+    return;
+  }
   const bs = e.target.closest('.bsend');
   if (bs) {
     e.stopPropagation();
@@ -708,29 +728,38 @@ async function tick() {
          'empty.<br><code>' + esc(d.roster_error) + '</code></div>';
   }
   const att = d.attention || [];
-  if (att.length) {
-    h += '<div class="needs"><h3>' + att.length + ' waiting on you</h3>' +
-      '<div class="ln q" style="margin:-4px 0 8px">only things no session can fix ' +
-      'itself &mdash; click one for why it matters and the command that clears it</div>' +
-      att.map((a, i) => attnItem(a, 'm' + i)).join('') + '</div>';
-  } else {
-    h += '<div class="clear">nothing is waiting on you</div>';
+  // Machine-level items belong to no project, so they sit above all of them.
+  const machine = att.filter(a => !a.project);
+  if (machine.length) {
+    h += '<div class="needs"><h3>' + machine.length + ' waiting on you &middot; ' +
+      'this machine</h3>' +
+      machine.map((a, i) => attnItem(a, 'x' + i)).join('') + '</div>';
   }
-  h += d.projects.map(p =>
-    (p.nodes.forEach(n => n._slug = p.slug),
-    '<div class="proj"><h2>' + esc(p.project) + '</h2>' +
-    '<div class="repo">' + esc(p.repo) + '</div>' +
-    '<div class="ln q" style="margin:0 0 6px">click a task chip to read its brief ' +
-    'and comment on it</div>' +
-    (p.orphan_marks.length ? '<div class="ln dup">' + p.orphan_marks.length +
-      ' open task record(s) name no node in this tree</div><ul class="orph">' +
-      p.orphan_marks.map(o => '<li><span class="chip" data-task="' + esc(o.task) +
-        '" data-slug="' + esc(p.slug) + '">' + esc(o.task) + '</span>' +
-        (o.named ? ' <span class="q">named ' + esc(o.named) + ', trimmed</span>'
-                 : ' <span class="q">names no node</span>') +
-        (o.at ? ' <span class="q">&middot; ' + esc(o.at) + '</span>' : '') +
-        '</li>').join('') + '</ul>' : '') +
-    tree(p.nodes) + '</div>')).join('');
+  h += d.projects.map((p, pi) => {
+    p.nodes.forEach(n => n._slug = p.slug);
+    const mine = att.filter(a => a.project === p.project);
+    const col = mine.length
+      ? '<div class="needs"><h3>' + mine.length + ' waiting on you' +
+        '<span class="collapse" data-collapse="' + esc(p.project) + '">collapse all</span>' +
+        '</h3><div class="ln q" style="margin:-4px 0 8px">only what no session can ' +
+        'fix itself &mdash; click one for why it matters and the command that clears ' +
+        'it</div>' + mine.map((a, i) => attnItem(a, 'p' + pi + '-' + i)).join('') + '</div>'
+      : '<div class="clear">nothing is waiting on you here</div>';
+    return '<div class="proj"><h2>' + esc(p.project) + '</h2>' +
+      '<div class="repo">' + esc(p.repo) + '</div>' +
+      '<div class="cols"><div class="treecol">' +
+      '<div class="ln q" style="margin:0 0 6px">click a task chip to read its brief ' +
+      'and comment on it</div>' +
+      (p.orphan_marks.length ? '<div class="ln dup">' + p.orphan_marks.length +
+        ' open task record(s) name no node in this tree</div><ul class="orph">' +
+        p.orphan_marks.map(o => '<li><span class="chip" data-task="' + esc(o.task) +
+          '" data-slug="' + esc(p.slug) + '">' + esc(o.task) + '</span>' +
+          (o.named ? ' <span class="q">named ' + esc(o.named) + ', trimmed</span>'
+                   : ' <span class="q">names no node</span>') +
+          (o.at ? ' <span class="q">&middot; ' + esc(o.at) + '</span>' : '') +
+          '</li>').join('') + '</ul>' : '') +
+      tree(p.nodes) + '</div><div class="attncol">' + col + '</div></div></div>';
+  }).join('');
   if (!d.projects.length) h += '<div class="empty">no enrolled projects on this machine</div>';
   paint(h);
 }

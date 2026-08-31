@@ -769,6 +769,13 @@ def cmd_spawn(a):
         name = f"{idx['project']}-{n}"
         model, effort = assignment_for(ctx, n)
         model, effort = a.model or model, a.effort or effort
+        # Not a refusal: standing up an empty node is legitimate, and a node
+        # can be occupied with nothing to do (that is the `unassigned` state).
+        # But a lead should learn its child has nothing to start on BEFORE it
+        # spends a session finding out and asking.
+        if not briefed_unstarted(ctx, n):
+            print(f"  note {n:<12} nothing briefed — it will have no task to open. "
+                  f"harness brief <task> --for {n} --write \"...\"")
         gr = grants_for(ctx, n)
         reach = f"  +{len(gr)} grant(s)" if gr else ""
         cmd = ["claude", "--bg", "-n", name] + grant_flags(gr, model, effort)
@@ -1169,6 +1176,30 @@ def cmd_mark(a):
             print(f"  {owner} has no open task record left — recycle it, or brief it again.")
         return
 
+    # T1 is a gate, not a convention. A task opened without a brief is a task
+    # whose scope will arrive in pieces, and the same information delivered
+    # piecemeal costs 39% against delivering it at once — with the degradation
+    # appearing at TWO pieces, so the first follow-up detail is already the
+    # failure. There is no --force: the remedy is one command, and it is the
+    # command that makes the work go better.
+    _, b = load_brief(ctx, a.task)
+    if b is None:
+        parent = ctx.tree["nodes"].get(node, {}).get("parent")
+        own = ctx.rank(node) == 0
+        die(REFUSED,
+            f"'{a.task}' has no brief, so it cannot be opened on '{node}'.\n"
+            + (f"           Write it first:  harness brief {a.task} --for {node} "
+               f"--write \"...\"\n" if own else
+               f"           Ask '{parent}' for one:  harness brief {a.task} "
+               f"--for {node} --write \"...\"\n")
+            + f"           Scope, the approach already decided, the check set, the "
+              f"seams, what done\n           means — all of it at once. Delivered in "
+              f"pieces instead it costs 39%,\n           and the penalty lands at the "
+              f"second piece.")
+    if b.get("node") != node:
+        die(REFUSED, f"'{a.task}' is briefed for '{b.get('node')}', not '{node}'. "
+                     f"A task belongs to one node.")
+
     tot = read_spend(sid)
     if f.exists() and not a.force:
         die(REFUSED, f"{a.task} is already marked at {json.loads(f.read_text()).get('_at')} "
@@ -1180,6 +1211,8 @@ def cmd_mark(a):
     f.write_text(json.dumps(tot, indent=2) + "\n")
     print(f"marked {a.task} on {node} at {tot['_at']}  "
           f"({tot['_records']} records, ~${usd(tot):.2f} so far)")
+    print(f"  brief revision {b.get('revision')} by {b.get('written_by')} "
+          f"— read it: harness brief {a.task}")
 
 
 def cmd_spend(a):
@@ -1525,6 +1558,9 @@ def cmd_recycle(a):
             done += 1
             continue
 
+        if not briefed_unstarted(ctx, n):
+            print(f"  note {n:<12} nothing briefed — the fresh session will have "
+                  f"no task to open")
         name = f"{idx['project']}-{n}"
         gr = grants_for(ctx, n)
         cmd = ["claude", "--bg", "-n", name] + grant_flags(gr, model, effort)
@@ -1981,6 +2017,25 @@ def brief_node(ctx, task, explicit=None):
     return None
 
 
+def briefed_unstarted(ctx, node):
+    """Briefs written for a node that no mark has opened yet: work handed down
+    and not picked up. This is what a session STARTS on, so a node with none of
+    it is a session about to ask what it should be doing."""
+    d = ctx.state / "briefs"
+    out = []
+    for p in (sorted(d.glob("*.json")) if d.is_dir() else []):
+        try:
+            b = json.loads(p.read_text())
+        except Exception:
+            continue
+        if b.get("node") != node:
+            continue
+        if ctx.state_file("marks", p.stem, ".json").exists():
+            continue
+        out.append(p.stem)
+    return out
+
+
 def cmd_brief(a):
     """The task description: written by the lead, for its children.
 
@@ -2025,6 +2080,10 @@ def cmd_brief(a):
                 f"else — a node\n           that sets its own task is what the tree exists "
                 f"to prevent. Suggest instead:\n"
                 f"           harness brief {a.task} --suggest \"...\"")
+        if not a.write.strip():
+            die(REFUSED, "an empty brief is not a brief. If there is nothing to say "
+                         "about scope,\n           approach, checks, seams and what done "
+                         "means, the task is not ready to issue.")
         rev = (b or {}).get("revision", 0) + 1
         rec = {"task": a.task, "node": target, "text": a.write, "revision": rev,
                "written_by": who, "written_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),

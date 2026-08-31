@@ -120,6 +120,11 @@ harness brief <task>                  # what you were actually asked for
 harness brief <task> --suggest "..."  # propose a change; your lead decides
 ```
 
+**You cannot open a task without one.** `harness mark <task>` refuses when no
+brief exists for it on your node, and there is no override. If you are stuck
+there, ask your lead for the brief — do not work around it by marking something
+else, and do not start without a record.
+
 You do not write it. A node that sets its own task is the thing the tree exists
 to prevent, so `--write` refuses you by rank — that is not a permission problem
 to work around, it is the design.

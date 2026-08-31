@@ -225,6 +225,11 @@ check set, the seams, what done means. Write it before the child starts, not in
 pieces afterwards — the same information delivered in pieces costs 39%, and the
 penalty lands at two pieces.
 
+**This is a gate, not advice.** `harness mark` refuses a task with no brief and
+has no override, so a child you have not briefed cannot open one. `spawn` and
+`recycle` warn you when a node has nothing briefed, which is your cue to write
+it rather than let a fresh session start and ask.
+
 **A brief is a plan, not a record.** Rewriting it replaces the earlier text and
 that is correct; a working document that behaves like provenance is one nobody
 dares to correct. The append-only half is `harness note`, and comments there

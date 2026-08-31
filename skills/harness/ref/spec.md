@@ -44,6 +44,7 @@ Every node is checked out in exactly one worktree held by exactly one session.
 **The lead does the thinking.** Planning is the lead's work, not a negotiation held afterwards. A lead that issues a stub and answers questions has chosen the 39%.
 **Enforcement** The scope is checked against the global registry ([[#I3 — Scopes are globally disjoint]]) before the task is issued. Overlap is refused at issue time.
 **Fails when** Intent is recorded as a restatement of the scope. `src/parse/**` is a scope; *widen the parser signature for encoding support* is an intent.
+**Applies at every rank.** A brief written for a lead is a segment that lead breaks up, under the same rule — see [[#T14 — A brief handed to a lead is split, not done]]. Work that arrives at rank 0 as an operator decision enters this path through [[#T13 — Unblocking is a task]].
 
 ### T2 — Catch-up (merge down)
 
@@ -272,6 +273,40 @@ A brief exists **before** its mark: the lead writes it, then the member accepts.
 **Why it is not removed.** Workers given ambiguous instructions with no channel to ask were correct about 39% of the time, so roughly 61% of submitted work was wrong. And specifications are incomplete more often than their authors believe: 46.7% of flagged ambiguities in freshly written specifications were confirmed by the authors themselves, about 2.6 per specification, and 38.3% of a curated software benchmark was judged underspecified. A complete plan is the goal; a channel for the gaps is the admission that the goal is missed about half the time.
 **Enforcement** The lead answers, or escalates under [[#T5 — Document request (upward)]] and [[#T9 — Ruling]].
 **Fails when** The lead answers from guesswork. *I don't know, escalating* is a correct answer, on the same principle as an unrecorded intent under T7.
+
+### T13 — Unblocking is a task
+
+**Direction** the operator's answer arrives at rank 0; work leaves rank 0 downward.
+**Rule** A block that has been answered is **half-finished**. Closing it requires naming what work the answer produced: a brief, or an explicit `none` with its reason. `--resolve` refuses an operator-answered block that names neither, and `--no-task` refuses an empty reason.
+
+**Why the gap existed.** [[#T9 — Ruling]] said the outcome reaches the lane rewritten, and [[#R14 — The operator is told, and does not have to look]] routed the conversation to rank 0 so the lane would not receive reasoning as though it were instruction. Both were right and neither closed the loop. The operator answered, `grant` closed the block as a side effect, rank 0 read the thread — and then the decision lived in a record no lead reads and in a transcript that ends at the next recycle. The lane was unblocked and still working to the brief it had. **Being told is not being tasked, and a task is the only thing in this design that travels.**
+
+**Rank 0 closes any block in the tree**, not only its own. It held the conversation; leaving the close to the lane that raised it hands the decision to the one party that was not in it.
+
+**Look at what the answer released, not at the block.** A ruling on one lane's question routinely unblocks work spread across lanes that raised nothing. Rank 0 writes one brief for the whole of it, addressed to its lead, and the lead splits it — which is [[#T1 — Task assignment]] applied a rank higher, with the same rule that everything known goes down in one go.
+
+**Lineage, not forwarding.** `--from-block` stamps the block with the task it produced, so the block stops appearing in rank 0's queue by the act of being answered rather than by being dismissed. The brief records which block it answers and the lane can read the operator's reasoning one hop away — but the brief itself is rank 0's rewriting, never a relay of the thread ([[#T9 — Ruling]]).
+
+**A block the raiser closed itself is not in the queue.** No operator comment, no grant: it found another way, there is nothing to hand down, and a queue that names work which does not exist is a queue that stops being read.
+
+**`none` is a real answer.** A reach grant usually removes an obstacle without adding work. It is recorded with its reason because an unexplained silence and a forgotten decision are indistinguishable afterwards.
+
+**Enforcement** `harness blocked --decided` is rank 0's queue and `whoami` prints its count at orientation. The consequence is a field on the block record, so it survives the recycle that ends the session which wrote it.
+**Fails when** Rank 0 answers the operator in the block thread and stops, satisfied that the exchange happened. The exchange is not the deliverable.
+
+### T14 — A brief handed to a lead is split, not done
+
+**Direction** downward, one rank at a time.
+**Rule** A brief written for a lead is a **segment sized for a rank**, not a task sized for a session. The lead discharges it by opening a mark on it (it is doing the work itself) or by deriving briefs from it for its children (`--from`). Until one of those, the brief is **unactioned** and `whoami` says so at every orientation.
+
+**Why it needs a record.** Nothing else in the harness notices a cascade that stops. `spawn` and `recycle` warn that a node has nothing briefed; nothing warned that a node had a brief and had passed none of it on. A brief written for a lead then sat in a directory nobody was asked to look in, and the rank below never learned the work existed.
+
+**`--from` is what makes the split visible.** A lead may only split a brief written **for it** — lineage that can be invented for work never handed down is lineage not worth reading. The derived brief is a rewrite carrying its own complete specification, never the parent forwarded or the parent in pieces: the 39% penalty of [[#T1 — Task assignment]] does not care whether the pieces arrived as three briefs or as one brief and two comments.
+
+**Task ids are compared after sanitising.** A brief is stored under the filename its id becomes, so `corpus-ingest` and `corpus_ingest` are one brief; comparing lineage on what was typed made a recorded split fail to count and left the lead nagged for work it had already passed down.
+
+**Enforcement** `handed N brief(s) to split or start` at orientation, cleared only by a mark or a derived brief.
+**Fails when** A lead treats its segment as its own task list and works it directly with children idle. That is legitimate only when it is genuinely one session's work; the mark is the declaration that it is.
 
 ---
 

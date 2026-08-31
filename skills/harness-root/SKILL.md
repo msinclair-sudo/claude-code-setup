@@ -250,10 +250,48 @@ Sent straight to the lane it is contextual noise in a task that was scoped
 precisely to avoid it.
 
 **Your job is to convert it.** The discussion is yours to have; what reaches the
-lane is the outcome, rewritten: a grant, a `T9` ruling, or a revision of the
-brief. Never relay the thread. If the operator's reasoning changes what a lane
-should do, put the changed instruction in the brief and let the revision
-advance — the thread stays on record beside it as the reason.
+lane is the outcome, rewritten: a grant, a `T9` ruling, or a brief. Never relay
+the thread. If the operator's reasoning changes what a lane should do, put the
+changed instruction in the brief and let the revision advance — the thread stays
+on record beside it as the reason.
 
 Comments on a brief follow the same rule one level down: they prompt the lead
 who *writes* that brief, not the lane it is for.
+
+## Being told is not being tasked
+
+A block that has been answered is only half-finished. The answer is in a record
+your leads do not read and in a transcript that ends at your next recycle, and a
+decision nobody is tasked with does not move. **A task is the only thing that
+travels.**
+
+So closing an answered block requires you to say what work it produced:
+
+```bash
+harness blocked --decided                   # answered, no task written yet
+harness brief <task> --for dev \
+        --from-block "<need>" --write "..." # the work it produced
+harness blocked "<need>" --resolve --task <task>
+harness blocked "<need>" --no-task "why it produced none"
+```
+
+`--resolve` refuses an operator-answered block that names neither. `--no-task` is
+a real answer and often the right one — a reach grant usually removes an obstacle
+without adding work — but it is recorded with its reason, because an unexplained
+silence and a forgotten decision look identical afterwards.
+
+You close blocks anywhere in the tree, not only your own. You held the
+conversation; leaving the close to the lane that raised it hands the decision to
+the one party that was not in it.
+
+**Look at what the answer actually unblocked, not at the block.** The operator
+ruled on the 2023 rows; the work that ruling releases may be spread over three
+lanes and none of them raised anything. Write the brief for the whole of it,
+addressed to your lead, and let the lead split it. `--from-block` stamps the
+block so it stops asking you, and leaves the lineage readable: the lane sees
+`answers the block '<need>'` and can go read the reasoning one hop away.
+
+What you write is a segment for the rank below, not a task list. Your lead breaks
+it up. Write everything you know in one go — that is `T1`, and it is the same
+39% penalty whether the pieces arrive as three briefs or as one brief and two
+comments.

@@ -401,10 +401,26 @@ def _whoami(a):
                   f"{', '.join(waiting)}")
     except Exception:
         pass
+    try:
+        # Work handed to you that has gone nowhere. For a member that means a
+        # brief with no mark; for a lead it also means a brief it has not split,
+        # which is the one place a cascade stops silently — the rank below never
+        # learns the work exists, and nothing else in the harness would say so.
+        un = unactioned_briefs(ctx, node)
+        if un:
+            verb = "split or start" if ctx.children(node) else "start"
+            print(f"handed   {len(un)} brief(s) to {verb}: {', '.join(un)} "
+                  f"— harness brief <task>")
+    except Exception:
+        pass
     if ctx.rank(node) == 0:
         try:
             stale_m, unattr_m = orphan_marks(ctx)
             nb = len(open_blocks(ctx))
+            nd = len(decided_blocks(ctx))
+            if nd:
+                print(f"decide   {nd} answered block(s) with no task written "
+                      f"— harness blocked --decided")
             if stale_m or unattr_m:
                 print(f"unclaimed {len(stale_m) + len(unattr_m)} open task record(s) "
                       f"claimed by no node — harness status")
@@ -2054,6 +2070,51 @@ def brief_node(ctx, task, explicit=None):
     return None
 
 
+def tkey(name):
+    """The filename a task id becomes. Two ids that differ only in punctuation
+    are the same brief, so lineage has to be compared on this, not on what was
+    typed — otherwise `--from corpus-ingest` never matches the brief stored as
+    corpus_ingest and the split silently fails to count."""
+    return re.sub(r"[^A-Za-z0-9]", "_", name or "")
+
+
+def all_briefs(ctx):
+    """Every brief, keyed by its file stem, each carrying the task id its writer
+    typed. Callers print the id and match on the stem."""
+    d = ctx.state / "briefs"
+    out = {}
+    for p in (sorted(d.glob("*.json")) if d.is_dir() else []):
+        try:
+            b = json.loads(p.read_text())
+        except Exception:
+            continue
+        b.setdefault("task", p.stem)
+        out[p.stem] = b
+    return out
+
+
+def unactioned_briefs(ctx, node):
+    """Briefs handed to this node that it has neither started nor passed on.
+
+    A brief is how work travels exactly one rank. For a member that is the end
+    of the line, so opening a mark is the only thing that discharges it. For a
+    lead it is not: a lead's brief is a segment it is expected to break up, and
+    the break-up IS the cascade. Without this, a brief written for a lead sits
+    in a directory nobody is asked to look in, and the rank below never learns
+    the work exists.
+
+    A brief is discharged by a mark (this node is doing it) or by a brief
+    derived from it (this node has split it). Both are real answers; neither is
+    guessed. Cleared by doing the right thing, not by dismissing a warning.
+    """
+    briefs = all_briefs(ctx)
+    derived = {tkey(b.get("from")) for b in briefs.values() if b.get("from")}
+    return sorted(b["task"] for k, b in briefs.items()
+                  if b.get("node") == node
+                  and k not in derived
+                  and not ctx.state_file("marks", k, ".json").exists())
+
+
 def briefed_unstarted(ctx, node):
     """Briefs written for a node that no mark has opened yet: work handed down
     and not picked up. This is what a session STARTS on, so a node with none of
@@ -2154,13 +2215,43 @@ def cmd_brief(a):
             die(REFUSED, "an empty brief is not a brief. If there is nothing to say "
                          "about scope,\n           approach, checks, seams and what done "
                          "means, the task is not ready to issue.")
+        parent_task = a.from_task or (b or {}).get("from")
+        if parent_task:
+            # Splitting is passing your OWN brief down one rank, so the parent
+            # brief must be one written for you. Anything else is a lead
+            # inventing lineage for work it was never handed, and a provenance
+            # chain that can be invented is not one worth reading.
+            _, pb = load_brief(ctx, parent_task)
+            if pb is None:
+                die(REFUSED, f"no brief '{parent_task}' to split. "
+                             f"--from names the brief you were handed.")
+            if pb.get("node") != me:
+                die(REFUSED,
+                    f"'{parent_task}' was written for '{pb.get('node')}', not '{me}'.\n"
+                    f"           --from splits a brief handed to YOU into work for your\n"
+                    f"           children. You cannot split a brief you were not given.")
         rev = (b or {}).get("revision", 0) + 1
         rec = {"task": a.task, "node": target, "text": a.write, "revision": rev,
                "written_by": who, "written_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                "suggestions": (b or {}).get("suggestions", [])}
+        if parent_task:
+            rec["from"] = parent_task
+        blk = a.from_block or (b or {}).get("from_block")
+        if blk:
+            rec["from_block"] = blk
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(json.dumps(rec, indent=2) + "\n")
         print(f"brief for '{target}' / {a.task}  (revision {rev}, by {who})")
+        if a.from_task:
+            print(f"  splits '{parent_task}', the brief '{me}' was handed")
+        if a.from_block:
+            hit = stamp_consequence(ctx, blk, a.task, target)
+            if hit:
+                print(f"  records this as what the block '{blk}' produced "
+                      f"— it stops asking rank 0 for a task")
+            else:
+                print(f"  no block named '{blk}' — nothing stamped. "
+                      f"`harness blocked --decided` lists them.")
         if rev > 1:
             print("  the previous text is gone — a brief is a plan, not a record")
         open_s = [i for i, s in enumerate((b or {}).get("suggestions", []), 1)
@@ -2247,9 +2338,28 @@ def cmd_brief(a):
         pass
     print(f"{a.task}   for {b.get('node')}   revision {b.get('revision')}")
     print(f"  by {b.get('written_by')} at {str(b.get('written_at'))[:19]}")
+    if b.get("from"):
+        print(f"  splits   {b['from']}")
+    if b.get("from_block"):
+        # A pointer, not a copy. The operator's actual words stay one hop away
+        # in the block record; what is above is the lead's rewriting of them,
+        # and that rewriting is the instruction.
+        print(f"  answers  the block '{b['from_block']}'  "
+              f"— reasoning behind it: harness blocked --list")
     print()
     for line in (b.get("text") or "").splitlines() or [""]:
         print(f"  {line}")
+    kids = ctx.children(b.get("node") or "")
+    derived = sorted(o["task"] for o in all_briefs(ctx).values()
+                     if tkey(o.get("from")) == tkey(a.task))
+    if derived:
+        print(f"\n  split into {', '.join(derived)}")
+    elif kids and b.get("node") == me:
+        print(f"\n  Not split yet. This is a segment of work for {', '.join(kids)}, "
+              f"not for you to\n  do: break it up and hand each piece down, whole, "
+              f"in one brief each.")
+        print(f"    harness brief <sub-task> --for {kids[0]} --from {b.get('task')} "
+              f"--write \"...\"")
     cs = b.get("comments") or []
     if cs:
         print(f"\n  {len(cs)} comment(s) — context, not instruction. Only the brief "
@@ -2475,6 +2585,65 @@ def open_blocks(ctx):
     return out
 
 
+def decided_blocks(ctx):
+    """Blocks that closed with a decision in them and no task written yet.
+
+    This is the seam the harness was missing. A block leaves the tree, the
+    operator answers it, the answer closes the block, and there it stopped: the
+    lane was unblocked but never re-instructed. The decision then lived in a
+    block record nobody downstream reads and in a rank 0 transcript that ends at
+    the next recycle. Being told is not the same as being tasked, and only a
+    task moves.
+
+    So a block that closed with the operator's fingerprints on it — answered in
+    comments, or closed by a grant — is not finished until rank 0 says what work
+    it produced. That answer is a brief, or an explicit `none`, and both are
+    recorded on the block.
+
+    A block the raiser closed by itself with no operator comment is not listed.
+    It found another way, there is nothing to hand down, and a queue that names
+    work which does not exist is a queue that stops being read.
+    """
+    out = {}
+    d = ctx.state / "blocks"
+    for f in (sorted(d.glob("*.json")) if d.is_dir() else []):
+        try:
+            r = json.loads(f.read_text())
+        except Exception:
+            continue
+        if not r.get("resolved_at") or r.get("consequence"):
+            continue
+        if (r.get("resolved_by") == "grant"
+                or any(c.get("by") == "operator" for c in (r.get("comments") or []))):
+            out[f.stem] = r
+    return out
+
+
+def stamp_consequence(ctx, need, task, node):
+    """Record on the block that this brief is what it produced. Returns the keys
+    stamped, so a wrong --from-block is visible rather than silent."""
+    hit = []
+    d = ctx.state / "blocks"
+    for f in (sorted(d.glob("*.json")) if d.is_dir() else []):
+        try:
+            r = json.loads(f.read_text())
+        except Exception:
+            continue
+        if r.get("need") != need and not f.stem.endswith(
+                re.sub(r"[^A-Za-z0-9]", "_", need or "")):
+            continue
+        c = r.setdefault("consequence", {"tasks": []})
+        if isinstance(c, dict):
+            c.setdefault("tasks", [])
+            if task not in c["tasks"]:
+                c["tasks"].append(task)
+            c["for"] = node
+            c["at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        f.write_text(json.dumps(r, indent=2) + "\n")
+        hit.append(f.stem)
+    return hit
+
+
 def unread_block_comments(ctx, who):
     """Comments on ANY open block in this tree, for rank 0 only.
 
@@ -2512,10 +2681,64 @@ def cmd_blocked(a):
     """
     ctx = Ctx(); ctx.require_enrolled()
     node, _ = ctx.node()
+
+    if a.decided:
+        rows = decided_blocks(ctx)
+        if not rows:
+            print("every decided block has produced a task or been recorded as "
+                  "producing none"); return
+        print(f"{len(rows)} block(s) answered and not yet turned into work.\n")
+        for k, r in sorted(rows.items()):
+            print(f"  {r.get('node', '?'):<12} {r.get('need', k)}")
+            print(f"  {'':<12} raised for: {r.get('why') or '—'}")
+            for c in (r.get("comments") or []):
+                print(f"  {'':<12} [{str(c.get('at'))[:16]}  {c.get('by')}]")
+                for line in (c.get("text") or "").splitlines():
+                    print(f"  {'':<14}  {line}")
+            kid = ctx.tree["nodes"].get(r.get("node"), {}).get("parent")
+            hand = r.get("node") if kid == node else (kid or r.get("node"))
+            print(f"  {'':<12} write the task it produced, for the rank below you:")
+            print(f"  {'':<14}  harness brief <task> --for {hand} "
+                  f"--from-block {shlex.quote(r.get('need') or k)} --write \"...\"")
+            print(f"  {'':<12} or record that it produced none:")
+            print(f"  {'':<14}  harness blocked {shlex.quote(r.get('need') or k)} "
+                  f"--no-task \"why not\"\n")
+        print("Being told is not being tasked. Until one of these is written, the")
+        print("lane that raised the block is unblocked and still working to the old")
+        print("brief — the decision reached you and stopped.")
+        return
+
+    if a.no_task is not None:
+        if ctx.rank(node) != 0:
+            die(REFUSED, f"'{node}' is rank {ctx.rank(node)}. Whether an answer produces "
+                         f"work is\n           rank 0's call — it is the only party in the "
+                         f"conversation the answer came from.")
+        if not (a.no_task or "").strip():
+            die(REFUSED, "say why it produces no work. An unexplained 'none' is "
+                         "indistinguishable\n           from forgetting.")
+        hits = [(k, r) for k, r in decided_blocks(ctx).items()
+                if r.get("need") == a.need or k.endswith(
+                    re.sub(r"[^A-Za-z0-9]", "_", a.need or ""))]
+        if not hits:
+            die(REFUSED, f"no answered block awaiting a task for '{a.need}'. "
+                         f"`harness blocked --decided` lists them.")
+        k, r = hits[0]
+        r["consequence"] = {"tasks": [], "none": a.no_task,
+                            "by": node, "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
+        (ctx.state / "blocks" / (k + ".json")).write_text(json.dumps(r, indent=2) + "\n")
+        print(f"recorded: '{r.get('need')}' produced no task")
+        print(f"  {a.no_task}")
+        print(f"  '{r.get('node')}' is not told. If it should be, that is a brief "
+              f"revision, not this.")
+        return
+
     if a.list or not a.need:
         rows = open_blocks(ctx)
-        if not rows:
+        pend = decided_blocks(ctx) if ctx.rank(node) == 0 else {}
+        if not rows and not pend:
             print("nothing blocked"); return
+        if not rows:
+            print("nothing blocked")
         for k, r in sorted(rows.items()):
             print(f"  {r.get('node', '?'):<12} {r.get('need', k)}")
             print(f"  {'':<12} {r.get('why') or '(no reason recorded)'}   "
@@ -2532,6 +2755,11 @@ def cmd_blocked(a):
                         json.dumps(r, indent=2) + "\n")
                 except Exception:
                     pass
+        if pend:
+            print(f"\n{len(pend)} answered and not yet turned into work — "
+                  f"harness blocked --decided")
+            for k, r in sorted(pend.items()):
+                print(f"  {r.get('node', '?'):<12} {r.get('need', k)}")
         return
     if a.comment is not None:
         # The operator answering a block is the thing the lane is waiting on, so
@@ -2562,14 +2790,51 @@ def cmd_blocked(a):
     f = ctx.state_file("blocks", f"{node}-{a.need}", ".json")
     f.parent.mkdir(parents=True, exist_ok=True)
     if a.resolve:
+        # You close your own. Rank 0 closes anyone's, because rank 0 is the party
+        # that holds the conversation the answer comes from — leaving the close
+        # to the raiser means the node that was never in that conversation
+        # decides when it is over.
+        if not f.exists() and ctx.rank(node) == 0:
+            hits = [(k, r) for k, r in open_blocks(ctx).items()
+                    if r.get("need") == a.need or k.endswith(
+                        re.sub(r"[^A-Za-z0-9]", "_", a.need or ""))]
+            if hits:
+                f = ctx.state / "blocks" / (hits[0][0] + ".json")
         if not f.exists():
             die(REFUSED, f"no block recorded for '{a.need}' on {node}")
         r = json.loads(f.read_text())
+        answered = any(c.get("by") == "operator" for c in (r.get("comments") or []))
+        if answered and not (a.task or a.no_task is not None):
+            die(REFUSED,
+                f"'{a.need}' was answered by the operator. Closing it is half the "
+                f"act; the\n           other half is saying what work the answer "
+                f"produced, because a decision\n           nobody is tasked with is a "
+                f"decision that does not move.\n\n"
+                f"           harness blocked {shlex.quote(a.need)} --resolve "
+                f"--task <task>      (a brief you wrote)\n"
+                f"           harness blocked {shlex.quote(a.need)} --resolve "
+                f"--no-task \"why\"   (it produced none)")
+        if a.task:
+            _, tb = load_brief(ctx, a.task)
+            if tb is None:
+                die(REFUSED, f"no brief '{a.task}'. Write the task before you close "
+                             f"the block:\n           harness brief {a.task} --for "
+                             f"<node> --from-block {shlex.quote(a.need)} --write \"...\"")
+            r["consequence"] = {"tasks": [a.task], "by": node,
+                                "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
+        elif a.no_task is not None:
+            r["consequence"] = {"tasks": [], "none": a.no_task, "by": node,
+                                "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
         r["resolved_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        r["resolved_by"] = node
         f.write_text(json.dumps(r, indent=2) + "\n")
         write_needs(scan_needs())
         append_inbox(dict(r, event="resolved"))
-        print(f"resolved: {a.need}"); return
+        print(f"resolved: {a.need}")
+        if a.task:
+            print(f"  it produced '{a.task}', briefed for "
+                  f"{load_brief(ctx, a.task)[1].get('node')}")
+        return
     if f.exists() and not json.loads(f.read_text()).get("resolved_at"):
         print(f"already raised: {a.need} on {node}"); return
     rec = {"node": node, "need": a.need, "why": a.why or "",
@@ -2774,7 +3039,14 @@ def main():
     bk.add_argument("--why", help="what it is for, in one line")
     bk.add_argument("--still-moving", dest="still_moving",
                     help="what continues without it — this is how urgent gets judged")
-    bk.add_argument("--resolve", action="store_true", help="close a block you raised")
+    bk.add_argument("--resolve", action="store_true",
+                    help="close it; rank 0 may close any block in the tree")
+    bk.add_argument("--task", metavar="TASK",
+                    help="the brief the answer produced (required when the operator answered)")
+    bk.add_argument("--no-task", dest="no_task", metavar="WHY",
+                    help="record that the answer produced no work, and why")
+    bk.add_argument("--decided", action="store_true",
+                    help="answered blocks with no task written yet (rank 0's queue)")
     bk.add_argument("--comment", metavar="TEXT",
                     help="answer or add context; does not clear the block")
     bk.add_argument("--list", action="store_true", help="every open block")
@@ -2788,6 +3060,10 @@ def main():
                     help="propose a change to your own brief; your lead decides")
     br.add_argument("--comment", metavar="TEXT",
                     help="context for whoever works on it; does NOT change the brief")
+    br.add_argument("--from", dest="from_task", metavar="TASK",
+                    help="the brief handed to you that this one splits")
+    br.add_argument("--from-block", dest="from_block", metavar="NEED",
+                    help="the answered block this task carries down")
     br.add_argument("--resolve", type=int, metavar="N", help="mark suggestion N addressed")
     nt = add("note", cmd_note)
     nt.add_argument("task", help="task id, as recorded at T1")

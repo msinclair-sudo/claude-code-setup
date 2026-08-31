@@ -238,6 +238,29 @@ survive the recycle that ends the session you are answering.
 You cannot write a grandchild's brief. `dev_1`'s lead is `dev`, so `dev` writes
 it — if you are above that, tell the lead what you want and let it write.
 
+**A brief handed to you is a segment to split, not a task to do.** Your lead
+writes you a piece of work sized for a rank, not for a session. `whoami` says
+`handed N brief(s) to split or start`, and it keeps saying it until you either
+open a mark on it (you are doing it yourself) or derive briefs from it:
+
+```bash
+harness brief <sub-task> --for <child> --from <the-brief-you-were-handed> \
+        --write "..."
+```
+
+`--from` is what records the split, and it is the only thing that tells the
+harness the work reached the rank below. Without it a brief written for you sits
+in a directory nobody is asked to look in, your children never learn the work
+exists, and nothing anywhere reports that the cascade stopped at you.
+
+You can only split a brief written **for you**. Lineage you could invent for work
+you were never handed is lineage not worth reading.
+
+Splitting is a rewrite, not a forward. Each child gets its own whole
+specification — scope, approach, checks, what done means — in one go. Passing
+your brief down verbatim, or in pieces with the rest to follow, is the 39%
+penalty by another route.
+
 **Comments are context; only your brief instructs.** `whoami` tells you when a
 brief you own has unread comments — from the operator, from the lane, from a
 peer. Read them, then decide. If a comment changes what the work should be,

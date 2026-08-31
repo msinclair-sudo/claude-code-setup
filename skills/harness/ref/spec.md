@@ -308,6 +308,20 @@ A brief exists **before** its mark: the lead writes it, then the member accepts.
 **Enforcement** `handed N brief(s) to split or start` at orientation, cleared only by a mark or a derived brief.
 **Fails when** A lead treats its segment as its own task list and works it directly with children idle. That is legitimate only when it is genuinely one session's work; the mark is the declaration that it is.
 
+### T15 — Acceptance is not a decision
+
+**Direction** none. This is the absence of a transaction, stated so it stops being invented.
+**Rule** A brief at the head of a node's queue is an **instruction already given**. The member opens the mark and begins. It does not ask whether to start, and there is nobody waiting to be asked.
+
+**What it is not.** [[#T12 — Question]] stays exactly as it is: a member may ask about a gap the plan could not have covered. *Shall I do this?* is not a gap. T12 already forbids asking for confirmation of what the plan says, and the behaviour happened anyway — which means the rule was true and was not reaching the member at the moment it mattered.
+
+**That moment is orientation.** A session that starts, reads its brief and ends its turn with a question has spent a session to request something it already held, and the node it is standing on is now idle with a live counterparty — the condition [[#R2 — Occupancy is the worktree, not the session]] exists to prevent, arrived at by politeness rather than by drift.
+
+**Ambiguity is what produces the question, and the queue is what removes it.** A member holding four briefs and no order does not have a backlog, it has a choice — and a member choosing which of its tasks to do first is choosing its own work, one notch smaller than choosing its own task and refused on the same grounds. So orientation names **one** task, prints the two commands that begin it, and says plainly that the brief is the instruction. What follows it is listed and marked *not yours to start*.
+
+**Enforcement** None, and there cannot be. A CLI cannot make a session begin. What it can do is remove every ambiguity the question could be about, and say the thing at the moment the question would otherwise be asked. If it is still asked, that is a prompt failure and not a design gap.
+**Fails when** The queue is empty and orientation says so. A node with nothing briefed asking what to do is correct; that question belongs to its lead, and `spawn` and `recycle` both warn before it can happen.
+
 ---
 
 ## Invariants
@@ -1013,6 +1027,10 @@ It is a teardown and relaunch, not a clear. A background session cannot clear
 itself, and a session that stopped itself could not start its replacement — so
 the parent does both. **Never `claude rm`:** that deletes the session *and its
 worktree*, and on a node the worktree is the node.
+
+**Between tasks, not between sessions.** A member's queue is the ordered briefs written for it that no mark has opened. Its lead sets the order (`harness queue <node> --order`), because a member picking its own next task is picking its own work. When a task is signed off, the harness computes what happens to the node and prints it with the command already written: recycle, or carry on. Leaving that to be remembered is how one session ends up doing four tasks on one accumulating context, which is the thing this rule exists to prevent.
+
+**Coupling is the exception, and is justified in writing.** Two tasks may be declared to run in one session (`harness brief <b> --with <a> --why "..."`) when the context the first built is worth more than the reset the second would get. The `--why` is required and refused when empty, because the default is the evidenced one and an exception with no stated reason is indistinguishable from forgetting. A coupled task holds no queue position of its own — it is reached through its predecessor or not at all, and ordering one directly is refused.
 
 **Recycling is the best-evidenced thing in this design.** A persistent worker
 accumulates its own errors: measured, per-step accuracy falls as steps grow, and

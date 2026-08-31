@@ -425,11 +425,32 @@ def _whoami(a):
         # brief with no mark; for a lead it also means a brief it has not split,
         # which is the one place a cascade stops silently — the rank below never
         # learns the work exists, and nothing else in the harness would say so.
-        un = unactioned_briefs(ctx, node)
-        if un:
-            verb = "split or start" if ctx.children(node) else "start"
-            print(f"handed   {len(un)} brief(s) to {verb}: {', '.join(un)} "
-                  f"— harness brief <task>")
+        q = queue(ctx, node)
+        head = [b for b in q if not b.get("coupled_to")]
+        openm = [t for t, r in open_marks(ctx).items() if r.get("_node") == node]
+        if head and ctx.children(node):
+            print(f"handed   {len(head)} brief(s) to split or start: "
+                  f"{', '.join(b['task'] for b in head)} — harness brief <task>")
+        elif head and not openm:
+            # The line that answers "shall I start?" before it is asked. A member
+            # arriving to four briefs and no order holds an ambiguity at the top
+            # of its session, and an ambiguity there gets resolved by asking —
+            # which ends the session on a question and idles the node. One task,
+            # named, with the two commands that begin it.
+            b0 = head[0]
+            print(f"next     {b0['task']} — the brief is your instruction, not a "
+                  f"proposal.")
+            print(f"         Nothing further is coming and nobody is waiting to be "
+                  f"asked. Begin:")
+            print(f"           harness brief {b0['task']}    then    "
+                  f"harness mark {b0['task']}")
+            rest = head[1:]
+            if rest:
+                print(f"queue    {len(rest)} after it, in order: "
+                      f"{', '.join(b['task'] for b in rest)}  — not yours to start")
+        elif head:
+            print(f"queue    {len(head)} after your open task: "
+                  f"{', '.join(b['task'] for b in head)}")
     except Exception:
         pass
     if ctx.rank(node) == 0:
@@ -824,9 +845,13 @@ def cmd_spawn(a):
         # can be occupied with nothing to do (that is the `unassigned` state).
         # But a lead should learn its child has nothing to start on BEFORE it
         # spends a session finding out and asking.
-        if not briefed_unstarted(ctx, n):
+        nq = [b for b in queue(ctx, n) if not b.get("coupled_to")]
+        if not nq:
             print(f"  note {n:<12} nothing briefed — it will have no task to open. "
                   f"harness brief <task> --for {n} --write \"...\"")
+        else:
+            print(f"       {n:<12} starts on {nq[0]['task']}"
+                  + (f", then {len(nq) - 1} more" if len(nq) > 1 else ""))
         gr = grants_for(ctx, n)
         reach = f"  +{len(gr)} grant(s)" if gr else ""
         cmd = ["claude", "--bg", "-n", name] + grant_flags(gr, model, effort)
@@ -1191,6 +1216,7 @@ def cmd_mark(a):
         rec["_presented_at"] = now["_at"]
         rec["_presented_by"] = f"{node} (session {sid[:8]})"
         rec["_presented_sha"] = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
+        nxt, coupled = next_after(ctx, node, a.task)
         if rec.get("_session") == sid:
             rec["_delta"] = {k: now[k] - rec.get(k, 0) for k in RATES}
             cost = f"~${usd(rec['_delta']):.2f}"
@@ -1209,6 +1235,20 @@ def cmd_mark(a):
         print(f"  It is NOT closed. {parent or 'your lead'} signs it off: "
               f"harness mark {a.task} --close")
         print(f"  You cannot close your own work — you cannot check it either (T4).")
+        # What happens to this session next, said here rather than left to be
+        # worked out. A member that has presented and does not know whether it is
+        # continuing will fill the gap, and what it fills it with is a question.
+        if nxt and coupled:
+            print(f"\nnext: '{nxt['task']}' is coupled to this one — you carry on in "
+                  f"this session.")
+            print(f"  {nxt.get('coupled_why') or ''}")
+            print(f"  harness brief {nxt['task']}    then    harness mark {nxt['task']}")
+        elif nxt:
+            print(f"\nnext: '{nxt['task']}' is queued for you and is NOT yours to "
+                  f"start.")
+            print(f"  Your lead recycles this node first (R13). Do not open it, and do "
+                  f"not ask\n  whether to: presenting is the whole of your last act on "
+                  f"this task.")
         return
 
     if a.close:
@@ -1244,8 +1284,27 @@ def cmd_mark(a):
         still = sorted(t for t, r in open_marks(ctx).items() if r.get("_node") == owner)
         if still:
             print(f"  {owner} still has {len(still)} open task(s): {', '.join(still)}")
+            return
+        # The boundary between two tasks is where a member is either replaced or
+        # deliberately kept. Leaving that to be remembered is how a session ends
+        # up doing four tasks on one accumulating context, which is the thing
+        # R13 exists to prevent — so the answer is computed and printed here,
+        # with the command already written out.
+        nxt, coupled = next_after(ctx, owner, a.task)
+        if nxt and coupled:
+            print(f"  '{nxt['task']}' is COUPLED to this one — the same session "
+                  f"carries on:")
+            print(f"    {nxt.get('coupled_why') or '(no reason recorded)'}")
+            print(f"  It opens the next mark itself. Do not recycle {owner}.")
+        elif nxt:
+            print(f"  next for {owner}: {nxt['task']}  — recycle it first, "
+                  f"do not hand it on:")
+            print(f"    harness recycle {owner}")
+            print(f"  A fresh session costs less than the errors the old one has "
+                  f"accumulated (R13).")
         else:
-            print(f"  {owner} has no open task record left — recycle it, or brief it again.")
+            print(f"  {owner} has nothing queued. Brief it again, or recycle it "
+                  f"idle:  harness recycle {owner}")
         return
 
     # T1 is a gate, not a convention. A task opened without a brief is a task
@@ -1630,9 +1689,13 @@ def cmd_recycle(a):
             done += 1
             continue
 
-        if not briefed_unstarted(ctx, n):
-            print(f"  note {n:<12} nothing briefed — the fresh session will have "
+        nq = [b for b in queue(ctx, n) if not b.get("coupled_to")]
+        if not nq:
+            print(f"  note {n:<12} nothing queued — the fresh session will have "
                   f"no task to open")
+        else:
+            print(f"       {n:<12} starts on {nq[0]['task']}"
+                  + (f", then {len(nq) - 1} more" if len(nq) > 1 else ""))
         name = f"{idx['project']}-{n}"
         gr = grants_for(ctx, n)
         cmd = ["claude", "--bg", "-n", name] + grant_flags(gr, model, effort)
@@ -2315,6 +2378,136 @@ def briefed_unstarted(ctx, node):
     return out
 
 
+def queue(ctx, node):
+    """The briefs waiting for this node, in the order its lead put them.
+
+    A node holding three briefs and no order does not have a backlog, it has an
+    ambiguity — and an ambiguity at the top of a session is answered by asking.
+    Ordering is the lead's, on the same authority as the briefs themselves: a
+    member choosing which of its tasks to do first is choosing its own work, one
+    notch smaller than choosing its own task.
+
+    Order is `seq` where the lead has set one, and the order the briefs were
+    written where it has not, which is almost always the order intended.
+    """
+    briefs = all_briefs(ctx)
+    derived = {tkey(b.get("from")) for b in briefs.values() if b.get("from")}
+    rows = [b for k, b in briefs.items()
+            if b.get("node") == node and k not in derived
+            and not ctx.state_file("marks", k, ".json").exists()]
+    rows.sort(key=lambda b: (b.get("seq") if b.get("seq") is not None else 10**6,
+                             b.get("written_at") or ""))
+    return rows
+
+
+def couple_chain(ctx, task):
+    """Every task coupled to this one, forward, in order. A chain runs in ONE
+    session; the whole point is that the boundary between them is not a
+    teardown."""
+    briefs = all_briefs(ctx)
+    out, cur = [], tkey(task)
+    seen = {cur}
+    while True:
+        nxt = next((b for k, b in briefs.items()
+                    if tkey(b.get("coupled_to")) == cur and k not in seen), None)
+        if not nxt:
+            return out
+        cur = tkey(nxt["task"]); seen.add(cur)
+        out.append(nxt)
+
+
+def next_after(ctx, node, task):
+    """What happens when `task` closes: (next_brief, coupled).
+
+    Coupled means the same session carries on, because the context it already
+    holds is the reason the two were put together. Uncoupled means the session
+    ends: a fresh one is cheaper than the accumulated errors of the old one, and
+    that is R13 rather than tidiness."""
+    chain = couple_chain(ctx, task)
+    if chain:
+        return chain[0], True
+    q = [b for b in queue(ctx, node) if tkey(b["task"]) != tkey(task)]
+    # A coupled task is reached through its predecessor, never picked up cold.
+    q = [b for b in q if not b.get("coupled_to")]
+    return (q[0] if q else None), False
+
+
+def cmd_queue(a):
+    """What each node has waiting, and in what order.
+
+    Read by anyone. Ordered by the lead, because a member picking its own next
+    task is picking its own work.
+    """
+    ctx = Ctx(); ctx.require_enrolled()
+    me, _ = ctx.node()
+
+    if a.order:
+        target = a.node or me
+        parent = ctx.tree["nodes"].get(target, {}).get("parent")
+        if parent != me and not (target == me and ctx.rank(me) == 0):
+            die(REFUSED, f"'{me}' does not order '{target}'s queue. A lead orders "
+                         f"its CHILDREN's;\n           rank 0 orders its own.")
+        want = [t.strip() for t in a.order.split(",") if t.strip()]
+        # Only the head of each coupled chain is orderable. A coupled task is
+        # reached through its predecessor by construction, so giving it a
+        # position of its own would state an order that can never happen.
+        all_q = {tkey(b["task"]): b for b in queue(ctx, target)}
+        have = {k: b for k, b in all_q.items() if not b.get("coupled_to")}
+        chained = [t for t in want if tkey(t) in all_q and tkey(t) not in have]
+        if chained:
+            die(REFUSED,
+                f"{', '.join(chained)} runs inside another task's session and has no "
+                f"place\n           of its own in the queue. Order the task it is "
+                f"coupled to.")
+        missing = [t for t in want if tkey(t) not in have]
+        if missing:
+            die(REFUSED, f"not queued for '{target}': {', '.join(missing)}\n"
+                         f"           queued: "
+                         f"{', '.join(b['task'] for b in have.values())}")
+        for i, t in enumerate(want):
+            b = have[tkey(t)]
+            b["seq"] = i
+            ctx.state_file("briefs", b["task"], ".json").write_text(
+                json.dumps(b, indent=2) + "\n")
+        # Anything unnamed keeps its place behind what was named, rather than
+        # being silently promoted by a partial reorder.
+        for j, b in enumerate((x for x in have.values() if tkey(x["task"]) not in
+                               {tkey(t) for t in want}), start=len(want)):
+            b["seq"] = j
+            ctx.state_file("briefs", b["task"], ".json").write_text(
+                json.dumps(b, indent=2) + "\n")
+        print(f"{target}: " + " → ".join(b["task"] for b in queue(ctx, target)
+                                         if not b.get("coupled_to")))
+        return
+
+    nodes = [a.node] if a.node else sorted(ctx.tree["nodes"])
+    shown = False
+    for n in nodes:
+        if n not in ctx.tree["nodes"]:
+            die(REFUSED, f"'{n}' is not a node in {ctx.tree_path}")
+        q = queue(ctx, n)
+        openm = sorted(t for t, r in open_marks(ctx).items() if r.get("_node") == n)
+        if not q and not openm:
+            continue
+        shown = True
+        print(f"{n}")
+        for t in openm:
+            r = open_marks(ctx)[t]
+            state = "presented, waiting on sign-off" if r.get("_presented_at") else "OPEN"
+            print(f"    ▸ {t:<24} {state}")
+        head = [b for b in q if not b.get("coupled_to")]
+        for i, b in enumerate(head):
+            mark = "next" if i == 0 and not openm else f"  {i + 1}."
+            print(f"    {mark:<4} {b['task']:<24} "
+                  f"{(b.get('text') or '').strip().splitlines()[0][:44] if b.get('text') else ''}")
+            for c in couple_chain(ctx, b["task"]):
+                why = (c.get("coupled_why") or "").strip().replace("\n", " ")
+                print(f"         ↳ {c['task']:<22} same session: "
+                      f"{why[:40]}{'…' if len(why) > 40 else ''}")
+    if not shown:
+        print("nothing queued or open anywhere in this tree")
+
+
 def unread_brief_comments(ctx, who):
     """Comments on any brief for this node that this node has not read yet.
 
@@ -2374,6 +2567,10 @@ def cmd_brief(a):
     sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     who = f"{me} ({'session ' + sid[:8] if sid else 'operator'})"
 
+    if a.write is None and (a.with_task or a.why):
+        die(REFUSED, "--with and --why describe a brief being written. Add --write "
+                     "\"...\" —\n           coupling two tasks does not write the "
+                     "second one for you.")
     if a.write is not None:
         if target is None:
             die(REFUSED, f"no brief for '{a.task}' yet and no node named — "
@@ -2411,12 +2608,41 @@ def cmd_brief(a):
                     f"'{parent_task}' was written for '{pb.get('node')}', not '{me}'.\n"
                     f"           --from splits a brief handed to YOU into work for your\n"
                     f"           children. You cannot split a brief you were not given.")
+        if a.with_task:
+            # Coupling is the EXCEPTION and has to read as one. A fresh session
+            # per task is the default because a persistent worker's own errors
+            # compound in its own context and clearing history is what fixes it;
+            # coupling deliberately keeps that context, so it is justified in
+            # writing or not at all.
+            _, wb = load_brief(ctx, a.with_task)
+            if wb is None:
+                die(REFUSED, f"no brief '{a.with_task}' to couple to")
+            if wb.get("node") != target:
+                die(REFUSED,
+                    f"'{a.with_task}' is for '{wb.get('node')}' and this is for "
+                    f"'{target}'.\n           Coupling means one session does both, "
+                    f"so they must be the same node.")
+            if tkey(a.with_task) == tkey(a.task):
+                die(REFUSED, "a task cannot be coupled to itself")
+            if not (a.why or "").strip():
+                die(REFUSED,
+                    "--with needs --why. Coupling keeps a session alive across a task "
+                    "boundary,\n           and a worker carrying its own history "
+                    "compounds its own errors — so the\n           context being "
+                    "reused has to be worth more than the reset it costs. Say what "
+                    "it is.")
+        coupled = a.with_task or (b or {}).get("coupled_to")
         rev = (b or {}).get("revision", 0) + 1
         rec = {"task": a.task, "node": target, "text": a.write, "revision": rev,
                "written_by": who, "written_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                "suggestions": (b or {}).get("suggestions", [])}
         if parent_task:
             rec["from"] = parent_task
+        if coupled:
+            rec["coupled_to"] = coupled
+            rec["coupled_why"] = a.why or (b or {}).get("coupled_why") or ""
+        if (b or {}).get("seq") is not None:
+            rec["seq"] = b["seq"]
         blk = a.from_block or (b or {}).get("from_block")
         if blk:
             rec["from_block"] = blk
@@ -2425,6 +2651,10 @@ def cmd_brief(a):
         print(f"brief for '{target}' / {a.task}  (revision {rev}, by {who})")
         if a.from_task:
             print(f"  splits '{parent_task}', the brief '{me}' was handed")
+        if a.with_task:
+            print(f"  runs in the SAME session as '{a.with_task}', which is why it "
+                  f"is not queued separately")
+            print(f"  because: {a.why}")
         if a.from_block:
             hit = stamp_consequence(ctx, blk, a.task, target)
             if hit:
@@ -2521,6 +2751,9 @@ def cmd_brief(a):
     print(f"  by {b.get('written_by')} at {str(b.get('written_at'))[:19]}")
     if b.get("from"):
         print(f"  splits   {b['from']}")
+    if b.get("coupled_to"):
+        print(f"  follows   {b['coupled_to']} in the same session: "
+              f"{b.get('coupled_why') or ''}")
     if b.get("from_block"):
         # A pointer, not a copy. The operator's actual words stay one hop away
         # in the block record; what is above is the lead's rewriting of them,
@@ -3241,6 +3474,10 @@ def main():
                     help="propose a change to your own brief; your lead decides")
     br.add_argument("--comment", metavar="TEXT",
                     help="context for whoever works on it; does NOT change the brief")
+    br.add_argument("--with", dest="with_task", metavar="TASK",
+                    help="run in the SAME session as TASK, instead of being queued")
+    br.add_argument("--why", metavar="TEXT",
+                    help="why coupling is worth keeping a session alive (required with --with)")
     br.add_argument("--from", dest="from_task", metavar="TASK",
                     help="the brief handed to you that this one splits")
     br.add_argument("--from-block", dest="from_block", metavar="NEED",
@@ -3257,6 +3494,10 @@ def main():
     nt = add("note", cmd_note)
     nt.add_argument("task", help="task id, as recorded at T1")
     nt.add_argument("--add", metavar="TEXT", help="append a comment; never edits an earlier one")
+    qu = add("queue", cmd_queue)
+    qu.add_argument("node", nargs="?", help="one node; every node in the tree if omitted")
+    qu.add_argument("--order", metavar="A,B,C",
+                    help="set the order of a child's queue; unnamed keep their place behind")
     add("needs", cmd_needs)
     add("index", cmd_index)
     ps = add("position", cmd_position)

@@ -35,6 +35,38 @@ now rather than in the diff. If the restatement needs a page, the task is too bi
 **Work.** Stay inside your assigned scope. Seams between children belong to your
 lead (`I9`) — a changed signature another child depends on is not yours.
 
+## You do not ask whether to start
+
+Orientation names one task and prints the two commands that begin it:
+
+```
+next     doi-index — the brief is your instruction, not a proposal.
+         Nothing further is coming and nobody is waiting to be asked. Begin:
+           harness brief doi-index    then    harness mark doi-index
+queue    2 after it, in order: ingest-2024, ui-pointer  — not yours to start
+```
+
+Read the brief and open the mark. **Do not end your turn with "shall I do
+this?"** — you already hold the authorisation, the answer to that question is
+always yes, and asking it costs a whole session. Worse, it leaves your node
+standing there occupied and idle while your lead is waiting on work, which is
+the exact condition the tree is built to avoid.
+
+If your queue is empty, orientation says so, and *that* is worth raising — a node
+with nothing briefed is its lead's problem and you should say so plainly rather
+than invent something to do.
+
+**You do not pick your next task either.** The order is your lead's. A member
+choosing which of its tasks to do first is choosing its own work, which is the
+same act as setting its own task, one notch smaller.
+
+**After you present, you are usually done.** `--done` tells you which it is:
+
+- *coupled* — the next task runs in this session, deliberately, because the
+  context you already hold is the reason. Read it and open it.
+- *queued* — your lead recycles this node and a fresh session takes it. Do not
+  open it, and do not ask whether to. Presenting is the whole of your last act.
+
 **`T12` question** — ask only about a **gap the plan could not have covered**,
 something your lead did not know when it wrote the plan. Do not ask for
 confirmation of what the plan already says: that is information arriving in

@@ -238,6 +238,50 @@ survive the recycle that ends the session you are answering.
 You cannot write a grandchild's brief. `dev_1`'s lead is `dev`, so `dev` writes
 it — if you are above that, tell the lead what you want and let it write.
 
+## The queue, and the boundary between tasks
+
+```bash
+harness queue                       # every node in the tree
+harness queue dev_1                 # one node, in the order you set
+harness queue dev_1 --order a,b,c   # set it; unnamed keep their place behind
+```
+
+Briefs queue in the order you write them. **Order them deliberately** — a member
+holding four briefs and no order does not have a backlog, it has a choice, and
+a member choosing which task to do first is choosing its own work. It is also
+where "shall I start?" comes from: an ambiguity at the top of a session gets
+resolved by asking.
+
+**Recycle between tasks.** When you sign off, you are told which it is and given
+the command:
+
+```
+signed off doi-index for dev_1
+  next for dev_1: ingest-2024  — recycle it first, do not hand it on:
+    harness recycle dev_1
+```
+
+Do it. Handing a second task to a session that just finished one is the pattern
+with the best evidence against it in this whole design: a persistent worker
+compounds its own earlier mistakes, scale does not fix it, and explicitly
+clearing history does. The fresh session costs less than the errors you keep.
+
+**Couple two tasks only when the context is the point:**
+
+```bash
+harness brief doi-verify --for dev_1 --with doi-index \
+        --why "it checks the index the previous task just built; a fresh
+               session would re-read the same 40 files to know what it is
+               checking" --write "..."
+```
+
+`--why` is required and an empty one is refused. Coupling keeps a session alive
+across a boundary the evidence says to reset at, so the reason has to be real:
+shared context expensive to rebuild, not "they're both about the UI". A coupled
+task has no queue position of its own — it runs through its predecessor or not at
+all — and the member is told at presentation that it carries on rather than being
+replaced.
+
 **Read the charter before you split.** `harness charter` is what the project is
 for and which features are in scope; your brief is one piece of it. Splitting is
 where the general becomes technical, and that translation is exactly where an

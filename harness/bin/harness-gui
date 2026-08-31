@@ -202,8 +202,18 @@ def read_state():
             except Exception:
                 continue
             if r.get("node"):
+                # `task` stays the file stem, because that is what every read
+                # path here whitelists against; `label` is the id its lead typed.
+                # Coupling is matched on the stem too — a brief written as
+                # `doi-index` is stored as `doi_index`, and comparing the typed
+                # form against the stored one is how a recorded link silently
+                # stops matching.
                 briefs.setdefault(r["node"], []).append(
-                    {"task": bf.stem,
+                    {"task": bf.stem, "label": r.get("task") or bf.stem,
+                     "seq": r.get("seq"), "written_at": r.get("written_at"),
+                     "coupled_to": (CLI.tkey(r["coupled_to"])
+                                    if r.get("coupled_to") else None),
+                     "coupled_why": r.get("coupled_why") or "",
                      "open_suggestions": sum(1 for x in (r.get("suggestions") or [])
                                              if not x.get("resolved_at"))})
         suggestions = {}
@@ -230,10 +240,14 @@ def read_state():
                                "id": (r.get("sessionId") or "")[:8]} for r in here]),
                 "claimed": name in locks,
                 "tasks": sorted(tasks.get(name, []), key=lambda x: x["task"]),
-                # Briefed but not yet marked: handed out, not started.
-                "briefed": sorted((b for b in briefs.get(name, [])
-                                   if b["task"] not in ever_marked),
-                                  key=lambda b: b["task"]),
+                # The QUEUE, in the order its lead set — not alphabetical. What a
+                # node does next is a fact about the tree, and sorting it by name
+                # would invent an order and show it as though it were the one the
+                # lead chose.
+                "briefed": sorted(
+                    (b for b in briefs.get(name, []) if b["task"] not in ever_marked),
+                    key=lambda b: (b.get("seq") if b.get("seq") is not None else 10**6,
+                                   b.get("written_at") or "", b["task"])),
                 "blocks": [x for x in blocks if x.get("node") == name],
             })
         nodes.sort(key=lambda n: (n["rank"], n["name"]))
@@ -351,6 +365,8 @@ border-bottom:1px dotted var(--none)}
 .cbtn:hover{color:var(--ink)}
 .cmsg{font-size:11px;color:var(--dim)}
 .editing{outline:1px solid var(--warn)}
+.chip.coupled{border-style:dashed}
+.nextlbl{color:var(--busy);font-size:10px;letter-spacing:.05em;text-transform:uppercase}
 .collapse{margin-left:auto;font-size:10px;letter-spacing:.04em;text-transform:none;
 color:var(--dim);cursor:pointer;border-bottom:1px dotted var(--none)}
 .collapse:hover{color:var(--ink)}
@@ -780,13 +796,24 @@ function needBlock(n, i) {
 // rendering it as an empty node is the bug this view had.
 // Briefed but not marked: work its lead has handed down that it has not picked
 // up. A separate line, because "assigned" and "under way" are different facts.
+// The queue in the lead's order, with the head named. A coupled task is drawn
+// hanging off the one it runs with rather than as a queue position of its own,
+// because it has none: it is reached through its predecessor or not at all.
 function briefedChips(n) {
   if (!n.briefed || !n.briefed.length) return '';
-  return '<div class="ln q">briefed: ' + n.briefed.map(b =>
-    '<span class="chip pending" data-task="' + esc(b.task) + '" data-slug="' +
-    esc(n._slug) + '">' + esc(b.task) +
+  const head = n.briefed.filter(b => !b.coupled_to);
+  const chip = (b, cls) =>
+    '<span class="chip ' + cls + '" data-task="' + esc(b.task) + '" data-slug="' +
+    esc(n._slug) + '" title="' + esc(b.coupled_why || '') + '">' + esc(b.label || b.task) +
     (b.open_suggestions ? ' <b class="dup">!' + b.open_suggestions + '</b>' : '') +
-    '</span>').join(' ') + '</div>';
+    '</span>';
+  const chain = t => n.briefed.filter(b => b.coupled_to === t)
+    .map(b => ' <span class="q">+</span> ' + chip(b, 'pending coupled')).join('');
+  const open = (n.tasks || []).some(t => !t.presented);
+  return '<div class="ln q">' +
+    head.map((b, i) => (i === 0 && !open ? '<b class="nextlbl">next</b> ' : '') +
+                       chip(b, 'pending') + chain(b.task)).join(' ') +
+    '</div>';
 }
 
 function card(n) {

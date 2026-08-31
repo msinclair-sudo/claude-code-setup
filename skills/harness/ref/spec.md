@@ -549,6 +549,10 @@ what that command is for. Every occupancy question now passes rows through
 `live_rows()`, which requires an integer pid belonging to a running process.
 Controlled against a real pid, a null pid, a dead pid and a row missing the key;
 only the first survives.
+**"This session" must mean a session, not a directory.** `spawn` derived it from the branch of the working directory, so an operator standing in a node's worktree in a plain shell was told `skip main — this session` about a node whose session they had just stopped, and could not start its replacement from the one place it is natural to try. It is keyed on the session id now: where there is no session, there is no this-session, and only the occupancy check applies.
+
+**A stale claim from another host is refused, and for a while nothing checked.** `claim` returned before its own `--force` branch, which made the remaining test unreachable: a lock recorded on a different machine was taken silently. Absence from a **local** roster is not evidence about a remote process, and taking a node a live session holds elsewhere is precisely the two-sessions-one-branch failure the lock exists to prevent. The message also stopped calling it a resume — a resumed conversation and a fresh session replacing a stopped one are indistinguishable from there, so it now reports what was observed rather than choosing between them.
+
 ### R3 — State is split by whether it travels
 
 | in the repository, versioned | on the machine, never committed |

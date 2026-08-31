@@ -437,25 +437,31 @@ def cmd_claim(a):
         if held["ref"] in peers:
             die(REFUSED, f"'{node}' is held by {held['name']} [{held['ref']}], "
                          f"which is live elsewhere. Not taking it.")
-        # The recorded holder is gone and nobody else is here: this is the same
-        # conversation after a resume, not a takeover.
-        rec["resumed_from"] = {"ref": held["ref"], "name": held.get("name"),
-                               "claimed_at": held.get("claimed_at")}
+        # The recorded holder is not live and no other session is in this
+        # worktree, so taking the lock is safe. That much is checked above.
+        #
+        # It used to `return` here and everything below was unreachable, which
+        # quietly disabled the ONE check that still mattered: a lock claimed on
+        # another host. Absence from a LOCAL roster is not evidence about a
+        # remote process, and taking a node held by a live session elsewhere is
+        # exactly the two-sessions-one-branch failure the lock exists to stop.
+        if held.get("host") and held["host"] != socket.gethostname() and not a.force:
+            die(REFUSED,
+                f"'{node}' was claimed on host '{held['host']}', and this is "
+                f"'{socket.gethostname()}'.\n"
+                f"           It is absent from THIS machine's roster, which says "
+                f"nothing about whether\n           it is running there. --force if you "
+                f"have checked.")
+        rec["taken_from"] = {"ref": held["ref"], "name": held.get("name"),
+                             "host": held.get("host"),
+                             "claimed_at": held.get("claimed_at")}
         lock.write_text(json.dumps(rec, indent=2))
-        print(f"reclaimed {node} after a resume "
-              f"(session id changed {held['ref'][:8]} → {self_ref[:8]})")
+        # Deliberately not "resumed": a resumed conversation and a fresh session
+        # replacing a stopped one are indistinguishable from here, and only one
+        # of them was true. Say what was observed instead of picking.
+        print(f"claimed {node} — the recorded holder {held.get('name')} "
+              f"[{held['ref'][:8]}] is not running and nobody else is in this worktree")
         return
-        if not a.force:
-            die(REFUSED, f"'{node}' is held by {held['name']} [{held['ref']}], "
-                         f"absent from the roster — stale.\n"
-                         f"           Re-run with --force to take it.")
-        if held.get("host") != socket.gethostname():
-            die(REFUSED, f"'{node}' was claimed on host '{held.get('host')}'. "
-                         f"Absence from a local roster does not prove it is dead.")
-        rec["forced_from"] = {"ref": held["ref"], "name": held["name"],
-                              "claimed_at": held.get("claimed_at")}
-        lock.write_text(json.dumps(rec, indent=2))
-        print(f"claimed {node} (forced from stale {held['name']} [{held['ref']}])"); return
     with os.fdopen(fd, "w") as fh:
         json.dump(rec, fh, indent=2)
     print(f"claimed {node} as {self_name} [{self_ref}]")
@@ -724,7 +730,12 @@ def cmd_spawn(a):
         n = by_wt.get(r.get("cwd", ""))
         if n:
             occupied.setdefault(n, []).append(r)
-    here = idx["byBranch"].get(ctx.branch)
+    # "This session" must mean a SESSION, not a directory. `here` is derived from
+    # the branch of the cwd, so an operator standing in a node's worktree in a
+    # plain shell was told "skip main — this session" about a node whose session
+    # they had just stopped, and could not start a replacement from the one place
+    # it is natural to try. When there is no session id there is no this-session.
+    here = idx["byBranch"].get(ctx.branch) if os.environ.get("CLAUDE_CODE_SESSION_ID") else None
     targets = a.node or sorted(n for n, sp in idx["nodes"].items() if sp["worktree"])
     launched = skipped = 0
     for n in targets:
@@ -734,7 +745,8 @@ def cmd_spawn(a):
         if not sp["worktree"]:
             print(f"  skip {n:<12} no worktree — create one first"); skipped += 1; continue
         if n == here:
-            print(f"  skip {n:<12} this session"); skipped += 1; continue
+            print(f"  skip {n:<12} this session — it cannot spawn into its own worktree")
+            skipped += 1; continue
         if n in occupied:
             who = occupied[n][0].get("name") or "?"
             print(f"  skip {n:<12} occupied by {who}"); skipped += 1; continue

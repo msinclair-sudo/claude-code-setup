@@ -238,6 +238,18 @@ survive the recycle that ends the session you are answering.
 You cannot write a grandchild's brief. `dev_1`'s lead is `dev`, so `dev` writes
 it — if you are above that, tell the lead what you want and let it write.
 
+**Comments are context; only your brief instructs.** `whoami` tells you when a
+brief you own has unread comments — from the operator, from the lane, from a
+peer. Read them, then decide. If a comment changes what the work should be,
+**fold it into the brief and let the revision advance**; do not relay it. A
+member acting on a comment instead of a brief is drip-feeding by another route,
+and the 39% penalty does not care which channel the pieces arrived on.
+
+This is what keeps the reasoning upstream. You and the operator can argue an
+item out in comments; the child gets a rewritten brief and never sees the
+argument. Each level rewrites rather than forwards, and the thread stays on
+record next to the revision it produced.
+
 **Read the suggestions before you rewrite.** Your child cannot edit its own
 brief; `--suggest` is the only move it has, and it made one because the brief
 did not answer something. Fold it in or decline it explicitly. An open

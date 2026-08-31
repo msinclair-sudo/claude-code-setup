@@ -129,6 +129,17 @@ You do not write it. A node that sets its own task is the thing the tree exists
 to prevent, so `--write` refuses you by rank — that is not a permission problem
 to work around, it is the design.
 
+```bash
+harness brief <task>                  # the brief, and any comments on it
+harness brief <task> --comment "..."  # context for whoever reads it next
+```
+
+**Comments are context, not instruction.** Your lead or the operator may leave
+one. Read it — `whoami` tells you when there is an unread one — but act on the
+**brief**. If a comment means the brief is now wrong, say so with `--suggest`
+and let your lead rewrite it. Acting on a comment directly is how a scoped task
+turns back into a drip-feed.
+
 `--suggest` is the move you do have, and it is recorded against the revision you
 read, so your lead can see exactly what you were looking at. Use it when the
 brief cannot answer something: a missing scope, a contract with no route for

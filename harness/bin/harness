@@ -377,6 +377,14 @@ def _whoami(a):
     # and a line that appears is worth the tokens. Unclaimed task records and
     # open blocks are rank 0's housekeeping, and nothing else tells it they exist.
     try:
+        u = unread_brief_comments(ctx, node)
+        if u:
+            n = sum(len(v) for v in u.values())
+            print(f"unread   {n} comment(s) on {', '.join(sorted(u))} "
+                  f"— harness brief <task>")
+    except Exception:
+        pass
+    try:
         kids = set(ctx.children(node))
         waiting = sorted(t for t, r in open_marks(ctx).items()
                          if r.get("_presented_at") and r.get("_node") in kids)
@@ -2057,6 +2065,33 @@ def briefed_unstarted(ctx, node):
     return out
 
 
+def unread_brief_comments(ctx, who):
+    """Comments on any brief for this node that this node has not read yet.
+
+    Keyed by READER, so a lead reading a child's brief does not mark it read for
+    the child. Nothing can push to a running session ([[R4]] — no daemon), so
+    this is surfaced by the next harness command the session happens to run. A
+    comment therefore reaches a lane at its next harness call or its next
+    recycle, not the instant it is written, and a session deep in an edit-test
+    loop will not see it for a while. That limit is real and is not worked
+    around by inventing a poller.
+    """
+    d = ctx.state / "briefs"
+    out = {}
+    for p in (sorted(d.glob("*.json")) if d.is_dir() else []):
+        try:
+            b = json.loads(p.read_text())
+        except Exception:
+            continue
+        if b.get("node") != who:
+            continue
+        seen = (b.get("read") or {}).get(who, "")
+        new = [c for c in (b.get("comments") or []) if (c.get("at") or "") > seen]
+        if new:
+            out[p.stem] = new
+    return out
+
+
 def cmd_brief(a):
     """The task description: written by the lead, for its children.
 
@@ -2137,6 +2172,29 @@ def cmd_brief(a):
         print("  Your lead decides. Carry on with the brief as it stands meanwhile.")
         return
 
+    if a.comment is not None:
+        # Anyone may comment; only the lead may WRITE. A comment is context, not
+        # an instruction — if it changes what the work should be, the lead folds
+        # it into the brief and the revision advances. Two channels of
+        # instruction would rebuild the drip-feed this design exists to close,
+        # one piece at a time.
+        if b is None:
+            die(REFUSED, f"no brief for '{a.task}' to comment on. Its lead writes one "
+                         f"first:\n           harness brief {a.task} --for <node> "
+                         f"--write \"...\"")
+        if not a.comment.strip():
+            die(REFUSED, "an empty comment says nothing")
+        b.setdefault("comments", []).append(
+            {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "by": who, "text": a.comment})
+        f.write_text(json.dumps(b, indent=2) + "\n")
+        lead = ctx.tree["nodes"].get(b.get("node"), {}).get("parent") or "rank 0"
+        print(f"commented on {a.task} ({len(b['comments'])} total)")
+        print(f"  '{b.get('node')}' and its lead '{lead}' see it at their next "
+              f"harness command.")
+        print(f"  It does not change the brief. If it should, {lead} rewrites it:")
+        print(f"    harness brief {a.task} --write \"...\"")
+        return
+
     if a.resolve:
         if b is None:
             die(REFUSED, f"no brief for '{a.task}'")
@@ -2166,11 +2224,27 @@ def cmd_brief(a):
               + (f" — its lead writes one:\n  harness brief {a.task} --for {target} "
                  f"--write \"...\"" if target else "") + extra)
         return
+    # Reading marks it read for THIS reader only.
+    seen_before = (b.get("read") or {}).get(me, "")
+    b.setdefault("read", {})[me] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    try:
+        f.write_text(json.dumps(b, indent=2) + "\n")
+    except Exception:
+        pass
     print(f"{a.task}   for {b.get('node')}   revision {b.get('revision')}")
     print(f"  by {b.get('written_by')} at {str(b.get('written_at'))[:19]}")
     print()
     for line in (b.get("text") or "").splitlines() or [""]:
         print(f"  {line}")
+    cs = b.get("comments") or []
+    if cs:
+        print(f"\n  {len(cs)} comment(s) — context, not instruction. Only the brief "
+              f"above tells you what to do.")
+        for c in cs:
+            flag = "NEW  " if (c.get("at") or "") > seen_before else ""
+            print(f"    [{flag}{str(c.get('at'))[:16]}  {c.get('by')}]")
+            for line in (c.get("text") or "").splitlines():
+                print(f"        {line}")
     ss = b.get("suggestions") or []
     if ss:
         print(f"\n  {len(ss)} suggestion(s):")
@@ -2633,6 +2707,8 @@ def main():
                     help="write or rewrite it; a lead writes its children's, rank 0 its own")
     br.add_argument("--suggest", metavar="TEXT",
                     help="propose a change to your own brief; your lead decides")
+    br.add_argument("--comment", metavar="TEXT",
+                    help="context for whoever works on it; does NOT change the brief")
     br.add_argument("--resolve", type=int, metavar="N", help="mark suggestion N addressed")
     nt = add("note", cmd_note)
     nt.add_argument("task", help="task id, as recorded at T1")

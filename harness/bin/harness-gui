@@ -239,56 +239,12 @@ def read_state():
         nodes.sort(key=lambda n: (n["rank"], n["name"]))
         pname = Path(repo).name
 
-        # Everything in this tree waiting on a decision, and WHOSE it is. The
-        # explanation is not decoration: an item nobody can act on without first
-        # working out why it matters is an item that sits there.
-        for task, onode, by in presented:
-            lead = tree.get(onode, {}).get("parent")
-            att.append({
-                "kind": "sign-off", "owner": lead or "rank 0",
-                "where": f"{pname} / {onode}", "what": task,
-                "why": f"{by} says this is finished and recorded what it cost. Until its "
-                       f"lead signs it off the task stays on {onode}, so the next session "
-                       f"to hold that node inherits work nobody said was done and cannot "
-                       f"tell which of it is live. A member cannot sign off its own; it "
-                       f"cannot check its own work either (T4).",
-                "do": f"(cd {shlex.quote(repo)} && harness mark {task} --close)"})
-        for task, (onode, openn) in sorted(suggestions.items()):
-            lead = tree.get(onode, {}).get("parent")
-            att.append({
-                "kind": "suggestion", "owner": lead or "rank 0",
-                "where": f"{pname} / {onode}", "what": f"{task} ({len(openn)} open)",
-                "why": f"{onode} cannot edit its own brief, so it flagged a gap instead: "
-                       f"\u201c{(openn[0].get('text') or '')[:160]}\u201d Left unanswered "
-                       f"the lane works around that gap in silence, which is the failure "
-                       f"the suggestion channel exists to surface.",
-                "do": f"(cd {shlex.quote(repo)} && harness brief {task} --resolve 1)"})
-        for o in orphans:
-            att.append({
-                "kind": "orphan record", "owner": "rank 0",
-                "where": pname, "what": o["task"],
-                "why": (f"This open task record names '{o['named']}', which the tree no "
-                        f"longer has." if o["named"] else
-                        "This open task record names no node at all: it predates the "
-                        "field, and which node it belonged to is not recoverable.") +
-                       " It will never close by itself, and every reader that groups work "
-                       "by node drops it, so it stays invisible while still counting "
-                       "as open.",
-                "do": (f"(cd {shlex.quote(repo)} && harness trim)" if o["named"] else
-                       f"(cd {shlex.quote(repo)} && harness mark {o['task']} "
-                       f"--close --force)")})
-        for n in nodes:
-            if n["sessions"] and not n["tasks"] and not n["briefed"]:
-                att.append({
-                    "kind": "nothing briefed", "owner": n["parent"] or "rank 0",
-                    "where": f"{pname} / {n['name']}", "what": n["name"],
-                    "why": f"A session is standing in {n['name']} with no task record and "
-                           f"nothing briefed for it. It cannot open one either: "
-                           f"`harness mark` refuses without a brief and has no override. "
-                           f"So it is capacity with no object, and capacity with no object "
-                           f"gets spent on something nobody asked for.",
-                    "do": f"(cd {shlex.quote(repo)} && harness brief TASK --for "
-                          f"{n['name']} --write \"...\")"})
+        # ONLY what no agent in the tree has the authority to fix. A sign-off is
+        # dev's; a node with nothing briefed is its lead's; both were told at
+        # orientation, and neither is a fault. Listing them here put four items
+        # of somebody else's work-in-progress above the one item that was
+        # actually the operator's, which trains a reader to stop looking. Tree
+        # state belongs in the tree, where the chips already show it.
         for b in blocks:
             att.append({
                 "kind": "grant", "owner": "operator",
@@ -318,10 +274,9 @@ def read_state():
                            "every session is reading older instructions than the ones that "
                            "were written, silently, because nothing else reports it.",
                     "do": "bash install.sh    # from the source tree"})
-    att.sort(key=lambda x: (x["owner"] != "operator", x["kind"], x["where"]))
+    att.sort(key=lambda x: (x["kind"], x["where"]))
     return {"generated": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-            "attention": att,
-            "yours": sum(1 for x in att if x["owner"] == "operator"),
+            "attention": att, "yours": len(att),
             "roster_error": roster_error, "stale_server": stale_server(),
             "started": time.strftime("%H:%M:%S", time.localtime(STARTED)),
             "projects": projects, "needs": needs}
@@ -496,7 +451,7 @@ async function openTask(slug, task) {
   const d = await (await fetch('/api/task?p=' + encodeURIComponent(slug) +
                               '&t=' + encodeURIComponent(task))).json();
   if (d.error) { closeModal(); return; }
-  const cs = (d.comments || []).map(c =>
+  const cs = (d.brief_comments || []).concat(d.comments || []).map(c =>
     '<div class="cmt"><div class="cmt-h">' + esc(c.by) + ' &middot; ' +
     esc(String(c.at || '').slice(0, 16).replace('T', ' ')) + '</div>' +
     '<div class="cmt-b">' + esc(c.text) + '</div></div>').join('')
@@ -533,9 +488,13 @@ async function openTask(slug, task) {
           '<div class="cmt-b">' + esc(sg.text) + '</div></div>').join('') + '</dd>' : '') +
         '<dt>comments</dt><dd>' + cs + '</dd>' +
       '</dl>' +
-      '<textarea id="cbox" placeholder="add a comment..."></textarea>' +
+      '<textarea id="cbox" placeholder="context for whoever works on this..."></textarea>' +
       '<div class="row"><button id="csend">comment</button>' +
-      '<span class="ln q" id="cmsg">appended to the task record, never edited</span></div>' +
+      '<span class="ln q" id="cmsg">' + (d.brief_rev
+        ? 'appended to the brief, never edited. It does not change the instruction: '
+          + 'the node and its lead see it at their next harness command, and the lead '
+          + 'rewrites the brief if it should change.'
+        : 'appended to the task record, never edited') + '</span></div>' +
     '</div></div>';
   document.getElementById('csend').onclick = sendComment;
 }
@@ -562,12 +521,9 @@ async function sendComment() {
 // Each item carries its own explanation, because a queue you have to reason
 // about before you can act on it is a queue that does not get cleared.
 function attnItem(a, i) {
-  const mine = a.owner === 'operator';
   const key = a.kind + '|' + a.where + '|' + a.what;
   return '<div class="need" data-key="' + esc(key) + '"><div class="hd">' +
-    '<span class="who' + (mine ? ' mine' : '') + '">' +
-      (mine ? 'YOU' : esc(a.owner)) + '</span>' +
-    '<span class="kd2">' + esc(a.kind) + '</span>' +
+    '<span class="who mine">' + esc(a.kind) + '</span>' +
     '<span class="wh">' + esc(a.where) + ' &middot; ' + esc(a.what) + '</span></div>' +
     '<div class="detail"><div class="why">' + esc(a.why) + '</div>' +
     '<pre id="a' + i + '">' + esc(a.do) + '</pre>' +
@@ -669,9 +625,7 @@ async function tick() {
   if (sig === LAST) return;
   LAST = sig;
   document.getElementById('ct').innerHTML = d.yours
-    ? '<span style="color:#ffd08a">' + d.yours + ' waiting on you</span>'
-    : ((d.attention || []).length
-       ? '<span class="q">' + d.attention.length + ' waiting on the tree</span>' : '');
+    ? '<span style="color:#ffd08a">' + d.yours + ' waiting on you</span>' : '';
   let h = '';
   if (d.stale_server) {
     h += '<div class="banner"><b>This server is older than the code on disk</b> ' +
@@ -686,17 +640,12 @@ async function tick() {
   }
   const att = d.attention || [];
   if (att.length) {
-    const mine = att.filter(a => a.owner === 'operator');
-    const others = att.filter(a => a.owner !== 'operator');
-    h += '<div class="needs"><h3>' +
-      (mine.length ? mine.length + ' waiting on you' : 'nothing waiting on you') +
-      (others.length ? ' &middot; ' + others.length + ' waiting on the tree' : '') +
-      '</h3><div class="ln q" style="margin:-4px 0 8px">' +
-      'click an item for why it matters and the command that clears it</div>' +
-      mine.map((a, i) => attnItem(a, 'm' + i)).join('') +
-      others.map((a, i) => attnItem(a, 'o' + i)).join('') + '</div>';
+    h += '<div class="needs"><h3>' + att.length + ' waiting on you</h3>' +
+      '<div class="ln q" style="margin:-4px 0 8px">only things no session can fix ' +
+      'itself &mdash; click one for why it matters and the command that clears it</div>' +
+      att.map((a, i) => attnItem(a, 'm' + i)).join('') + '</div>';
   } else {
-    h += '<div class="clear">nothing is waiting on anyone</div>';
+    h += '<div class="clear">nothing is waiting on you</div>';
   }
   h += d.projects.map(p =>
     (p.nodes.forEach(n => n._slug = p.slug),
@@ -769,6 +718,7 @@ def task_detail(slug, task):
             "brief_rev": (brief or {}).get("revision"),
             "brief_at": (brief or {}).get("written_at"),
             "suggestions": (brief or {}).get("suggestions") or [],
+            "brief_comments": (brief or {}).get("comments") or [],
             "mark_note": rec.get("_note") or "",
             "comments": rec.get("_comments") or []}
 
@@ -790,7 +740,12 @@ def add_comment(slug, task, text):
     # sign the comment with it, which is a false attribution in the one record
     # that exists to be trusted.
     env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
-    r = subprocess.run([sys.executable, str(exe), "note", task, "--add", text],
+    # The BRIEF when there is one: it is what gets rewritten, so the reasoning
+    # belongs beside it, and its unread cursor is what makes a lane look. The
+    # mark is the fallback for tasks that predate briefs.
+    argv = ([str(exe), "brief", task, "--comment", text] if d.get("brief_rev")
+            else [str(exe), "note", task, "--add", text])
+    r = subprocess.run([sys.executable] + argv,
                        cwd=d["repo"], capture_output=True, text=True, timeout=20, env=env)
     return r.returncode == 0, (r.stdout or r.stderr).strip()[:300]
 

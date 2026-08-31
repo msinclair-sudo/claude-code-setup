@@ -560,6 +560,26 @@ The ground moves only at task boundaries, so two catch-ups is frequent only if b
 
 **A retired feature stays on the charter**, marked out of scope with its reason. What a project decided not to build is part of what it is, and the next person to propose it deserves the answer rather than the silence.
 
+### I13 — A measurement travels with the command that produced it
+
+**Rule** A value one session hands to another is recorded as a **fact**: the value, and the command that produced it. `--from` is required and an empty one is refused. Facts are observations, appended, never edited.
+
+**What it costs not to have this.** Sessions were re-deriving figures another session had already measured, and — the expensive half — re-deriving *how* to measure them. A number written into prose ages silently and carries no way to check it, so the honest thing to write beside one is the date it was taken and an instruction to re-derive. A head lead ended up doing exactly that by hand: *"22 endpoints, 74 declared pairs, 57 reached, 17 not reached at all, 220 requests, exit 1 — RECORDED 2026-08-30 and deliberately not re-measured since. Re-derive before acting; it is cheap for you and the figure is two days old."* Every part of that is provenance the record should have carried, written out longhand because there was nowhere to put it.
+
+**A value with no way to reproduce it is a rumour with a figure attached.** The next session either believes it or pays the whole derivation again, and both are wrong. With the command stored, checking costs one `--recheck`.
+
+**Record the value in the command's own words.** A figure the recorder paraphrased is one `--recheck` can never compare against, so the mechanism itself sets the convention.
+
+**Any node may record one, and that is not a widening of authority.** A measurement is not an instruction; it tells nobody what to do. The member that ran the command is the one holding the number, and routing it up to be retyped by a lead is how a digit changes.
+
+**Two things can have moved, and conflating them is how a stale figure passes as current.** The **commit** may have moved, which makes a figure old. The **worktree** may be a different one, which makes it a different measurement — two lanes ran the same check honestly and got 1 and 9, because `npm ci` leaves `node_modules/` and `surface/build/` behind, both gitignored and both invisible to `git status`. A tree that has ever run an install is not the tree the next reader holds. The record carries both, and the reader is told which applies.
+
+**Briefs cite rather than paste.** `harness brief <task> --fact <name>` resolves at **read** time, so a member opening its brief sees the current value, its age, and the command — not the figure that happened to be true when the brief was written. Citing a fact that does not exist is refused, which is what stops a citation being a promise.
+
+**A recheck is never automatic.** It runs a command another session recorded, so it happens only when typed. Nothing in the harness re-runs one on a schedule, at orientation, or as a side effect.
+
+**Fails when** a fact becomes a channel for instruction. It carries a value and a command and nothing else; if it needs to change what someone does, that is a brief revision ([[#T1 — Task assignment]]), on the same rule as a comment.
+
 **Fails when** rank 0 drafts a charter by reading the repository. It will describe the backlog in prose, more confidently than before, and every brief will then pass any check made against it. The operator's correction is the deliverable, not the draft.
 
 ---

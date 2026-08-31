@@ -35,6 +35,28 @@ now rather than in the diff. If the restatement needs a page, the task is too bi
 **Work.** Stay inside your assigned scope. Seams between children belong to your
 lead (`I9`) — a changed signature another child depends on is not yours.
 
+## Write down what you measure, with the command
+
+You are the one running the commands, so you are the one holding the numbers.
+
+```bash
+harness fact endpoint-reach --is "57 of 74" \
+  --from "python tools/probe.py --declared --count" \
+  --what "declared endpoint states a probe actually reached"
+```
+
+Do it for anything you had to work out how to measure — a count, an exit code, a
+population, a timing. The expensive part is almost never running the command; it
+is figuring out which command answers the question. That is what you are saving
+the next session, and the next session is often you after a recycle.
+
+Look one up before you derive it (`harness fact --list`). If it is stale, one
+`--recheck` settles it, and that is cheaper than deciding from scratch how to
+ask.
+
+Put it in your presentation too: a figure in a report with no command behind it
+is one your lead cannot check and will have to take on trust or redo.
+
 ## You do not ask whether to start
 
 Orientation names one task and prints the two commands that begin it:

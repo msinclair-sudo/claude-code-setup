@@ -96,6 +96,36 @@ what you cannot do is give it a node, a claim or a transaction.
 `harness release` at the end of a task. The ledger row is closed, never deleted:
 an ancestor resolving a deep conflict (`T8`) reads closed rows.
 
+## Before you derive a number, look it up
+
+```bash
+harness fact --list                      # everything measured here
+harness fact <name>                      # the value, and the command that made it
+harness fact <name> --recheck            # run that command again, here, now
+harness fact <name> --is "..." --from "<command>" --what "..."
+```
+
+**`--from` is required.** A value with no way to reproduce it is a rumour with a
+figure attached: whoever reads it either believes you or pays the entire
+derivation again, and the second cost is the one that keeps being paid. Record
+the command and checking costs one `--recheck`.
+
+**Record the value in the command's own words**, not in yours. `2` and not
+"about two". A value you paraphrased is one `--recheck` can never compare
+against, and it will report a difference that is only your phrasing.
+
+**Read what it tells you about where it came from.** Two different things go
+stale, and they are not the same:
+
+- *the tree has moved since* — the figure is old at this commit. Re-run it.
+- *measured in another worktree* — it is a **different measurement**, not a
+  disagreement. Two lanes ran the same check honestly and got 1 and 9, because
+  an install directory that `git status` cannot see changes what a check counts.
+
+Any node may record a fact. It is not authority: a measurement tells nobody what
+to do. If it should change what someone does, that is a brief, and only a lead
+writes one.
+
 ## If you need to ask why
 
 ```bash

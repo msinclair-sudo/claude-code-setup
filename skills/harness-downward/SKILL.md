@@ -238,6 +238,29 @@ survive the recycle that ends the session you are answering.
 You cannot write a grandchild's brief. `dev_1`'s lead is `dev`, so `dev` writes
 it — if you are above that, tell the lead what you want and let it write.
 
+## Cite figures, do not paste them
+
+```bash
+harness brief <task> --for <child> --fact endpoint-reach --write "..."
+```
+
+A number typed into a brief is true on the day you write it and silently wrong
+after that. The honest thing to write beside one is the date it was taken and an
+instruction to re-derive — which is a lot of longhand for something the record
+can carry.
+
+`--fact` resolves when the brief is **read**, so your member sees the current
+value, its age, and the command that produced it:
+
+```
+fact      todo-count = 3  [the tree has moved since]
+          2d ago · grep -c TODO notes.txt
+```
+
+Citing a fact nobody has recorded is refused, which is what keeps a citation from
+being a promise. If you need a figure that does not exist yet, that is a task:
+brief someone to measure it and record it.
+
 ## The queue, and the boundary between tasks
 
 ```bash

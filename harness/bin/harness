@@ -2287,6 +2287,221 @@ def cmd_charter(a):
         print(f"  harness charter --feature <name>")
 
 
+def load_fact(ctx, name):
+    f = ctx.state_file("facts", name, ".json")
+    if not f.exists():
+        return f, None
+    try:
+        return f, json.loads(f.read_text())
+    except json.JSONDecodeError:
+        die(REFUSED, f"{f} is not valid JSON — refusing to overwrite a fact it "
+                     f"cannot read")
+
+
+def all_facts(ctx):
+    d = ctx.state / "facts"
+    out = {}
+    for p in (sorted(d.glob("*.json")) if d.is_dir() else []):
+        try:
+            r = json.loads(p.read_text())
+        except Exception:
+            continue
+        r.setdefault("name", p.stem)
+        out[p.stem] = r
+    return out
+
+
+def latest(fact):
+    obs = fact.get("observations") or []
+    return obs[-1] if obs else None
+
+
+def fact_state(ctx, o):
+    """Whether an observation still describes the tree the reader is standing in.
+
+    Two separate things can have moved, and conflating them is how a stale
+    figure passes for a current one. The COMMIT may have moved, which makes the
+    figure old. The WORKTREE may be a different one, which makes it a different
+    measurement — two lanes ran the same check honestly and got 1 and 9, because
+    npm ci leaves node_modules/ and surface/build/ behind and both are invisible
+    to git status. A worktree that has ever run an install is not the tree the
+    next reader holds.
+    """
+    head = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
+    same_sha = bool(o.get("sha")) and o["sha"] == head
+    same_wt = str(o.get("worktree") or "") == str(ctx.worktree)
+    return same_sha, same_wt, head
+
+
+def run_recorded(cmd, cwd, timeout):
+    """Run the command a previous session recorded. This is the whole point of
+    recording it — but it is also arbitrary code from another session's
+    transcript, so it is never automatic and never implied. Nothing in the
+    harness re-runs one of these except `--recheck`, typed deliberately."""
+    try:
+        r = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True,
+                           text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return None, f"timed out after {timeout}s", 124
+    out = (r.stdout or "").strip()
+    return out, (r.stderr or "").strip(), r.returncode
+
+
+def cmd_fact(a):
+    """A measured value, and the command that produced it.
+
+    Written because sessions kept re-deriving figures that another session had
+    already measured — and, worse, kept re-deriving *how* to measure them, which
+    is the expensive half. A number in prose ages silently and carries no way to
+    check it, so the honest thing to write beside one is a date and an
+    instruction to re-derive, and that is exactly what a lead ended up doing by
+    hand: "RECORDED 2026-08-30 and deliberately not re-measured since. Re-derive
+    before acting."
+
+    So the command is not optional. A value with no way to reproduce it is a
+    rumour with a number attached, and the next session either believes it or
+    pays the full cost of the original derivation. Record the command and it
+    pays for one `--recheck`.
+
+    Facts are OBSERVATIONS, appended, never edited ([[I6]]). What a figure was
+    last week and what it is now is usually the interesting part; a store that
+    overwrote would delete the finding.
+
+    Any node may write one. This is not authority — a measurement is not an
+    instruction and does not tell anyone what to do. The member running the
+    command is the one who has the number, and routing it through a lead to be
+    retyped is how a digit changes.
+    """
+    ctx = Ctx(); ctx.require_enrolled()
+    node, _ = ctx.node()
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    who = f"{node} (session {sid[:8]})" if sid else "operator"
+
+    if a.list or not a.name:
+        rows = all_facts(ctx)
+        if not rows:
+            print("no facts recorded — nothing measured here has been written down "
+                  "with\nthe command that measured it.  harness fact <name> --is "
+                  "\"...\" --from \"...\"")
+            return
+        for k, r in sorted(rows.items()):
+            o = latest(r)
+            if not o:
+                continue
+            same_sha, same_wt, _ = fact_state(ctx, o)
+            flag = ("current" if same_sha and same_wt
+                    else "OTHER WORKTREE" if not same_wt
+                    else f"tree moved since")
+            print(f"  {r.get('name', k):<24} {str(o.get('value'))[:34]:<36} {flag}")
+            print(f"  {'':<24} {_ago(o.get('at'))} by {o.get('by')}"
+                  + (f"   ({len(r['observations'])} observations)"
+                     if len(r.get("observations") or []) > 1 else ""))
+        print(f"\n{len(rows)} fact(s). Each carries the command that produced it: "
+              f"harness fact <name>")
+        return
+
+    f, r = load_fact(ctx, a.name)
+
+    if a.is_ is not None or a.from_ is not None:
+        if a.is_ is None or not str(a.is_).strip():
+            die(REFUSED, "--is needs the value. Record it in the command's OWN words, "
+                         "not yours —\n           a value you paraphrased is one "
+                         "`--recheck` can never compare against.")
+        if a.from_ is None or not a.from_.strip():
+            die(REFUSED,
+                "--from is required: the command that produced this value.\n"
+                "           A number with no way to reproduce it is a rumour with a "
+                "figure attached,\n           and the next session either believes it "
+                "or pays the whole derivation\n           again. That cost is the "
+                "reason this command exists.")
+        head = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
+        r = r or {"name": a.name, "observations": []}
+        if a.what:
+            r["what"] = a.what
+        r.setdefault("observations", []).append(
+            {"value": a.is_, "command": a.from_, "node": node,
+             "worktree": str(ctx.worktree), "sha": head, "by": who,
+             "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")})
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(r, indent=2) + "\n")
+        n = len(r["observations"])
+        print(f"fact '{a.name}' = {a.is_}   (observation {n}, by {who})")
+        print(f"  from: {a.from_}")
+        print(f"  at {head[:8]} in {ctx.worktree}")
+        if n > 1:
+            prev = r["observations"][-2]
+            if str(prev.get("value")) != str(a.is_):
+                print(f"  CHANGED from {prev.get('value')} "
+                      f"({_ago(prev.get('at'))}, {str(prev.get('sha'))[:8]})")
+        print(f"  Cite it rather than pasting the number: harness fact {a.name}")
+        return
+
+    if r is None:
+        die(REFUSED, f"no fact '{a.name}'. Whoever measured it records it with the "
+                     f"command:\n           harness fact {a.name} --is \"...\" "
+                     f"--from \"...\"")
+    o = latest(r)
+    if o is None:
+        die(REFUSED, f"'{a.name}' has no observations")
+
+    if a.recheck:
+        cwd = ctx.worktree
+        same_sha, same_wt, head = fact_state(ctx, o)
+        print(f"re-running: {o['command']}")
+        if not same_wt:
+            print(f"  NOTE it was measured in {o.get('worktree')} and you are in "
+                  f"{cwd}.")
+            print(f"       A different worktree is a different measurement, not a "
+                  f"disagreement —\n       an install directory that git cannot see "
+                  f"changes what a check counts.")
+        out, err, rc = run_recorded(o["command"], cwd, a.timeout)
+        if out is None:
+            die(CONTRACT, f"recheck failed: {err}")
+        print(f"  exit {rc}")
+        for line in (out or "(no output)").splitlines()[:20]:
+            print(f"  | {line}")
+        if err:
+            for line in err.splitlines()[:5]:
+                print(f"  ! {line}")
+        r["observations"].append(
+            {"value": out, "command": o["command"], "node": node,
+             "worktree": str(cwd), "sha": head, "by": who, "exit": rc,
+             "rechecked": True, "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")})
+        f.write_text(json.dumps(r, indent=2) + "\n")
+        if out.strip() == str(o.get("value")).strip():
+            print(f"\n  UNCHANGED — same as the recorded value, {_ago(o.get('at'))}")
+        else:
+            print(f"\n  recorded value was: {o.get('value')}")
+            print(f"  the two are not textually equal. Compare them yourself: this "
+                  f"does not\n  claim a verdict, because a value someone phrased in "
+                  f"their own words differs\n  from its own command's output without "
+                  f"anything having changed.")
+        return
+
+    same_sha, same_wt, head = fact_state(ctx, o)
+    print(f"{r.get('name')} = {o.get('value')}")
+    if r.get("what"):
+        print(f"  {r['what']}")
+    print(f"  from     {o.get('command')}")
+    print(f"  measured {_ago(o.get('at'))} by {o.get('by')}  at {str(o.get('sha'))[:8]}")
+    if not same_wt:
+        print(f"  WORKTREE {o.get('worktree')}")
+        print(f"           not the one you are standing in — a check can count "
+              f"differently in a\n           tree that has run an install, and git "
+              f"cannot see the difference.")
+    if not same_sha:
+        print(f"  STALE    the tree has moved since ({head[:8]} now). Re-run it:")
+    else:
+        print(f"  current  measured at the commit you are standing on. Re-run it:")
+    print(f"           harness fact {r.get('name')} --recheck")
+    obs = r.get("observations") or []
+    if len(obs) > 1:
+        print(f"\n  {len(obs)} observations:")
+        for x in obs[-6:]:
+            print(f"    {str(x.get('at'))[:16]}  {str(x.get('value'))[:40]:<42} "
+                  f"{str(x.get('sha'))[:8]}  {x.get('node')}")
+
+
 def load_brief(ctx, task):
     f = ctx.state_file("briefs", task, ".json")
     if not f.exists():
@@ -2638,6 +2853,15 @@ def cmd_brief(a):
                "suggestions": (b or {}).get("suggestions", [])}
         if parent_task:
             rec["from"] = parent_task
+        cited = a.fact or (b or {}).get("facts") or []
+        for nm in cited:
+            if load_fact(ctx, nm)[1] is None:
+                die(REFUSED,
+                    f"no fact '{nm}' to cite. Whoever measured it records it first, "
+                    f"with the\n           command that produced it:  harness fact "
+                    f"{nm} --is \"...\" --from \"...\"")
+        if cited:
+            rec["facts"] = list(dict.fromkeys(cited))
         if coupled:
             rec["coupled_to"] = coupled
             rec["coupled_why"] = a.why or (b or {}).get("coupled_why") or ""
@@ -2751,6 +2975,22 @@ def cmd_brief(a):
     print(f"  by {b.get('written_by')} at {str(b.get('written_at'))[:19]}")
     if b.get("from"):
         print(f"  splits   {b['from']}")
+    for nm in (b.get("facts") or []):
+        # Resolved at READ time, never pasted at write time. A figure typed into
+        # prose is a figure that ages silently, and the honest thing to write
+        # beside one is the date it was taken and an instruction to re-derive —
+        # which is the whole cost this avoids.
+        _, fr = load_fact(ctx, nm)
+        o = latest(fr) if fr else None
+        if not o:
+            print(f"  fact      {nm} — recorded, then removed")
+            continue
+        same_sha, same_wt, _ = fact_state(ctx, o)
+        tag = ("" if same_sha and same_wt
+               else "  [MEASURED IN ANOTHER WORKTREE]" if not same_wt
+               else "  [the tree has moved since]")
+        print(f"  fact      {nm} = {o.get('value')}{tag}")
+        print(f"            {_ago(o.get('at'))} · {o.get('command')}")
     if b.get("coupled_to"):
         print(f"  follows   {b['coupled_to']} in the same session: "
               f"{b.get('coupled_why') or ''}")
@@ -3474,6 +3714,9 @@ def main():
                     help="propose a change to your own brief; your lead decides")
     br.add_argument("--comment", metavar="TEXT",
                     help="context for whoever works on it; does NOT change the brief")
+    br.add_argument("--fact", action="append", metavar="NAME",
+                    help="cite a recorded measurement; resolved live when the brief "
+                         "is read (repeatable)")
     br.add_argument("--with", dest="with_task", metavar="TASK",
                     help="run in the SAME session as TASK, instead of being queued")
     br.add_argument("--why", metavar="TEXT",
@@ -3494,6 +3737,17 @@ def main():
     nt = add("note", cmd_note)
     nt.add_argument("task", help="task id, as recorded at T1")
     nt.add_argument("--add", metavar="TEXT", help="append a comment; never edits an earlier one")
+    ft = add("fact", cmd_fact)
+    ft.add_argument("name", nargs="?", help="what the measurement is called")
+    ft.add_argument("--is", dest="is_", metavar="VALUE",
+                    help="the value, in the command's own words")
+    ft.add_argument("--from", dest="from_", metavar="COMMAND",
+                    help="the command that produced it — required")
+    ft.add_argument("--what", metavar="TEXT", help="what it measures, in one line")
+    ft.add_argument("--recheck", action="store_true",
+                    help="re-run the recorded command here and append what it says")
+    ft.add_argument("--timeout", type=int, default=120, metavar="SECONDS")
+    ft.add_argument("--list", action="store_true", help="every fact, with its age")
     qu = add("queue", cmd_queue)
     qu.add_argument("node", nargs="?", help="one node; every node in the tree if omitted")
     qu.add_argument("--order", metavar="A,B,C",

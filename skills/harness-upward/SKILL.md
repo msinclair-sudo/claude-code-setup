@@ -104,6 +104,21 @@ not stop: a blocked path blocks the work that needs it, rarely the whole task.
 If it is granted, it takes effect when you are next spawned or recycled, not
 mid-session. You will simply have the reach, and there will be nothing to ask.
 
+## Read your task's comments before you report
+
+```bash
+harness note <task-id>            # the brief you were given, and every comment
+harness note <task-id> --add "…"  # append; it never edits an earlier one
+```
+
+Your lead or the operator can leave a comment on your task record. It is put
+there rather than sent to you because a message dies with the session that
+receives it and you are recycled (`R13`) — the record outlives that, so it is
+the only place a reply survives to reach whoever holds this node next.
+
+`harness status` tells you when a task has comments. Read them before you
+present work, not after.
+
 ## An instruction that arrives late is reported, not reconstructed
 
 Messages down the tree are acted on when they arrive; there is no recall, and no

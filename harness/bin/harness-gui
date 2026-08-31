@@ -21,6 +21,7 @@ else's long-running service got there first is a viewer nobody opens.
 import argparse, importlib.util, json, os, subprocess, sys, threading, time, webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.machinery import SourceFileLoader
+from urllib.parse import parse_qs, urlparse
 from pathlib import Path
 
 
@@ -179,7 +180,8 @@ def read_state():
                 "blocks": [x for x in blocks if x.get("node") == name],
             })
         nodes.sort(key=lambda n: (n["rank"], n["name"]))
-        projects.append({"project": Path(repo).name, "repo": repo, "nodes": nodes,
+        projects.append({"project": Path(repo).name, "repo": repo, "slug": pdir.name,
+                         "nodes": nodes,
                          "blocks": blocks,
                          "orphan_marks": sorted(orphans, key=lambda o: o["task"]),
                          "indexed_at": idx.get("generated")})
@@ -267,9 +269,32 @@ pre{margin:0;white-space:pre-wrap;word-break:break-all;color:var(--busy);font-si
 button.cp{margin-top:5px;background:#00000040;color:var(--dim);border:1px solid var(--line);
 border-radius:6px;padding:3px 9px;font:inherit;font-size:11px;cursor:pointer}
 .empty{color:var(--none);padding:30px 0}
+.chip{display:inline-block;background:#00000038;border:1px solid var(--line);
+border-radius:5px;padding:0 6px;margin:1px 2px 1px 0;cursor:pointer}
+.chip:hover{border-color:var(--busy);color:var(--busy)}
+.veil{position:fixed;inset:0;background:#000000b0;display:flex;align-items:flex-start;
+justify-content:center;padding:60px 16px;z-index:20;overflow-y:auto}
+.sheet{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+padding:16px 18px;width:min(680px,100%);cursor:default}
+.sheet-h{display:flex;align-items:baseline;margin-bottom:10px}
+.sheet-h .x{margin-left:auto;color:var(--none);cursor:pointer;font-size:11px}
+.sheet-h .x:hover{color:var(--ink)}
+.sheet dt{color:var(--none);font-size:10px;text-transform:uppercase;letter-spacing:.08em}
+.sheet dd{margin:2px 0 11px}
+.sheet .q{color:var(--none)}
+.cmt{border-left:2px solid var(--line);padding:2px 0 2px 9px;margin:0 0 7px}
+.cmt-h{color:var(--none);font-size:10px}
+.cmt-b{white-space:pre-wrap}
+#cbox{width:100%;min-height:74px;background:var(--bg);color:var(--ink);
+border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit;resize:vertical}
+.row{display:flex;align-items:center;gap:10px;margin-top:8px}
+.row button{background:#24301a;color:var(--busy);border:1px solid #40562e;
+border-radius:7px;padding:5px 13px;font:inherit;cursor:pointer}
+.row button:hover{background:#2c3b20}
 </style></head><body>
 <header><h1>harness</h1><span id="ct"></span><span id="age"></span></header>
 <main id="root"><div class="empty">loading...</div></main>
+<div id="modal"></div>
 <script>
 // No inline onclick anywhere. Nested quoting inside an HTML attribute inside a
 // JS string inside a Python string is three levels of escaping, and it silently
@@ -293,9 +318,70 @@ document.addEventListener('click', e => {
     if (n) n.scrollIntoView({ behavior: 'smooth' });
     return;
   }
+  if (e.target.dataset.close) { closeModal(); return; }
+  const tk = e.target.closest('[data-task]');
+  if (tk) { openTask(tk.dataset.slug, tk.dataset.task); return; }
   const need = e.target.closest('.need');
   if (need) need.querySelector('.detail').classList.toggle('on');
 });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+// ── task modal ─────────────────────────────────────────────────────────────
+let MODAL = null;   // {slug, task}
+
+function closeModal() { MODAL = null; document.getElementById('modal').innerHTML = ''; }
+
+async function openTask(slug, task) {
+  MODAL = { slug, task };
+  const d = await (await fetch('/api/task?p=' + encodeURIComponent(slug) +
+                              '&t=' + encodeURIComponent(task))).json();
+  if (d.error) { closeModal(); return; }
+  const cs = (d.comments || []).map(c =>
+    '<div class="cmt"><div class="cmt-h">' + esc(c.by) + ' &middot; ' +
+    esc(String(c.at || '').slice(0, 16).replace('T', ' ')) + '</div>' +
+    '<div class="cmt-b">' + esc(c.text) + '</div></div>').join('')
+    || '<div class="ln q">no comments yet</div>';
+  document.getElementById('modal').innerHTML =
+    '<div class="veil" data-close="1"><div class="sheet">' +
+      '<div class="sheet-h"><b>' + esc(d.task) + '</b>' +
+        '<span class="x" data-close="1">close</span></div>' +
+      '<dl>' +
+        '<dt>node</dt><dd>' + (d.node ? esc(d.node) +
+            (d.branch ? ' <span class="q">(' + esc(d.branch) + ')</span>' : '')
+          : '<span class="dup">names no node &mdash; it predates the field</span>') + '</dd>' +
+        '<dt>opened</dt><dd>' + esc(String(d.opened || '').slice(0, 19).replace('T', ' ')) +
+          ' <span class="q">session ' + esc(d.session) + '</span>' +
+          (d.closed ? ' <span class="q">&middot; closed ' +
+            esc(String(d.closed).slice(0, 19).replace('T', ' ')) + '</span>' : '') + '</dd>' +
+        '<dt>brief</dt><dd>' + (d.brief ? esc(d.brief)
+          : '<span class="q">none recorded at T1 &mdash; harness mark --note</span>') + '</dd>' +
+        '<dt>comments</dt><dd>' + cs + '</dd>' +
+      '</dl>' +
+      '<textarea id="cbox" placeholder="add a comment..."></textarea>' +
+      '<div class="row"><button id="csend">comment</button>' +
+      '<span class="ln q" id="cmsg">appended to the task record, never edited</span></div>' +
+    '</div></div>';
+  document.getElementById('csend').onclick = sendComment;
+}
+
+async function sendComment() {
+  const box = document.getElementById('cbox');
+  const msg = document.getElementById('cmsg');
+  const text = box.value.trim();
+  if (!text || !MODAL) return;
+  msg.textContent = 'saving...';
+  try {
+    const r = await fetch('/api/comment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Harness-Local': '1' },
+      body: JSON.stringify({ slug: MODAL.slug, task: MODAL.task, text })
+    });
+    const j = await r.json();
+    if (!j.ok) { msg.textContent = 'refused: ' + (j.message || r.status); return; }
+    box.value = '';
+    openTask(MODAL.slug, MODAL.task);
+  } catch (e) { msg.textContent = 'failed: ' + e; }
+}
 
 function needBlock(n, i) {
   const g = "(cd " + n._repo + " && harness grant " + n.node + " '" + n.need +
@@ -332,7 +418,9 @@ function card(n) {
   else                    who = '<div class="ln q">no session</div>';
   // "unassigned" read as "nothing is there", which is the opposite of what it
   // means: the session is working, the HARNESS just has no record of on what.
-  const task = n.tasks.length ? '<div class="ln">' + esc(n.tasks.join(', ')) + '</div>'
+  const task = n.tasks.length ? '<div class="ln">' + n.tasks.map(x =>
+                 '<span class="chip" data-task="' + esc(x) + '" data-slug="' +
+                 esc(n._slug) + '">' + esc(x) + '</span>').join(' ') + '</div>'
              : (!unknown && ss.length
                 ? '<div class="ln q" title="no harness mark — run harness mark ' +
                   '&lt;task&gt; in that session">no task record</div>' : '');
@@ -381,21 +469,80 @@ async function tick() {
     h += '<div class="needs"><h3>attention</h3>' + d.needs.map(needBlock).join('') + '</div>';
   }
   h += d.projects.map(p =>
+    (p.nodes.forEach(n => n._slug = p.slug),
     '<div class="proj"><h2>' + esc(p.project) + '</h2>' +
     '<div class="repo">' + esc(p.repo) + '</div>' +
     (p.orphan_marks.length ? '<div class="ln dup">' + p.orphan_marks.length +
       ' open task record(s) name no node in this tree</div><ul class="orph">' +
-      p.orphan_marks.map(o => '<li>' + esc(o.task) +
+      p.orphan_marks.map(o => '<li><span class="chip" data-task="' + esc(o.task) +
+        '" data-slug="' + esc(p.slug) + '">' + esc(o.task) + '</span>' +
         (o.named ? ' <span class="q">named ' + esc(o.named) + ', trimmed</span>'
                  : ' <span class="q">names no node</span>') +
         (o.at ? ' <span class="q">&middot; ' + esc(o.at) + '</span>' : '') +
         '</li>').join('') + '</ul>' : '') +
-    tree(p.nodes) + '</div>').join('');
+    tree(p.nodes) + '</div>')).join('');
   if (!d.projects.length) h += '<div class="empty">no enrolled projects on this machine</div>';
   document.getElementById('root').innerHTML = h;
 }
 tick(); setInterval(tick, 3000);
 </script></body></html>"""
+
+
+def _project_dir(slug):
+    """Whitelist, not sanitise. The slug must BE one of the directories that
+    exist; nothing is joined from user input, so there is no path to traverse."""
+    for p in CLI.HOME_STATE.glob("*"):
+        if p.is_dir() and p.name == slug and (p / "binding.json").exists():
+            return p
+    return None
+
+
+def task_detail(slug, task):
+    pdir = _project_dir(slug)
+    if pdir is None:
+        return None
+    md = pdir / "marks"
+    # Same whitelist: the file must already be in the listing.
+    hit = next((f for f in md.glob("*.json") if f.stem == task), None) if md.is_dir() else None
+    if hit is None:
+        return None
+    try:
+        rec = json.loads(hit.read_text())
+    except Exception:
+        return None
+    repo = ""
+    try:
+        repo = json.loads((pdir / "binding.json").read_text()).get("repo", "")
+    except Exception:
+        pass
+    return {"task": task, "slug": slug, "repo": repo,
+            "node": rec.get("_node"), "branch": rec.get("_branch"),
+            "opened": rec.get("_at"), "closed": rec.get("_closed_at"),
+            "session": (rec.get("_session") or "")[:8],
+            "brief": rec.get("_note") or "",
+            "comments": rec.get("_comments") or []}
+
+
+def add_comment(slug, task, text):
+    """The one write, and it is delegated.
+
+    The server runs `harness note --add` in the project rather than editing the
+    record itself, so the viewer gains no ability the CLI does not already grant
+    and there is exactly one implementation of what a comment is. If the CLI
+    refuses, so does this.
+    """
+    d = task_detail(slug, task)
+    if d is None or not d["repo"]:
+        return False, "no such task"
+    exe = Path(__file__).resolve().with_name("harness")
+    # A comment typed into this page was typed by a PERSON. The server may have
+    # been launched from inside a session and would otherwise inherit its id and
+    # sign the comment with it, which is a false attribution in the one record
+    # that exists to be trusted.
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
+    r = subprocess.run([sys.executable, str(exe), "note", task, "--add", text],
+                       cwd=d["repo"], capture_output=True, text=True, timeout=20, env=env)
+    return r.returncode == 0, (r.stdout or r.stderr).strip()[:300]
 
 
 class H(BaseHTTPRequestHandler):
@@ -417,10 +564,37 @@ class H(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send(json.dumps({"error": str(e), "projects": [], "needs": []}),
                            "application/json")
+        elif self.path.startswith("/api/task?"):
+            q = parse_qs(urlparse(self.path).query)
+            d = task_detail((q.get("p") or [""])[0], (q.get("t") or [""])[0])
+            self._send(json.dumps(d or {"error": "not found"}), "application/json")
         elif self.path in ("/", "/index.html"):
             self._send(PAGE, "text/html; charset=utf-8")
         else:
             self.send_error(404)
+
+    def do_POST(self):
+        # This server has no authentication, so a page you merely VISIT could POST
+        # here. A custom header forces a CORS preflight cross-origin, and no OPTIONS
+        # is answered, so a browser blocks it before it is sent; Origin is checked
+        # too, for anything that is not a browser following the rules.
+        if self.headers.get("X-Harness-Local") != "1":
+            self.send_error(403, "missing X-Harness-Local"); return
+        origin = self.headers.get("Origin")
+        if origin and not origin.startswith(("http://127.0.0.1:", "http://localhost:")):
+            self.send_error(403, "cross-origin"); return
+        if not self.path.startswith("/api/comment"):
+            self.send_error(404); return
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(min(n, 64_000)) or b"{}")
+        except Exception:
+            self.send_error(400, "bad JSON"); return
+        text = (body.get("text") or "").strip()
+        if not text:
+            self.send_error(400, "empty comment"); return
+        ok, msg = add_comment(body.get("slug", ""), body.get("task", ""), text)
+        self._send(json.dumps({"ok": ok, "message": msg}), "application/json")
 
     def log_message(self, *a):
         pass          # a poll every 3 seconds would bury anything worth reading

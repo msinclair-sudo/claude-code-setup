@@ -189,3 +189,28 @@ It is a **viewer**. It never claims, writes or decides, so killing it changes
 nothing — which is what keeps `R4` true. It is also a prototype with no
 authentication, so it binds loopback only; it shows worktree paths, session
 names and every open block, and none of that should leave the machine.
+
+## Unclaimed task records
+
+`whoami` tells you at every start when open task records name no node in the
+tree, because nothing else would. Two kinds:
+
+- **named a node that has been trimmed** — `harness trim` closes them
+- **named no node at all** — they predate the field and cannot be attributed.
+  Close by hand: `harness mark <task> --close --force`
+
+Do not guess which node an unattributable one belonged to. A number invented
+into the ledger is worse than a record you closed without a cost attached.
+
+## Commenting on a task
+
+```bash
+harness note <task-id>            # brief, who opened it, every comment
+harness note <task-id> --add "…"
+```
+
+Also the click target in `harness gui`: a task chip opens the brief with a box
+beneath it. Comments append to the mark record, so they survive the recycle
+that ends the session you are answering — which is why a comment, and not a
+message, is the right instrument for anything the *next* occupant of that node
+also needs to know.

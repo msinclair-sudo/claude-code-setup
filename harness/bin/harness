@@ -372,6 +372,22 @@ def _whoami(a):
     print(f"skills   {', '.join(skills_for(ctx, node))}")
     print(f"run as   {model}, effort {effort}   ({role_of(ctx, node)})")
 
+    # Rank 0 only, and only when there is something. Orientation runs on every
+    # start, resume and compact, so a line that is usually absent costs nothing
+    # and a line that appears is worth the tokens. Unclaimed task records and
+    # open blocks are rank 0's housekeeping, and nothing else tells it they exist.
+    if ctx.rank(node) == 0:
+        try:
+            stale_m, unattr_m = orphan_marks(ctx)
+            nb = len(open_blocks(ctx))
+            if stale_m or unattr_m:
+                print(f"unclaimed {len(stale_m) + len(unattr_m)} open task record(s) "
+                      f"claimed by no node — harness status")
+            if nb:
+                print(f"blocked  {nb} lane(s) waiting on the operator — harness needs")
+        except Exception:
+            pass
+
 
 def cmd_behind(a):
     ctx = Ctx(); ctx.require_enrolled()
@@ -476,9 +492,10 @@ def cmd_status(a):
     # A claim is not an assignment. A node can be claimed, live, and holding
     # nothing to do — and an idle session with a live counterparty spends that
     # capacity on elective correspondence, which no transaction terminates.
-    tasks = {}
+    tasks, tasks_rec = {}, {}
     for task, rec in open_marks(ctx).items():
         tasks.setdefault(rec.get("_node") or "?", []).append(task)
+        tasks_rec[task] = rec
 
     d = ctx.state / "locks"
     locks = sorted(d.glob("*.lock")) if d.is_dir() else []
@@ -489,6 +506,9 @@ def cmd_status(a):
         claimed.add(h["node"])
         open_here = tasks.get(h["node"], [])
         work = ", ".join(sorted(open_here)) if open_here else "no task record"
+        nc = sum(len(tasks_rec.get(x, {}).get("_comments") or []) for x in open_here)
+        if nc:
+            work += f"   ({nc} comment(s) — harness note <task>)"
         if live == "live" and not open_here:
             unassigned.append(h["node"])
         print(f"  {h['node']:<12} {h['name']:<22} [{h['ref']}]  {live:<8}{work}")
@@ -1861,6 +1881,53 @@ def _ago(ts):
     return f"{d // 86400}d ago"
 
 
+def cmd_note(a):
+    """Read a task's brief and its comments, or append one.
+
+    A comment is the only thing written to a mark after it opens, and it is
+    APPENDED, never edited ([[I6]]). It exists because a reply to a running task
+    had nowhere to live that the task's own session could read: a message dies
+    with the session that received it, and the next occupant of that node starts
+    with none of it. The mark outlives a recycle, so the reply belongs there.
+
+    Reading is free. Writing takes `--add`, and records who wrote it — a session
+    id, or `operator` when there is no session, which is the same distinction
+    `harness grant` records and for the same reason.
+    """
+    ctx = Ctx(); ctx.require_enrolled()
+    f = ctx.state_file("marks", a.task, ".json")
+    if not f.exists():
+        die(REFUSED, f"no task record '{a.task}'. `harness status` lists the open ones.")
+    rec = json.loads(f.read_text())
+
+    if a.add:
+        sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+        rec.setdefault("_comments", []).append(
+            {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+             "by": (f"session {sid[:8]}" if sid else "operator"),
+             "text": a.add})
+        f.write_text(json.dumps(rec, indent=2) + "\n")
+        print(f"added a comment to {a.task}  ({len(rec['_comments'])} total)")
+        return
+
+    node = rec.get("_node") or "— names no node (it predates the field)"
+    print(f"{a.task}")
+    print(f"  node     {node}")
+    print(f"  opened   {str(rec.get('_at'))[:19]}   session {str(rec.get('_session'))[:8]}")
+    if rec.get("_closed_at"):
+        print(f"  closed   {str(rec['_closed_at'])[:19]}")
+    print(f"  brief    {rec.get('_note') or '— none recorded at T1'}")
+    cs = rec.get("_comments") or []
+    if not cs:
+        print("  no comments")
+        return
+    print(f"  {len(cs)} comment(s):")
+    for c in cs:
+        print(f"    [{str(c.get('at'))[:16]}  {c.get('by')}]")
+        for line in (c.get("text") or "").splitlines() or [""]:
+            print(f"      {line}")
+
+
 def cmd_needs(a):
     """One place the operator looks, and everything a decision needs in it.
 
@@ -2242,6 +2309,9 @@ def main():
                     help="what continues without it — this is how urgent gets judged")
     bk.add_argument("--resolve", action="store_true", help="close a block you raised")
     bk.add_argument("--list", action="store_true", help="every open block")
+    nt = add("note", cmd_note)
+    nt.add_argument("task", help="task id, as recorded at T1")
+    nt.add_argument("--add", metavar="TEXT", help="append a comment; never edits an earlier one")
     add("needs", cmd_needs)
     add("index", cmd_index)
     ps = add("position", cmd_position)

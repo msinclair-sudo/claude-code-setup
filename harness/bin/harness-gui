@@ -144,7 +144,7 @@ def read_state():
                 h = json.loads(lf.read_text()); locks[h.get("node")] = h
             except Exception:
                 pass
-        tasks, orphans = {}, 0
+        tasks, orphans = {}, []
         md = pdir / "marks"
         for mf in (sorted(md.glob("*.json")) if md.is_dir() else []):
             try:
@@ -157,7 +157,8 @@ def read_state():
             # Counted, not dropped: an open record naming no node is a fact about
             # the ledger, and hiding it is how six of them sat there unnoticed.
             if n is None or n not in tree:
-                orphans += 1
+                orphans.append({"task": mf.stem, "named": n,
+                                "at": (r.get("_at") or "")[:19].replace("T", " ")})
             else:
                 tasks.setdefault(n, []).append(mf.stem)
         blocks = [x for x in needs if x.get("_repo") == repo]
@@ -179,7 +180,8 @@ def read_state():
             })
         nodes.sort(key=lambda n: (n["rank"], n["name"]))
         projects.append({"project": Path(repo).name, "repo": repo, "nodes": nodes,
-                         "blocks": blocks, "orphan_marks": orphans,
+                         "blocks": blocks,
+                         "orphan_marks": sorted(orphans, key=lambda o: o["task"]),
                          "indexed_at": idx.get("generated")})
     return {"generated": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "roster_error": roster_error, "stale_server": stale_server(),
@@ -243,6 +245,9 @@ border:1px solid var(--line);border-radius:9px;padding:8px 11px;text-align:left}
 .bell{display:inline-block;margin-top:5px;background:var(--warnbg);color:var(--warn);
 border:1px solid #5a3a1e;border-radius:20px;padding:1px 9px;font-size:11px;cursor:pointer}
 
+.orph{margin:2px 0 8px;padding-left:20px;color:var(--warn);font-size:11px}
+.orph li{margin:1px 0}
+.orph .q{color:var(--none)}
 .banner{background:#3a1c1c;border:1px solid #6b2f2f;color:#e5a0a0;border-radius:9px;
 padding:9px 13px;margin-bottom:16px}
 .needs{background:var(--warnbg);border:1px solid #5a3a1e;border-radius:10px;
@@ -378,8 +383,13 @@ async function tick() {
   h += d.projects.map(p =>
     '<div class="proj"><h2>' + esc(p.project) + '</h2>' +
     '<div class="repo">' + esc(p.repo) + '</div>' +
-    (p.orphan_marks ? '<div class="ln dup">' + p.orphan_marks +
-      ' open task record(s) name no node in this tree</div>' : '') +
+    (p.orphan_marks.length ? '<div class="ln dup">' + p.orphan_marks.length +
+      ' open task record(s) name no node in this tree</div><ul class="orph">' +
+      p.orphan_marks.map(o => '<li>' + esc(o.task) +
+        (o.named ? ' <span class="q">named ' + esc(o.named) + ', trimmed</span>'
+                 : ' <span class="q">names no node</span>') +
+        (o.at ? ' <span class="q">&middot; ' + esc(o.at) + '</span>' : '') +
+        '</li>').join('') + '</ul>' : '') +
     tree(p.nodes) + '</div>').join('');
   if (!d.projects.length) h += '<div class="empty">no enrolled projects on this machine</div>';
   document.getElementById('root').innerHTML = h;

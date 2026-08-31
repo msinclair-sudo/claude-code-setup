@@ -144,15 +144,22 @@ def read_state():
                 h = json.loads(lf.read_text()); locks[h.get("node")] = h
             except Exception:
                 pass
-        tasks = {}
+        tasks, orphans = {}, 0
         md = pdir / "marks"
         for mf in (sorted(md.glob("*.json")) if md.is_dir() else []):
             try:
                 r = json.loads(mf.read_text())
             except Exception:
                 continue
-            if not r.get("_closed_at"):
-                tasks.setdefault(r.get("_node"), []).append(mf.stem)
+            if r.get("_closed_at"):
+                continue
+            n = r.get("_node")
+            # Counted, not dropped: an open record naming no node is a fact about
+            # the ledger, and hiding it is how six of them sat there unnoticed.
+            if n is None or n not in tree:
+                orphans += 1
+            else:
+                tasks.setdefault(n, []).append(mf.stem)
         blocks = [x for x in needs if x.get("_repo") == repo]
         nodes = []
         for name, spec in tree.items():
@@ -172,7 +179,8 @@ def read_state():
             })
         nodes.sort(key=lambda n: (n["rank"], n["name"]))
         projects.append({"project": Path(repo).name, "repo": repo, "nodes": nodes,
-                         "blocks": blocks, "indexed_at": idx.get("generated")})
+                         "blocks": blocks, "orphan_marks": orphans,
+                         "indexed_at": idx.get("generated")})
     return {"generated": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "roster_error": roster_error, "stale_server": stale_server(),
             "started": time.strftime("%H:%M:%S", time.localtime(STARTED)),
@@ -317,8 +325,12 @@ function card(n) {
       esc(ss[0].status) + '</div>';
   else if (n.claimed)     who = '<div class="ln dup">claimed, no session</div>';
   else                    who = '<div class="ln q">no session</div>';
+  // "unassigned" read as "nothing is there", which is the opposite of what it
+  // means: the session is working, the HARNESS just has no record of on what.
   const task = n.tasks.length ? '<div class="ln">' + esc(n.tasks.join(', ')) + '</div>'
-             : (!unknown && ss.length ? '<div class="ln q">unassigned</div>' : '');
+             : (!unknown && ss.length
+                ? '<div class="ln q" title="no harness mark — run harness mark ' +
+                  '&lt;task&gt; in that session">no task record</div>' : '');
   return '<div class="card ' + cls + (n.blocks.length ? ' blocked' : '') + '">' +
     '<div class="hdr"><span class="dot"></span><span class="nm">' + esc(n.name) +
     '</span><span class="kd">' + esc(n.kind || '') + '</span></div>' +
@@ -365,7 +377,10 @@ async function tick() {
   }
   h += d.projects.map(p =>
     '<div class="proj"><h2>' + esc(p.project) + '</h2>' +
-    '<div class="repo">' + esc(p.repo) + '</div>' + tree(p.nodes) + '</div>').join('');
+    '<div class="repo">' + esc(p.repo) + '</div>' +
+    (p.orphan_marks ? '<div class="ln dup">' + p.orphan_marks +
+      ' open task record(s) name no node in this tree</div>' : '') +
+    tree(p.nodes) + '</div>').join('');
   if (!d.projects.length) h += '<div class="empty">no enrolled projects on this machine</div>';
   document.getElementById('root').innerHTML = h;
 }

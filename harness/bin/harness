@@ -488,7 +488,7 @@ def cmd_status(a):
         live = "live" if h["ref"] in peers else ("stale" if roster else "unknown")
         claimed.add(h["node"])
         open_here = tasks.get(h["node"], [])
-        work = ", ".join(sorted(open_here)) if open_here else "unassigned"
+        work = ", ".join(sorted(open_here)) if open_here else "no task record"
         if live == "live" and not open_here:
             unassigned.append(h["node"])
         print(f"  {h['node']:<12} {h['name']:<22} [{h['ref']}]  {live:<8}{work}")
@@ -517,10 +517,25 @@ def cmd_status(a):
         print("  Nobody is unblocked by a session with looser settings:")
         print("  `harness grant <node> <path>` from rank 0 or a shell, then recycle it.")
 
+    stale_m, unattr_m = orphan_marks(ctx)
+    if stale_m or unattr_m:
+        print()
+        if stale_m:
+            print(f"  {len(stale_m)} open task record(s) name a node the tree no longer has: "
+                  f"{', '.join(sorted(stale_m))}")
+            print("  `harness trim` closes those.")
+        if unattr_m:
+            print(f"  {len(unattr_m)} open task record(s) name no node at all "
+                  f"(they predate the field): {', '.join(sorted(unattr_m))}")
+            print("  They cannot be attributed, only closed: "
+                  "harness mark <task> --close --force")
+
     if unassigned:
-        print(f"\n  {len(unassigned)} live node(s) with no open task: {', '.join(sorted(unassigned))}")
-        print("  Capacity with no object. Close the task record at T10 and recycle,")
-        print("  or give it one:  harness recycle --idle")
+        print(f"\n  {len(unassigned)} live node(s) with no open task RECORD: "
+              f"{', '.join(sorted(unassigned))}")
+        print("  That is not the same as doing nothing — it means the harness cannot")
+        print("  tell what they are doing, and cannot price it (I10). Mark the task,")
+        print("  or if the work is done: close it at T10 and  harness recycle --idle")
 
 
 def cmd_enrol(a):
@@ -995,6 +1010,26 @@ def open_marks(ctx):
     return out
 
 
+def orphan_marks(ctx):
+    """Open task records that name no node this tree has.
+
+    Two kinds, and they are not the same problem. A mark whose `_node` names a
+    node that has been trimmed away is stale and can be closed. A mark with NO
+    `_node` at all predates the field: it cannot be attributed, only reported,
+    because guessing which node it belonged to is exactly the kind of inference
+    that makes a ledger untrustworthy. Both were previously dropped in silence,
+    so their nodes read as having no task while their sessions worked on one.
+    """
+    stale, unattributable = {}, {}
+    for task, rec in open_marks(ctx).items():
+        n = rec.get("_node")
+        if n is None:
+            unattributable[task] = rec
+        elif n not in ctx.tree["nodes"]:
+            stale[task] = rec
+    return stale, unattributable
+
+
 def cmd_mark(a):
     """Record the token position when a T1 is accepted, so the actual at T10 is a
     subtraction rather than an apportionment.
@@ -1466,6 +1501,27 @@ def _reconcile(ctx, dry_run=False):
             print(f"  closed     claim on '{node}' — not in the tree")
     if not closed:
         print("  locks      every claim names a node that exists")
+
+    stale_m, unattr_m = orphan_marks(ctx)
+    for task, rec in sorted(stale_m.items()):
+        f = ctx.state_file("marks", task, ".json")
+        if dry_run:
+            print(f"  would close mark '{task}' — names '{rec.get('_node')}', not in the tree")
+            continue
+        rec["_closed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        rec["_closed_because"] = f"node '{rec.get('_node')}' is not in the tree"
+        rec["_delta"] = None
+        f.write_text(json.dumps(rec, indent=2) + "\n")
+        print(f"  closed     mark '{task}' — named '{rec.get('_node')}', not in the tree")
+    if not stale_m:
+        print("  marks      every open task record names a node that exists")
+    if unattr_m:
+        # Reported, never guessed. Which node a pre-`_node` mark belonged to is
+        # not recoverable, and inventing one would put a wrong number in a ledger
+        # that exists to be trusted.
+        print(f"  note       {len(unattr_m)} open task record(s) name no node "
+              f"(they predate the field): {', '.join(sorted(unattr_m))}")
+        print(f"  {'':<10} close with: harness mark <task> --close --force")
     rc, porc, _ = git("worktree", "list", "--porcelain", cwd=ctx.repo)
     cur, stray = None, []
     for line in porc.splitlines():

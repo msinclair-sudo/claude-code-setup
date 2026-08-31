@@ -377,6 +377,13 @@ def _whoami(a):
     # and a line that appears is worth the tokens. Unclaimed task records and
     # open blocks are rank 0's housekeeping, and nothing else tells it they exist.
     try:
+        ub = unread_block_comments(ctx, node)
+        if ub:
+            n = sum(len(v) for v in ub.values())
+            print(f"answered {n} comment(s) on your open block(s) — harness blocked --list")
+    except Exception:
+        pass
+    try:
         u = unread_brief_comments(ctx, node)
         if u:
             n = sum(len(v) for v in u.values())
@@ -2461,6 +2468,24 @@ def open_blocks(ctx):
     return out
 
 
+def unread_block_comments(ctx, who):
+    """Answers left on this node's open blocks that it has not read.
+
+    A block is usually a question, and the reply is the thing the lane is
+    waiting on. Same cursor rule as a brief: keyed by reader, surfaced by the
+    next harness command, never pushed.
+    """
+    out = {}
+    for k, r in open_blocks(ctx).items():
+        if r.get("node") != who:
+            continue
+        seen = (r.get("read") or {}).get(who, "")
+        new = [c for c in (r.get("comments") or []) if (c.get("at") or "") > seen]
+        if new:
+            out[r.get("need") or k] = new
+    return out
+
+
 def cmd_blocked(a):
     """A member raises a block as a RECORD, not a message.
 
@@ -2481,7 +2506,45 @@ def cmd_blocked(a):
             print(f"  {r.get('node', '?'):<12} {r.get('need', k)}")
             print(f"  {'':<12} {r.get('why') or '(no reason recorded)'}   "
                   f"raised {str(r.get('raised_at'))[:19]}")
+            cs = r.get("comments") or []
+            for c in cs:
+                print(f"  {'':<12} [{str(c.get('at'))[:16]}  {c.get('by')}]")
+                for line in (c.get("text") or "").splitlines():
+                    print(f"  {'':<14}  {line}")
+            if cs and r.get("node") == node:
+                r.setdefault("read", {})[node] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+                try:
+                    (ctx.state / "blocks" / (k + ".json")).write_text(
+                        json.dumps(r, indent=2) + "\n")
+                except Exception:
+                    pass
         return
+    if a.comment is not None:
+        # The operator answering a block is the thing the lane is waiting on, so
+        # it goes on the record rather than into a message: the record outlives
+        # the session that raised it, and the next occupant of that node inherits
+        # the answer along with the question.
+        hits = [(k, r) for k, r in open_blocks(ctx).items()
+                if r.get("need") == a.need or k.endswith(re.sub(r"[^A-Za-z0-9]", "_",
+                                                                a.need or ""))]
+        if not hits:
+            die(REFUSED, f"no open block for '{a.need}'. `harness needs` lists them.")
+        k, r = hits[0]
+        bf = ctx.state / "blocks" / (k + ".json")
+        r.setdefault("comments", []).append(
+            {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+             "by": (f"{node} (session {os.environ['CLAUDE_CODE_SESSION_ID'][:8]})"
+                    if os.environ.get("CLAUDE_CODE_SESSION_ID") else "operator"),
+             "text": a.comment})
+        bf.write_text(json.dumps(r, indent=2) + "\n")
+        write_needs(scan_needs())
+        print(f"commented on the block '{r.get('need')}' ({len(r['comments'])} total)")
+        print(f"  '{r.get('node')}' sees it at its next harness command: "
+              f"harness blocked --list")
+        print(f"  It does not clear the block. Granting does, or "
+              f"'{r.get('node')}' resolves it.")
+        return
+
     f = ctx.state_file("blocks", f"{node}-{a.need}", ".json")
     f.parent.mkdir(parents=True, exist_ok=True)
     if a.resolve:
@@ -2698,6 +2761,8 @@ def main():
     bk.add_argument("--still-moving", dest="still_moving",
                     help="what continues without it — this is how urgent gets judged")
     bk.add_argument("--resolve", action="store_true", help="close a block you raised")
+    bk.add_argument("--comment", metavar="TEXT",
+                    help="answer or add context; does not clear the block")
     bk.add_argument("--list", action="store_true", help="every open block")
     br = add("brief", cmd_brief)
     br.add_argument("task", help="task id")

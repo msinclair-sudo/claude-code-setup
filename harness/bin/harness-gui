@@ -259,7 +259,9 @@ def read_state():
                           if b.get("still_moving") else ""),
                 "do": f"(cd {shlex.quote(repo)} && harness grant {b.get('node')} "
                       f"{shlex.quote(b.get('need') or '')} --reason "
-                      f"{shlex.quote((b.get('why') or 'see the block record')[:60])})"})
+                      f"{shlex.quote((b.get('why') or 'see the block record')[:60])})",
+                "slug": pdir.name, "node": b.get("node"), "need": b.get("need"),
+                "comments": b.get("comments") or []})
         projects.append({"project": pname, "repo": repo, "slug": pdir.name,
                          "nodes": nodes,
                          "blocks": blocks,
@@ -368,7 +370,13 @@ border-radius:6px;padding:3px 9px;font:inherit;font-size:11px;cursor:pointer}
 .empty{color:var(--none);padding:30px 0}
 .chip{display:inline-block;background:#00000038;border:1px solid var(--line);
 border-radius:5px;padding:0 6px;margin:1px 2px 1px 0;cursor:pointer}
-.chip:hover{border-color:var(--busy);color:var(--busy)}
+.chip:hover{border-color:var(--busy);color:var(--busy);background:#1c2614}
+.cct{margin-left:auto;color:var(--warn);font-size:11px}
+.bbox{width:100%;min-height:66px;background:var(--bg);color:var(--ink);
+border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit;
+resize:vertical;margin-top:4px}
+.row button.bsend{background:#24301a;color:var(--busy);border:1px solid #40562e;
+border-radius:7px;padding:5px 13px;font:inherit;cursor:pointer}
 .chip.pending{border-style:dashed;color:var(--dim)}
 .chip.presented{border-color:#40562e;color:var(--busy);background:#1c2614}
 .veil{position:fixed;inset:0;background:#000000b0;display:flex;align-items:flex-start;
@@ -422,6 +430,25 @@ document.addEventListener('click', e => {
   if (e.target.dataset.close) { closeModal(); return; }
   const tk = e.target.closest('[data-task]');
   if (tk) { openTask(tk.dataset.slug, tk.dataset.task); return; }
+  const bs = e.target.closest('.bsend');
+  if (bs) {
+    e.stopPropagation();
+    const wrap = bs.closest('.detail');
+    const box = wrap.querySelector('.bbox'), msg = wrap.querySelector('.bmsg');
+    const text = box.value.trim();
+    if (!text) return;
+    msg.textContent = 'saving...';
+    fetch('/api/comment', { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Harness-Local': '1' },
+      body: JSON.stringify({ kind: 'block', slug: box.dataset.slug,
+                             node: box.dataset.node, need: box.dataset.need, text }) })
+      .then(r => r.json())
+      .then(j => { msg.textContent = j.ok ? 'sent' : 'refused: ' + (j.message || '');
+                   if (j.ok) { box.value = ''; LAST = ''; tick(); } })
+      .catch(err => { msg.textContent = 'failed: ' + err; });
+    return;
+  }
+  if (e.target.closest('.bbox')) { e.stopPropagation(); return; }
   const need = e.target.closest('.need');
   if (need) {
     const on = need.querySelector('.detail').classList.toggle('on');
@@ -522,12 +549,28 @@ async function sendComment() {
 // about before you can act on it is a queue that does not get cleared.
 function attnItem(a, i) {
   const key = a.kind + '|' + a.where + '|' + a.what;
+  const n = (a.comments || []).length;
+  const cs = (a.comments || []).map(c =>
+    '<div class="cmt"><div class="cmt-h">' + esc(c.by) + ' &middot; ' +
+    esc(String(c.at || '').slice(0, 16).replace('T', ' ')) + '</div>' +
+    '<div class="cmt-b">' + esc(c.text) + '</div></div>').join('');
+  // The box lives on the item, because this is what the operator is looking at.
+  // An affordance one click away on another surface is one that is not found.
+  const box = a.need ? '<div class="ln q" style="margin-top:12px">reply or add ' +
+      'context &mdash; ' + esc(a.node) + ' sees it at its next harness command, and it ' +
+      'does not clear the block</div>' +
+      '<textarea class="bbox" data-slug="' + esc(a.slug) + '" data-node="' + esc(a.node) +
+      '" data-need="' + esc(a.need) + '" placeholder="reply to ' + esc(a.node) +
+      '..."></textarea>' +
+      '<div class="row"><button class="bsend">comment</button>' +
+      '<span class="ln q bmsg"></span></div>' : '';
   return '<div class="need" data-key="' + esc(key) + '"><div class="hd">' +
     '<span class="who mine">' + esc(a.kind) + '</span>' +
-    '<span class="wh">' + esc(a.where) + ' &middot; ' + esc(a.what) + '</span></div>' +
-    '<div class="detail"><div class="why">' + esc(a.why) + '</div>' +
+    '<span class="wh">' + esc(a.where) + ' &middot; ' + esc(a.what) + '</span>' +
+    (n ? '<span class="cct">' + n + ' comment' + (n === 1 ? '' : 's') + '</span>' : '') +
+    '</div><div class="detail"><div class="why">' + esc(a.why) + '</div>' + cs +
     '<pre id="a' + i + '">' + esc(a.do) + '</pre>' +
-    '<button class="cp" data-c="a' + i + '">copy</button></div></div>';
+    '<button class="cp" data-c="a' + i + '">copy</button>' + box + '</div></div>';
 }
 
 function needBlock(n, i) {
@@ -651,6 +694,8 @@ async function tick() {
     (p.nodes.forEach(n => n._slug = p.slug),
     '<div class="proj"><h2>' + esc(p.project) + '</h2>' +
     '<div class="repo">' + esc(p.repo) + '</div>' +
+    '<div class="ln q" style="margin:0 0 6px">click a task chip to read its brief ' +
+    'and comment on it</div>' +
     (p.orphan_marks.length ? '<div class="ln dup">' + p.orphan_marks.length +
       ' open task record(s) name no node in this tree</div><ul class="orph">' +
       p.orphan_marks.map(o => '<li><span class="chip" data-task="' + esc(o.task) +
@@ -750,6 +795,30 @@ def add_comment(slug, task, text):
     return r.returncode == 0, (r.stdout or r.stderr).strip()[:300]
 
 
+def add_block_comment(slug, node, need, text):
+    """Delegated exactly like a task comment: the CLI defines what a comment is
+    and this only calls it, with the session id stripped so a human's reply is
+    attributed to a human."""
+    pdir = _project_dir(slug)
+    if pdir is None:
+        return False, "no such project"
+    try:
+        repo = json.loads((pdir / "binding.json").read_text()).get("repo", "")
+    except Exception:
+        return False, "unreadable binding"
+    wt = repo
+    try:
+        idx = json.loads((pdir / "index.json").read_text())
+        wt = idx.get("nodes", {}).get(node, {}).get("worktree") or repo
+    except Exception:
+        pass
+    exe = Path(__file__).resolve().with_name("harness")
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
+    r = subprocess.run([sys.executable, str(exe), "blocked", need, "--comment", text],
+                       cwd=wt, capture_output=True, text=True, timeout=20, env=env)
+    return r.returncode == 0, (r.stdout or r.stderr).strip()[:300]
+
+
 class H(BaseHTTPRequestHandler):
     def _send(self, body, ctype):
         # A page polling every 3s abandons requests routinely: navigate away, or
@@ -810,7 +879,11 @@ class H(BaseHTTPRequestHandler):
         text = (body.get("text") or "").strip()
         if not text:
             self.send_error(400, "empty comment"); return
-        ok, msg = add_comment(body.get("slug", ""), body.get("task", ""), text)
+        if body.get("kind") == "block":
+            ok, msg = add_block_comment(body.get("slug", ""), body.get("node", ""),
+                                        body.get("need", ""), text)
+        else:
+            ok, msg = add_comment(body.get("slug", ""), body.get("task", ""), text)
         self._send(json.dumps({"ok": ok, "message": msg}), "application/json")
 
     def log_message(self, *a):

@@ -104,6 +104,15 @@ operator tells a stopped lane from a stopped step without reading your
 transcript. Leave it out and yours looks like every other one.
 Then carry on with everything the block does not stop, and report what it does.
 
+**The answer comes back on the record, not in a message.** `whoami` tells you
+when one of your open blocks has been answered; `harness blocked --list` prints
+it. Read it before you assume nothing has happened — an answer that arrived
+while you were working looks exactly like silence until you look.
+
+A comment does not clear the block. If the answer means you can proceed,
+`harness blocked <need> --resolve` says so; if it was a permission, the grant
+arrives at your next spawn or recycle.
+
 Three things not to do, in the order they will tempt you. Do not ask a session
 with looser settings to do the write for you — that is the operator's decision
 being routed around rather than implemented, and `harness grant` refuses it by

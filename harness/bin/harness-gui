@@ -261,6 +261,8 @@ def read_state():
                       f"{shlex.quote(b.get('need') or '')} --reason "
                       f"{shlex.quote((b.get('why') or 'see the block record')[:60])})",
                 "slug": pdir.name, "node": b.get("node"), "need": b.get("need"),
+                "root": next((n for n, sp in tree.items()
+                              if sp.get("parent") is None), "rank 0"),
                 "comments": b.get("comments") or []})
         projects.append({"project": pname, "repo": repo, "slug": pdir.name,
                          "nodes": nodes,
@@ -556,13 +558,14 @@ function attnItem(a, i) {
     '<div class="cmt-b">' + esc(c.text) + '</div></div>').join('');
   // The box lives on the item, because this is what the operator is looking at.
   // An affordance one click away on another surface is one that is not found.
-  const box = a.need ? '<div class="ln q" style="margin-top:12px">reply or add ' +
-      'context &mdash; ' + esc(a.node) + ' sees it at its next harness command, and it ' +
-      'does not clear the block</div>' +
+  const box = a.need ? '<div class="ln q" style="margin-top:12px">think out loud here ' +
+      '&mdash; this goes to <b>' + esc(a.root || 'rank 0') + '</b>, not to ' +
+      esc(a.node) + '. It reaches the lane rewritten: as a grant, a ruling, or a ' +
+      'brief revision. Nothing here is an instruction.</div>' +
       '<textarea class="bbox" data-slug="' + esc(a.slug) + '" data-node="' + esc(a.node) +
-      '" data-need="' + esc(a.need) + '" placeholder="reply to ' + esc(a.node) +
-      '..."></textarea>' +
-      '<div class="row"><button class="bsend">comment</button>' +
+      '" data-need="' + esc(a.need) + '" placeholder="reasoning for ' +
+      esc(a.root || 'rank 0') + '..."></textarea>' +
+      '<div class="row"><button class="bsend">send to lead</button>' +
       '<span class="ln q bmsg"></span></div>' : '';
   return '<div class="need" data-key="' + esc(key) + '"><div class="hd">' +
     '<span class="who mine">' + esc(a.kind) + '</span>' +

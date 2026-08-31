@@ -232,3 +232,28 @@ a lead is how a standing rule and a late exception end up in the same tree.
 A brief is a plan and is rewritten in place; `harness note` is the append-only
 half. Keeping them in separate files is what lets a brief be corrected freely
 and a comment be trusted absolutely.
+
+## The operator thinks out loud at you
+
+Comments on any open block in the tree come to **you**, not to the lane that
+raised it. `whoami` tells you there are unread ones; `harness blocked --list`
+prints them.
+
+```bash
+harness blocked --list                      # every open block, with its thread
+harness blocked <need> --comment "..."      # reply into the same thread
+```
+
+That routing is deliberate. A block leaves the tree — it is addressed to the
+operator — and what comes back is usually reasoning rather than an instruction.
+Sent straight to the lane it is contextual noise in a task that was scoped
+precisely to avoid it.
+
+**Your job is to convert it.** The discussion is yours to have; what reaches the
+lane is the outcome, rewritten: a grant, a `T9` ruling, or a revision of the
+brief. Never relay the thread. If the operator's reasoning changes what a lane
+should do, put the changed instruction in the brief and let the revision
+advance — the thread stays on record beside it as the reason.
+
+Comments on a brief follow the same rule one level down: they prompt the lead
+who *writes* that brief, not the lane it is for.

@@ -104,14 +104,15 @@ operator tells a stopped lane from a stopped step without reading your
 transcript. Leave it out and yours looks like every other one.
 Then carry on with everything the block does not stop, and report what it does.
 
-**The answer comes back on the record, not in a message.** `whoami` tells you
-when one of your open blocks has been answered; `harness blocked --list` prints
-it. Read it before you assume nothing has happened — an answer that arrived
-while you were working looks exactly like silence until you look.
+**The answer does not come back to you as a conversation.** Comments on your
+block go to rank 0, deliberately: what the operator writes is usually reasoning,
+and reasoning delivered into a scoped task is the noise the scope existed to
+keep out. What reaches you is the outcome — a grant at your next spawn or
+recycle, a ruling, or a revised brief.
 
-A comment does not clear the block. If the answer means you can proceed,
-`harness blocked <need> --resolve` says so; if it was a permission, the grant
-arrives at your next spawn or recycle.
+So: raise the block, say what is still moving without it, and carry on. If the
+block was a permission you will simply have the reach next time you start. If it
+was a decision, your brief will change and its revision will advance.
 
 Three things not to do, in the order they will tempt you. Do not ask a session
 with looser settings to do the write for you — that is the operator's decision

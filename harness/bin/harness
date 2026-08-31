@@ -380,15 +380,16 @@ def _whoami(a):
         ub = unread_block_comments(ctx, node)
         if ub:
             n = sum(len(v) for v in ub.values())
-            print(f"answered {n} comment(s) on your open block(s) — harness blocked --list")
+            print(f"discuss  {n} comment(s) on open block(s) in this tree "
+                  f"— harness blocked --list")
     except Exception:
         pass
     try:
         u = unread_brief_comments(ctx, node)
         if u:
             n = sum(len(v) for v in u.values())
-            print(f"unread   {n} comment(s) on {', '.join(sorted(u))} "
-                  f"— harness brief <task>")
+            print(f"unread   {n} comment(s) on brief(s) you write: "
+                  f"{', '.join(sorted(u))} — harness brief <task>")
     except Exception:
         pass
     try:
@@ -2090,7 +2091,13 @@ def unread_brief_comments(ctx, who):
             b = json.loads(p.read_text())
         except Exception:
             continue
-        if b.get("node") != who:
+        # The LEAD that writes this brief, not the lane it is for. A comment is
+        # context and only the brief instructs, so the party who is prompted to
+        # act on it must be the one who can fold it in. The lane still sees
+        # comments when it reads its brief; it is simply not asked to act.
+        owner = b.get("node")
+        lead = ctx.tree["nodes"].get(owner, {}).get("parent")
+        if (lead or owner) != who:
             continue
         seen = (b.get("read") or {}).get(who, "")
         new = [c for c in (b.get("comments") or []) if (c.get("at") or "") > seen]
@@ -2469,20 +2476,27 @@ def open_blocks(ctx):
 
 
 def unread_block_comments(ctx, who):
-    """Answers left on this node's open blocks that it has not read.
+    """Comments on ANY open block in this tree, for rank 0 only.
 
-    A block is usually a question, and the reply is the thing the lane is
-    waiting on. Same cursor rule as a brief: keyed by reader, surfaced by the
-    next harness command, never pushed.
+    Not for the node that raised it. A block leaves the tree — it is addressed
+    to the operator — and what comes back is usually reasoning rather than an
+    instruction: whether a class of document is eligible, whether to re-embed,
+    what a column is for. Routed straight to the lane, that reasoning arrives as
+    exactly the contextual noise a scoped task is supposed to be free of.
+
+    So the conversation happens between the operator and rank 0, and its OUTCOME
+    reaches the lane rewritten: as a grant, as a ruling ([[T9]]), or as a brief
+    revision. Each level rewrites rather than forwards, and this is that rule
+    applied to the one channel that starts outside the tree.
     """
+    if ctx.rank(who) != 0:
+        return {}
     out = {}
     for k, r in open_blocks(ctx).items():
-        if r.get("node") != who:
-            continue
         seen = (r.get("read") or {}).get(who, "")
         new = [c for c in (r.get("comments") or []) if (c.get("at") or "") > seen]
         if new:
-            out[r.get("need") or k] = new
+            out[f"{r.get('node')}: {r.get('need') or k}"] = new
     return out
 
 
@@ -2511,7 +2525,7 @@ def cmd_blocked(a):
                 print(f"  {'':<12} [{str(c.get('at'))[:16]}  {c.get('by')}]")
                 for line in (c.get("text") or "").splitlines():
                     print(f"  {'':<14}  {line}")
-            if cs and r.get("node") == node:
+            if cs and ctx.rank(node) == 0:
                 r.setdefault("read", {})[node] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
                 try:
                     (ctx.state / "blocks" / (k + ".json")).write_text(
@@ -2538,11 +2552,11 @@ def cmd_blocked(a):
              "text": a.comment})
         bf.write_text(json.dumps(r, indent=2) + "\n")
         write_needs(scan_needs())
+        root = next((n for n in ctx.tree["nodes"] if ctx.rank(n) == 0), "rank 0")
         print(f"commented on the block '{r.get('need')}' ({len(r['comments'])} total)")
-        print(f"  '{r.get('node')}' sees it at its next harness command: "
-              f"harness blocked --list")
-        print(f"  It does not clear the block. Granting does, or "
-              f"'{r.get('node')}' resolves it.")
+        print(f"  '{root}' sees it at its next harness command — NOT '{r.get('node')}'.")
+        print(f"  Reasoning about a block is discussed at rank 0 and reaches the lane")
+        print(f"  rewritten: as a grant, a ruling, or a brief revision.")
         return
 
     f = ctx.state_file("blocks", f"{node}-{a.need}", ".json")

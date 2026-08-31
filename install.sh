@@ -321,6 +321,19 @@ if [[ -d "$SCRIPT_DIR/harness" ]]; then
     rm -rf "$HOME/.claude/harness/templates"
     cp -r "$SCRIPT_DIR/harness/templates" "$HOME/.claude/harness/templates"
     chmod +x "$HOME/.claude/harness/templates/hooks/"*
+    # On PATH, without editing anyone's shell profile. ~/.local/bin is on the
+    # default PATH on every distro this targets and is already exported by the
+    # stock .profile, so a symlink there is the whole job -- and `resolve()` in
+    # both scripts follows it, so each still finds its sibling.
+    if [[ -d "$HOME/.local/bin" ]] || mkdir -p "$HOME/.local/bin" 2>/dev/null; then
+        ln -sf "$HOME/.claude/harness/bin/harness"     "$HOME/.local/bin/harness"
+        ln -sf "$HOME/.claude/harness/bin/harness-gui" "$HOME/.local/bin/harness-gui"
+        echo "  Linked harness and harness-gui into $HOME/.local/bin"
+        case ":$PATH:" in
+            *":$HOME/.local/bin:"*) ;;
+            *) echo "  NOTE: $HOME/.local/bin is not on your PATH in this shell." ;;
+        esac
+    fi
     echo "  Installed harness CLI to $HOME/.claude/harness/bin/harness"
     echo "  Installed harness viewer  (harness gui)"
     echo "  Installed guard templates to $HOME/.claude/harness/templates/"

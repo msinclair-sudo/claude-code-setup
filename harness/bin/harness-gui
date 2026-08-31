@@ -13,10 +13,15 @@ Served on 127.0.0.1 only. Stdlib only, one file, no build step.
     harness-gui --port 9000 --no-open
     harness-gui --once        # print the JSON it would serve, and exit
 """
-import argparse, importlib.util, json, os, socket, sys, time, webbrowser
+import argparse, importlib.util, json, os, subprocess, sys, time, webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
+
+
+# Loading the CLI as a module would otherwise drop a __pycache__ into the install
+# directory, on every run, for a file that is never imported twice in a process.
+sys.dont_write_bytecode = True
 
 
 def load_cli():
@@ -249,6 +254,36 @@ class H(BaseHTTPRequestHandler):
         pass          # a poll every 3 seconds would bury anything worth reading
 
 
+def open_browser(url):
+    """Under WSL the browser is on the other side of the kernel.
+
+    `webbrowser` resolves to xdg-open, which finds no Linux browser on a headless
+    WSL install and either fails or opens nothing at all. Windows reaches
+    127.0.0.1 in the VM directly, so handing the URL to the Windows shell is both
+    correct and the only thing that works. `explorer.exe` exits non-zero on
+    success, so its return code is deliberately not consulted.
+    """
+    wsl = False
+    try:
+        wsl = "microsoft" in Path("/proc/version").read_text().lower()
+    except Exception:
+        pass
+    if wsl:
+        for exe in ("wslview", "explorer.exe"):
+            try:
+                subprocess.run([exe, url], timeout=10,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return
+            except Exception:
+                continue
+        print("  (could not reach a Windows browser — open the URL yourself)")
+        return
+    try:
+        webbrowser.open(url)
+    except Exception:
+        pass
+
+
 def main():
     ap = argparse.ArgumentParser(prog="harness-gui", description=__doc__.splitlines()[0])
     ap.add_argument("--port", type=int, default=8787)
@@ -267,10 +302,7 @@ def main():
     url = f"http://127.0.0.1:{a.port}/"
     print(f"harness-gui  {url}   (read-only; ctrl-c to stop)")
     if not a.no_open:
-        try:
-            webbrowser.open(url)
-        except Exception:
-            pass
+        open_browser(url)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

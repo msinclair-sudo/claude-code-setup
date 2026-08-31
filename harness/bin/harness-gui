@@ -468,12 +468,26 @@ document.addEventListener('click', e => {
   const tk = e.target.closest('[data-task]');
   if (tk) { openTask(tk.dataset.slug, tk.dataset.task); return; }
   const need = e.target.closest('.need');
-  if (need) need.querySelector('.detail').classList.toggle('on');
+  if (need) {
+    const on = need.querySelector('.detail').classList.toggle('on');
+    // Remembered by key, not by position. The poll rebuilds this panel every
+    // three seconds, and an expansion that lives only in the DOM is an
+    // expansion that closes itself two seconds after you open it.
+    if (need.dataset.key) on ? OPEN.add(need.dataset.key) : OPEN.delete(need.dataset.key);
+  }
 });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
 // ── task modal ─────────────────────────────────────────────────────────────
 let MODAL = null;   // {slug, task}
+const OPEN = new Set();   // expanded attention items, by key
+let LAST = '';            // last payload rendered, to avoid pointless redraws
+
+function reopen() {
+  document.querySelectorAll('[data-key]').forEach(el => {
+    if (OPEN.has(el.dataset.key)) el.querySelector('.detail').classList.add('on');
+  });
+}
 
 function closeModal() { MODAL = null; document.getElementById('modal').innerHTML = ''; }
 
@@ -549,7 +563,8 @@ async function sendComment() {
 // about before you can act on it is a queue that does not get cleared.
 function attnItem(a, i) {
   const mine = a.owner === 'operator';
-  return '<div class="need"><div class="hd">' +
+  const key = a.kind + '|' + a.where + '|' + a.what;
+  return '<div class="need" data-key="' + esc(key) + '"><div class="hd">' +
     '<span class="who' + (mine ? ' mine' : '') + '">' +
       (mine ? 'YOU' : esc(a.owner)) + '</span>' +
     '<span class="kd2">' + esc(a.kind) + '</span>' +
@@ -563,7 +578,8 @@ function needBlock(n, i) {
   const g = "(cd " + n._repo + " && harness grant " + n.node + " '" + n.need +
             "' --reason '" + (n.why || 'see the block record').replace(/'/g, '') + "')";
   const r = "(cd " + n._repo + " && harness recycle " + n.node + ")";
-  return '<div class="need">' +
+  return '<div class="need" data-key="block|' + esc(n._project) + '|' + esc(n.node) +
+    '|' + esc(n.need) + '">' +
     '<div class="hd"><span class="who">' + esc(n._project) + ' / ' + esc(n.node) + '</span>' +
     '<span class="wh">' + esc(n.why || n.need) + '</span></div>' +
     '<div class="detail"><dl>' +
@@ -639,10 +655,19 @@ function tree(nodes) {
 }
 
 async function tick() {
-  let d;
-  try { d = await (await fetch('/api/state')).json(); }
+  let raw, d;
+  try {
+    raw = await (await fetch('/api/state')).text();
+    d = JSON.parse(raw);
+  }
   catch (e) { document.getElementById('age').textContent = 'disconnected'; return; }
   document.getElementById('age').textContent = new Date().toLocaleTimeString();
+  // `generated` changes every poll and nothing else usually does, so it is
+  // excluded from the comparison: redrawing identical content is what loses a
+  // text selection mid-copy.
+  const sig = raw.replace(/"generated":"[^"]*",/, '');
+  if (sig === LAST) return;
+  LAST = sig;
   document.getElementById('ct').innerHTML = d.yours
     ? '<span style="color:#ffd08a">' + d.yours + ' waiting on you</span>'
     : ((d.attention || []).length
@@ -688,6 +713,7 @@ async function tick() {
     tree(p.nodes) + '</div>')).join('');
   if (!d.projects.length) h += '<div class="empty">no enrolled projects on this machine</div>';
   document.getElementById('root').innerHTML = h;
+  reopen();
 }
 tick(); setInterval(tick, 3000);
 </script></body></html>"""

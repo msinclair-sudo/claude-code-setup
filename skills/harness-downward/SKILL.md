@@ -212,6 +212,32 @@ timer's. Answer first, then recycle.
 
 Never `claude rm` — it deletes the worktree, and the worktree is the node.
 
+## You write your children's briefs
+
+```bash
+harness brief <task> --for <child> --write "..."   # write it, or rewrite it
+harness brief <task>                               # read it back, with suggestions
+harness brief <task> --resolve N                   # a suggestion you have addressed
+```
+
+The brief is the `T1` plan in a file: scope, the approach **you** decided, the
+check set, the seams, what done means. Write it before the child starts, not in
+pieces afterwards — the same information delivered in pieces costs 39%, and the
+penalty lands at two pieces.
+
+**A brief is a plan, not a record.** Rewriting it replaces the earlier text and
+that is correct; a working document that behaves like provenance is one nobody
+dares to correct. The append-only half is `harness note`, and comments there
+survive the recycle that ends the session you are answering.
+
+You cannot write a grandchild's brief. `dev_1`'s lead is `dev`, so `dev` writes
+it — if you are above that, tell the lead what you want and let it write.
+
+**Read the suggestions before you rewrite.** Your child cannot edit its own
+brief; `--suggest` is the only move it has, and it made one because the brief
+did not answer something. Fold it in or decline it explicitly. An open
+suggestion nobody answers is a lane working around a gap in silence.
+
 ## What you send down is already done
 
 There is no recall. By the time a message reaches a child it has been acted on,

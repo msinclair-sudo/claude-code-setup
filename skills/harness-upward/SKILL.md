@@ -104,6 +104,26 @@ not stop: a blocked path blocks the work that needs it, rarely the whole task.
 If it is granted, it takes effect when you are next spawned or recycled, not
 mid-session. You will simply have the reach, and there will be nothing to ask.
 
+## Your brief is written by your lead, and you can push back on it
+
+```bash
+harness brief <task>                  # what you were actually asked for
+harness brief <task> --suggest "..."  # propose a change; your lead decides
+```
+
+You do not write it. A node that sets its own task is the thing the tree exists
+to prevent, so `--write` refuses you by rank — that is not a permission problem
+to work around, it is the design.
+
+`--suggest` is the move you do have, and it is recorded against the revision you
+read, so your lead can see exactly what you were looking at. Use it when the
+brief cannot answer something: a missing scope, a contract with no route for
+what you were asked to build, two instructions that cannot both hold.
+
+**Then carry on against the brief as it stands.** A suggestion is not a blocker
+and not a question — it does not stop you, and waiting for a reply to it is the
+round trip `T11` and `T12` exist to keep rare.
+
 ## Read your task's comments before you report
 
 ```bash

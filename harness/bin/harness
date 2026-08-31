@@ -1881,6 +1881,154 @@ def _ago(ts):
     return f"{d // 86400}d ago"
 
 
+def load_brief(ctx, task):
+    f = ctx.state_file("briefs", task, ".json")
+    if not f.exists():
+        return f, None
+    try:
+        return f, json.loads(f.read_text())
+    except json.JSONDecodeError:
+        die(REFUSED, f"{f} is not valid JSON — refusing to overwrite a brief it cannot read")
+
+
+def brief_node(ctx, task, explicit=None):
+    """Which node a brief is for: what was said, then what was stored, then the
+    mark. Never inferred from who is asking."""
+    if explicit:
+        return explicit
+    _, b = load_brief(ctx, task)
+    if b and b.get("node"):
+        return b["node"]
+    mf = ctx.state_file("marks", task, ".json")
+    if mf.exists():
+        try:
+            return json.loads(mf.read_text()).get("_node")
+        except Exception:
+            pass
+    return None
+
+
+def cmd_brief(a):
+    """The task description: written by the lead, for its children.
+
+    A brief is a PLAN, not a record. It is rewritten in place as understanding
+    changes, and no earlier version is kept, because pretending a working
+    document is provenance makes people afraid to correct it. Comments
+    (`harness note`) are the append-only half; this is the mutable half, and
+    keeping them in separate files is what lets both be honest.
+
+    Authority follows the tree, which is the whole point. A lead writes the
+    briefs of its children. Rank 0 writes its own, because there is nobody above
+    it. A node cannot write its own brief anywhere else: a node that sets its own
+    task is the failure the tree exists to prevent, and it is also [[T1]] —
+    everything the lead knows goes down at once, from the lead.
+
+    The assignee is not silent. It reads the brief, and `--suggest` appends a
+    proposed change for the lead to fold in or decline. A suggestion is not an
+    edit, and the difference is deliberate.
+    """
+    ctx = Ctx(); ctx.require_enrolled()
+    me, _ = ctx.node()
+    f, b = load_brief(ctx, a.task)
+    target = brief_node(ctx, a.task, a.for_node)
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    who = f"{me} ({'session ' + sid[:8] if sid else 'operator'})"
+
+    if a.write is not None:
+        if target is None:
+            die(REFUSED, f"no brief for '{a.task}' yet and no node named — "
+                         f"say who it is for: harness brief {a.task} --for <node> --write ...")
+        if target not in ctx.tree["nodes"]:
+            die(REFUSED, f"'{target}' is not a node in {ctx.tree_path}")
+        parent = ctx.tree["nodes"][target].get("parent")
+        own_root = (target == me and ctx.rank(me) == 0)
+        if parent != me and not own_root:
+            die(REFUSED,
+                f"'{me}' does not write the brief for '{target}'.\n"
+                f"           A lead writes the briefs of its CHILDREN; "
+                + (f"'{target}' answers to '{parent}'.\n" if parent
+                   else f"'{target}' has no parent.\n") +
+                f"           Rank 0 writes its own, and nobody writes their own anywhere "
+                f"else — a node\n           that sets its own task is what the tree exists "
+                f"to prevent. Suggest instead:\n"
+                f"           harness brief {a.task} --suggest \"...\"")
+        rev = (b or {}).get("revision", 0) + 1
+        rec = {"task": a.task, "node": target, "text": a.write, "revision": rev,
+               "written_by": who, "written_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+               "suggestions": (b or {}).get("suggestions", [])}
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(rec, indent=2) + "\n")
+        print(f"brief for '{target}' / {a.task}  (revision {rev}, by {who})")
+        if rev > 1:
+            print("  the previous text is gone — a brief is a plan, not a record")
+        open_s = [i for i, s in enumerate((b or {}).get("suggestions", []), 1)
+                  if not s.get("resolved_at")]
+        if open_s:
+            print(f"  {len(open_s)} suggestion(s) still open: "
+                  f"{', '.join('#' + str(i) for i in open_s)}  (--resolve N)")
+        return
+
+    if a.suggest is not None:
+        if b is None:
+            die(REFUSED, f"no brief for '{a.task}' to suggest against. "
+                         f"Its lead writes one first.")
+        if me != b.get("node"):
+            die(REFUSED, f"'{a.task}' is briefed for '{b.get('node')}', not '{me}'. "
+                         f"Suggestions come from the node doing the work.")
+        b.setdefault("suggestions", []).append(
+            {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "by": who,
+             "text": a.suggest, "against_revision": b.get("revision")})
+        f.write_text(json.dumps(b, indent=2) + "\n")
+        print(f"suggested against revision {b.get('revision')} of {a.task} "
+              f"({len(b['suggestions'])} total)")
+        print("  Your lead decides. Carry on with the brief as it stands meanwhile.")
+        return
+
+    if a.resolve:
+        if b is None:
+            die(REFUSED, f"no brief for '{a.task}'")
+        if ctx.tree["nodes"].get(b.get("node"), {}).get("parent") != me and \
+           not (b.get("node") == me and ctx.rank(me) == 0):
+            die(REFUSED, f"only '{b.get('node')}'s lead resolves its suggestions")
+        ss = b.get("suggestions", [])
+        if not 1 <= a.resolve <= len(ss):
+            die(REFUSED, f"no suggestion #{a.resolve} (there are {len(ss)})")
+        ss[a.resolve - 1]["resolved_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        ss[a.resolve - 1]["resolved_by"] = who
+        f.write_text(json.dumps(b, indent=2) + "\n")
+        print(f"resolved suggestion #{a.resolve} on {a.task}")
+        return
+
+    if b is None:
+        mf = ctx.state_file("marks", a.task, ".json")
+        extra = ""
+        if mf.exists():
+            try:
+                n = json.loads(mf.read_text()).get("_note")
+                if n:
+                    extra = f"\n  the mark carries a note, which is not a brief: {n}"
+            except Exception:
+                pass
+        print(f"no brief for '{a.task}'"
+              + (f" — its lead writes one:\n  harness brief {a.task} --for {target} "
+                 f"--write \"...\"" if target else "") + extra)
+        return
+    print(f"{a.task}   for {b.get('node')}   revision {b.get('revision')}")
+    print(f"  by {b.get('written_by')} at {str(b.get('written_at'))[:19]}")
+    print()
+    for line in (b.get("text") or "").splitlines() or [""]:
+        print(f"  {line}")
+    ss = b.get("suggestions") or []
+    if ss:
+        print(f"\n  {len(ss)} suggestion(s):")
+        for i, sg in enumerate(ss, 1):
+            state = "resolved" if sg.get("resolved_at") else "OPEN"
+            print(f"    #{i} [{state}] {sg.get('by')} against rev "
+                  f"{sg.get('against_revision')}")
+            for line in (sg.get("text") or "").splitlines():
+                print(f"        {line}")
+
+
 def cmd_note(a):
     """Read a task's brief and its comments, or append one.
 
@@ -1916,7 +2064,20 @@ def cmd_note(a):
     print(f"  opened   {str(rec.get('_at'))[:19]}   session {str(rec.get('_session'))[:8]}")
     if rec.get("_closed_at"):
         print(f"  closed   {str(rec['_closed_at'])[:19]}")
-    print(f"  brief    {rec.get('_note') or '— none recorded at T1'}")
+    _, b = load_brief(ctx, a.task)
+    if b:
+        print(f"  brief    revision {b.get('revision')} by {b.get('written_by')} "
+              f"— harness brief {a.task}")
+        for line in (b.get("text") or "").splitlines():
+            print(f"           {line}")
+        openn = [i for i, x in enumerate(b.get("suggestions") or [], 1)
+                 if not x.get("resolved_at")]
+        if openn:
+            print(f"           {len(openn)} open suggestion(s)")
+    else:
+        print(f"  brief    — none written. Its lead writes one: harness brief {a.task}")
+    if rec.get("_note"):
+        print(f"  mark note {rec['_note']}")
     cs = rec.get("_comments") or []
     if not cs:
         print("  no comments")
@@ -2309,6 +2470,15 @@ def main():
                     help="what continues without it — this is how urgent gets judged")
     bk.add_argument("--resolve", action="store_true", help="close a block you raised")
     bk.add_argument("--list", action="store_true", help="every open block")
+    br = add("brief", cmd_brief)
+    br.add_argument("task", help="task id")
+    br.add_argument("--for", dest="for_node", metavar="NODE",
+                    help="which node the brief is for (needed on the first write)")
+    br.add_argument("--write", metavar="TEXT",
+                    help="write or rewrite it; a lead writes its children's, rank 0 its own")
+    br.add_argument("--suggest", metavar="TEXT",
+                    help="propose a change to your own brief; your lead decides")
+    br.add_argument("--resolve", type=int, metavar="N", help="mark suggestion N addressed")
     nt = add("note", cmd_note)
     nt.add_argument("task", help="task id, as recorded at T1")
     nt.add_argument("--add", metavar="TEXT", help="append a comment; never edits an earlier one")

@@ -162,6 +162,21 @@ def read_state():
                                 "at": (r.get("_at") or "")[:19].replace("T", " ")})
             else:
                 tasks.setdefault(n, []).append(mf.stem)
+        # A brief exists BEFORE its mark: the lead writes it, then the member
+        # accepts. Without this the handed-out work is invisible until someone
+        # picks it up, which is exactly the window a lead needs to see.
+        briefs = {}
+        bd = pdir / "briefs"
+        for bf in (sorted(bd.glob("*.json")) if bd.is_dir() else []):
+            try:
+                r = json.loads(bf.read_text())
+            except Exception:
+                continue
+            if r.get("node"):
+                briefs.setdefault(r["node"], []).append(
+                    {"task": bf.stem,
+                     "open_suggestions": sum(1 for x in (r.get("suggestions") or [])
+                                             if not x.get("resolved_at"))})
         blocks = [x for x in needs if x.get("_repo") == repo]
         nodes = []
         for name, spec in tree.items():
@@ -177,6 +192,10 @@ def read_state():
                                "id": (r.get("sessionId") or "")[:8]} for r in here]),
                 "claimed": name in locks,
                 "tasks": sorted(tasks.get(name, [])),
+                # Briefed but not yet marked: handed out, not started.
+                "briefed": sorted((b for b in briefs.get(name, [])
+                                   if b["task"] not in tasks.get(name, [])),
+                                  key=lambda b: b["task"]),
                 "blocks": [x for x in blocks if x.get("node") == name],
             })
         nodes.sort(key=lambda n: (n["rank"], n["name"]))
@@ -272,6 +291,7 @@ border-radius:6px;padding:3px 9px;font:inherit;font-size:11px;cursor:pointer}
 .chip{display:inline-block;background:#00000038;border:1px solid var(--line);
 border-radius:5px;padding:0 6px;margin:1px 2px 1px 0;cursor:pointer}
 .chip:hover{border-color:var(--busy);color:var(--busy)}
+.chip.pending{border-style:dashed;color:var(--dim)}
 .veil{position:fixed;inset:0;background:#000000b0;display:flex;align-items:flex-start;
 justify-content:center;padding:60px 16px;z-index:20;overflow-y:auto}
 .sheet{background:var(--panel);border:1px solid var(--line);border-radius:12px;
@@ -285,6 +305,8 @@ padding:16px 18px;width:min(680px,100%);cursor:default}
 .cmt{border-left:2px solid var(--line);padding:2px 0 2px 9px;margin:0 0 7px}
 .cmt-h{color:var(--none);font-size:10px}
 .cmt-b{white-space:pre-wrap}
+.brief{white-space:pre-wrap;background:#00000030;border-left:2px solid var(--busy);
+padding:7px 10px;border-radius:0 7px 7px 0}
 #cbox{width:100%;min-height:74px;background:var(--bg);color:var(--ink);
 border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit;resize:vertical}
 .row{display:flex;align-items:center;gap:10px;margin-top:8px}
@@ -353,8 +375,18 @@ async function openTask(slug, task) {
           ' <span class="q">session ' + esc(d.session) + '</span>' +
           (d.closed ? ' <span class="q">&middot; closed ' +
             esc(String(d.closed).slice(0, 19).replace('T', ' ')) + '</span>' : '') + '</dd>' +
-        '<dt>brief</dt><dd>' + (d.brief ? esc(d.brief)
-          : '<span class="q">none recorded at T1 &mdash; harness mark --note</span>') + '</dd>' +
+        '<dt>brief' + (d.brief_rev ? ' <span class="q">rev ' + esc(d.brief_rev) +
+            '</span>' : '') + '</dt><dd>' +
+          (d.brief ? '<div class="brief">' + esc(d.brief) + '</div>' +
+             '<div class="ln q">' + esc(d.brief_by) + ' &middot; ' +
+             esc(String(d.brief_at || '').slice(0, 19).replace('T', ' ')) + '</div>'
+           : '<span class="q">no brief written &mdash; its lead writes one with ' +
+             'harness brief ' + esc(d.task) + ' --for &lt;node&gt; --write</span>') + '</dd>' +
+        (d.suggestions.length ? '<dt>suggestions</dt><dd>' + d.suggestions.map((sg, i) =>
+          '<div class="cmt"><div class="cmt-h">#' + (i + 1) + ' ' +
+          (sg.resolved_at ? 'resolved' : '<b class="dup">open</b>') + ' &middot; ' +
+          esc(sg.by) + ' &middot; against rev ' + esc(sg.against_revision) + '</div>' +
+          '<div class="cmt-b">' + esc(sg.text) + '</div></div>').join('') + '</dd>' : '') +
         '<dt>comments</dt><dd>' + cs + '</dd>' +
       '</dl>' +
       '<textarea id="cbox" placeholder="add a comment..."></textarea>' +
@@ -403,6 +435,17 @@ function needBlock(n, i) {
 
 // null sessions means the roster could not be read. That is a THIRD state, and
 // rendering it as an empty node is the bug this view had.
+// Briefed but not marked: work its lead has handed down that it has not picked
+// up. A separate line, because "assigned" and "under way" are different facts.
+function briefedChips(n) {
+  if (!n.briefed || !n.briefed.length) return '';
+  return '<div class="ln q">briefed: ' + n.briefed.map(b =>
+    '<span class="chip pending" data-task="' + esc(b.task) + '" data-slug="' +
+    esc(n._slug) + '">' + esc(b.task) +
+    (b.open_suggestions ? ' <b class="dup">!' + b.open_suggestions + '</b>' : '') +
+    '</span>').join(' ') + '</div>';
+}
+
 function card(n) {
   const unknown = n.sessions === null;
   const ss = n.sessions || [];
@@ -421,9 +464,11 @@ function card(n) {
   const task = n.tasks.length ? '<div class="ln">' + n.tasks.map(x =>
                  '<span class="chip" data-task="' + esc(x) + '" data-slug="' +
                  esc(n._slug) + '">' + esc(x) + '</span>').join(' ') + '</div>'
+             + briefedChips(n)
              : (!unknown && ss.length
                 ? '<div class="ln q" title="no harness mark — run harness mark ' +
-                  '&lt;task&gt; in that session">no task record</div>' : '');
+                  '&lt;task&gt; in that session">no task record</div>' + briefedChips(n)
+                : briefedChips(n));
   return '<div class="card ' + cls + (n.blocks.length ? ' blocked' : '') + '">' +
     '<div class="hdr"><span class="dot"></span><span class="nm">' + esc(n.name) +
     '</span><span class="kd">' + esc(n.kind || '') + '</span></div>' +
@@ -501,25 +546,41 @@ def task_detail(slug, task):
     pdir = _project_dir(slug)
     if pdir is None:
         return None
-    md = pdir / "marks"
+    md, bd = pdir / "marks", pdir / "briefs"
     # Same whitelist: the file must already be in the listing.
     hit = next((f for f in md.glob("*.json") if f.stem == task), None) if md.is_dir() else None
-    if hit is None:
+    bhit = next((f for f in bd.glob("*.json") if f.stem == task), None) if bd.is_dir() else None
+    if hit is None and bhit is None:
         return None
-    try:
-        rec = json.loads(hit.read_text())
-    except Exception:
-        return None
+    rec, brief = {}, None
+    for src, into in ((hit, "rec"), (bhit, "brief")):
+        if src is None:
+            continue
+        try:
+            v = json.loads(src.read_text())
+        except Exception:
+            continue
+        if into == "rec":
+            rec = v
+        else:
+            brief = v
     repo = ""
     try:
         repo = json.loads((pdir / "binding.json").read_text()).get("repo", "")
     except Exception:
         pass
     return {"task": task, "slug": slug, "repo": repo,
-            "node": rec.get("_node"), "branch": rec.get("_branch"),
+            "node": rec.get("_node") or (brief or {}).get("node"),
+            "branch": rec.get("_branch"),
             "opened": rec.get("_at"), "closed": rec.get("_closed_at"),
             "session": (rec.get("_session") or "")[:8],
-            "brief": rec.get("_note") or "",
+            "marked": hit is not None,
+            "brief": (brief or {}).get("text") or "",
+            "brief_by": (brief or {}).get("written_by") or "",
+            "brief_rev": (brief or {}).get("revision"),
+            "brief_at": (brief or {}).get("written_at"),
+            "suggestions": (brief or {}).get("suggestions") or [],
+            "mark_note": rec.get("_note") or "",
             "comments": rec.get("_comments") or []}
 
 

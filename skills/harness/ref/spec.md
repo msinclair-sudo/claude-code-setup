@@ -218,6 +218,21 @@ ledger row, drop the worktree, and stop the session.
 **The close is the point, and it had no record until 2026-08-31.** "Released" was a claim in a message rather than a fact in a store, so nothing could tell a node still working from a node finished and still standing there. `harness status` now names the difference — an open task, or `unassigned` — and `harness recycle --idle` sweeps exactly the children that have none. Closing is always permitted even when the measurement is not: a task closed in a different session than it opened records `_delta: null` and says why, because refusing the close over an unmeasurable cost would leave the task open forever and destroy the one signal this exists to give.
 **Fails when** The row is deleted rather than closed — [[#T8 — Deep conflict]] depends on closed rows staying readable. Or the session is left running after its node is released: a lane nobody can shut down is not a lane, it is a leak. `release` drops the claim and **does not end the session**, so that leak has a shape — a live session standing in a worktree it no longer claims, constrained by no rule in the tree. `status` reports it as `OCCUPIED but unclaimed`.
 
+**The brief is written by the lead, and `harness brief` enforces that.** A lead writes the briefs of its **children**; rank 0 writes its **own**, because there is nobody above it; and no node writes its own anywhere else. A node that sets its own task is the failure the tree exists to prevent, and it is also this transaction — everything the lead knows goes down at once, *from the lead*.
+
+| act | who | |
+| --- | --- | --- |
+| `harness brief <task> --for <node> --write` | that node's parent | writes or rewrites it |
+| `harness brief <task> --write` | rank 0, for itself | the only self-write in the tree |
+| `harness brief <task> --suggest` | the node the brief is **for** | proposes; does not change it |
+| `harness brief <task> --resolve N` | that node's lead | marks a suggestion addressed |
+
+**A brief is a plan, not provenance, and the two are kept in different files on purpose.** It is rewritten in place, the revision counter advances, and the previous text is gone — because a working document that behaves like a record is one people become afraid to correct. `harness note` is the append-only half: comments are never edited, and they survive the recycle that ends the session they answer. Both attach to the same task and neither is allowed to become the other.
+
+The assignee is not silent, and that is what stops "no questions asked" collapsing into the 39%-wrong result at [[#T12 — Question]]. It reads the brief, and `--suggest` records a proposed change against the revision it read, for the lead to fold in or decline. **A suggestion is not an edit**, and the work continues against the brief as it stands while the lead decides.
+
+A brief exists **before** its mark: the lead writes it, then the member accepts. So `harness gui` shows briefed-but-unmarked work on the child's card as a dashed chip — handed down and not yet picked up, which is a window a lead otherwise cannot see.
+
 ### T11 — Comprehension check
 
 **Direction** upward, one turn. Not a negotiation.

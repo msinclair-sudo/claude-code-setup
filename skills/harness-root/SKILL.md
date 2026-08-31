@@ -214,3 +214,21 @@ beneath it. Comments append to the mark record, so they survive the recycle
 that ends the session you are answering — which is why a comment, and not a
 message, is the right instrument for anything the *next* occupant of that node
 also needs to know.
+
+## Briefs (`T1`)
+
+You write two kinds and no others: **your own**, because there is nobody above
+you, and **your children's** — in practice the one lead beneath you.
+
+```bash
+harness brief <task> --write "..."              # your own
+harness brief <task> --for dev --write "..."    # your child's
+```
+
+You cannot write a grandchild's. That lead writes it, and if you want something
+different in it, say so to the lead rather than reaching past it — reaching past
+a lead is how a standing rule and a late exception end up in the same tree.
+
+A brief is a plan and is rewritten in place; `harness note` is the append-only
+half. Keeping them in separate files is what lets a brief be corrected freely
+and a comment be trusted absolutely.

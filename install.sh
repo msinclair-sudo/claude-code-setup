@@ -334,6 +334,15 @@ if [[ -d "$SCRIPT_DIR/harness" ]]; then
             *) echo "  NOTE: $HOME/.local/bin is not on your PATH in this shell." ;;
         esac
     fi
+    # Stamp what was installed and from where. Three separate times in one day a
+    # source of truth was edited and the copy that is actually READ was left
+    # behind -- the guard in a project repo, the running viewer, and every
+    # harness skill. None of them announced it. `harness doctor` compares this
+    # against the source tree it names.
+    printf '{\n  "source": "%s",\n  "commit": "%s",\n  "installed_at": "%s"\n}\n' \
+        "$SCRIPT_DIR" \
+        "$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo unknown)" \
+        "$(date -Is)" > "$HOME/.claude/harness/VERSION"
     echo "  Installed harness CLI to $HOME/.claude/harness/bin/harness"
     echo "  Installed harness viewer  (harness gui)"
     echo "  Installed guard templates to $HOME/.claude/harness/templates/"

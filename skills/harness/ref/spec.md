@@ -900,6 +900,12 @@ rejects it — by then the session is already spawned and detached.
 
 Granting closes the block it answers. A queue that keeps naming something already dealt with is a queue nobody reads, so the two records are kept in step rather than left to a member to tidy up after the fact.
 
+**The viewer opens with what is waiting, and on whom.** Every pending decision in every tree on the machine, in one list: a **grant** (yours), a **sign-off**, an unanswered **suggestion**, an **orphan record**, a live node with **nothing briefed**, and a **stale install**. Items owed to the operator sort first and the header counts only those, so `waiting on you` and `waiting on the tree` are never the same number.
+
+**Each item carries its own explanation, and that is not decoration.** A queue you have to reason about before you can act on it is a queue that does not get cleared — which is how six orphan records sat for a day. So the entry says what happened, what it costs to leave, and the command that ends it, and the reader is never asked to reconstruct any of the three.
+
+**Copies drift, and nothing announced it three times in one day.** The guard in a project repo, the running viewer, and every installed skill each fell behind their source silently. `install.sh` now stamps `~/.claude/harness/VERSION` with the source path and its commit; `harness doctor` compares them as its first arm, because a stale install makes every arm below it a measurement of the wrong thing; and the viewer raises it as an item owed to the operator.
+
 **Comments are the one thing the viewer writes, and the exception is deliberate.** Clicking a task opens its brief, when it was opened, which session opened it, and every comment on it, with a box beneath. A comment appends to the mark record and is never edited ([[#I6 — The ledger is append-only]]). It goes there and not into a message because **a message dies with the session that receives it**: the next occupant of that node starts with none of it, while the mark outlives a recycle by design.
 
 The write is *delegated*, not implemented: the server shells out to `harness note --add` in the project, so the viewer gains no ability the CLI does not already grant and there is one definition of what a comment is. It strips `CLAUDE_CODE_SESSION_ID` before doing so, because a comment typed into a page was typed by a person, and a server launched from inside a session would otherwise sign it with that session's id — a false attribution in the one record that exists to be trusted.

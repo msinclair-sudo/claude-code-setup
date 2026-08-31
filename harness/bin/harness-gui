@@ -22,6 +22,7 @@ import argparse, importlib.util, json, os, subprocess, sys, threading, time, web
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.machinery import SourceFileLoader
 from urllib.parse import parse_qs, urlparse
+import shlex
 from pathlib import Path
 
 
@@ -103,8 +104,29 @@ def roster(max_age=2.5):
         return _ROSTER["rows"], _ROSTER["error"]
 
 
+def install_drift():
+    """Whether what is installed is older than what it was installed from."""
+    vf = CLI.HOME_STATE / "VERSION"
+    if not vf.exists():
+        return None
+    try:
+        v = json.loads(vf.read_text())
+        src = Path(v.get("source", ""))
+        if not src.is_dir():
+            return None
+        r = subprocess.run(["git", "-C", str(src), "rev-parse", "HEAD"],
+                           capture_output=True, text=True, timeout=10)
+        if r.returncode or r.stdout.strip() == v.get("commit"):
+            return None
+        return (f"installed from {str(v.get('commit'))[:8]}, "
+                f"{src.name} is now at {r.stdout.strip()[:8]}")
+    except Exception:
+        return None
+
+
 def read_state():
     rows, roster_error = roster()
+    att = []
     # A LIST per worktree, not one session. Two sessions in one worktree is the
     # condition the statusline colours red; a dict keyed on cwd silently kept the
     # last one and reported the breach as normal occupancy.
@@ -145,7 +167,7 @@ def read_state():
                 h = json.loads(lf.read_text()); locks[h.get("node")] = h
             except Exception:
                 pass
-        tasks, orphans, ever_marked = {}, [], set()
+        tasks, orphans, ever_marked, presented = {}, [], set(), []
         md = pdir / "marks"
         for mf in (sorted(md.glob("*.json")) if md.is_dir() else []):
             try:
@@ -158,6 +180,8 @@ def read_state():
             ever_marked.add(mf.stem)
             if r.get("_closed_at"):
                 continue
+            if r.get("_presented_at") and r.get("_node"):
+                presented.append((mf.stem, r["_node"], r.get("_presented_by") or "?"))
             n = r.get("_node")
             # Counted, not dropped: an open record naming no node is a fact about
             # the ledger, and hiding it is how six of them sat there unnoticed.
@@ -182,6 +206,15 @@ def read_state():
                     {"task": bf.stem,
                      "open_suggestions": sum(1 for x in (r.get("suggestions") or [])
                                              if not x.get("resolved_at"))})
+        suggestions = {}
+        for bf in (sorted(bd.glob("*.json")) if bd.is_dir() else []):
+            try:
+                r = json.loads(bf.read_text())
+            except Exception:
+                continue
+            openn = [x for x in (r.get("suggestions") or []) if not x.get("resolved_at")]
+            if openn and r.get("node"):
+                suggestions[bf.stem] = (r["node"], openn)
         blocks = [x for x in needs if x.get("_repo") == repo]
         nodes = []
         for name, spec in tree.items():
@@ -204,12 +237,91 @@ def read_state():
                 "blocks": [x for x in blocks if x.get("node") == name],
             })
         nodes.sort(key=lambda n: (n["rank"], n["name"]))
-        projects.append({"project": Path(repo).name, "repo": repo, "slug": pdir.name,
+        pname = Path(repo).name
+
+        # Everything in this tree waiting on a decision, and WHOSE it is. The
+        # explanation is not decoration: an item nobody can act on without first
+        # working out why it matters is an item that sits there.
+        for task, onode, by in presented:
+            lead = tree.get(onode, {}).get("parent")
+            att.append({
+                "kind": "sign-off", "owner": lead or "rank 0",
+                "where": f"{pname} / {onode}", "what": task,
+                "why": f"{by} says this is finished and recorded what it cost. Until its "
+                       f"lead signs it off the task stays on {onode}, so the next session "
+                       f"to hold that node inherits work nobody said was done and cannot "
+                       f"tell which of it is live. A member cannot sign off its own; it "
+                       f"cannot check its own work either (T4).",
+                "do": f"(cd {shlex.quote(repo)} && harness mark {task} --close)"})
+        for task, (onode, openn) in sorted(suggestions.items()):
+            lead = tree.get(onode, {}).get("parent")
+            att.append({
+                "kind": "suggestion", "owner": lead or "rank 0",
+                "where": f"{pname} / {onode}", "what": f"{task} ({len(openn)} open)",
+                "why": f"{onode} cannot edit its own brief, so it flagged a gap instead: "
+                       f"\u201c{(openn[0].get('text') or '')[:160]}\u201d Left unanswered "
+                       f"the lane works around that gap in silence, which is the failure "
+                       f"the suggestion channel exists to surface.",
+                "do": f"(cd {shlex.quote(repo)} && harness brief {task} --resolve 1)"})
+        for o in orphans:
+            att.append({
+                "kind": "orphan record", "owner": "rank 0",
+                "where": pname, "what": o["task"],
+                "why": (f"This open task record names '{o['named']}', which the tree no "
+                        f"longer has." if o["named"] else
+                        "This open task record names no node at all: it predates the "
+                        "field, and which node it belonged to is not recoverable.") +
+                       " It will never close by itself, and every reader that groups work "
+                       "by node drops it, so it stays invisible while still counting "
+                       "as open.",
+                "do": (f"(cd {shlex.quote(repo)} && harness trim)" if o["named"] else
+                       f"(cd {shlex.quote(repo)} && harness mark {o['task']} "
+                       f"--close --force)")})
+        for n in nodes:
+            if n["sessions"] and not n["tasks"] and not n["briefed"]:
+                att.append({
+                    "kind": "nothing briefed", "owner": n["parent"] or "rank 0",
+                    "where": f"{pname} / {n['name']}", "what": n["name"],
+                    "why": f"A session is standing in {n['name']} with no task record and "
+                           f"nothing briefed for it. It cannot open one either: "
+                           f"`harness mark` refuses without a brief and has no override. "
+                           f"So it is capacity with no object, and capacity with no object "
+                           f"gets spent on something nobody asked for.",
+                    "do": f"(cd {shlex.quote(repo)} && harness brief TASK --for "
+                          f"{n['name']} --write \"...\")"})
+        for b in blocks:
+            att.append({
+                "kind": "grant", "owner": "operator",
+                "where": f"{pname} / {b.get('node')}", "what": b.get("need"),
+                "why": f"{b.get('why') or 'A lane needs a path outside its worktree.'} "
+                       f"A member writes inside its own worktree and nowhere else, because "
+                       f"anything outside it has no owner, no scope and no check that can "
+                       f"go red on it. Only you can widen that: a lead doing the write "
+                       f"instead would be routing your decision around rather than making "
+                       f"it, and the CLI refuses that by rank."
+                       + (f" Still moving without it: {b['still_moving']}"
+                          if b.get("still_moving") else ""),
+                "do": f"(cd {shlex.quote(repo)} && harness grant {b.get('node')} "
+                      f"{shlex.quote(b.get('need') or '')} --reason "
+                      f"{shlex.quote((b.get('why') or 'see the block record')[:60])})"})
+        projects.append({"project": pname, "repo": repo, "slug": pdir.name,
                          "nodes": nodes,
                          "blocks": blocks,
                          "orphan_marks": sorted(orphans, key=lambda o: o["task"]),
                          "indexed_at": idx.get("generated")})
+    v = install_drift()
+    if v:
+        att.append({"kind": "stale install", "owner": "operator", "where": "this machine",
+                    "what": v,
+                    "why": "The harness CLI and the four skills under ~/.claude/skills are "
+                           "copies. Their source has moved since they were installed, so "
+                           "every session is reading older instructions than the ones that "
+                           "were written, silently, because nothing else reports it.",
+                    "do": "bash install.sh    # from the source tree"})
+    att.sort(key=lambda x: (x["owner"] != "operator", x["kind"], x["where"]))
     return {"generated": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "attention": att,
+            "yours": sum(1 for x in att if x["owner"] == "operator"),
             "roster_error": roster_error, "stale_server": stale_server(),
             "started": time.strftime("%H:%M:%S", time.localtime(STARTED)),
             "projects": projects, "needs": needs}
@@ -280,6 +392,12 @@ padding:9px 13px;margin-bottom:16px}
 padding:12px 14px;margin:0 0 20px}
 .needs h3{margin:0 0 8px;font-size:12px;color:var(--warn);text-transform:uppercase;
 letter-spacing:.09em}
+.needs .who.mine{color:#ffd08a;font-weight:700}
+.kd2{color:var(--none);font-size:10px;text-transform:uppercase;letter-spacing:.07em;
+min-width:110px}
+.why{color:var(--dim);margin-bottom:8px;line-height:1.55;max-width:76ch}
+.clear{color:var(--none);border:1px dashed var(--line);border-radius:9px;
+padding:9px 13px;margin-bottom:18px}
 .need{padding:7px 0;border-top:1px solid #4a2d17;cursor:pointer}
 .need:first-of-type{border-top:0}
 .need .hd{display:flex;gap:10px;flex-wrap:wrap}
@@ -427,6 +545,20 @@ async function sendComment() {
   } catch (e) { msg.textContent = 'failed: ' + e; }
 }
 
+// Each item carries its own explanation, because a queue you have to reason
+// about before you can act on it is a queue that does not get cleared.
+function attnItem(a, i) {
+  const mine = a.owner === 'operator';
+  return '<div class="need"><div class="hd">' +
+    '<span class="who' + (mine ? ' mine' : '') + '">' +
+      (mine ? 'YOU' : esc(a.owner)) + '</span>' +
+    '<span class="kd2">' + esc(a.kind) + '</span>' +
+    '<span class="wh">' + esc(a.where) + ' &middot; ' + esc(a.what) + '</span></div>' +
+    '<div class="detail"><div class="why">' + esc(a.why) + '</div>' +
+    '<pre id="a' + i + '">' + esc(a.do) + '</pre>' +
+    '<button class="cp" data-c="a' + i + '">copy</button></div></div>';
+}
+
 function needBlock(n, i) {
   const g = "(cd " + n._repo + " && harness grant " + n.node + " '" + n.need +
             "' --reason '" + (n.why || 'see the block record').replace(/'/g, '') + "')";
@@ -511,8 +643,10 @@ async function tick() {
   try { d = await (await fetch('/api/state')).json(); }
   catch (e) { document.getElementById('age').textContent = 'disconnected'; return; }
   document.getElementById('age').textContent = new Date().toLocaleTimeString();
-  document.getElementById('ct').innerHTML = d.needs.length
-    ? '<span style="color:var(--warn)">' + d.needs.length + ' need you</span>' : '';
+  document.getElementById('ct').innerHTML = d.yours
+    ? '<span style="color:#ffd08a">' + d.yours + ' waiting on you</span>'
+    : ((d.attention || []).length
+       ? '<span class="q">' + d.attention.length + ' waiting on the tree</span>' : '');
   let h = '';
   if (d.stale_server) {
     h += '<div class="banner"><b>This server is older than the code on disk</b> ' +
@@ -525,8 +659,19 @@ async function tick() {
          'could not be read, so every node below is shown as unknown rather than ' +
          'empty.<br><code>' + esc(d.roster_error) + '</code></div>';
   }
-  if (d.needs.length) {
-    h += '<div class="needs"><h3>attention</h3>' + d.needs.map(needBlock).join('') + '</div>';
+  const att = d.attention || [];
+  if (att.length) {
+    const mine = att.filter(a => a.owner === 'operator');
+    const others = att.filter(a => a.owner !== 'operator');
+    h += '<div class="needs"><h3>' +
+      (mine.length ? mine.length + ' waiting on you' : 'nothing waiting on you') +
+      (others.length ? ' &middot; ' + others.length + ' waiting on the tree' : '') +
+      '</h3><div class="ln q" style="margin:-4px 0 8px">' +
+      'click an item for why it matters and the command that clears it</div>' +
+      mine.map((a, i) => attnItem(a, 'm' + i)).join('') +
+      others.map((a, i) => attnItem(a, 'o' + i)).join('') + '</div>';
+  } else {
+    h += '<div class="clear">nothing is waiting on anyone</div>';
   }
   h += d.projects.map(p =>
     (p.nodes.forEach(n => n._slug = p.slug),

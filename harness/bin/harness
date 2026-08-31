@@ -807,6 +807,27 @@ def cmd_doctor(a):
     node, spec = ctx.node()
     fails = []
 
+    # Installed-versus-source, first, because a stale install makes every arm
+    # below a measurement of the wrong thing. Three times in one day the copy
+    # that is actually read was left behind while its source moved on.
+    vf = HOME_STATE / "VERSION"
+    if vf.exists():
+        try:
+            v = json.loads(vf.read_text())
+            src = Path(v.get("source", ""))
+            rc, head, _ = git("rev-parse", "HEAD", cwd=src) if src.is_dir() else (1, "", "")
+            if rc == 0 and head.strip() != v.get("commit"):
+                print(f"  WARN installed from {str(v.get('commit'))[:8]}, "
+                      f"{src.name} is now at {head.strip()[:8]} — re-run install.sh")
+                print(f"       skills and the CLI you are running are older than their source")
+            elif rc == 0:
+                print(f"  ok   installed at {str(v.get('commit'))[:8]}, level with {src.name}")
+        except Exception:
+            pass
+    else:
+        print("  note no ~/.claude/harness/VERSION — cannot tell whether this install "
+              "is current")
+
     def arm(label, ok, detail=""):
         print(f"  {'ok  ' if ok else 'FAIL'} {label}{('  ' + detail) if detail else ''}")
         if not ok:

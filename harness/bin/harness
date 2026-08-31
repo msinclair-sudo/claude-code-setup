@@ -9,7 +9,7 @@ up holding one node, which is the failure the lock exists to prevent.
 This tool does no reasoning. The agent gathers liveness with ListAgents and
 passes it in; this only asserts, derives and writes atomically.
 """
-import argparse, json, os, re, shutil, socket, subprocess, sys, time
+import argparse, json, os, re, shlex, shutil, socket, subprocess, sys, time
 from pathlib import Path
 
 OK, CONTRACT, NOT_ENROLLED, REFUSED, MISMATCH = 0, 2, 3, 4, 5
@@ -1707,6 +1707,140 @@ def grant_flags(rows, model, effort):
     return out
 
 
+# ── R14: the operator's queue ────────────────────────────────────────────────
+
+def scan_needs():
+    """Every open block on this machine, across every enrolled project.
+
+    Deliberately builds no Ctx. The operator is usually not standing in the
+    repository that needs them — often not in any repository — and a command
+    that only works from the right directory is one they will not run.
+    """
+    out = []
+    for pdir in sorted(p for p in HOME_STATE.glob("*") if p.is_dir()):
+        b = pdir / "blocks"
+        if not b.is_dir():
+            continue
+        repo = ""
+        try:
+            repo = json.loads((pdir / "binding.json").read_text()).get("repo", "")
+        except Exception:
+            pass
+        for f in sorted(b.glob("*.json")):
+            try:
+                r = json.loads(f.read_text())
+            except Exception:
+                continue
+            if r.get("resolved_at"):
+                continue
+            r["_repo"] = repo
+            r["_project"] = Path(repo).name if repo else pdir.name
+            out.append(r)
+    out.sort(key=lambda r: r.get("raised_at") or "")
+    return out
+
+
+def write_needs(rows):
+    """A derived cache, for readers that must be cheap and must never fail.
+
+    The statusline renders on every prompt, so it cannot walk every project's
+    block directory; it reads this one small file. Same split as index.json:
+    the records are the truth, this is a convenience rebuilt from them.
+    """
+    p = HOME_STATE / "needs.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(
+        {"generated": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+         "count": len(rows),
+         "open": [{k: v for k, v in r.items() if k != "session"} for r in rows]},
+        indent=2) + "\n")
+
+
+def append_inbox(rec):
+    p = HOME_STATE / "inbox.jsonl"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open("a") as fh:
+        fh.write(json.dumps(rec) + "\n")
+
+
+def notify(kind, rows):
+    """Fire the operator's own notifier, if they installed one.
+
+    The harness does not choose the channel. `notify-send` is wrong over ssh,
+    wrong on a Mac and wrong in WSL, which is three of three on the machines
+    this has run on. `~/.claude/harness/notify`, executable, is run with the
+    detail in the environment; absent, the record is still written and the
+    statusline still shows it. Never raises, never blocks for long: a notifier
+    that fails must not take the block record down with it.
+    """
+    hook = HOME_STATE / "notify"
+    if not (hook.exists() and os.access(hook, os.X_OK)):
+        return False
+    first = rows[0] if rows else {}
+    summary = (f"{len(rows)} thing(s) need you — "
+               f"{first.get('_project', '?')}/{first.get('node', '?')}: "
+               f"{first.get('need', '')}")
+    env = dict(os.environ, HARNESS_EVENT=kind, HARNESS_COUNT=str(len(rows)),
+               HARNESS_SUMMARY=summary, HARNESS_JSON=json.dumps(rows))
+    try:
+        subprocess.run([str(hook)], env=env, timeout=10,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except Exception:
+        return False
+
+
+def _ago(ts):
+    try:
+        then = time.mktime(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S"))
+    except Exception:
+        return "?"
+    d = max(0, int(time.time() - then))
+    if d < 90:
+        return f"{d}s ago"
+    if d < 5400:
+        return f"{d // 60}m ago"
+    if d < 172800:
+        return f"{d // 3600}h ago"
+    return f"{d // 86400}d ago"
+
+
+def cmd_needs(a):
+    """One place the operator looks, and everything a decision needs in it.
+
+    A block reaches the operator as a record rather than a message because a
+    message arrives in one transcript, out of order, behind whatever else is in
+    it, and dies with the session that sent it. This prints every open one on
+    the machine with the command that clears it already written out — the
+    operator should never have to assemble `harness grant` by hand from a
+    transcript, and a queue that costs effort to read is a queue that is not read.
+    """
+    rows = scan_needs()
+    write_needs(rows)
+    if not rows:
+        print("nothing needs you")
+        return
+    for r in rows:
+        node, need = r.get("node", "?"), r.get("need", "")
+        print(f"{r['_project']} · {node}{'':<4}raised {_ago(r.get('raised_at', ''))}")
+        print(f"  needs    {need}")
+        print(f"  for      {r.get('why') or '—'}")
+        if r.get("still_moving"):
+            print(f"  moving   {r['still_moving']}")
+        repo = r.get("_repo") or "."
+        reason = (r.get("why") or "").replace("'", "")[:60] or "see the block record"
+        print(f"  grant    (cd {shlex.quote(repo)} && harness grant {node} "
+              f"{shlex.quote(need)} --reason {shlex.quote(reason)})")
+        print(f"  then     (cd {shlex.quote(repo)} && harness recycle {node})")
+        print()
+    print(f"{len(rows)} open. Granting also closes the block; the node picks the reach")
+    print("up when it is next spawned or recycled, never mid-task.")
+    if not (HOME_STATE / "notify").exists():
+        print(f"\nNo notifier installed. To be told rather than to look, make "
+              f"{HOME_STATE / 'notify'}\nexecutable — it is run with HARNESS_SUMMARY, "
+              f"HARNESS_COUNT and HARNESS_JSON in the environment.")
+
+
 def cmd_grant(a):
     """Record what a node may reach outside its worktree. Append-only.
 
@@ -1774,9 +1908,33 @@ def cmd_grant(a):
         print(f"already granted: {key} on {a.node}"); return
     rows.append(rec)
     p.write_text(json.dumps(g, indent=2) + "\n")
+    # Close the block this answers. Left open, the operator's queue keeps naming
+    # something already dealt with, and a queue that lies is one nobody reads.
+    closed = 0
+    bd = ctx.state / "blocks"
+    for bf in (sorted(bd.glob("*.json")) if bd.is_dir() else []):
+        try:
+            br = json.loads(bf.read_text())
+        except Exception:
+            continue
+        if br.get("resolved_at") or br.get("node") != a.node:
+            continue
+        same = (br.get("need") == a.what
+                or (rec.get("path") and
+                    str(Path(br.get("need", "")).expanduser().resolve()) == rec["path"]))
+        if not same:
+            continue
+        br["resolved_at"] = rec["granted_at"]
+        br["resolved_by"] = "grant"
+        bf.write_text(json.dumps(br, indent=2) + "\n")
+        append_inbox(dict(br, event="resolved"))
+        closed += 1
+    write_needs(scan_needs())
     print(f"granted {key}\n  to {a.node}, by {rec['granted_by']}"
           + (f"\n  reason: {rec['reason']}" if rec["reason"] else ""))
     print("  applies at the next spawn or recycle; a running session keeps what it had")
+    if closed:
+        print(f"  closed {closed} block(s) this answers")
 
 
 def open_blocks(ctx):
@@ -1821,17 +1979,28 @@ def cmd_blocked(a):
         r = json.loads(f.read_text())
         r["resolved_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
         f.write_text(json.dumps(r, indent=2) + "\n")
+        write_needs(scan_needs())
+        append_inbox(dict(r, event="resolved"))
         print(f"resolved: {a.need}"); return
     if f.exists() and not json.loads(f.read_text()).get("resolved_at"):
         print(f"already raised: {a.need} on {node}"); return
-    f.write_text(json.dumps(
-        {"node": node, "need": a.need, "why": a.why or "",
-         "raised_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-         "session": os.environ.get("CLAUDE_CODE_SESSION_ID", "")}, indent=2) + "\n")
+    rec = {"node": node, "need": a.need, "why": a.why or "",
+           "still_moving": a.still_moving or "",
+           "repo": str(ctx.repo),
+           "raised_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+           "session": os.environ.get("CLAUDE_CODE_SESSION_ID", "")}
+    f.write_text(json.dumps(rec, indent=2) + "\n")
+    rows = scan_needs()
+    write_needs(rows)
+    append_inbox(dict(rec, event="raised"))
+    told = notify("raised", rows)
     print(f"raised on {node}: {a.need}")
-    print("  It is in `harness status` now. Do not route around it, do not ask a")
-    print("  session with looser settings to do it for you, and do not stop work —")
-    print("  carry on with everything this does not block, and report what it does.")
+    print(f"  {len(rows)} thing(s) now need the operator"
+          + ("  (notifier fired)" if told else "  (no notifier installed — "
+             "it is in `harness needs` and the statusline)"))
+    print("  Do not route around it, do not ask a session with looser settings to do")
+    print("  it for you, and do not stop: carry on with everything this does not")
+    print("  block, and say in your report what it does.")
 
 
 def cmd_scaffold(a):
@@ -2001,8 +2170,11 @@ def main():
     bk = add("blocked", cmd_blocked)
     bk.add_argument("need", nargs="?", help="what you need — a path, a command, a permission")
     bk.add_argument("--why", help="what it is for, in one line")
+    bk.add_argument("--still-moving", dest="still_moving",
+                    help="what continues without it — this is how urgent gets judged")
     bk.add_argument("--resolve", action="store_true", help="close a block you raised")
     bk.add_argument("--list", action="store_true", help="every open block")
+    add("needs", cmd_needs)
     add("index", cmd_index)
     ps = add("position", cmd_position)
     ps.add_argument("--format", choices=["line", "json"], default="line")

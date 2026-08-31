@@ -847,6 +847,24 @@ that a sweep should be re-run after any model migration or workload shift.
 A misspelt effort is refused when the tree is validated, not when `claude`
 rejects it — by then the session is already spawned and detached.
 
+### R14 — The operator is told, and does not have to look
+
+**The platform cannot tell you which session wants you.** Measured 2026-08-31: `claude agents --json` carries `status` (busy/idle) and `state` (working/done) and nothing else. A session stopped dead on a refused permission is `busy`, indistinguishable from one that is working. So the harness has to say so itself, and the mechanism is constrained by [[#R4 — No arbiter process]]: nothing polls, because nothing is running to poll. **The event notifies at the moment it is recorded**, or not at all.
+
+| surface | reaches the operator when |
+| --- | --- |
+| `~/.claude/harness/notify` | immediately, if they installed one — run with `HARNESS_SUMMARY`, `HARNESS_COUNT`, `HARNESS_JSON` in the environment |
+| the statusline badge | next prompt, in **any** session, enrolled or not |
+| `harness needs` | when they ask, from anywhere |
+
+**The harness does not choose the channel.** `notify-send` is wrong over ssh, wrong on a Mac and wrong in WSL, which is three of three on the machines this has run on. The hook is absent by default and the record is written either way; a notifier that fails, hangs or is missing must never take the block record down with it.
+
+**Everything a decision needs is in one place, with the command already written.** `harness needs` scans every enrolled project on the machine, deliberately building no `Ctx` — the operator is usually not standing in the repository that wants them, and often not in a repository at all. A command that only works from the right directory is one that does not get run. Each entry prints what is needed, what it is for, **what is still moving without it** (which is how urgency gets judged rather than guessed), and the exact `harness grant` and `harness recycle` lines, `cd`-wrapped and shell-quoted.
+
+Granting closes the block it answers. A queue that keeps naming something already dealt with is a queue nobody reads, so the two records are kept in step rather than left to a member to tidy up after the fact.
+
+`needs.json` beside the project directories is a derived cache, rebuilt on every raise, grant and resolve, and it exists for exactly one reader: the statusline renders on every prompt and cannot walk every project's block directory. The per-project block records are the truth; `inbox.jsonl` is the append-only history of both raising and clearing ([[#I6 — The ledger is append-only]]).
+
 ### R13 — Members are recycled, not accumulated
 
 A member's session is ended and a fresh one started on the same node once its

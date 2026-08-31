@@ -125,7 +125,8 @@ the operator's — never a lead's, and never by doing the write on the member's
 behalf.
 
 ```bash
-harness blocked --list                     # every open block
+harness needs                              # every project on the machine, anywhere
+harness blocked --list                     # this project only
 harness grant <node> <path> --reason "..."  # append-only, records who and why
 harness grant --list                        # live and revoked
 harness grant <node> <path> --revoke        # stays on the record
@@ -146,3 +147,19 @@ one carries it. And a grant made quickly for one task outlives that task — it
 persists for everything that node does afterwards, and once nobody remembers why
 it exists, nobody removes it. Grant the **path**, record the reason, and revoke
 it when the task that needed it closes.
+
+## Being told rather than looking
+
+`harness needs` is the operator's queue, not yours to clear — but you will often
+be the one who notices it is not empty. It runs from anywhere, including outside
+a repository, and prints the `grant` and `recycle` lines already written out.
+
+Nothing polls, because nothing is running to poll (`R4`). A block notifies at the
+moment it is recorded or not at all, through three surfaces: the operator's own
+`~/.claude/harness/notify` hook if one exists, the statusline badge in every
+session they have open, and `harness needs` when they ask.
+
+If they have no notifier, say so once and move on — the record is written either
+way, and the badge shows it. The hook is theirs to write, not yours to install:
+it is run with `HARNESS_SUMMARY`, `HARNESS_COUNT` and `HARNESS_JSON` in the
+environment, and what it does with them depends on a machine you are not on.

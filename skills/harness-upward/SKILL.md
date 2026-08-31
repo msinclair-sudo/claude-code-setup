@@ -81,10 +81,18 @@ reds; nothing reviews it at `T4`, and no ref records that it changed (`I3`).
 When you need a path outside it, **raise a record — do not ask around**:
 
 ```bash
-harness blocked ~/data/subset.db --why "dim=3 reduction output for 5,222 docs"
+harness blocked ~/data/subset.db \
+  --why "dim=3 reduction output for 5,222 docs" \
+  --still-moving "everything but the render; the contract work is unaffected"
 ```
 
-That puts it in `harness status`, where it survives the recycle that ends you.
+That reaches the operator immediately if they installed a notifier, shows in the
+statusline of every session they have open, and sits in `harness needs` until it
+is cleared. It survives the recycle that ends you, which a message would not.
+
+**`--still-moving` is the field that gets you unblocked sooner.** It is how the
+operator tells a stopped lane from a stopped step without reading your
+transcript. Leave it out and yours looks like every other one.
 Then carry on with everything the block does not stop, and report what it does.
 
 Three things not to do, in the order they will tempt you. Do not ask a session

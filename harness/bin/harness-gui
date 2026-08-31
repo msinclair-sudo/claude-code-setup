@@ -471,21 +471,11 @@ let LAST = '';            // last payload rendered, to avoid pointless redraws
 
 const boxKey = b => b.dataset.slug + '|' + b.dataset.node + '|' + b.dataset.need;
 
-// Every keystroke is remembered, so a redraw that does happen cannot eat it.
+// Only the shape-changed rebuild can reach a box, and that path restores these.
 document.addEventListener('input', e => {
   const b = e.target.closest && e.target.closest('.bbox');
   if (b) DRAFT[boxKey(b)] = b.value;
 });
-
-// The real fix: do not redraw AT ALL while there is something to lose. The
-// identical-payload check does not save you here, because a session flipping
-// between busy and idle is a genuine change and arrives every few seconds.
-function typing() {
-  const a = document.activeElement;
-  if (a && (a.classList && a.classList.contains('bbox') || a.id === 'cbox')) return true;
-  return Array.prototype.some.call(document.querySelectorAll('.bbox'),
-                                   b => b.value.trim() !== '');
-}
 
 function reopen() {
   document.querySelectorAll('[data-key]').forEach(el => {
@@ -591,13 +581,21 @@ function attnItem(a, i) {
       esc(a.root || 'rank 0') + '..."></textarea>' +
       '<div class="row"><button class="bsend">send to lead</button>' +
       '<span class="ln q bmsg"></span></div>' : '';
-  return '<div class="need" data-key="' + esc(key) + '"><div class="hd">' +
-    '<span class="who mine">' + esc(a.kind) + '</span>' +
-    '<span class="wh">' + esc(a.where) + ' &middot; ' + esc(a.what) + '</span>' +
-    (n ? '<span class="cct">' + n + ' comment' + (n === 1 ? '' : 's') + '</span>' : '') +
-    '</div><div class="detail"><div class="why">' + esc(a.why) + '</div>' + cs +
-    '<pre id="a' + i + '">' + esc(a.do) + '</pre>' +
-    '<button class="cp" data-c="a' + i + '">copy</button>' + box + '</div></div>';
+  // data-live marks the parts a poll may replace. Everything else -- the
+  // textarea above all -- is rendered once and never touched again.
+  return '<div class="need" data-key="' + esc(key) + '">' +
+    '<div class="hd" data-live="hd:' + esc(key) + '">' +
+      '<span class="who mine">' + esc(a.kind) + '</span>' +
+      '<span class="wh">' + esc(a.where) + ' &middot; ' + esc(a.what) + '</span>' +
+      (n ? '<span class="cct">' + n + ' comment' + (n === 1 ? '' : 's') + '</span>' : '') +
+    '</div>' +
+    '<div class="detail">' +
+      '<div data-live="body:' + esc(key) + '">' +
+        '<div class="why">' + esc(a.why) + '</div>' + cs +
+        '<pre id="a' + i + '">' + esc(a.do) + '</pre>' +
+        '<button class="cp" data-c="a' + i + '">copy</button>' +
+      '</div>' + box +
+    '</div></div>';
 }
 
 function needBlock(n, i) {
@@ -658,7 +656,8 @@ function card(n) {
                 ? '<div class="ln q" title="no harness mark — run harness mark ' +
                   '&lt;task&gt; in that session">no task record</div>' + briefedChips(n)
                 : briefedChips(n));
-  return '<div class="card ' + cls + (n.blocks.length ? ' blocked' : '') + '">' +
+  return '<div class="card ' + cls + (n.blocks.length ? ' blocked' : '') +
+    '" data-live="card:' + esc(n._slug + ':' + n.name) + '">' +
     '<div class="hdr"><span class="dot"></span><span class="nm">' + esc(n.name) +
     '</span><span class="kd">' + esc(n.kind || '') + '</span></div>' +
     '<div class="ln q">' + esc(n.branch || '') + (n.indexed ? '' : ' (not indexed)') + '</div>' +
@@ -691,9 +690,6 @@ async function tick() {
   // `generated` changes every poll and nothing else usually does, so it is
   // excluded from the comparison: redrawing identical content is what loses a
   // text selection mid-copy.
-  // A held draft, or a cursor in a box, outranks a fresher tree.
-  if (typing()) { document.getElementById('age').textContent += '  (paused: typing)';
-                  return; }
   const sig = raw.replace(/"generated":"[^"]*",/, '');
   if (sig === LAST) return;
   LAST = sig;
@@ -736,8 +732,39 @@ async function tick() {
         '</li>').join('') + '</ul>' : '') +
     tree(p.nodes) + '</div>')).join('');
   if (!d.projects.length) h += '<div class="empty">no enrolled projects on this machine</div>';
-  document.getElementById('root').innerHTML = h;
-  reopen();
+  paint(h);
+}
+
+// Targeted update, not a repaint. The page is built once; after that a poll may
+// only replace elements that carry data-live, and only when their content has
+// actually changed. Anything not on that list -- a textarea mid-sentence, an
+// expanded panel, a text selection, the scroll position -- survives by
+// construction rather than by being remembered and put back.
+//
+// An include list is the maintainable direction: a new volatile field is opted
+// IN by tagging it, and forgetting to tag one shows up as a stale number, which
+// is visible. The exclude list it replaces failed the other way -- forgetting to
+// exempt something ate your work silently.
+function paint(h) {
+  const root = document.getElementById('root');
+  const tpl = document.createElement('div');
+  tpl.innerHTML = h;
+  const keys = el => Array.prototype.map.call(
+    el.querySelectorAll('[data-live]'), e => e.dataset.live).join(',');
+
+  // The shape changed -- a node appeared, an item cleared -- so there is nothing
+  // to patch into. This is the only path that rebuilds, and it is rare.
+  if (keys(tpl) !== keys(root)) {
+    root.innerHTML = h;
+    reopen();
+    return;
+  }
+  Array.prototype.forEach.call(tpl.querySelectorAll('[data-live]'), fresh => {
+    const cur = root.querySelector('[data-live="' + fresh.dataset.live + '"]');
+    if (!cur) return;
+    if (cur.className !== fresh.className) cur.className = fresh.className;
+    if (cur.innerHTML !== fresh.innerHTML) cur.innerHTML = fresh.innerHTML;
+  });
 }
 tick(); setInterval(tick, 3000);
 </script></body></html>"""

@@ -317,7 +317,23 @@ harness blocked "<need>" --resolve --task <task>
 harness blocked "<need>" --no-task "why it produced none"
 ```
 
-`--resolve` refuses an operator-answered block that names neither. `--no-task` is
+`--resolve` refuses an operator-answered block that names neither.
+
+**If the task already exists, link it — do not write it twice.**
+
+```bash
+harness blocked "<need>" --task <task>      # repeatable; closes the block
+```
+
+You have no memory across a respawn, so an answered block with nothing linked
+looks exactly like a decision nobody acted on. That is how the same brief gets
+written twice. `--decided` shows both halves: what is answered and unlinked, and
+what is answered and **in hand**, with each task's state — `briefed`, `open`,
+`presented`, `closed`. Once every task on a block has closed it stops printing.
+
+**Answered is the test, not closed.** A block the operator replied to and nobody
+closed is yours, not theirs. It is in your queue and not in `harness needs`,
+because asking them to decide twice is how a queue stops being read. `--no-task` is
 a real answer and often the right one — a reach grant usually removes an obstacle
 without adding work — but it is recorded with its reason, because an unexplained
 silence and a forgotten decision look identical afterwards.

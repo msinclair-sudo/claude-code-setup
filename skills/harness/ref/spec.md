@@ -287,6 +287,12 @@ A brief exists **before** its mark: the lead writes it, then the member accepts.
 
 **Lineage, not forwarding.** `--from-block` stamps the block with the task it produced, so the block stops appearing in rank 0's queue by the act of being answered rather than by being dismissed. The brief records which block it answers and the lane can read the operator's reasoning one hop away — but the brief itself is rank 0's rewriting, never a relay of the thread ([[#T9 — Ruling]]).
 
+**Answered is the test, not closed.** A block the operator replied to and nobody closed is the commonest shape of this, and it appeared in nobody's queue: not the operator's as a decision, because they had made it, and not rank 0's as work, because it was not resolved. It now sits in rank 0's queue, and the operator's shows one summary count instead of asking them to decide twice. Recording what it produced closes it, because that is the second half of the same act.
+
+**A task written before anyone linked it still counts.** `harness blocked <need> --task <task>` attaches an existing task to an answered block, repeatably, and closes it. Without that, a decision acted on and never linked stayed in the queue forever and **every respawn re-reported it** — a fresh rank 0 has no memory, so an unlinked decision looks exactly like an unmade one, and the second session writes the brief again.
+
+**A respawn needs the state, not just the link.** `--decided` prints answered blocks whose tasks are `briefed`, `open`, `presented` or `gated`, one line each, and goes silent once every task has closed. All four states are read off the mark and brief records that already exist, so there is no second store to fall out of step. A queue that keeps naming finished work stops being read, which is the same rule that keeps a self-closed block out of it.
+
 **A block the raiser closed itself is not in the queue.** No operator comment, no grant: it found another way, there is nothing to hand down, and a queue that names work which does not exist is a queue that stops being read.
 
 **`none` is a real answer.** A reach grant usually removes an obstacle without adding work. It is recorded with its reason because an unexplained silence and a forgotten decision are indistinguishable afterwards.

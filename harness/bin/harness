@@ -474,7 +474,7 @@ def _whoami(a):
     if ctx.rank(node) == 0:
         try:
             stale_m, unattr_m = orphan_marks(ctx)
-            nb = len(open_blocks(ctx))
+            nb = sum(1 for r in open_blocks(ctx).values() if not answered(r))
             nd = len(decided_blocks(ctx))
             if nd:
                 print(f"decide   {nd} answered block(s) with no task written "
@@ -2180,6 +2180,11 @@ def scan_needs():
             if r.get("resolved_at"):
                 continue
             r["_repo"], r["_project"], r["_kind"] = repo, proj, "block"
+            # Answered and still open: it is rank 0's to turn into a task, and
+            # showing it to the operator again asks them to decide twice.
+            r["_answered"] = bool(
+                r.get("resolved_by") == "grant"
+                or any(c.get("by") == "operator" for c in (r.get("comments") or [])))
             out.append(r)
         # Two different things wait on the operator and they are not the same
         # question. A block asks whether a lane may REACH something. An approval
@@ -3517,8 +3522,11 @@ def cmd_needs(a):
     """
     rows = scan_needs()
     write_needs(rows)
+    done = [r for r in rows if r.get("_answered")]
+    rows = [r for r in rows if not r.get("_answered")]
     if not rows:
-        print("nothing needs you")
+        print("nothing needs you"
+              + (f"  ({len(done)} answered, with rank 0)" if done else ""))
         return
     for r in rows:
         node, need = r.get("node", "?"), r.get("need", "")
@@ -3541,6 +3549,8 @@ def cmd_needs(a):
             print(f"  Nobody is idle over this — the lane carried on with its queue.")
             print()
             continue
+        if r.get("_answered"):
+            continue
         print(f"{r['_project']} · {node}{'':<4}raised {_ago(r.get('raised_at', ''))}")
         print(f"  needs    {need}")
         print(f"  for      {r.get('why') or '—'}")
@@ -3553,7 +3563,9 @@ def cmd_needs(a):
         print(f"  then     (cd {shlex.quote(repo)} && harness recycle {node})")
         print()
     nb = sum(1 for r in rows if r.get("_kind") != "approval")
-    print(f"{nb} block(s), {len(rows) - nb} approval(s). Granting also closes a block; "
+    print(f"{nb} block(s), {sum(1 for r in rows if r.get('_kind') == 'approval')} "
+          f"approval(s)"
+          + (f", {len(done)} answered and with rank 0" if done else "") + ". Granting also closes a block; "
           f"the node picks\nthe reach up when it is next spawned or recycled, never "
           f"mid-task.")
     if not (HOME_STATE / "notify").exists():
@@ -3697,12 +3709,101 @@ def decided_blocks(ctx):
             r = json.loads(f.read_text())
         except Exception:
             continue
-        if not r.get("resolved_at") or r.get("consequence"):
+        # Answered is the test, not closed. A block the operator replied to and
+        # nobody closed is the commonest shape of this: the decision has been
+        # made, the lane is still working to the old brief, and it appeared in
+        # nobody's queue — not the operator's as a decision (they made it) and
+        # not rank 0's as work (it was not resolved).
+        if r.get("consequence"):
             continue
-        if (r.get("resolved_by") == "grant"
-                or any(c.get("by") == "operator" for c in (r.get("comments") or []))):
+        if answered(r):
             out[f.stem] = r
     return out
+
+
+def task_state(ctx, task):
+    """Where a task has got to, in one word, derived rather than tracked.
+
+    A respawn arrives knowing nothing. What it must not do is re-decide work
+    already in flight, and the only thing that stops it is being able to see, per
+    task, whether anyone has started or finished it. Every state here is read
+    off records that already exist — no second store to fall out of step.
+    """
+    mf = ctx.state_file("marks", task, ".json")
+    if mf.exists():
+        try:
+            r = json.loads(mf.read_text())
+        except Exception:
+            return "unreadable"
+        if r.get("_closed_at"):
+            return "closed"
+        return "presented" if r.get("_presented_at") else "open"
+    _, b = load_brief(ctx, task)
+    if b is None:
+        return "no brief"
+    ap = (b.get("approval") or {}).get("state")
+    return "gated" if ap == "pending" else "declined" if ap == "declined" else "briefed"
+
+
+def in_flight(ctx):
+    """Answered blocks that DID produce a task, where the task is not finished.
+
+    Blocks whose tasks have all closed are finished business and are not printed:
+    a queue that keeps naming completed work is one that stops being read, which
+    is the same rule that keeps a self-closed block out of `--decided`.
+    """
+    out = {}
+    d = ctx.state / "blocks"
+    for f in (sorted(d.glob("*.json")) if d.is_dir() else []):
+        try:
+            r = json.loads(f.read_text())
+        except Exception:
+            continue
+        tasks = ((r.get("consequence") or {}).get("tasks")) or []
+        if not tasks:
+            continue
+        states = {t: task_state(ctx, t) for t in tasks}
+        if all(v == "closed" for v in states.values()):
+            continue
+        out[f.stem] = (r, states)
+    return out
+
+
+def answered(r):
+    return (r.get("resolved_by") == "grant"
+            or any(c.get("by") == "operator" for c in (r.get("comments") or [])))
+
+
+def settle(ctx, need, node):
+    """Find the block a consequence is being recorded against, and close it if it
+    is still open.
+
+    Recording what an answer produced IS the second half of closing it ([[T13]]),
+    so doing the second half finishes the first. A block the operator answered
+    and nobody closed sat in their queue forever while the work it caused was
+    already briefed — the queue naming something dealt with, which is how a queue
+    stops being read.
+    """
+    key = re.sub(r"[^A-Za-z0-9]", "_", need or "")
+    d = ctx.state / "blocks"
+    for f in (sorted(d.glob("*.json")) if d.is_dir() else []):
+        try:
+            r = json.loads(f.read_text())
+        except Exception:
+            continue
+        if r.get("need") != need and not f.stem.endswith(key):
+            continue
+        if not r.get("resolved_at") and not answered(r):
+            die(REFUSED, f"'{need}' has not been answered by the operator. Recording "
+                         f"what it\n           produced would close a block still "
+                         f"waiting on them.")
+        closed = False
+        if not r.get("resolved_at"):
+            r["resolved_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+            r["resolved_by"] = node
+            closed = True
+        return f, r, closed
+    die(REFUSED, f"no block for '{need}'")
 
 
 def stamp_consequence(ctx, need, task, node):
@@ -3770,9 +3871,15 @@ def cmd_blocked(a):
 
     if a.decided:
         rows = decided_blocks(ctx)
+        flight = in_flight(ctx)
+        if flight:
+            print("answered, in hand:")
+            for k, (r, st) in sorted(flight.items()):
+                print(f"  {r.get('node', '?'):<12} {str(r.get('need'))[:34]:<36} "
+                      + ", ".join(f"{t} {v}" for t, v in st.items()))
+            print()
         if not rows:
-            print("every decided block has produced a task or been recorded as "
-                  "producing none"); return
+            print("nothing answered is waiting on a task"); return
         print(f"{len(rows)} block(s) answered and not yet turned into work.\n")
         for k, r in sorted(rows.items()):
             print(f"  {r.get('node', '?'):<12} {r.get('need', k)}")
@@ -3786,12 +3893,37 @@ def cmd_blocked(a):
             print(f"  {'':<12} write the task it produced, for the rank below you:")
             print(f"  {'':<14}  harness brief <task> --for {hand} "
                   f"--from-block {shlex.quote(r.get('need') or k)} --write \"...\"")
+            print(f"  {'':<12} or, if the task already exists, link it:")
+            print(f"  {'':<14}  harness blocked {shlex.quote(r.get('need') or k)} "
+                  f"--task <task>")
             print(f"  {'':<12} or record that it produced none:")
             print(f"  {'':<14}  harness blocked {shlex.quote(r.get('need') or k)} "
                   f"--no-task \"why not\"\n")
         print("Being told is not being tasked. Until one of these is written, the")
         print("lane that raised the block is unblocked and still working to the old")
         print("brief — the decision reached you and stopped.")
+        return
+
+    if a.task and not a.resolve:
+        # The link was made at the moment a brief was written with --from-block,
+        # and only then. Work briefed before anyone thought to connect it left
+        # the block asking for a task that already existed, and every respawn
+        # asked again.
+        f, r, closed = settle(ctx, a.need, node)
+        for t in a.task:
+            if load_brief(ctx, t)[1] is None:
+                die(REFUSED, f"no brief '{t}'")
+        c = r.setdefault("consequence", {"tasks": []})
+        c.setdefault("tasks", [])
+        for t in a.task:
+            if t not in c["tasks"]:
+                c["tasks"].append(t)
+        c["by"], c["at"] = node, time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        f.write_text(json.dumps(r, indent=2) + "\n")
+        write_needs(scan_needs())
+        print(f"{r.get('need')} → " + ", ".join(
+            f"{t} ({task_state(ctx, t)})" for t in c["tasks"])
+            + ("   (block closed)" if closed else ""))
         return
 
     if a.no_task is not None:
@@ -3802,20 +3934,15 @@ def cmd_blocked(a):
         if not (a.no_task or "").strip():
             die(REFUSED, "say why it produces no work. An unexplained 'none' is "
                          "indistinguishable\n           from forgetting.")
-        hits = [(k, r) for k, r in decided_blocks(ctx).items()
-                if r.get("need") == a.need or k.endswith(
-                    re.sub(r"[^A-Za-z0-9]", "_", a.need or ""))]
-        if not hits:
-            die(REFUSED, f"no answered block awaiting a task for '{a.need}'. "
-                         f"`harness blocked --decided` lists them.")
-        k, r = hits[0]
+        f, r, closed = settle(ctx, a.need, node)
         r["consequence"] = {"tasks": [], "none": a.no_task,
                             "by": node, "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
-        (ctx.state / "blocks" / (k + ".json")).write_text(json.dumps(r, indent=2) + "\n")
-        print(f"recorded: '{r.get('need')}' produced no task")
-        print(f"  {a.no_task}")
-        print(f"  '{r.get('node')}' is not told. If it should be, that is a brief "
-              f"revision, not this.")
+        f.write_text(json.dumps(r, indent=2) + "\n")
+        write_needs(scan_needs())
+        print(f"{r.get('need')} → no task: {a.no_task}"
+              + ("   (block closed)" if closed else ""))
+        print(f"  '{r.get('node')}' is not told — if it should be, that is a brief "
+              f"revision.")
         return
 
     if a.list or not a.need:
@@ -3901,12 +4028,12 @@ def cmd_blocked(a):
                 f"           harness blocked {shlex.quote(a.need)} --resolve "
                 f"--no-task \"why\"   (it produced none)")
         if a.task:
-            _, tb = load_brief(ctx, a.task)
-            if tb is None:
-                die(REFUSED, f"no brief '{a.task}'. Write the task before you close "
-                             f"the block:\n           harness brief {a.task} --for "
-                             f"<node> --from-block {shlex.quote(a.need)} --write \"...\"")
-            r["consequence"] = {"tasks": [a.task], "by": node,
+            for t in a.task:
+                if load_brief(ctx, t)[1] is None:
+                    die(REFUSED, f"no brief '{t}'. Write the task before you close the "
+                                 f"block:\n           harness brief {t} --for <node> "
+                                 f"--from-block {shlex.quote(a.need)} --write \"...\"")
+            r["consequence"] = {"tasks": list(a.task), "by": node,
                                 "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
         elif a.no_task is not None:
             r["consequence"] = {"tasks": [], "none": a.no_task, "by": node,
@@ -3918,8 +4045,7 @@ def cmd_blocked(a):
         append_inbox(dict(r, event="resolved"))
         print(f"resolved: {a.need}")
         if a.task:
-            print(f"  it produced '{a.task}', briefed for "
-                  f"{load_brief(ctx, a.task)[1].get('node')}")
+            print("  → " + ", ".join(f"{t} ({task_state(ctx, t)})" for t in a.task))
         return
     if f.exists() and not json.loads(f.read_text()).get("resolved_at"):
         print(f"already raised: {a.need} on {node}"); return
@@ -4129,8 +4255,9 @@ def main():
                     help="what continues without it — this is how urgent gets judged")
     bk.add_argument("--resolve", action="store_true",
                     help="close it; rank 0 may close any block in the tree")
-    bk.add_argument("--task", metavar="TASK",
-                    help="the brief the answer produced (required when the operator answered)")
+    bk.add_argument("--task", metavar="TASK", action="append",
+                    help="the task the answer produced; repeatable, and works on a "
+                         "block already closed")
     bk.add_argument("--no-task", dest="no_task", metavar="WHY",
                     help="record that the answer produced no work, and why")
     bk.add_argument("--decided", action="store_true",

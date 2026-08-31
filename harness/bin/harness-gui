@@ -285,7 +285,11 @@ def read_state():
                 "root": next((n for n, sp in tree.items()
                               if sp.get("parent") is None), "rank 0"),
                 "comments": []})
-        for b in [x for x in blocks if x.get("_kind") != "approval"]:
+        # An answered block belongs to rank 0 now. Leaving it here asks the
+        # operator to decide something they already decided, and a panel that
+        # does that is one they stop reading.
+        for b in [x for x in blocks
+                  if x.get("_kind") != "approval" and not x.get("_answered")]:
             att.append({
                 "kind": "grant", "owner": "operator",
                 "where": f"{pname} / {b.get('node')}", "what": b.get("need"),

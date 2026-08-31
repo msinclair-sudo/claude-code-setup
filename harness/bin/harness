@@ -1089,8 +1089,17 @@ def cmd_stop(a):
 
 # ── I10: the denominator, measured rather than apportioned ───────────────────
 
-# Opus 5 list rates, $/MTok. Cache writes bill at 1.25x input, reads at 0.1x.
-RATES = {"input": 5.0, "cache_write": 6.25, "cache_read": 0.5, "output": 25.0}
+# The unit is TOKENS, never money. A dollar figure is this multiplied by a
+# price table the harness would have to hold per model and keep correct, and
+# every node may run a different one. A drifted rate produces a figure that
+# looks authoritative and cannot be checked from the record it sits in.
+TOKEN_KINDS = ("input", "cache_write", "cache_read", "output")
+
+# The bands of I10, as ranges rather than letters, so an estimate and its actual
+# are finally the same unit. XL is a refusal and not a size: it is the
+# operational definition of I8, and the only number here that decides whether
+# work may be issued at all.
+BANDS = {"S": (0, 40_000), "M": (40_000, 120_000), "L": (120_000, 300_000)}
 
 
 def read_spend(sid):
@@ -1137,8 +1146,48 @@ def read_spend(sid):
     return tot
 
 
-def usd(t):
-    return sum(t[k] * RATES[k] for k in RATES) / 1e6
+def tok(n):
+    """A token count a person can read. Three significant figures at most: a
+    measurement of billed tokens printed to the digit implies a precision the
+    quantity does not have."""
+    n = int(n or 0)
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.0f}k"
+    return str(n)
+
+
+def split(t):
+    """Up, down, and resent — and they are three quantities, not one.
+
+    UP is what was newly sent: the prompt, plus whatever was written into the
+    cache for the first time. DOWN is what was generated. RESENT is cache reads,
+    which is the conversation being handed back on every turn, and it is the
+    reason a session bills hundreds of millions of tokens while doing a few
+    hundred thousand tokens of work.
+
+    Adding resent into a headline is what made the raw total useless: a task
+    inside a band of 40k measured 261.7M, and the two were never the same
+    quantity. So they are never summed here. NEW (up + down) is the figure that
+    is comparable to a band; resent is printed beside it and stays there.
+    """
+    up = (t.get("input", 0) or 0) + (t.get("cache_write", 0) or 0)
+    down = t.get("output", 0) or 0
+    return up, down, (t.get("cache_read", 0) or 0)
+
+
+def spend_line(t):
+    up, down, resent = split(t)
+    return (f"↑{tok(up)} ↓{tok(down)}  = {tok(up + down)} new"
+            + (f", {tok(resent)} resent" if resent else ""))
+
+
+def band_of(n):
+    for k, (lo, hi) in BANDS.items():
+        if lo <= n < hi:
+            return k
+    return "XL"
 
 
 def open_marks(ctx):
@@ -1218,8 +1267,8 @@ def cmd_mark(a):
         rec["_presented_sha"] = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
         nxt, coupled = next_after(ctx, node, a.task)
         if rec.get("_session") == sid:
-            rec["_delta"] = {k: now[k] - rec.get(k, 0) for k in RATES}
-            cost = f"~${usd(rec['_delta']):.2f}"
+            rec["_delta"] = {k: now[k] - rec.get(k, 0) for k in TOKEN_KINDS}
+            cost = spend_line(rec["_delta"])
         else:
             rec["_delta"] = None
             rec["_delta_unavailable"] = (f"opened in session {str(rec.get('_session'))[:8]}, "
@@ -1231,6 +1280,19 @@ def cmd_mark(a):
                  "text": a.note})
         f.write_text(json.dumps(rec, indent=2) + "\n")
         parent = ctx.tree["nodes"].get(node, {}).get("parent")
+        if rec.get("_band") and rec.get("_delta"):
+            u, dn, _ = split(rec["_delta"])
+            actual = band_of(u + dn)
+            order = list(BANDS) + ["XL"]
+            verdict = ("in band" if actual == rec["_band"]
+                       else "OVER band" if order.index(actual) > order.index(rec["_band"])
+                       else "under band")
+            print(f"band: estimated {rec['_band']}, measured {actual} "
+                  f"({tok(u + dn)} new) — {verdict}")
+            if verdict == "OVER band":
+                print(f"  Say so in your report. A band that was wrong is the only "
+                      f"thing that improves\n  the next estimate, and it is your "
+                      f"lead's estimate that was wrong, not your work.")
         print(f"presented {a.task}  {cost}")
         print(f"  It is NOT closed. {parent or 'your lead'} signs it off: "
               f"harness mark {a.task} --close")
@@ -1278,7 +1340,7 @@ def cmd_mark(a):
         rec["_closed_by"] = f"{node} (session {sid[:8]})" if sid else f"{node} (operator)"
         rec["_closed_sha"] = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
         d = rec.get("_delta")
-        cost = f"~${usd(d):.2f}" if d else "cost recorded at presentation, if at all"
+        cost = spend_line(d) if d else "not measured at presentation"
         f.write_text(json.dumps(rec, indent=2) + "\n")
         print(f"signed off {a.task} for {owner} at {rec['_closed_at']}  {cost}")
         still = sorted(t for t, r in open_marks(ctx).items() if r.get("_node") == owner)
@@ -1335,13 +1397,28 @@ def cmd_mark(a):
     if f.exists() and not a.force:
         die(REFUSED, f"{a.task} is already marked at {json.loads(f.read_text()).get('_at')} "
                      f"— use --force to re-mark, which discards the earlier position")
+    if a.band:
+        band = a.band.upper()
+        if band == "XL":
+            die(REFUSED,
+                "XL is a refusal, not a size (I10). A task estimated above 300k new "
+                "tokens is a\n           decomposition that has not happened yet: "
+                "split it, or escalate to your lead.")
+        if band not in BANDS:
+            die(REFUSED, f"band must be one of {', '.join(BANDS)} "
+                         f"({', '.join(f'{k} < {tok(v[1])}' for k, v in BANDS.items())})")
+        tot["_band"] = band
     tot["_note"] = a.note or ""
     tot["_node"] = node
     tot["_branch"] = ctx.branch
     tot["_sha"] = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
     f.write_text(json.dumps(tot, indent=2) + "\n")
     print(f"marked {a.task} on {node} at {tot['_at']}  "
-          f"({tot['_records']} records, ~${usd(tot):.2f} so far)")
+          f"({tot['_records']} records, {spend_line(tot)} so far)")
+    if tot.get("_band"):
+        lo, hi = BANDS[tot["_band"]]
+        print(f"  band {tot['_band']}: expected under {tok(hi)} new tokens "
+              f"(up + down, resent not counted)")
     print(f"  brief revision {b.get('revision')} by {b.get('written_by')} "
           f"— read it: harness brief {a.task}")
 
@@ -1374,19 +1451,42 @@ def cmd_spend(a):
                 f"separately.")
     label = f"since mark '{a.task}'" if base else "whole session"
     print(f"{label}   session {sid[:8]}   {now['_records']} usage records")
-    print(f"{'':14}{'tokens':>14}{'$/MTok':>10}{'USD':>10}")
-    d = {}
-    for k in ("input", "cache_write", "cache_read", "output"):
-        d[k] = now[k] - (base[k] if base else 0)
-        print(f"  {k:<12}{d[k]:>14,}{RATES[k]:>10.2f}{d[k]*RATES[k]/1e6:>10.2f}")
-    print(f"  {'':<12}{sum(d.values()):>14,}{'':>10}{usd(d):>10.2f}")
+    d = {k: now[k] - (base[k] if base else 0) for k in TOKEN_KINDS}
+    up, down, resent = split(d)
+    print(f"{'':14}{'tokens':>14}")
+    print(f"  {'input':<12}{d['input']:>14,}")
+    print(f"  {'cache write':<12}{d['cache_write']:>14,}")
+    print(f"  {'up':<12}{up:>14,}   sent, new")
+    print(f"  {'output':<12}{d['output']:>14,}")
+    print(f"  {'down':<12}{down:>14,}   generated")
+    print(f"  {'':<12}{'':>14}")
+    print(f"  {'NEW':<12}{up + down:>14,}   up + down — this is what a band means")
+    print(f"  {'resent':<12}{resent:>14,}   cache reads: the conversation handed "
+          f"back each turn")
     print()
-    print("  Units: BILLED tokens, summed across turns — each turn resends the")
-    print("  conversation, so this is not context occupancy and the two must not")
-    print("  share a column in a ledger. Cache reads dominate and bill at 0.1x, so")
-    print("  the token sum overstates cost; read the USD column.")
-    if not base:
-        print("  No mark: this is the whole session, not a task's share (I10).")
+    print("  Units: BILLED tokens, summed across turns. NOT context occupancy —")
+    print("  what a window holds at one moment and what a session was billed across")
+    print("  all of them are different quantities and must never share a column.")
+    print()
+    print("  Resent is reported and never added in. Every turn hands the whole")
+    print("  conversation back, so it grows with the square of the turns and swamps")
+    print("  the work: a task inside a 40k band measured 261.7M once counted that")
+    print("  way. A total that includes it measures the shape of the conversation,")
+    print("  not the size of the job.")
+    if base:
+        actual = band_of(up + down)
+        est = base.get("_band")
+        line = f"\n  band: {actual}"
+        if est:
+            line += f", estimated {est}"
+            order = list(BANDS) + ["XL"]
+            if order.index(actual) > order.index(est):
+                line += "  — OVER"
+            elif order.index(actual) < order.index(est):
+                line += "  — under"
+        print(line)
+    else:
+        print("\n  No mark: this is the whole session, not a task's share (I10).")
 
 
 def cmd_review(a):
@@ -3630,6 +3730,8 @@ def main():
     mk = add("mark", cmd_mark)
     mk.add_argument("task", help="task id, as recorded at T1")
     mk.add_argument("--note", help="what this task is")
+    mk.add_argument("--band", metavar="S|M|L",
+                    help="the estimated size in new tokens (I10); XL is refused")
     mk.add_argument("--force", action="store_true", help="re-mark, discarding the earlier position")
     mk.add_argument("--done", action="store_true",
                     help="present it as finished and record what it cost; your lead closes it")

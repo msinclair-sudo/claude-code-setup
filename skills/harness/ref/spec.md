@@ -448,7 +448,11 @@ Every task carries an estimated cost band at [[#T1 — Task assignment]] and a m
 | **L** | 120k – 300k | needs design, touches more than one seam |
 | **XL** | > 300k | not a task — a decomposition that has not happened yet |
 
-**XL is a refusal, not a size.** It is the operational definition of [[#I8 — Tasks are short]]: if a lead cannot bring a task under L, it splits it or escalates. This is the only number in the harness that decides whether work may be issued at all.
+**The band counts NEW tokens** (up + down), not billed total. Resent context is excluded, or every band would be exceeded by the second turn and the estimate would measure conversation length instead of work.
+
+**XL is a refusal, not a size, and is now enforced.** It is the operational definition of [[#I8 — Tasks are short]]: `harness mark <task> --band XL` is refused outright, so a lead that cannot bring a task under L splits it or escalates. This is the only number in the harness that decides whether work may be issued at all.
+
+**The band is recorded on the mark, and checked at presentation.** `--band S|M|L` at open, and `--done` prints the measured band beside the estimated one. A band that was wrong is the only thing that improves the next estimate, and it is the lead's estimate that was wrong rather than the member's work — which is why the member is told to report it rather than to explain it.
 
 Rough per-transaction cost, for budgeting a task's overhead:
 
@@ -520,10 +524,24 @@ tokens accumulate across turns, because every turn resends the conversation.
 
 Recording both under the word "tokens" is precisely how *a number restated once
 acquires an owner it never had*. So `spend` prints components and never a single
-figure, and states its unit every time. Cache reads dominate the sum and bill at
-0.1×, which makes the token total actively misleading as a proxy for cost — for
-this session, 261.7M tokens is ~$194.50, and reading the token column instead of
-the dollar column would overstate it by an order of magnitude.
+figure, and states its unit every time.
+
+**Up, down, and resent — three quantities, and the third is never added in.**
+*Up* is what was newly sent: the prompt, plus whatever entered the cache for the
+first time. *Down* is what was generated. *Resent* is cache reads, which is the
+conversation handed back on every turn, and it grows with the square of the turns
+rather than with the size of the job. **New** is up plus down, and it is the only
+one of them comparable to a band: the 261.7M above sat inside a task banded at
+40k, because almost all of it was the same conversation counted again. A total
+including resent measures the shape of the exchange, not the work.
+
+**The unit is tokens and not money.** A dollar figure is a token count multiplied
+by a price table the harness would have to hold, per model, and keep correct —
+and every node may run a different model. A rate that has drifted produces a
+figure that looks authoritative, cannot be checked from the record it sits in,
+and is wrong in a ledger whose whole purpose is to be trusted. Tokens are what
+was measured; the price is somebody else's table and is not this file's to
+assert.
 
 Until enough rows are closed, `dev_ui_1`'s interim stands and is now the rule
 rather than a workaround: **session total plus stated coverage, no per-task

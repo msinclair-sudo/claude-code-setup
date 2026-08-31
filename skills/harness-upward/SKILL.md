@@ -108,11 +108,30 @@ with `fatal: Not possible to fast-forward, aborting.` Never push: a checked-out
 branch rejects pushes outright.
 
 **`T10` release** — `harness mark <task-id> --done`, then `harness release`,
-then `harness spend <task-id>` for the measured actual against the estimated band
+then `harness spend <task-id>` for the measured actual against the band
 (`I10`). That number is a subtraction only if you ran `harness mark <task-id>`
 when you accepted the task; without a mark, `spend` refuses to apportion and you
 should report the **session total with its coverage stated**, never a share you
 inferred.
+
+**The unit is tokens, and it is three numbers rather than one.**
+
+```
+  up          85,000   sent, new
+  down       140,000   generated
+  NEW        225,000   up + down — this is what a band means
+  resent  19,000,000   cache reads: the conversation handed back each turn
+```
+
+Never quote the raw total. *Resent* is the whole conversation counted again on
+every turn, so it grows with how long you talked rather than with what you did —
+a task banded at 40k once measured 261.7M that way. **New** is the figure that
+answers "how big was this", and it is the one a band is set in.
+
+If you were given a band (`--band S|M|L` when you opened the mark), `--done`
+tells you whether you landed in it. **Say so in your report when you did not.**
+A band that was wrong is the only thing that improves the next estimate, and it
+was your lead's estimate — not your work — that missed.
 
 **You present; your lead closes.** `--done` records what the task cost and that
 you believe it finished. It does **not** close it — `--close` refuses you by

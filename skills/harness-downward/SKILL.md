@@ -238,6 +238,28 @@ survive the recycle that ends the session you are answering.
 You cannot write a grandchild's brief. `dev_1`'s lead is `dev`, so `dev` writes
 it — if you are above that, tell the lead what you want and let it write.
 
+## Bands are token counts, and XL is a refusal
+
+| band | new tokens | shape |
+| --- | --- | --- |
+| S | ≤ 40k | one file, approach already known |
+| M | 40k – 120k | several files, some exploration |
+| L | 120k – 300k | needs design, touches more than one seam |
+| XL | > 300k | **not a task** — a decomposition you have not done yet |
+
+`harness mark <task> --band XL` is refused outright. If you cannot bring a piece
+under L, split it or escalate; that is the whole of `I8`.
+
+**New tokens means up + down** — what was sent for the first time plus what was
+generated. It excludes resent context, which is the conversation handed back
+every turn: count that and every band is blown by the second turn, and you are
+measuring how long the session talked instead of how big the job was.
+
+The estimate is yours and the measurement is the member's. When they come back
+apart, that is your estimate that was wrong. It is the only thing that makes the
+next one better, so ask for it plainly rather than treating an over-band as the
+member's problem.
+
 ## Cite figures, do not paste them
 
 ```bash

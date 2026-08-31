@@ -259,7 +259,33 @@ def read_state():
         # of somebody else's work-in-progress above the one item that was
         # actually the operator's, which trains a reader to stop looking. Tree
         # state belongs in the tree, where the chips already show it.
-        for b in blocks:
+        # An approval is squarely what this panel is for: work nobody requested,
+        # which no session in the tree may authorise for itself. It carries the
+        # brief's own text, because deciding whether a task is worth a session
+        # means reading the task.
+        for b in [x for x in blocks if x.get("_kind") == "approval"]:
+            att.append({
+                "kind": "approval", "owner": "operator",
+                "where": f"{pname} / {b.get('node')}",
+                "what": f"start '{b.get('task')}'?",
+                "why": (f"A lane noticed this while doing something else"
+                        + (f" — the finding '{b['from_finding']}'"
+                           if b.get("from_finding") else "")
+                        + f", and {b.get('asked_by')} wrote it up as a task. Nobody "
+                          f"asked for it, so no session in the tree may put a session "
+                          f"on it. It is not queued, `harness mark` refuses it, and "
+                          f"nothing is idle waiting: the lane carried on with its "
+                          f"queue.\n\n" + (b.get("why") or "")),
+                "do": f"(cd {shlex.quote(repo)} && harness brief "
+                      f"{shlex.quote(b.get('task') or '')} --approve)\n"
+                      f"(cd {shlex.quote(repo)} && harness brief "
+                      f"{shlex.quote(b.get('task') or '')} --decline \"why\")",
+                "project": pname, "slug": pdir.name, "node": b.get("node"),
+                "need": b.get("need"), "task": b.get("task"),
+                "root": next((n for n, sp in tree.items()
+                              if sp.get("parent") is None), "rank 0"),
+                "comments": []})
+        for b in [x for x in blocks if x.get("_kind") != "approval"]:
             att.append({
                 "kind": "grant", "owner": "operator",
                 "where": f"{pname} / {b.get('node')}", "what": b.get("need"),

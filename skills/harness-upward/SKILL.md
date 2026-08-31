@@ -35,6 +35,37 @@ now rather than in the diff. If the restatement needs a page, the task is too bi
 **Work.** Stay inside your assigned scope. Seams between children belong to your
 lead (`I9`) — a changed signature another child depends on is not yours.
 
+## What you noticed but must not act on
+
+You will find things your task did not ask about — a claim about how something
+really behaves, a fault no check can see, a reason the approach in front of you
+is wrong somewhere else. **Do not act on it.** Acting on what you noticed is
+choosing your own task. **And do not let it die in your report**, which is read
+once by one session and then ends. It is often the most expensive thing your
+session produced.
+
+```bash
+harness finding pixel-depth \
+  --what "A size in pixels is not a size on screen. The layer adds the point
+          offset before the perspective divide, so nothing at two depths is
+          painted the same size." \
+  --how  "looked at a screenshot after the arm went green; the checks assert on
+          layer props, not on what was drawn" \
+  --fact reachable-docs
+```
+
+It goes to **your lead**, one rank up, and nowhere else. Your lead decides
+whether it becomes a task; you carry on with your queue.
+
+**`--how` is required.** *Found by looking at a screenshot after the arm went
+green* is the difference between a claim your lead can weigh and one it can only
+believe. The strongest findings come from **use rather than review** — a 2px
+floor once cut reachable documents from 20 to 6 while every check written for it
+stayed green — and that is precisely the kind nothing else in the tree can see.
+
+If a number sits behind it, record the number as a fact first and cite it. A
+finding with a figure and no command behind the figure is half a finding.
+
 ## Write down what you measure, with the command
 
 You are the one running the commands, so you are the one holding the numbers.

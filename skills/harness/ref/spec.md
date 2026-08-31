@@ -322,6 +322,26 @@ A brief exists **before** its mark: the lead writes it, then the member accepts.
 **Enforcement** None, and there cannot be. A CLI cannot make a session begin. What it can do is remove every ambiguity the question could be about, and say the thing at the moment the question would otherwise be asked. If it is still asked, that is a prompt failure and not a design gap.
 **Fails when** The queue is empty and orientation says so. A node with nothing briefed asking what to do is correct; that question belongs to its lead, and `spawn` and `recycle` both warn before it can happen.
 
+### T16 — A finding crosses one rank, and becomes work only with approval
+
+**Direction** upward one rank, then downward as a gated brief.
+**Rule** Potential work noticed while doing something else is recorded as a **finding**, addressed to the **lead of the node that made the claim**. The lead either writes a brief from it or declines it on the record. A brief written from a finding is **not staffable until the operator approves it**.
+
+**The channel was missing and its absence had a shape.** A lane learns something real — that a size in pixels is not a size on screen, because the layer adds the point offset before the perspective divide, so nothing at two depths is painted alike — and there is nowhere for it to go. Not a block: it asks the operator for nothing. Not a suggestion: it is not about this task's brief. Not a fact: no command produces it. So it goes in a report, and a report is read once by one session and then ends. The most expensive thing the session produced is the thing with the shortest life.
+
+**It goes up exactly one rank, and to the lead.** The claimant may not act on it — a member doing what it noticed is choosing its own task ([[#T15 — Acceptance is not a decision]]) — and the lead is the only party that may turn it into one. Reaching past that lead is refused.
+
+**It carries how it was found**, on the same rule as [[#I13 — A measurement travels with the command that produced it]]. *Found by looking at a screenshot after the arm went green* is the difference between a claim a lead can weigh and one it can only believe, and `--how` is required. The same lane caught a regression by **use rather than review** — a 2px floor cut reachable documents from 20 to 6 while every check it had written stayed green — which is the case for the channel in one sentence: the finding was invisible to every instrument that existed, and existed only in a session that was about to end.
+
+**Approval is the operator's, and rank 0 is not an exception.** Every session is refused, including the head lead, because a lead approving the brief it just wrote is the gate approving itself. This is stricter than [[#I11 — Reach beyond the worktree is granted at enrolment]] deliberately: a grant is a capability rank 0 already holds, so making one gives it nothing, while an approval is a *decision* about whether unrequested work is worth a session. The CLI still cannot authenticate an operator and does not pretend to — it refuses the identifiable case and records who decided.
+
+**Gated means gated.** The brief is written in full and readable by everyone; it is in no queue, `harness mark` refuses it, and `spawn` and `recycle` will not start a session on it. A declined brief is never offered again but is never deleted: what a project decided against is part of what it is, and the next lead to notice the same thing deserves the answer.
+
+**Nobody waits.** The lane that raised the finding carried on with its queue, and the gate holds no session idle. That is what makes it safe to gate at all.
+
+**Enforcement** `--how` required; the addressed lead only; every session refused at `--approve`; `mark` and the queue both exclude a gated or declined brief. It reaches the operator through `harness needs` and the viewer's attention panel, carrying the brief's own text — deciding whether a task is worth a session means reading the task.
+**Fails when** A lead turns every finding into a gated brief. The queue is the operator's attention and it is finite; declining on the record is a first-class outcome and costs one line.
+
 ---
 
 ## Invariants

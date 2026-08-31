@@ -402,6 +402,24 @@ def _whoami(a):
     except Exception:
         pass
     try:
+        fnd = open_findings(ctx, node)
+        if fnd:
+            print(f"findings {len(fnd)} handed up to you: "
+                  f"{', '.join(sorted(r.get('name', k) for k, r in fnd.items()))}")
+            print(f"         potential work nobody has scoped — brief it "
+                  f"(--from-finding) or\n         decline it. harness finding --list")
+    except Exception:
+        pass
+    try:
+        gated = sorted(t for t, gb in pending_approvals(ctx).items()
+                       if gb.get("node") == node
+                       or ctx.tree["nodes"].get(gb.get("node"), {}).get("parent") == node)
+        if gated:
+            print(f"gated    {len(gated)} brief(s) waiting on the operator: "
+                  f"{', '.join(gated)}  — not staffable")
+    except Exception:
+        pass
+    try:
         # Grounding, not an instruction. A member does not need the project's
         # purpose to execute a complete brief, so this is one line and a pointer,
         # never a demand to go and read. Rank 0 with no charter is the one case
@@ -1393,6 +1411,15 @@ def cmd_mark(a):
         die(REFUSED, f"'{a.task}' is briefed for '{b.get('node')}', not '{node}'. "
                      f"A task belongs to one node.")
 
+    if awaiting(b):
+        die(REFUSED,
+            f"'{a.task}' is not approved. It was written from something noticed rather "
+            f"than\n           asked for, and the operator has not said it is worth a "
+            f"session yet.\n           It is in `harness needs`. Carry on with what is "
+            f"queued.")
+    if ((b.get("approval") or {}).get("state")) == "declined":
+        die(REFUSED, f"'{a.task}' was declined by the operator: "
+                     f"{(b['approval'].get('why'))}")
     tot = read_spend(sid)
     if f.exists() and not a.force:
         die(REFUSED, f"{a.task} is already marked at {json.loads(f.read_text()).get('_at')} "
@@ -2138,24 +2165,41 @@ def scan_needs():
     """
     out = []
     for pdir in sorted(p for p in HOME_STATE.glob("*") if p.is_dir()):
-        b = pdir / "blocks"
-        if not b.is_dir():
-            continue
         repo = ""
         try:
             repo = json.loads((pdir / "binding.json").read_text()).get("repo", "")
         except Exception:
             pass
-        for f in sorted(b.glob("*.json")):
+        proj = Path(repo).name if repo else pdir.name
+        b = pdir / "blocks"
+        for f in (sorted(b.glob("*.json")) if b.is_dir() else []):
             try:
                 r = json.loads(f.read_text())
             except Exception:
                 continue
             if r.get("resolved_at"):
                 continue
-            r["_repo"] = repo
-            r["_project"] = Path(repo).name if repo else pdir.name
+            r["_repo"], r["_project"], r["_kind"] = repo, proj, "block"
             out.append(r)
+        # Two different things wait on the operator and they are not the same
+        # question. A block asks whether a lane may REACH something. An approval
+        # asks whether work nobody requested is worth a session at all. Both are
+        # theirs and belong in one queue; neither should be phrased as the other.
+        bd = pdir / "briefs"
+        for f in (sorted(bd.glob("*.json")) if bd.is_dir() else []):
+            try:
+                r = json.loads(f.read_text())
+            except Exception:
+                continue
+            if (r.get("approval") or {}).get("state") != "pending":
+                continue
+            out.append({"_repo": repo, "_project": proj, "_kind": "approval",
+                        "task": r.get("task") or f.stem, "node": r.get("node"),
+                        "need": f"approve the task '{r.get('task') or f.stem}'",
+                        "why": (r.get("text") or "").strip(),
+                        "from_finding": r.get("from_finding") or "",
+                        "raised_at": (r.get("approval") or {}).get("asked_at"),
+                        "asked_by": (r.get("approval") or {}).get("asked_by")})
     out.sort(key=lambda r: r.get("raised_at") or "")
     return out
 
@@ -2602,6 +2646,151 @@ def cmd_fact(a):
                   f"{str(x.get('sha'))[:8]}  {x.get('node')}")
 
 
+def all_findings(ctx):
+    d = ctx.state / "findings"
+    out = {}
+    for p in (sorted(d.glob("*.json")) if d.is_dir() else []):
+        try:
+            r = json.loads(p.read_text())
+        except Exception:
+            continue
+        r.setdefault("name", p.stem)
+        out[p.stem] = r
+    return out
+
+
+def open_findings(ctx, lead=None):
+    """Findings nobody has turned into a task or declined.
+
+    Addressed to the LEAD of the node that made the claim, because the claim is
+    about work the claimant was not given and must not take. A member that acts
+    on what it noticed is choosing its own task; a member that says nothing has
+    thrown away the most expensive thing the session produced.
+    """
+    out = {}
+    for k, r in all_findings(ctx).items():
+        if r.get("became") or r.get("dropped_at"):
+            continue
+        if lead is not None and r.get("to") != lead:
+            continue
+        out[k] = r
+    return out
+
+
+def cmd_finding(a):
+    """Potential work, noticed while doing something else, handed one rank up.
+
+    This is the channel that was missing, and its absence had a shape: a lane
+    would learn something real — that a pixel size is not a size on screen
+    because the offset is added before the perspective divide, so nothing at two
+    depths is painted alike — and there was nowhere for it to go. Not a block: it
+    asks the operator for nothing. Not a suggestion: it is not about this task's
+    brief. Not a fact: there is no command that produces it. So it went in a
+    report, and a report is read once by one session and then ends.
+
+    It goes to the lead, not to the operator and not sideways, because the lead
+    is the only party that may turn it into a task. And it carries HOW it was
+    found on the same rule as [[I13]]: 'found by looking at a screenshot after
+    the arm went green' is the difference between a claim a lead can weigh and
+    one it can only believe.
+    """
+    ctx = Ctx(); ctx.require_enrolled()
+    node, _ = ctx.node()
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    who = f"{node} (session {sid[:8]})" if sid else "operator"
+    f = ctx.state_file("findings", a.name or "_", ".json")
+
+    if a.list or not a.name:
+        rows = open_findings(ctx, None if a.all else node)
+        if not rows:
+            print("no open findings" + ("" if a.all else " addressed to you"))
+            return
+        for k, r in sorted(rows.items()):
+            print(f"  {r.get('name', k)}   from {r.get('from')} → {r.get('to')}   "
+                  f"{_ago(r.get('at'))}")
+            for line in (r.get("what") or "").splitlines():
+                print(f"      {line}")
+            if r.get("how"):
+                print(f"    found by: {r['how']}")
+            if r.get("fact"):
+                print(f"    fact: {r['fact']}  — harness fact {r['fact']}")
+        print(f"\n{len(rows)} open. Each is potential work nobody has scoped. Turn one "
+              f"into a task:")
+        print(f"  harness brief <task> --for <node> --from-finding <name> --write \"...\"")
+        print(f"or decline it, on the record:  harness finding <name> --drop \"why\"")
+        return
+
+    _, r = (f, json.loads(f.read_text())) if f.exists() else (f, None)
+
+    if a.drop is not None:
+        if r is None:
+            die(REFUSED, f"no finding '{a.name}'")
+        if not a.drop.strip():
+            die(REFUSED, "say why. A finding that disappears without a reason is "
+                         "indistinguishable\n           from one nobody read, and the "
+                         "next lane will find it again.")
+        if r.get("to") != node:
+            die(REFUSED, f"'{a.name}' was handed to '{r.get('to')}', not '{node}'. "
+                         f"Only the lead it was\n           addressed to decides what "
+                         f"becomes of it.")
+        r["dropped_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        r["dropped_by"] = who
+        r["dropped_why"] = a.drop
+        f.write_text(json.dumps(r, indent=2) + "\n")
+        print(f"declined '{a.name}' — it stays on the record with your reason")
+        print(f"  {a.drop}")
+        return
+
+    if a.what is None:
+        if r is None:
+            die(REFUSED, f"no finding '{a.name}'. Record one:\n"
+                         f"           harness finding {a.name} --what \"...\" "
+                         f"--how \"how you found it\"")
+        print(f"{r.get('name')}   from {r.get('from')} → {r.get('to')}   "
+              f"{_ago(r.get('at'))}   at {str(r.get('sha'))[:8]}")
+        print()
+        for line in (r.get("what") or "").splitlines():
+            print(f"  {line}")
+        if r.get("how"):
+            print(f"\n  found by: {r['how']}")
+        if r.get("fact"):
+            print(f"  fact:     {r['fact']}")
+        if r.get("became"):
+            print(f"\n  became the task '{r['became']}'")
+        if r.get("dropped_at"):
+            print(f"\n  declined {str(r['dropped_at'])[:19]} by {r.get('dropped_by')}: "
+                  f"{r.get('dropped_why')}")
+        return
+
+    if not a.what.strip():
+        die(REFUSED, "an empty finding says nothing")
+    if not (a.how or "").strip():
+        die(REFUSED,
+            "--how is required: how you came to this.\n"
+            "           'found by looking at a screenshot after the arm went green' is "
+            "the\n           difference between a claim your lead can weigh and one it "
+            "can only\n           believe. A claim with no derivation is the thing this "
+            "harness spent\n           four sessions learning not to act on.")
+    if a.fact and load_fact(ctx, a.fact)[1] is None:
+        die(REFUSED, f"no fact '{a.fact}' to cite. Record the measurement first: "
+                     f"harness fact {a.fact} --is \"...\" --from \"...\"")
+    lead = ctx.tree["nodes"].get(node, {}).get("parent")
+    if not lead:
+        die(REFUSED, f"'{node}' is rank 0 and has no lead to hand this to. What you "
+                     f"noticed is\n           yours to brief or to drop; the finding "
+                     f"channel exists to cross a rank.")
+    rec = {"name": a.name, "what": a.what, "how": a.how, "fact": a.fact or "",
+           "from": node, "to": lead, "by": who,
+           "sha": git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip(),
+           "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(rec, indent=2) + "\n")
+    print(f"finding '{a.name}' handed to {lead}")
+    print(f"  It sees it at its next harness command. Nothing else happens: this is")
+    print(f"  potential work, and it is not yours to start — carry on with your brief.")
+    return
+
+
 def load_brief(ctx, task):
     f = ctx.state_file("briefs", task, ".json")
     if not f.exists():
@@ -2693,6 +2882,22 @@ def briefed_unstarted(ctx, node):
     return out
 
 
+def awaiting(b):
+    """A brief written, visible, and not staffable until the operator says so."""
+    return (b.get("approval") or {}).get("state") == "pending"
+
+
+def refused(b):
+    """Declined by the operator. The brief stays — what was decided against is
+    part of what the project is, and the next lead to notice the same thing
+    deserves the answer rather than the silence. It is simply never offered."""
+    return (b.get("approval") or {}).get("state") == "declined"
+
+
+def pending_approvals(ctx):
+    return {k: b for k, b in all_briefs(ctx).items() if awaiting(b)}
+
+
 def queue(ctx, node):
     """The briefs waiting for this node, in the order its lead put them.
 
@@ -2709,6 +2914,7 @@ def queue(ctx, node):
     derived = {tkey(b.get("from")) for b in briefs.values() if b.get("from")}
     rows = [b for k, b in briefs.items()
             if b.get("node") == node and k not in derived
+            and not awaiting(b) and not refused(b)
             and not ctx.state_file("marks", k, ".json").exists()]
     rows.sort(key=lambda b: (b.get("seq") if b.get("seq") is not None else 10**6,
                              b.get("written_at") or ""))
@@ -2802,7 +3008,9 @@ def cmd_queue(a):
             die(REFUSED, f"'{n}' is not a node in {ctx.tree_path}")
         q = queue(ctx, n)
         openm = sorted(t for t, r in open_marks(ctx).items() if r.get("_node") == n)
-        if not q and not openm:
+        gated = [x for x in all_briefs(ctx).values()
+                 if x.get("node") == n and awaiting(x)]
+        if not q and not openm and not gated:
             continue
         shown = True
         print(f"{n}")
@@ -2810,6 +3018,9 @@ def cmd_queue(a):
             r = open_marks(ctx)[t]
             state = "presented, waiting on sign-off" if r.get("_presented_at") else "OPEN"
             print(f"    ▸ {t:<24} {state}")
+        for gb in gated:
+            print(f"    gate {gb['task']:<24} waiting on the operator "
+                  f"({_ago((gb.get('approval') or {}).get('asked_at'))})")
         head = [b for b in q if not b.get("coupled_to")]
         for i, b in enumerate(head):
             mark = "next" if i == 0 and not openm else f"  {i + 1}."
@@ -2953,6 +3164,21 @@ def cmd_brief(a):
                "suggestions": (b or {}).get("suggestions", [])}
         if parent_task:
             rec["from"] = parent_task
+        fnd = None
+        if a.from_finding:
+            _, fnd = (ctx.state_file("findings", a.from_finding, ".json"),
+                      None)
+            ff = ctx.state_file("findings", a.from_finding, ".json")
+            if not ff.exists():
+                die(REFUSED, f"no finding '{a.from_finding}'. "
+                             f"harness finding --list shows the open ones.")
+            fnd = json.loads(ff.read_text())
+            if fnd.get("to") != me:
+                die(REFUSED,
+                    f"'{a.from_finding}' was handed to '{fnd.get('to')}', not '{me}'.\n"
+                    f"           A finding crosses exactly one rank. If it belongs "
+                    f"further up, hand\n           your own on rather than reaching "
+                    f"past the lead it was addressed to.")
         cited = a.fact or (b or {}).get("facts") or []
         for nm in cited:
             if load_fact(ctx, nm)[1] is None:
@@ -2962,6 +3188,24 @@ def cmd_brief(a):
                     f"{nm} --is \"...\" --from \"...\"")
         if cited:
             rec["facts"] = list(dict.fromkeys(cited))
+        # Work nobody asked for does not get staffed on a lead's say-so. A
+        # finding is potential work by definition — the claimant noticed it while
+        # doing something else and nobody has decided it is worth a session. So
+        # the brief is written in full, sits where everyone can read it, and is
+        # not staffable until the operator says so.
+        if a.from_finding or a.needs_approval:
+            prev_ap = (b or {}).get("approval") or {}
+            if prev_ap.get("state") != "approved":
+                rec["approval"] = {"state": "pending",
+                                   "asked_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                                   "asked_by": who,
+                                   "from_finding": a.from_finding or ""}
+            else:
+                rec["approval"] = prev_ap
+        elif (b or {}).get("approval"):
+            rec["approval"] = b["approval"]
+        if a.from_finding:
+            rec["from_finding"] = a.from_finding
         if coupled:
             rec["coupled_to"] = coupled
             rec["coupled_why"] = a.why or (b or {}).get("coupled_why") or ""
@@ -2975,6 +3219,21 @@ def cmd_brief(a):
         print(f"brief for '{target}' / {a.task}  (revision {rev}, by {who})")
         if a.from_task:
             print(f"  splits '{parent_task}', the brief '{me}' was handed")
+        if a.from_finding:
+            fnd["became"] = a.task
+            fnd["became_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+            ctx.state_file("findings", a.from_finding, ".json").write_text(
+                json.dumps(fnd, indent=2) + "\n")
+            print(f"  from {fnd.get('from')}'s finding '{a.from_finding}' — it stops "
+                  f"asking you for a decision")
+        if (rec.get("approval") or {}).get("state") == "pending":
+            write_needs(scan_needs())
+            told = notify("approval", scan_needs())
+            print(f"  NOT STAFFABLE until the operator approves it. It is queued "
+                  f"nowhere and\n  `harness mark {a.task}` is refused until then."
+                  + ("  (notifier fired)" if told else ""))
+            print(f"  It is in `harness needs` and in the viewer, with your text, "
+                  f"for them to read.")
         if a.with_task:
             print(f"  runs in the SAME session as '{a.with_task}', which is why it "
                   f"is not queued separately")
@@ -3035,6 +3294,47 @@ def cmd_brief(a):
         print(f"    harness brief {a.task} --write \"...\"")
         return
 
+    if a.approve or a.decline is not None:
+        if b is None:
+            die(REFUSED, f"no brief for '{a.task}'")
+        if not awaiting(b):
+            st = (b.get("approval") or {}).get("state") or "not gated"
+            die(REFUSED, f"'{a.task}' is not waiting on approval ({st})")
+        # No session may do this, including rank 0. A grant is a capability rank
+        # 0 already holds, so letting it make one gives it nothing; approval is a
+        # DECISION, and a head lead approving the work it just briefed is the
+        # gate approving itself. The CLI cannot authenticate an operator and does
+        # not pretend to — it refuses the one case that is identifiable, and
+        # records who did it so the rest is discoverable afterwards.
+        if sid:
+            die(REFUSED,
+                f"'{me}' is a session. Approving work is the operator's, and rank 0 is "
+                f"not\n           an exception: a lead approving the brief it wrote is "
+                f"the gate approving\n           itself. It is in `harness needs` and "
+                f"in `harness gui`, where they can\n           read the brief and "
+                f"decide.")
+        ap = b["approval"]
+        ap["state"] = "approved" if a.approve else "declined"
+        ap["decided_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        ap["decided_by"] = "operator"
+        if a.decline is not None:
+            if not a.decline.strip():
+                die(REFUSED, "say why it is declined — the brief stays on the record "
+                             "and the next\n           lead to notice the same thing "
+                             "deserves the answer.")
+            ap["why"] = a.decline
+        f.write_text(json.dumps(b, indent=2) + "\n")
+        write_needs(scan_needs())
+        if a.approve:
+            print(f"approved {a.task} — it is now at the back of {b.get('node')}'s "
+                  f"queue.")
+            print(f"  Nothing starts by itself: its lead recycles or spawns "
+                  f"{b.get('node')} when ready.")
+        else:
+            print(f"declined {a.task}: {a.decline}")
+            print(f"  The brief stays. It is not queued and cannot be marked.")
+        return
+
     if a.resolve:
         if b is None:
             die(REFUSED, f"no brief for '{a.task}'")
@@ -3075,6 +3375,17 @@ def cmd_brief(a):
     print(f"  by {b.get('written_by')} at {str(b.get('written_at'))[:19]}")
     if b.get("from"):
         print(f"  splits   {b['from']}")
+    ap = b.get("approval") or {}
+    if ap.get("state") == "pending":
+        print(f"  GATED    not staffable — waiting on the operator since "
+              f"{_ago(ap.get('asked_at'))}")
+    elif ap.get("state") == "declined":
+        print(f"  DECLINED by the operator: {ap.get('why')}")
+    elif ap.get("state") == "approved":
+        print(f"  approved by the operator {_ago(ap.get('decided_at'))}")
+    if b.get("from_finding"):
+        print(f"  from     {b['from_finding']}, a finding — harness finding "
+              f"{b['from_finding']}")
     for nm in (b.get("facts") or []):
         # Resolved at READ time, never pasted at write time. A figure typed into
         # prose is a figure that ages silently, and the honest thing to write
@@ -3211,6 +3522,25 @@ def cmd_needs(a):
         return
     for r in rows:
         node, need = r.get("node", "?"), r.get("need", "")
+        if r.get("_kind") == "approval":
+            print(f"{r['_project']} · {node}{'':<4}APPROVAL   asked "
+                  f"{_ago(r.get('raised_at') or '')}")
+            print(f"  task     {r.get('task')}   written by {r.get('asked_by')}")
+            if r.get("from_finding"):
+                print(f"  from     '{r['from_finding']}', something a lane noticed "
+                      f"while doing something else")
+            print()
+            for line in (r.get("why") or "(no text)").splitlines()[:14]:
+                print(f"      {line}")
+            print()
+            repo = r.get("_repo") or "."
+            print(f"  approve  (cd {shlex.quote(repo)} && harness brief "
+                  f"{shlex.quote(r.get('task') or '')} --approve)")
+            print(f"  decline  (cd {shlex.quote(repo)} && harness brief "
+                  f"{shlex.quote(r.get('task') or '')} --decline \"why\")")
+            print(f"  Nobody is idle over this — the lane carried on with its queue.")
+            print()
+            continue
         print(f"{r['_project']} · {node}{'':<4}raised {_ago(r.get('raised_at', ''))}")
         print(f"  needs    {need}")
         print(f"  for      {r.get('why') or '—'}")
@@ -3222,8 +3552,10 @@ def cmd_needs(a):
               f"{shlex.quote(need)} --reason {shlex.quote(reason)})")
         print(f"  then     (cd {shlex.quote(repo)} && harness recycle {node})")
         print()
-    print(f"{len(rows)} open. Granting also closes the block; the node picks the reach")
-    print("up when it is next spawned or recycled, never mid-task.")
+    nb = sum(1 for r in rows if r.get("_kind") != "approval")
+    print(f"{nb} block(s), {len(rows) - nb} approval(s). Granting also closes a block; "
+          f"the node picks\nthe reach up when it is next spawned or recycled, never "
+          f"mid-task.")
     if not (HOME_STATE / "notify").exists():
         print(f"\nNo notifier installed. To be told rather than to look, make "
               f"{HOME_STATE / 'notify'}\nexecutable — it is run with HARNESS_SUMMARY, "
@@ -3816,6 +4148,14 @@ def main():
                     help="propose a change to your own brief; your lead decides")
     br.add_argument("--comment", metavar="TEXT",
                     help="context for whoever works on it; does NOT change the brief")
+    br.add_argument("--from-finding", dest="from_finding", metavar="NAME",
+                    help="the finding this task comes from; gates it on operator approval")
+    br.add_argument("--needs-approval", dest="needs_approval", action="store_true",
+                    help="write it, but do not let it be staffed until the operator agrees")
+    br.add_argument("--approve", action="store_true",
+                    help="operator only: release a gated task into its node's queue")
+    br.add_argument("--decline", metavar="WHY",
+                    help="operator only: refuse a gated task, on the record")
     br.add_argument("--fact", action="append", metavar="NAME",
                     help="cite a recorded measurement; resolved live when the brief "
                          "is read (repeatable)")
@@ -3839,6 +4179,14 @@ def main():
     nt = add("note", cmd_note)
     nt.add_argument("task", help="task id, as recorded at T1")
     nt.add_argument("--add", metavar="TEXT", help="append a comment; never edits an earlier one")
+    fd = add("finding", cmd_finding)
+    fd.add_argument("name", nargs="?", help="short name for the thing you noticed")
+    fd.add_argument("--what", metavar="TEXT", help="the claim, in full")
+    fd.add_argument("--how", metavar="TEXT", help="how you came to it — required")
+    fd.add_argument("--fact", metavar="NAME", help="a recorded measurement behind it")
+    fd.add_argument("--drop", metavar="WHY", help="the lead declines it, on the record")
+    fd.add_argument("--list", action="store_true", help="open findings addressed to you")
+    fd.add_argument("--all", action="store_true", help="every open finding in the tree")
     ft = add("fact", cmd_fact)
     ft.add_argument("name", nargs="?", help="what the measurement is called")
     ft.add_argument("--is", dest="is_", metavar="VALUE",

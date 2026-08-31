@@ -238,6 +238,40 @@ survive the recycle that ends the session you are answering.
 You cannot write a grandchild's brief. `dev_1`'s lead is `dev`, so `dev` writes
 it — if you are above that, tell the lead what you want and let it write.
 
+## Findings come up to you, and become work only with approval
+
+`whoami` tells you when a child has handed one up:
+
+```
+findings 1 handed up to you: pixel-depth
+         potential work nobody has scoped — brief it (--from-finding) or
+         decline it. harness finding --list
+```
+
+Two outcomes, and both are first class:
+
+```bash
+harness brief pixel-size-fix --for dev_1 --from-finding pixel-depth --write "..."
+harness finding pixel-depth --drop "why it is not worth a session"
+```
+
+**A brief written from a finding is gated on the operator.** It is written in
+full, everyone can read it, and it is in no queue — `harness mark` refuses it and
+`recycle` will not start on it — until the operator approves. **You cannot
+approve it yourself, and neither can rank 0**: a lead approving the brief it just
+wrote is the gate approving itself.
+
+Nobody is idle over it. The lane that raised the finding carried on with its
+queue, which is what makes gating safe.
+
+**Do not gate everything.** The operator's queue is their attention and it is
+finite. A finding you would not spend a session on is one you decline, in a line,
+on the record — and the record is the point: the next lead to notice the same
+thing gets your answer instead of the silence.
+
+`--needs-approval` puts the same gate on any brief, finding or not, when you want
+work written up but not started.
+
 ## Bands are token counts, and XL is a refusal
 
 | band | new tokens | shape |

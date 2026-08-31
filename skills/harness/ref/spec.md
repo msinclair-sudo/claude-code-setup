@@ -530,6 +530,24 @@ Understanding gained here also travels upward. A lead that reviewed its children
 
 The ground moves only at task boundaries, so two catch-ups is frequent only if boundaries are close together. A lead's boundary is *between integrations*, a narrower window than a member's, and it narrows with depth.
 
+### I12 — The project says what it is before it is divided
+
+**Rule** A **charter** holds what the project is for and which features are in scope, in prose, and every node can read it. It sits beside the briefs as its own object: a project description and, nested but separate, one description per major feature. It is written by rank 0 or by the operator directly, and by nobody else.
+
+**What goes wrong without it, observed.** A head lead with no charter divides the only thing it can see. Reading a repository it finds failing checks, stale docstrings and disagreements between artefacts, and produces work items that are faithful, well specified, and **the maintenance backlog wearing a plan's clothes**. Of five work items written on 2026-08-31, four were derived from the state of the instrument suite and the documentation, and one from a feature — and the one was the only one where the operator had supplied a purpose in their own words. Given a feature it wrote a feature; given a test suite it wrote test-suite work.
+
+**A backlog cannot be prioritised or bounded.** Nothing in it says what matters, because it was derived from what happens to be broken; and nothing in it can say what is **out** of scope, because being out of scope is not a property a failing check has. Both of those are the charter's job, and neither is any brief's.
+
+**Prose, and deliberately not a specification.** Written to be understood, not implemented from. The reader who has to check it is a person, and a technical document is the format a person will not read closely enough to notice that it describes the wrong project. This is the one artefact in the system whose purpose is to be argued with by the operator, which is why it is also the one thing the viewer lets them **edit** rather than comment on.
+
+**Read by all, required of none.** A member does not need the project's purpose to execute a complete brief, and pushing one at it would hand back the context its task was scoped to exclude ([[#T1 — Task assignment]]). But *why are we doing this* now has an answer that does not depend on a lead being awake. Orientation prints one line and a pointer, never a demand to go and read; the exception is rank 0 with no charter, which is told plainly.
+
+**It does not reintroduce the drip feed.** The 39% penalty is about a **task's specification** arriving in pieces. The charter is not part of any task's specification; it is the standing frame that makes a brief interpretable, and it is available whole before the first brief exists. The failure mode to watch is the charter absorbing implementation detail while briefs shrink into pointers at it — which is the drip feed reassembled through a side door. The line: **the charter says what and why, a brief says how and done.** If a sentence would change when the code changes, it is in the wrong document.
+
+**A retired feature stays on the charter**, marked out of scope with its reason. What a project decided not to build is part of what it is, and the next person to propose it deserves the answer rather than the silence.
+
+**Fails when** rank 0 drafts a charter by reading the repository. It will describe the backlog in prose, more confidently than before, and every brief will then pass any check made against it. The operator's correction is the deliverable, not the draft.
+
 ---
 
 ## Runtime

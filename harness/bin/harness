@@ -402,6 +402,25 @@ def _whoami(a):
     except Exception:
         pass
     try:
+        # Grounding, not an instruction. A member does not need the project's
+        # purpose to execute a complete brief, so this is one line and a pointer,
+        # never a demand to go and read. Rank 0 with no charter is the one case
+        # that is a problem, and it is told plainly.
+        _, ch = load_charter(ctx)
+        txt = ((ch.get("description") or {}).get("text") or "").strip()
+        if txt:
+            head = txt.splitlines()[0]
+            n = len(charter_features(ch))
+            print(f"charter  {head[:64]}{'…' if len(head) > 64 else ''}"
+                  + (f"  ({n} feature(s))" if n else "")
+                  + "  — harness charter")
+        elif ctx.rank(node) == 0:
+            print("charter  none written — nothing states what this project is for, "
+                  "so the only\n         work visible from here is whatever happens to "
+                  "be broken. harness charter")
+    except Exception:
+        pass
+    try:
         # Work handed to you that has gone nowhere. For a member that means a
         # brief with no mark; for a lead it also means a brief it has not split,
         # which is the one place a cascade stops silently — the rank below never
@@ -2043,6 +2062,168 @@ def _ago(ts):
     return f"{d // 86400}d ago"
 
 
+def load_charter(ctx):
+    """What the project is, and which features are in scope. One object, held
+    beside the briefs because it is the same kind of thing: a working document
+    the operator owns, not a record that must survive audit.
+
+    It exists because a tree with no statement of purpose divides the only thing
+    it can see. Rank 0 reading a repository finds failing checks, stale
+    docstrings and disagreements between artefacts, and if nothing says what the
+    project is FOR, that list becomes the plan. It is a maintenance backlog
+    wearing a plan's clothes: it cannot be prioritised, because nothing in it
+    says what matters, and it cannot say what is OUT of scope, because it was
+    derived from what happens to be broken.
+
+    The charter is prose, deliberately. Written to be understood rather than
+    implemented from — because the reader who has to check it is a person, and a
+    technical specification is the format a person will not read closely enough
+    to notice that it describes the wrong project.
+    """
+    f = ctx.state / "charter.json"
+    if not f.exists():
+        return f, {"features": {}}
+    try:
+        c = json.loads(f.read_text())
+    except json.JSONDecodeError:
+        die(REFUSED, f"{f} is not valid JSON — refusing to overwrite a charter "
+                     f"it cannot read")
+    c.setdefault("features", {})
+    return f, c
+
+
+def charter_features(c, include_retired=False):
+    return {k: v for k, v in sorted((c.get("features") or {}).items())
+            if include_retired or not v.get("retired_at")}
+
+
+def cmd_charter(a):
+    """Read it from anywhere; write it from rank 0 or from a shell.
+
+    Every node can read it and none is required to. That asymmetry is the point:
+    a member does not need the project's purpose to execute a complete brief, and
+    making it read one would be handing it context its task was scoped to
+    exclude. But a member that wants to ask WHY has somewhere to look, and until
+    now the only answer to that question was its lead's availability.
+
+    Writing is rank 0's, or the operator's directly. A lead cannot amend the
+    scope it was handed — that is the same act as a node setting its own task,
+    one level up and harder to see.
+    """
+    ctx = Ctx(); ctx.require_enrolled()
+    node, _ = ctx.node()
+    f, c = load_charter(ctx)
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    who = f"{node} (session {sid[:8]})" if sid else "operator"
+    now = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+
+    writing = a.write is not None or a.retire is not None
+    if writing and sid and ctx.rank(node) != 0:
+        die(REFUSED,
+            f"'{node}' is rank {ctx.rank(node)}. The charter is rank 0's, or the "
+            f"operator's directly.\n           A lead amending the scope it was "
+            f"handed is a node setting its own task,\n           one rank up and "
+            f"harder to see. If it is wrong, say so to your lead.")
+
+    if a.json:
+        print(json.dumps(c, indent=2)); return
+
+    if a.retire is not None:
+        if not a.feature:
+            die(REFUSED, "--retire needs --feature <name>")
+        k = tkey(a.feature)
+        if k not in (c.get("features") or {}):
+            die(REFUSED, f"no feature '{a.feature}' in the charter")
+        if not a.retire.strip():
+            die(REFUSED, "say why it left scope. A feature that vanishes without a "
+                         "reason\n           is indistinguishable from one nobody "
+                         "got to.")
+        # Retired, never deleted. What a project decided NOT to build is part of
+        # what it is, and the next person to propose it deserves the answer.
+        c["features"][k].update(retired_at=now, retired_by=who, retired_why=a.retire)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(c, indent=2) + "\n")
+        print(f"retired '{c['features'][k].get('name', k)}' — it stays on the "
+              f"charter, marked out of scope")
+        return
+
+    if a.write is not None:
+        if not a.write.strip():
+            die(REFUSED, "an empty charter is worse than none — it reads as though "
+                         "the question\n           was answered.")
+        if a.feature:
+            k = tkey(a.feature)
+            prev = (c["features"].get(k) or {})
+            c["features"][k] = dict(prev, name=a.feature, text=a.write,
+                                    revision=prev.get("revision", 0) + 1,
+                                    written_by=who, written_at=now,
+                                    retired_at=None, retired_by=None, retired_why=None)
+            rev = c["features"][k]["revision"]
+        else:
+            prev = c.get("description") or {}
+            c["description"] = {"text": a.write, "revision": prev.get("revision", 0) + 1,
+                                "written_by": who, "written_at": now}
+            rev = c["description"]["revision"]
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(c, indent=2) + "\n")
+        what = f"feature '{a.feature}'" if a.feature else "the project description"
+        print(f"charter: {what} written  (revision {rev}, by {who})")
+        if rev > 1:
+            print("  the previous text is gone — the charter is what the project is "
+                  "NOW, not how it got here")
+        print("  Every node can read it: harness charter")
+        return
+
+    if a.feature:
+        k = tkey(a.feature)
+        ft = (c.get("features") or {}).get(k)
+        if not ft:
+            near = ", ".join(v.get("name", k) for k, v
+                             in charter_features(c).items()) or "none"
+            die(REFUSED, f"no feature '{a.feature}' in the charter. In scope: {near}")
+        print(f"{ft.get('name', k)}   revision {ft.get('revision')}"
+              + ("   OUT OF SCOPE" if ft.get("retired_at") else ""))
+        print(f"  by {ft.get('written_by')} at {str(ft.get('written_at'))[:19]}\n")
+        for line in (ft.get("text") or "").splitlines() or [""]:
+            print(f"  {line}")
+        if ft.get("retired_at"):
+            print(f"\n  retired {str(ft['retired_at'])[:19]} by {ft.get('retired_by')}: "
+                  f"{ft.get('retired_why')}")
+        return
+
+    d = c.get("description") or {}
+    if not d.get("text"):
+        print("no charter for this project — nothing states what it is for.")
+        if ctx.rank(node) == 0 or not sid:
+            print("  Without one the only work visible from here is whatever "
+                  "happens to be broken,\n  and a backlog is not a plan. Write it, "
+                  "or edit it in `harness gui`:")
+            print('    harness charter --write "..."')
+            print('    harness charter --feature "<name>" --write "..."')
+        return
+    print(f"{ctx.repo.name}   charter revision {d.get('revision')}")
+    print(f"  by {d.get('written_by')} at {str(d.get('written_at'))[:19]}\n")
+    for line in (d.get("text") or "").splitlines():
+        print(f"  {line}")
+    live = charter_features(c)
+    gone = {k: v for k, v in (c.get("features") or {}).items() if v.get("retired_at")}
+    if live:
+        print(f"\n  {len(live)} feature(s) in scope:")
+        for k, ft in live.items():
+            first = (ft.get("text") or "").strip().splitlines()
+            print(f"    {ft.get('name', k)}")
+            if not a.full and first:
+                print(f"      {first[0][:96]}")
+            for line in (ft.get("text") or "").splitlines() if a.full else []:
+                print(f"      {line}")
+    if gone:
+        print(f"\n  {len(gone)} out of scope: "
+              f"{', '.join(v.get('name', k) for k, v in gone.items())}")
+    if not a.full and live:
+        print(f"\n  harness charter --full        every feature in full")
+        print(f"  harness charter --feature <name>")
+
+
 def load_brief(ctx, task):
     f = ctx.state_file("briefs", task, ".json")
     if not f.exists():
@@ -3065,6 +3246,14 @@ def main():
     br.add_argument("--from-block", dest="from_block", metavar="NEED",
                     help="the answered block this task carries down")
     br.add_argument("--resolve", type=int, metavar="N", help="mark suggestion N addressed")
+    ch = add("charter", cmd_charter)
+    ch.add_argument("--feature", metavar="NAME", help="read or write one feature")
+    ch.add_argument("--write", metavar="TEXT",
+                    help="the project description, or a feature's with --feature")
+    ch.add_argument("--retire", metavar="WHY",
+                    help="take a feature out of scope; it stays on the charter")
+    ch.add_argument("--full", action="store_true", help="every feature in full")
+    ch.add_argument("--json", action="store_true")
     nt = add("note", cmd_note)
     nt.add_argument("task", help="task id, as recorded at T1")
     nt.add_argument("--add", metavar="TEXT", help="append a comment; never edits an earlier one")

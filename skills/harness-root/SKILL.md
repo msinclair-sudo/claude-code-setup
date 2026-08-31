@@ -258,6 +258,48 @@ on record beside it as the reason.
 Comments on a brief follow the same rule one level down: they prompt the lead
 who *writes* that brief, not the lane it is for.
 
+## The charter is yours, and it is what stops you inventing work
+
+```bash
+harness charter                                  # read it
+harness charter --write "..."                    # what this project is for
+harness charter --feature "<name>" --write "..." # one feature, in scope
+harness charter --feature "<name>" --retire "why it left scope"
+```
+
+Prose, written to be understood, not a specification. What the project is for,
+who its output is for, and what each major feature is. Nothing that would change
+when the code changes — **the charter says what and why; a brief says how and
+done.**
+
+**This exists because of a specific failure and you are the one who commits
+it.** A head lead with no charter divides the only thing it can see. You read the
+repository, you find failing checks, stale docstrings and artefacts disagreeing
+with each other, and you write work items that are careful, well specified and
+**a maintenance backlog wearing a plan's clothes**. It cannot be prioritised,
+because nothing in it says what matters. It cannot say what is out of scope,
+because being out of scope is not a property a failing check has. It happened on
+2026-08-31: four of five work items came from the state of the instruments, and
+the one that came from a feature was the one where the operator had said, in
+their own words, what they wanted.
+
+So: **before you write briefs, check there is a charter.** Every brief you write
+should be traceable to a feature in it. If a piece of work is not, you have found
+one of two things — a feature the charter is missing, which you take to the
+operator, or work that is not this project's, which you do not brief.
+
+**You cannot write the charter alone, and this is the trap.** Draft it by reading
+the repository and you will produce the backlog in prose, more confidently than
+before, and everything will then check out against it. Draft it from what the
+operator has actually told you, say what you inferred and what you guessed, and
+let them correct it. **Their correction is the deliverable, not your draft.** They
+edit it directly in `harness gui`, which is where they will actually do it.
+
+Keep it current. When a ruling changes what is in scope, that is a charter edit
+as well as a brief — and a feature that leaves scope is **retired with its
+reason**, never deleted. What the project decided not to build is part of what it
+is.
+
 ## Being told is not being tasked
 
 A block that has been answered is only half-finished. The answer is in a record

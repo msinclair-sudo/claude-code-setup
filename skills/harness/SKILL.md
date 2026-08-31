@@ -95,3 +95,22 @@ what you cannot do is give it a node, a claim or a transaction.
 
 `harness release` at the end of a task. The ledger row is closed, never deleted:
 an ancestor resolving a deep conflict (`T8`) reads closed rows.
+
+## If you need to ask why
+
+```bash
+harness charter                     # what this project is for, and its features
+harness charter --feature <name>
+```
+
+You are not required to read it. A complete brief is enough to work from, and
+loading the project's purpose into a scoped task hands back the context that
+task was scoped to exclude.
+
+It is there for the moment you need it: when a brief seems to point away from
+what the project appears to be for, when you are choosing between two readings
+of a scope, or when you simply want to know what any of this is in aid of. The
+answer used to depend on your lead being awake.
+
+Only rank 0 and the operator write it. If it is wrong, that is a `--suggest` on
+your brief or a word to your lead, not an edit.

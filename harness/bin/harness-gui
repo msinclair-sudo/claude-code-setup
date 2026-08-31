@@ -265,7 +265,26 @@ def read_state():
                 "root": next((n for n, sp in tree.items()
                               if sp.get("parent") is None), "rank 0"),
                 "comments": b.get("comments") or []})
+        ch = {"description": "", "revision": 0, "features": []}
+        cf = pdir / "charter.json"
+        if cf.exists():
+            try:
+                raw = json.loads(cf.read_text())
+                d = raw.get("description") or {}
+                ch = {"description": d.get("text") or "",
+                      "revision": d.get("revision") or 0,
+                      "written_by": d.get("written_by") or "",
+                      "features": [
+                          {"key": k, "name": v.get("name") or k,
+                           "text": v.get("text") or "",
+                           "revision": v.get("revision") or 0,
+                           "retired": bool(v.get("retired_at")),
+                           "retired_why": v.get("retired_why") or ""}
+                          for k, v in sorted((raw.get("features") or {}).items())]}
+            except Exception:
+                ch["error"] = "charter.json is not readable"
         projects.append({"project": pname, "repo": repo, "slug": pdir.name,
+                         "charter": ch,
                          "nodes": nodes,
                          "blocks": blocks,
                          "orphan_marks": sorted(orphans, key=lambda o: o["task"]),
@@ -303,8 +322,35 @@ h1{font-size:14px;margin:0;letter-spacing:.09em;text-transform:uppercase;color:v
 main{padding:16px 20px 70px;max-width:1500px}
 .cols{display:flex;gap:20px;align-items:flex-start}
 .treecol{flex:1;min-width:0;overflow-x:auto}
-.attncol{width:min(430px,44%);flex:none}
-@media (max-width:960px){.cols{flex-direction:column}.attncol{width:100%}}
+.attncol{width:min(400px,38%);flex:none}
+.chartercol{width:min(340px,30%);flex:none}
+@media (max-width:1200px){.chartercol{width:min(300px,28%)}}
+@media (max-width:960px){.cols{flex-direction:column}
+.attncol,.chartercol{width:100%}}
+.charter{background:var(--panel);border:1px solid var(--line);padding:11px 13px}
+.charter h3{font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+color:var(--dim);margin:0 0 7px;display:flex;align-items:baseline;gap:8px}
+.ctext{white-space:pre-wrap;word-wrap:break-word;color:var(--ink)}
+.ctext.none{color:var(--none);font-style:italic}
+.cedit{margin-left:auto;font-size:10px;color:var(--dim);cursor:pointer;
+border-bottom:1px dotted var(--none);text-transform:none;letter-spacing:0}
+.cedit:hover{color:var(--ink)}
+.feats{margin-top:11px;border-top:1px solid var(--line);padding-top:9px}
+.feat{margin-bottom:11px}
+.fname{color:var(--busy);display:flex;align-items:baseline;gap:8px}
+.feat.out .fname{color:var(--none)}
+.feat.out .fname b{text-decoration:line-through}
+.ftext{color:var(--dim);white-space:pre-wrap;word-wrap:break-word;margin-top:2px}
+.cta{width:100%;min-height:150px;background:#0e1109;color:var(--ink);
+border:1px solid var(--line);padding:7px;font:inherit;resize:vertical}
+.cname{width:100%;background:#0e1109;color:var(--ink);border:1px solid var(--line);
+padding:5px 7px;font:inherit;margin-bottom:5px}
+.crow{display:flex;gap:9px;align-items:center;margin-top:5px}
+.cbtn{font-size:11px;color:var(--dim);cursor:pointer;
+border-bottom:1px dotted var(--none)}
+.cbtn:hover{color:var(--ink)}
+.cmsg{font-size:11px;color:var(--dim)}
+.editing{outline:1px solid var(--warn)}
 .collapse{margin-left:auto;font-size:10px;letter-spacing:.04em;text-transform:none;
 color:var(--dim);cursor:pointer;border-bottom:1px dotted var(--none)}
 .collapse:hover{color:var(--ink)}
@@ -423,7 +469,100 @@ border-radius:7px;padding:5px 13px;font:inherit;cursor:pointer}
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
+const EDITING = new Set();
+
+// The swap happens in the DOM rather than through a re-render, so the textarea
+// is created once and keeps its cursor, its selection and its scroll. Cancel
+// puts back exactly what was there, which is why the original HTML is stashed
+// rather than rebuilt.
+function beginEdit(el, opts) {
+  const box = opts.cnew ? null : el;
+  const raw = box ? (box.dataset.raw || '') : '';
+  const key = opts.slug + ':' + (opts.feature || '') + (opts.retire ? ':retire' : '');
+  if (EDITING.has(key)) return;
+  EDITING.add(key);
+  const host = opts.cnew ? el : box;
+  host.dataset.stash = host.innerHTML;
+  host.classList.add('editing');
+  const nameField = opts.cnew
+    ? '<input class="cname" placeholder="feature name" />' : '';
+  const ph = opts.retire
+    ? 'why it left scope — it stays on the charter, marked out'
+    : (opts.cnew ? 'what this feature is, in plain prose'
+                 : 'what this is, written to be understood');
+  host.innerHTML = nameField +
+    '<textarea class="cta" placeholder="' + ph + '">' +
+    (opts.retire ? '' : esc(raw)) + '</textarea>' +
+    '<div class="crow"><span class="cbtn csave">' +
+    (opts.retire ? 'retire' : 'save') + '</span>' +
+    '<span class="cbtn ccancel">cancel</span><span class="cmsg"></span></div>';
+  host.dataset.ckey = key;
+  host.dataset.cslug = opts.slug;
+  host.dataset.cfeature = opts.feature || '';
+  host.dataset.cretire = opts.retire ? '1' : '';
+  host.dataset.cnew = opts.cnew ? '1' : '';
+  const ta = host.querySelector('.cta');
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+}
+
+function endEdit(host) {
+  EDITING.delete(host.dataset.ckey);
+  host.classList.remove('editing');
+  host.innerHTML = host.dataset.stash || '';
+  // Every marker goes, not just the stash. A left-behind data-ckey makes an
+  // element that is no longer being edited answer a query for one that is.
+  ['stash', 'ckey', 'cslug', 'cfeature', 'cretire', 'cnew']
+    .forEach(k => delete host.dataset[k]);
+}
+
 document.addEventListener('click', e => {
+  const ce = e.target.closest('.cedit');
+  if (ce) {
+    e.stopPropagation();
+    const cnew = ce.dataset.cnew === '1';
+    const host = cnew ? ce.closest('.feats')
+                      : ce.closest('.charter').querySelector(
+                          ce.dataset.cfeature
+                            ? '.feat .cbody[data-raw]' : '.ctext.cbody');
+    // A feature's box is the one in its own .feat block, not the first on the page.
+    const target = (!cnew && ce.dataset.cfeature)
+      ? ce.closest('.feat').querySelector('.cbody') : host;
+    beginEdit(target, { slug: ce.dataset.cslug, feature: ce.dataset.cfeature,
+                        retire: ce.dataset.cretire === '1', cnew: cnew });
+    return;
+  }
+  const cc = e.target.closest('.ccancel');
+  if (cc) { e.stopPropagation(); endEdit(cc.closest('[data-ckey]')); return; }
+  const cs = e.target.closest('.csave');
+  if (cs) {
+    e.stopPropagation();
+    const host = cs.closest('[data-ckey]');
+    const ta = host.querySelector('.cta'), msg = host.querySelector('.cmsg');
+    const nm = host.querySelector('.cname');
+    const text = ta.value.trim();
+    const feature = host.dataset.cnew === '1'
+      ? (nm ? nm.value.trim() : '') : host.dataset.cfeature;
+    if (!text) { msg.textContent = 'nothing to save'; return; }
+    if (host.dataset.cnew === '1' && !feature) {
+      msg.textContent = 'name it first'; return; }
+    msg.textContent = 'saving...';
+    fetch('/api/charter', { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Harness-Local': '1' },
+      body: JSON.stringify({ slug: host.dataset.cslug, feature: feature,
+                             retire: host.dataset.cretire === '1', text }) })
+      .then(r => r.json())
+      .then(j => {
+        if (!j.ok) { msg.textContent = 'refused: ' + (j.message || ''); return; }
+        EDITING.delete(host.dataset.ckey);
+        host.classList.remove('editing');
+        ['stash', 'ckey', 'cslug', 'cfeature', 'cretire', 'cnew']
+          .forEach(k => delete host.dataset[k]);
+        LAST = ''; tick();
+      })
+      .catch(() => { msg.textContent = 'could not reach the server'; });
+    return;
+  }
   const cp = e.target.closest('.cp');
   if (cp) {
     e.stopPropagation();
@@ -747,7 +886,8 @@ async function tick() {
       : '<div class="clear">nothing is waiting on you here</div>';
     return '<div class="proj"><h2>' + esc(p.project) + '</h2>' +
       '<div class="repo">' + esc(p.repo) + '</div>' +
-      '<div class="cols"><div class="treecol">' +
+      '<div class="cols"><div class="chartercol">' + charter(p) + '</div>' +
+      '<div class="treecol">' +
       '<div class="ln q" style="margin:0 0 6px">click a task chip to read its brief ' +
       'and comment on it</div>' +
       (p.orphan_marks.length ? '<div class="ln dup">' + p.orphan_marks.length +
@@ -764,6 +904,51 @@ async function tick() {
   paint(h);
 }
 
+// The charter: what the project is, and the features in scope. Read by every
+// node and required of none -- a member does not need the purpose to execute a
+// complete brief, and handing it one would be giving back the context its task
+// was scoped to exclude. It is here so that "why are we doing this" has an
+// answer that does not depend on a lead being awake.
+//
+// It is also the only thing on this page the operator EDITS rather than
+// comments on, and that is the point of it: the charter exists to be argued
+// with by the person who knows what the project is for. A description that can
+// only be corrected somewhere else is one that goes stale where nobody looks.
+function feat(p, f) {
+  return '<div class="feat' + (f.retired ? ' out' : '') + '">' +
+    '<div class="fname"><b>' + esc(f.name) + '</b>' +
+    (f.retired ? ' <span class="q">out of scope</span>' : '') +
+    '<span class="cedit" data-cslug="' + esc(p.slug) + '" data-cfeature="' +
+      esc(f.name) + '">edit</span>' +
+    (f.retired ? '' : '<span class="cedit" data-cslug="' + esc(p.slug) +
+      '" data-cfeature="' + esc(f.name) + '" data-cretire="1">retire</span>') +
+    '</div>' +
+    '<div class="ftext cbody" data-raw="' + esc(f.text) + '">' + esc(f.text) +
+    (f.retired && f.retired_why ? '\n\nout of scope: ' + esc(f.retired_why) : '') +
+    '</div></div>';
+}
+
+function charter(p) {
+  const c = p.charter || { description: '', features: [] };
+  const head = '<h3>what this project is' +
+    '<span class="cedit" data-cslug="' + esc(p.slug) + '" data-cfeature="">edit</span>' +
+    '</h3>';
+  const body = c.description
+    ? '<div class="ctext cbody" data-raw="' + esc(c.description) + '">' +
+      esc(c.description) + '</div>'
+    : '<div class="ctext cbody none" data-raw="">Nothing states what this project ' +
+      'is for. Until something does, the only work visible to the head lead is ' +
+      'whatever happens to be broken — and a backlog is not a plan.</div>';
+  const fs = (c.features || []);
+  const list = fs.length
+    ? fs.map(f => feat(p, f)).join('')
+    : '<div class="ln q">no features listed</div>';
+  return '<div class="charter" data-live="charter:' + esc(p.slug) + '">' + head + body +
+    '<div class="feats"><h3>features in scope' +
+    '<span class="cedit" data-cslug="' + esc(p.slug) + '" data-cnew="1">+ add</span>' +
+    '</h3>' + list + '</div></div>';
+}
+
 // Targeted update, not a repaint. The page is built once; after that a poll may
 // only replace elements that carry data-live, and only when their content has
 // actually changed. Anything not on that list -- a textarea mid-sentence, an
@@ -775,6 +960,12 @@ async function tick() {
 // is visible. The exclude list it replaces failed the other way -- forgetting to
 // exempt something ate your work silently.
 function paint(h) {
+  // Nothing is replaced while prose is being written into this page. The
+  // include list protects a textarea that the poll knows about; it cannot
+  // protect one against the shape-change rebuild, and losing a paragraph
+  // someone was halfway through writing is not a fault worth risking to keep a
+  // busy dot current for three more seconds.
+  if (EDITING.size) return;
   const root = document.getElementById('root');
   const tpl = document.createElement('div');
   tpl.innerHTML = h;
@@ -905,6 +1096,34 @@ def add_block_comment(slug, node, need, text):
     return r.returncode == 0, (r.stdout or r.stderr).strip()[:300]
 
 
+def save_charter(slug, feature, text, retire=False):
+    """Delegated like every other write here: the CLI decides what a charter is
+    and what may change it, and this only calls it with the session id stripped,
+    because prose typed into a page was typed by a person.
+
+    This is the one object the operator is expected to EDIT rather than comment
+    on, which is why it is the one place the viewer offers a full text box. The
+    charter is the artefact whose whole purpose is to be argued with by the
+    person who knows what the project is for, and a description nobody can
+    correct in the place they read it is one that goes stale silently."""
+    pdir = _project_dir(slug)
+    if pdir is None:
+        return False, "no such project"
+    try:
+        repo = json.loads((pdir / "binding.json").read_text()).get("repo", "")
+    except Exception:
+        return False, "unreadable binding"
+    exe = Path(__file__).resolve().with_name("harness")
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
+    argv = [sys.executable, str(exe), "charter"]
+    if feature:
+        argv += ["--feature", feature]
+    argv += ["--retire", text] if retire else ["--write", text]
+    r = subprocess.run(argv, cwd=repo, capture_output=True, text=True,
+                       timeout=20, env=env)
+    return r.returncode == 0, (r.stdout or r.stderr).strip()[:300]
+
+
 class H(BaseHTTPRequestHandler):
     def _send(self, body, ctype):
         # A page polling every 3s abandons requests routinely: navigate away, or
@@ -955,7 +1174,7 @@ class H(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin")
         if origin and not origin.startswith(("http://127.0.0.1:", "http://localhost:")):
             self.send_error(403, "cross-origin"); return
-        if not self.path.startswith("/api/comment"):
+        if not self.path.startswith(("/api/comment", "/api/charter")):
             self.send_error(404); return
         try:
             n = int(self.headers.get("Content-Length") or 0)
@@ -963,6 +1182,13 @@ class H(BaseHTTPRequestHandler):
         except Exception:
             self.send_error(400, "bad JSON"); return
         text = (body.get("text") or "").strip()
+        if self.path.startswith("/api/charter"):
+            if not text:
+                self.send_error(400, "empty charter"); return
+            ok, msg = save_charter(body.get("slug", ""), body.get("feature") or "",
+                                   text, bool(body.get("retire")))
+            self._send(json.dumps({"ok": ok, "message": msg}), "application/json")
+            return
         if not text:
             self.send_error(400, "empty comment"); return
         if body.get("kind") == "block":

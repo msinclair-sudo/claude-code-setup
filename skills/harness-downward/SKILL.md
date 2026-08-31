@@ -238,6 +238,15 @@ survive the recycle that ends the session you are answering.
 You cannot write a grandchild's brief. `dev_1`'s lead is `dev`, so `dev` writes
 it — if you are above that, tell the lead what you want and let it write.
 
+**Read the charter before you split.** `harness charter` is what the project is
+for and which features are in scope; your brief is one piece of it. Splitting is
+where the general becomes technical, and that translation is exactly where an
+invented task gets in — a segment that traces to no feature is a segment worth
+querying upward before you break it into four.
+
+You do not write the charter. If your brief and the charter disagree, that is a
+question for your lead, and it is a good one.
+
 **A brief handed to you is a segment to split, not a task to do.** Your lead
 writes you a piece of work sized for a rank, not for a session. `whoami` says
 `handed N brief(s) to split or start`, and it keeps saying it until you either

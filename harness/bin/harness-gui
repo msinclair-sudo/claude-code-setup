@@ -446,7 +446,8 @@ document.addEventListener('click', e => {
                              node: box.dataset.node, need: box.dataset.need, text }) })
       .then(r => r.json())
       .then(j => { msg.textContent = j.ok ? 'sent' : 'refused: ' + (j.message || '');
-                   if (j.ok) { box.value = ''; LAST = ''; tick(); } })
+                   if (j.ok) { box.value = ''; delete DRAFT[boxKey(box)];
+                               LAST = ''; tick(); } })
       .catch(err => { msg.textContent = 'failed: ' + err; });
     return;
   }
@@ -465,11 +466,34 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal()
 // ── task modal ─────────────────────────────────────────────────────────────
 let MODAL = null;   // {slug, task}
 const OPEN = new Set();   // expanded attention items, by key
+const DRAFT = {};         // half-typed comments, by box identity
 let LAST = '';            // last payload rendered, to avoid pointless redraws
+
+const boxKey = b => b.dataset.slug + '|' + b.dataset.node + '|' + b.dataset.need;
+
+// Every keystroke is remembered, so a redraw that does happen cannot eat it.
+document.addEventListener('input', e => {
+  const b = e.target.closest && e.target.closest('.bbox');
+  if (b) DRAFT[boxKey(b)] = b.value;
+});
+
+// The real fix: do not redraw AT ALL while there is something to lose. The
+// identical-payload check does not save you here, because a session flipping
+// between busy and idle is a genuine change and arrives every few seconds.
+function typing() {
+  const a = document.activeElement;
+  if (a && (a.classList && a.classList.contains('bbox') || a.id === 'cbox')) return true;
+  return Array.prototype.some.call(document.querySelectorAll('.bbox'),
+                                   b => b.value.trim() !== '');
+}
 
 function reopen() {
   document.querySelectorAll('[data-key]').forEach(el => {
     if (OPEN.has(el.dataset.key)) el.querySelector('.detail').classList.add('on');
+  });
+  document.querySelectorAll('.bbox').forEach(b => {
+    const d = DRAFT[boxKey(b)];
+    if (d) b.value = d;
   });
 }
 
@@ -667,6 +691,9 @@ async function tick() {
   // `generated` changes every poll and nothing else usually does, so it is
   // excluded from the comparison: redrawing identical content is what loses a
   // text selection mid-copy.
+  // A held draft, or a cursor in a box, outranks a fresher tree.
+  if (typing()) { document.getElementById('age').textContent += '  (paused: typing)';
+                  return; }
   const sig = raw.replace(/"generated":"[^"]*",/, '');
   if (sig === LAST) return;
   LAST = sig;

@@ -238,6 +238,44 @@ survive the recycle that ends the session you are answering.
 You cannot write a grandchild's brief. `dev_1`'s lead is `dev`, so `dev` writes
 it — if you are above that, tell the lead what you want and let it write.
 
+## Watch your children's idle state — it is enforced
+
+```bash
+harness queue          # every child: occupancy, then its queue in your order
+```
+
+```
+dev_1   idle 1h00m
+    ▸ job-a                    presented, waiting on sign-off
+dev_2   no session
+    next job-b                 Other thing.
+```
+
+Two states make a queue stop moving without anything in the queue changing: a
+child with **nobody in it**, and a child whose session **stopped an hour ago**.
+Neither shows up in the briefs, and neither is visible to the child.
+
+You will be stopped if you leave either. Your `Stop` hook blocks once when you
+owe the rank below you:
+
+```
+You are about to stop with work owed to the rank below you.
+
+  dev_1 presented 'job-a' 45m ago and you have not signed it off:
+    harness mark job-a --close
+
+  dev_2 has been idle 1h00m with 'job-b' queued for it:
+    harness recycle dev_2
+```
+
+Both are one command. Signing off starts the next task by itself; recycling
+replaces a session that has been standing still. Both are aged past twenty
+minutes, so a review in progress or a node mid-recycle never triggers it.
+
+A child with an **empty** queue is not covered — that is you owing a brief, which
+is a bigger act than a command, and nothing will block you over it. It is still
+yours.
+
 ## Signing off starts the next task
 
 ```

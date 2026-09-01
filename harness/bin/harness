@@ -1464,6 +1464,43 @@ def unreported(ctx, node):
     return out
 
 
+def lead_owes(ctx, node):
+    """What this node owes its children, as (kind, child, task, age) rows.
+
+    Two things, and both are one command. A child that has presented and not
+    been signed off is finished work nobody has accepted. A child with a queue
+    and no open task is capacity standing still with work already written for
+    it. Neither is visible to the child — only the node above can act.
+
+    Both are aged. A presentation seconds old is a lead mid-review, not a lead
+    that has forgotten; a child idle for a moment is one being recycled. The
+    threshold is what separates "has not got to it" from "is not going to".
+    """
+    owed, marks = [], open_marks(ctx)
+    kids = ctx.children(node)
+    for t, r in marks.items():
+        if r.get("_node") in kids and r.get("_presented_at"):
+            then = _epoch(r["_presented_at"])
+            if then and time.time() - then > STALLED_SIGNOFF:
+                owed.append(("sign off", r["_node"], mark_label(r, t),
+                             time.time() - then))
+    for k in kids:
+        if any(r.get("_node") == k and not r.get("_presented_at")
+               for r in marks.values()):
+            continue                       # mid-task, nothing owed
+        q = [b for b in queue(ctx, k) if not b.get("coupled_to")]
+        if not q:
+            continue                       # nothing written for it: not this rule
+        # How long it has been standing still: since its last task closed, or
+        # since the work was written for it, whichever is later.
+        stamps = [_epoch(r.get("_closed_at")) for r in marks.values()
+                  if r.get("_node") == k] + [_epoch(q[0].get("written_at"))]
+        last = max([x for x in stamps if x] or [0])
+        if last and time.time() - last > STALLED_SIGNOFF:
+            owed.append(("start", k, q[0]["task"], time.time() - last))
+    return owed
+
+
 def cmd_hook_stop(a):
     """Claude Code's Stop hook: the one moment a member that has finished and
     said nothing is still reachable.
@@ -1499,6 +1536,31 @@ def cmd_hook_stop(a):
             return
         ctx.tree = json.loads(ctx.tree_path.read_text())
         node, _ = ctx.node()
+        # Downward first: what this node owes the rank below. It applies to rank
+        # 0 as much as anyone — main is dev's lead — which is why every row is
+        # aged past a threshold, so a design conversation is not interrupted over
+        # a child that has been idle for ninety seconds.
+        owed = lead_owes(ctx, node)
+        if owed:
+            nl = chr(10)
+            lines = []
+            for kind, child, task, age in owed[:4]:
+                lines.append(
+                    f"  {child} presented '{task}' {human_age(age)} ago and you have "
+                    f"not signed it off:{nl}    harness mark {task} --close"
+                    if kind == "sign off" else
+                    f"  {child} has been idle {human_age(age)} with '{task}' queued "
+                    f"for it:{nl}    harness recycle {child}")
+            print(json.dumps({"hookSpecificOutput": {
+                "hookEventName": "Stop", "decision": "block", "reason":
+                f"You are about to stop with work owed to the rank below you.{nl}{nl}"
+                + f"{nl}{nl}".join(lines) + f"{nl}{nl}"
+                + "Neither is visible to the child and neither can be done by it. "
+                  "Signing off starts the next task by itself; recycling replaces a "
+                  "session that has been standing still. If the right answer is "
+                  "neither, say so on the record rather than leaving the lane "
+                  "stopped."}}))
+            return
         if ctx.rank(node) == 0:
             return          # rank 0 closes its own; it presents to nobody
         rows = unreported(ctx, node)
@@ -3438,6 +3500,22 @@ def cmd_queue(a):
                   f"{parent}'s rewrite, not this.")
         return
 
+    # Who is actually standing in each node, and for how long. A lead reading
+    # its children's queues is the moment it should also see that one of them
+    # has nobody in it, or somebody who stopped an hour ago — the two states
+    # that make a queue stop moving without anything in the queue changing.
+    occ = {}
+    try:
+        idx = load_index(ctx)
+        rows = live_rows(agents_json(read_roster(a.__dict__.get("roster"))))
+        for n, sp in (idx.get("nodes") or {}).items():
+            for r in rows:
+                if r.get("cwd") == sp.get("worktree"):
+                    age, _ = last_turn(r.get("sessionId") or "")
+                    occ[n] = (r.get("status"), age)
+    except Exception:
+        occ = None
+
     nodes = [a.node] if a.node else sorted(ctx.tree["nodes"])
     shown = False
     for n in nodes:
@@ -3450,7 +3528,15 @@ def cmd_queue(a):
         if not q and not openm and not gated:
             continue
         shown = True
-        print(f"{n}")
+        if occ is None:
+            who = "   occupancy unknown"
+        elif n not in occ:
+            who = "   no session"
+        elif occ[n][0] == "busy":
+            who = "   busy"
+        else:
+            who = f"   idle {human_age(occ[n][1])}" if occ[n][1] else "   idle"
+        print(f"{n}{who}")
         for t in openm:
             r = open_marks(ctx)[t]
             state = "presented, waiting on sign-off" if r.get("_presented_at") else "OPEN"
@@ -4795,6 +4881,7 @@ def main():
     il.add_argument("--roster", help="a `claude agents --json` capture, for testing")
     qu = add("queue", cmd_queue)
     qu.add_argument("node", nargs="?", help="one node; every node in the tree if omitted")
+    qu.add_argument("--roster", help="a `claude agents --json` capture, for testing")
     qu.add_argument("--why", metavar="TEXT",
                     help="required when rank 0 reorders past a lead")
     qu.add_argument("--order", metavar="A,B,C",

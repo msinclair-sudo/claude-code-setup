@@ -1143,6 +1143,12 @@ worktree*, and on a node the worktree is the node.
 
 **A hook that runs on every turn must fail silently, not loudly.** It prints nothing on the allow path, because plain stdout on exit 0 becomes context in every turn of every session in that repository. It is silent outside a git worktree, outside an enrolled project, on a branch that is not a node, and on unparseable input. `Ctx()` raises `SystemExit` rather than an `Exception` when it refuses, which an ordinary guard does not catch and which would have written a notice into every transcript on the machine, forever.
 
+**The same hook enforces the other direction, and it is the harder one.** Upward reporting is a single act by the party that just did the work. Downward, a lead owes two things it can easily never notice, because neither is visible to the child and neither can be done by it: a presentation it has not signed off, and a child standing idle with work already written for it. This applies to **rank 0 as well** — main is `dev`'s lead — which is why every row is aged past a threshold, so a conversation with the operator is not interrupted over a child idle for ninety seconds.
+
+**Ageing is what separates "has not got to it" from "is not going to".** A presentation seconds old is a lead mid-review; a child idle for a moment is one being recycled. Idleness is measured from whichever is later, the child's last closed task or the moment the work was written for it — a queue nobody has started is not idle from the instant the brief is saved.
+
+**A child with an empty queue is not this rule.** That is a lead owing a *brief*, which is a larger act than a command, and blocking a stop over it would trap a lead legitimately waiting on something above it. The rule fires only where a single named command clears it.
+
 **The second chokepoint needs no hook.** `harness mark` refuses to open a task while this node holds unpresented work with evidence in it — opening a second task would leave the first invisible to everyone above. That one fires for anybody who does carry on working, including through a recycle.
 
 **Presenting releases the node.** The claim is on the worktree, and a member that has presented has nothing left to write there, so holding it only stops the lead refilling the node. It was a separate command, and it was the one that got skipped.

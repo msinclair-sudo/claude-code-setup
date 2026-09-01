@@ -238,31 +238,33 @@ survive the recycle that ends the session you are answering.
 You cannot write a grandchild's brief. `dev_1`'s lead is `dev`, so `dev` writes
 it — if you are above that, tell the lead what you want and let it write.
 
-## Recycle your children often, and expect to be recycled yourself
+## Signing off starts the next task
 
-```bash
-harness recycle --idle      # every child with nothing in flight
-harness recycle --cold      # every child past the cache lifetime
+```
+signed off job-a for dev_1  ↑12k ↓4k = 16k new
+  next for dev_1: job-b — recycling dev_1 onto it
+      recycled dev_1   sonnet/medium  fresh context
 ```
 
-Orientation tells you when: `recycle dev_1, dev_2 — nothing in flight`. It fires
-only when no child holds an unpresented mark, so acting on it can never take a
-node mid-task.
+`--close` does the recycle itself. You do not run a second command, and neither
+does anyone else — the gap between "signed off" and "started the next thing" was
+a command nobody ran, and the finished hand-off sat there. `--no-recycle` opts
+out when you want the node left as it is.
 
-**Do it often, including when your children are leads.** This used to be a
-members-only rule because a lead held things nobody else did — the briefs it
-wrote, which blocks were answered, what its children carried, the figures it
-measured. All of that is a record now, so a fresh lead reads it back rather than
-remembering it. What you lose by replacing one is context it should never have
-been the sole holder of.
+It refuses in exactly the cases the command line would: a dirty worktree, or an
+open unpresented mark. If nothing is queued, nothing starts.
 
-**You are on the same rule.** Every rank below 0 starts cold. If your lead
-recycles you, nothing is lost that mattered — and if something would be lost,
-that is a signal you were holding state that belonged in a brief, a fact or a
-finding. Write it down before it goes.
+**Sign off promptly.** Your member has already stopped and released the node, so
+until you close it the work sits finished and invisible and the node sits empty.
+If you leave one more than twenty minutes, the rank above you is told:
 
-Rank 0 is the only exception, and only because it holds the conversation with
-the operator, which no record reconstructs.
+```
+unsigned job-a (dev_1, 1h35m)
+         dev has not signed off. harness recycle dev
+```
+
+That is not a reprimand — it is the only way the tree can notice, since nothing
+pushes and an idle lead runs no commands.
 
 ## Recycle your children often, and expect to be recycled yourself
 

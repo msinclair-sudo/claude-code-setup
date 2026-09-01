@@ -182,6 +182,23 @@ open     specter2-embed — finishing it means presenting UP to main, not to
            harness mark specter2-embed --done      then main closes it
 ```
 
+**Presenting is your last act. Then stop.**
+
+`--done` records the work, releases the node, and tells you plainly:
+
+```
+You are done. Stop here — do not wait for the sign-off, do not poll for it,
+and do not start anything else. dev signs off and replaces you.
+```
+
+Do that. Do not sit waiting for the sign-off — it is not yours, it may take
+hours, and while you wait you hold a worktree and a context that costs its whole
+history the moment anyone speaks to you. Your lead signs off and recycles the
+node onto whatever is next; a fresh session picks that up, not you.
+
+The one exception is a **coupled** next task, and `--done` says so explicitly
+when it applies.
+
 **You present; your lead closes.** `--done` records what the task cost and that
 you believe it finished. It does **not** close it — `--close` refuses you by
 rank, and that is the same rule as `T4`: you cannot check your own work, so you

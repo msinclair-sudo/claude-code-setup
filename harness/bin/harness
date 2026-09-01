@@ -9,7 +9,7 @@ up holding one node, which is the failure the lock exists to prevent.
 This tool does no reasoning. The agent gathers liveness with ListAgents and
 passes it in; this only asserts, derives and writes atomically.
 """
-import argparse, json, os, re, shlex, shutil, socket, subprocess, sys, time
+import argparse, datetime, json, os, re, shlex, shutil, socket, subprocess, sys, time
 from pathlib import Path
 
 OK, CONTRACT, NOT_ENROLLED, REFUSED, MISMATCH = 0, 2, 3, 4, 5
@@ -439,6 +439,31 @@ def _whoami(a):
         if waiting:
             print(f"sign off {len(waiting)} presented task(s) waiting on you: "
                   f"{', '.join(waiting)}")
+    except Exception:
+        pass
+    try:
+        # A presentation is a record with no delivery: the lead learns of it at
+        # its next harness command, and a lead that is idle or absent runs none.
+        # So a finished hand-off can sit unnoticed while the member that finished
+        # it stands in the node. Nothing can push ([[R4]]) — but the rank ABOVE
+        # the lead is running, and recycling that lead is what makes it orient
+        # and see the queue it owes.
+        grand = {}
+        for t, r in open_marks(ctx).items():
+            n = r.get("_node")
+            lead = ctx.tree["nodes"].get(n, {}).get("parent")
+            if not r.get("_presented_at") or lead not in kids:
+                continue
+            then = _epoch(r.get("_presented_at"))
+            if then is None:
+                continue
+            age = time.time() - then
+            if age > STALLED_SIGNOFF:
+                grand.setdefault(lead, []).append((mark_label(r, t), n, age))
+        for lead, items in sorted(grand.items()):
+            names = ", ".join(f"{t} ({n}, {human_age(age)})" for t, n, age in items)
+            print(f"unsigned {names}")
+            print(f"         {lead} has not signed off. harness recycle {lead}")
     except Exception:
         pass
     try:
@@ -1165,6 +1190,10 @@ BANDS = {"S": (0, 40_000), "M": (40_000, 120_000), "L": (120_000, 300_000)}
 # re-processes its whole context.
 CACHE_TTL = 60 * 60
 
+# How long a presented task may sit unsigned before the rank above its lead is
+# told. Long enough that a lead mid-review is not reported as absent.
+STALLED_SIGNOFF = 20 * 60
+
 
 def last_turn(sid):
     """When a session last did anything, and how much context it is carrying.
@@ -1462,6 +1491,17 @@ def cmd_mark(a):
                 {"at": rec["_presented_at"], "by": rec["_presented_by"],
                  "text": a.note})
         f.write_text(json.dumps(rec, indent=2) + "\n")
+        # Presenting IS finishing with the node. The claim is on the worktree,
+        # and a presented member has nothing left to write there, so holding it
+        # only stops the lead refilling the node. It was a separate command, and
+        # it was the one that got skipped.
+        lock = ctx.lock_path(node)
+        released = False
+        try:
+            if lock.exists() and json.loads(lock.read_text()).get("session_id") == sid:
+                lock.unlink(); released = True
+        except Exception:
+            pass
         parent = ctx.tree["nodes"].get(node, {}).get("parent")
         if rec.get("_model"):
             print(f"ran as {rec['_model']}, effort {rec.get('_effort')}")
@@ -1478,7 +1518,8 @@ def cmd_mark(a):
                 print(f"  Say so in your report. A band that was wrong is the only "
                       f"thing that improves\n  the next estimate, and it is your "
                       f"lead's estimate that was wrong, not your work.")
-        print(f"presented {a.task}  {cost}")
+        print(f"presented {a.task}  {cost}"
+              + ("   node released" if released else ""))
         print(f"  It is NOT closed. {parent or 'your lead'} signs it off: "
               f"harness mark {a.task} --close")
         print(f"  You cannot close your own work — you cannot check it either (T4).")
@@ -1493,9 +1534,12 @@ def cmd_mark(a):
         elif nxt:
             print(f"\nnext: '{nxt['task']}' is queued for you and is NOT yours to "
                   f"start.")
-            print(f"  Your lead recycles this node first (R13). Do not open it, and do "
-                  f"not ask\n  whether to: presenting is the whole of your last act on "
-                  f"this task.")
+            print(f"  {parent or 'your lead'} recycles this node first (R13). Do not "
+                  f"open it, and do not\n  ask whether to.")
+        if not (nxt and coupled):
+            print(f"\nYou are done. Stop here — do not wait for the sign-off, do not "
+                  f"poll for it,\nand do not start anything else. "
+                  f"{parent or 'Your lead'} signs off and replaces you.")
         return
 
     if a.close:
@@ -1544,11 +1588,27 @@ def cmd_mark(a):
             print(f"    {nxt.get('coupled_why') or '(no reason recorded)'}")
             print(f"  It opens the next mark itself. Do not recycle {owner}.")
         elif nxt:
-            print(f"  next for {owner}: {nxt['task']}  — recycle it first, "
-                  f"do not hand it on:")
-            print(f"    harness recycle {owner}")
-            print(f"  A fresh session costs less than the errors the old one has "
-                  f"accumulated (R13).")
+            # The cycle continues by itself. Leaving the recycle to be remembered
+            # is what stranded a finished hand-off: the member had stopped, the
+            # next task was queued, and the only thing between them was a command
+            # nobody ran. `recycle` still applies its own guards — a dirty
+            # worktree or an open unpresented mark refuses here exactly as it
+            # would have on the command line.
+            print(f"  next for {owner}: {nxt['task']} — recycling {owner} onto it "
+                  f"(R13: a fresh\n  session costs less than the errors the old one "
+                  f"accumulated)")
+            if a.no_recycle:
+                print(f"    --no-recycle: run it yourself when ready — "
+                      f"harness recycle {owner}")
+            else:
+                res = subprocess.run([sys.executable, str(Path(__file__).resolve()),
+                                      "recycle", owner],
+                                     cwd=ctx.worktree, capture_output=True, text=True)
+                for line in (res.stdout or res.stderr).splitlines():
+                    print(f"    {line}")
+                if res.returncode:
+                    print(f"    recycle refused — {owner} keeps its session. "
+                          f"Clear it and run: harness recycle {owner}")
         else:
             print(f"  {owner} has nothing queued. Brief it again, or recycle it "
                   f"idle:  harness recycle {owner}")
@@ -2461,10 +2521,33 @@ def notify(kind, rows):
         return False
 
 
-def _ago(ts):
-    try:
-        then = time.mktime(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S"))
+def _epoch(ts):
+    """Seconds since the epoch, for either timestamp shape the harness handles.
+
+    Records this CLI writes carry a local offset (`+1000`); timestamps lifted
+    from a transcript are UTC with a `Z`. Parsing the second as though it were
+    the first put every derived age out by the local offset — ten hours here —
+    so a task presented a minute ago read as presented overnight. The offset was
+    being truncated away, which is worse than failing: it produced a plausible
+    number rather than an error.
+    """
+    t = (ts or "").strip().replace("Z", "+0000")
+    if not t:
+        return None
+    for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%f%z"):
+        try:
+            return datetime.datetime.strptime(t, fmt).timestamp()
+        except ValueError:
+            pass
+    try:                       # no offset at all: assume local, as before
+        return time.mktime(time.strptime(t[:19], "%Y-%m-%dT%H:%M:%S"))
     except Exception:
+        return None
+
+
+def _ago(ts):
+    then = _epoch(ts)
+    if then is None:
         return "?"
     d = max(0, int(time.time() - then))
     if d < 90:
@@ -4455,6 +4538,8 @@ def main():
     mk = add("mark", cmd_mark)
     mk.add_argument("task", help="task id, as recorded at T1")
     mk.add_argument("--note", help="what this task is")
+    mk.add_argument("--no-recycle", dest="no_recycle", action="store_true",
+                    help="on --close, do not start the next task; leave the node as it is")
     mk.add_argument("--band", metavar="S|M|L",
                     help="the estimated size in new tokens (I10); XL is refused")
     mk.add_argument("--force", action="store_true", help="re-mark, discarding the earlier position")

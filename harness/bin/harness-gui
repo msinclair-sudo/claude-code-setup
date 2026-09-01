@@ -138,10 +138,17 @@ def install_drift():
 # edited; `reset` is the deliberate way to take them.
 COMMANDS_FILE = CLI.HOME_STATE / "commands.json"
 
+# Bumped when the shipped list changes shape enough that an older seeded copy is
+# worse than the new one. A file already at this version is left alone, so a
+# hand-edited list survives every release until the number moves — and when it
+# does, the old copy is replaced rather than merged, because merging is how a
+# list you curated grows back the entries you took out of it.
+COMMANDS_VERSION = 2
+
 # Machine-level, like the viewer itself: what to type does not vary by project,
 # and a copy per tree is four lists to curate and four to disagree.
 DEFAULT_COMMANDS = [
- {"name": "Harness — where you are",
+ {"name": "harness",
   "note": "Position is derived, never declared. These four are skills; whoami "
           "names which of them this session should load, and loading the "
           "others is reading somebody else's instructions.",
@@ -166,7 +173,7 @@ DEFAULT_COMMANDS = [
     "when": "Only the top lead. It is the single node that writes documents; "
             "everything else sends a request up and waits."}]},
 
- {"name": "Name, model, effort",
+ {"name": "identity",
   "note": "A session's name is what the harness matches against the branch. "
           "Get it wrong and two sessions can end up holding one node, which is "
           "the whole failure the lock exists to prevent.",
@@ -189,7 +196,7 @@ DEFAULT_COMMANDS = [
     "when": "The quickest check that a node is actually running as what the "
             "tree says it should be."}]},
 
- {"name": "Context, and what a node costs",
+ {"name": "context",
   "note": "Idle is free. Resuming is not: past the cache lifetime the next "
           "turn re-reads the whole conversation at full rate, so a cold node "
           "carrying 340k is a bill waiting for you to say hello to it.",
@@ -220,7 +227,7 @@ DEFAULT_COMMANDS = [
     "when": "Reading back what a node did after it was cleared, without "
             "claiming anything."}]},
 
- {"name": "Running the tree",
+ {"name": "running",
   "note": "Spawned nodes are background sessions. A subagent is not a node and "
           "cannot become one: no session id, no lock, no row in the ledger.",
   "items": [
@@ -255,7 +262,7 @@ DEFAULT_COMMANDS = [
     "what": "Create and manage scheduled remote agents.",
     "when": "Work that should happen whether or not this machine is awake."}]},
 
- {"name": "Before you integrate",
+ {"name": "integrating",
   "note": "A lead reads before it fast-forwards. Reviewing after the merge is "
           "reviewing something you already own.",
   "items": [
@@ -276,7 +283,7 @@ DEFAULT_COMMANDS = [
     "when": "Cheaper than a revert while the wrong turn is still inside one "
             "worktree and has not been presented."}]},
 
- {"name": "Guards, skills, settings",
+ {"name": "settings",
   "note": "The harness's real guards are git hooks under core.hooksPath, and "
           "harness doctor is what proves them, by demanding a refusal. These "
           "are the Claude-side settings around them.",
@@ -306,9 +313,6 @@ DEFAULT_COMMANDS = [
             "looks exactly like a missing feature."}]},
 ]
 
-_CMDLOCK = threading.Lock()
-
-
 def _ids(groups):
     """Give every entry a stable id.
 
@@ -329,16 +333,18 @@ def _ids(groups):
 def write_commands(groups):
     COMMANDS_FILE.parent.mkdir(parents=True, exist_ok=True)
     tmp = COMMANDS_FILE.with_name(COMMANDS_FILE.name + ".tmp")
-    tmp.write_text(json.dumps({"version": 1, "groups": groups}, indent=2) + "\n")
+    tmp.write_text(json.dumps({"version": COMMANDS_VERSION, "groups": groups},
+                              indent=2) + "\n")
     tmp.replace(COMMANDS_FILE)
 
 
 def read_commands():
-    """The file if there is one, the defaults if there is not — never both."""
+    """The file if there is a current one, the defaults if there is not."""
     try:
         if COMMANDS_FILE.exists():
-            g = json.loads(COMMANDS_FILE.read_text()).get("groups")
-            if isinstance(g, list):
+            raw = json.loads(COMMANDS_FILE.read_text())
+            g = raw.get("groups")
+            if isinstance(g, list) and raw.get("version") == COMMANDS_VERSION:
                 g, changed = _ids(g)
                 if changed:
                     write_commands(g)
@@ -348,90 +354,6 @@ def read_commands():
     g, _ = _ids(json.loads(json.dumps(DEFAULT_COMMANDS)))
     write_commands(g)
     return g
-
-
-def _find(groups, ident):
-    """(heading index, item index) — the item index is None for a heading."""
-    for i, g in enumerate(groups):
-        if g.get("id") == ident:
-            return i, None
-        for j, it in enumerate(g.get("items") or []):
-            if it.get("id") == ident:
-                return i, j
-    return None, None
-
-
-def edit_commands(action, ident):
-    """Two levels, five verbs, no history.
-
-    Promote and demote are the only way an entry crosses between headings: up
-    and down stay among siblings, so a click meant to reorder cannot quietly
-    re-file something under a heading it does not belong to. Promote lifts a
-    command to a heading of its own; demote pushes a heading, and whatever hung
-    off it, into the heading above.
-
-    Delete is absolute. Nothing is retired, marked out or kept — this is a list
-    the operator owns, and a list that remembers what you removed is one you
-    have to curate twice.
-    """
-    with _CMDLOCK:
-        groups = read_commands()
-        if action == "reset":
-            groups, _ = _ids(json.loads(json.dumps(DEFAULT_COMMANDS)))
-            write_commands(groups)
-            return True, "back to the defaults"
-        gi, ii = _find(groups, ident)
-        if gi is None:
-            return False, "no such entry — the list moved; it will redraw"
-
-        if ii is None:                                    # a heading
-            if action == "up":
-                if gi == 0:
-                    return False, "already at the top"
-                groups[gi - 1], groups[gi] = groups[gi], groups[gi - 1]
-            elif action == "down":
-                if gi == len(groups) - 1:
-                    return False, "already at the bottom"
-                groups[gi + 1], groups[gi] = groups[gi], groups[gi + 1]
-            elif action == "promote":
-                return False, "this is already a heading"
-            elif action == "demote":
-                if gi == 0:
-                    return False, "nothing above it to sit under"
-                tgt = groups[gi - 1]
-                e = groups.pop(gi)
-                kids = e.pop("items", None) or []
-                tgt.setdefault("items", []).append(e)
-                # Its children follow it rather than going with it. A heading
-                # that swallowed its own list on the way down would lose
-                # entries with no way to see that it had.
-                tgt["items"].extend(kids)
-            elif action == "delete":
-                groups.pop(gi)
-            else:
-                return False, f"unknown action {action!r}"
-        else:                                             # a command under one
-            items = groups[gi]["items"]
-            if action == "up":
-                if ii == 0:
-                    return False, "already first under this heading"
-                items[ii - 1], items[ii] = items[ii], items[ii - 1]
-            elif action == "down":
-                if ii == len(items) - 1:
-                    return False, "already last under this heading"
-                items[ii + 1], items[ii] = items[ii], items[ii + 1]
-            elif action == "promote":
-                e = items.pop(ii)
-                e["items"] = []
-                groups.insert(gi + 1, e)
-            elif action == "demote":
-                return False, "there is no level below a command"
-            elif action == "delete":
-                items.pop(ii)
-            else:
-                return False, f"unknown action {action!r}"
-        write_commands(groups)
-        return True, ""
 
 
 # Why a whole CLASS of item is the operator's to decide. This does not vary
@@ -727,13 +649,16 @@ def read_state():
                 ch = {"description": d.get("text") or "",
                       "revision": d.get("revision") or 0,
                       "written_by": d.get("written_by") or "",
+                      # The CLI's ordering, not this file's opinion of one.
+                      # Two copies of "what order are the features in" is two
+                      # that drift, and nothing compares them.
                       "features": [
                           {"key": k, "name": v.get("name") or k,
                            "text": v.get("text") or "",
                            "revision": v.get("revision") or 0,
-                           "retired": bool(v.get("retired_at")),
-                           "retired_why": v.get("retired_why") or ""}
-                          for k, v in sorted((raw.get("features") or {}).items())]}
+                           "parent": v.get("parent") or None,
+                           "depth": depth}
+                          for k, v, depth in CLI.charter_order(raw)]}
             except Exception:
                 ch["error"] = "charter.json is not readable"
         projects.append({"project": pname, "repo": repo, "slug": pdir.name,
@@ -790,10 +715,9 @@ color:var(--dim);margin:0 0 7px;display:flex;align-items:baseline;gap:8px}
 border-bottom:1px dotted var(--none);text-transform:none;letter-spacing:0}
 .cedit:hover{color:var(--ink)}
 .feats{margin-top:11px;border-top:1px solid var(--line);padding-top:9px}
-.feat{margin-bottom:11px}
+.feat{margin-bottom:7px}
 .fname{color:var(--busy);display:flex;align-items:baseline;gap:8px}
-.feat.out .fname{color:var(--none)}
-.feat.out .fname b{text-decoration:line-through}
+.frow{display:flex;gap:9px;margin:2px 0 1px 13px}
 .ftext{color:var(--dim);white-space:pre-wrap;word-wrap:break-word;margin-top:2px}
 .cta{width:100%;min-height:150px;background:#0e1109;color:var(--ink);
 border:1px solid var(--line);padding:7px;font:inherit;resize:vertical}
@@ -941,55 +865,40 @@ margin:0 0 9px 14px;padding-left:9px;border-left:1px solid #4a2d17}
 .still{color:var(--busy);margin:6px 0 2px;line-height:1.55;max-width:76ch}
 .still b{color:var(--dim);font-weight:400}
 
-/* The command dictionary lives beside the whole page, not inside a project:
-   what to type does not vary by tree, and one per project would be four lists
-   to curate and four to disagree. */
-.page{display:flex;align-items:flex-start;gap:22px;padding:16px 20px 70px;
-max-width:1820px}
-main{padding:0;max-width:none;flex:1;min-width:0}
-.cmdrail{width:min(350px,29%);flex:none;position:sticky;top:57px;
-max-height:calc(100vh - 76px);overflow-y:auto}
-@media (max-width:1150px){.page{flex-direction:column}
-.cmdrail{width:100%;position:static;max-height:none}}
-.cmds{background:var(--panel);border:1px solid var(--line);padding:11px 13px}
-.cmds>h3{font-size:11px;letter-spacing:.06em;text-transform:uppercase;
-color:var(--dim);margin:0 0 4px;display:flex;align-items:baseline;gap:8px}
-.creset{margin-left:auto;font-size:10px;color:var(--none);cursor:pointer;
-text-transform:none;letter-spacing:0;border-bottom:1px dotted var(--line)}
-.creset:hover{color:var(--warn)}
-.creset.armed{color:var(--warn);border-bottom-color:var(--warn)}
-.cintro{color:var(--none);font-size:11px;line-height:1.5;margin-bottom:9px}
-.cmsg2{color:var(--warn);font-size:11px;line-height:1.45;margin-bottom:7px}
-.cgrp{border-top:1px solid var(--line);padding:5px 0}
-.cgrp:first-of-type{border-top:0}
+/* One box across the top, before any project. What to type does not vary by
+   tree, so it is neither per-project nor a column stealing width from one: as
+   few rows as it can pack into, with the detail on hover. */
+.cmdbar{background:var(--panel);border:1px solid var(--line);padding:7px 11px;
+margin-bottom:20px;display:flex;flex-wrap:wrap;align-items:baseline;
+gap:3px 16px;line-height:1.9}
+.cmdbar>h3{font-size:10px;letter-spacing:.09em;text-transform:uppercase;
+color:var(--none);margin:0 9px 0 0;flex:none}
+.cbgrp{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 7px}
+.cbgrp>b{color:var(--dim);font-weight:400;font-size:10px;letter-spacing:.05em;
+text-transform:uppercase}
+.cbcmd{color:var(--busy);cursor:help;border-bottom:1px dotted transparent}
+.cbcmd:hover{color:#b6e37f;border-bottom-color:#4a6b30}
+
+/* The charter is an outline: features carry an order the operator set and may
+   sit under one another. Same controls as the tree it describes. */
 .chead{display:flex;align-items:baseline;gap:5px;cursor:pointer;padding:1px 0}
-.chead:hover{color:#fff}
 .tri{color:var(--none);flex:none;font-size:9px;width:8px}
-.gname{font-weight:600}
-.chead code{color:var(--busy);font:inherit}
-.cwhat{color:var(--dim);overflow-wrap:anywhere}
-/* Present but faint, and full strength under the pointer. Hiding them entirely
-   until hover reads as a list of commands with no controls at all, and a
-   control nobody finds is one that is not there. */
-.cacts{margin-left:auto;display:flex;gap:1px;flex:none;opacity:.28;
+/* Present but faint, full strength under the pointer. Hidden until hover the
+   panel reads as having no controls at all, and a control nobody finds is one
+   that is not there. */
+.cacts{margin-left:auto;display:flex;gap:1px;flex:none;opacity:.3;
 transition:opacity .12s}
-.chead:hover .cacts,.cacts:focus-within,.cacts.live{opacity:1}
+.chead:hover .cacts,.cacts.live{opacity:1}
 .cact{color:var(--none);cursor:pointer;padding:0 3px;border-radius:4px;
 font-size:10px;line-height:1.6}
 .cact:hover{color:var(--ink);background:#00000050}
 .cact.del:hover{color:var(--warn)}
 .cact.armed{color:var(--warn);background:var(--warnbg);opacity:1}
-.cnote{color:var(--dim);font-size:11px;line-height:1.5;margin:3px 0 6px 13px}
-.citem{margin:2px 0 2px 13px;border-left:1px solid var(--line);padding-left:8px}
-.cbody2{margin:1px 0 6px 13px}
-.cbody2 .w{color:var(--ink)}
-.cbody2 .n{color:var(--dim);line-height:1.55;margin-top:3px}
+.sub{margin-left:11px;border-left:1px solid var(--line);padding-left:9px}
+.cmsg2{color:var(--warn);font-size:11px;line-height:1.45;margin:5px 0 7px}
 </style></head><body>
 <header><h1>harness</h1><span id="ct"></span><span id="age"></span></header>
-<div class="page">
 <main id="root"><div class="empty">loading...</div></main>
-<aside class="cmdrail" id="rail"></aside>
-</div>
 <div id="modal"></div>
 <script>
 // No inline onclick anywhere. Nested quoting inside an HTML attribute inside a
@@ -1001,103 +910,57 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c =>
 
 const EDITING = new Set();
 
-// ── the command dictionary ─────────────────────────────────────────────────
-// A list the operator owns. Reorder it, promote the one you reach for to a
-// heading of its own, delete the ones you never type. Delete is absolute --
-// nothing is retired or marked out, because a list that remembers what you
-// removed is one you have to curate twice.
-let RAIL = [];        // the groups, as last served
-let RAILSIG = '';     // what is currently drawn, so a poll redraws nothing
-let ARMED = null;     // the one destructive click waiting for its second
-let RAILMSG = '';     // a refusal or a warning, shown until the next click
-const CMDKEY = 'harness.cmdopen', RULEKEY = 'harness.ruleopen';
+// What is open, and what has been folded away, kept in localStorage rather
+// than in the DOM: the page redraws every three seconds, and a panel that
+// remembers its state only in the markup closes itself while you are reading
+// it.
+const FKEY = 'harness.featopen', RULEKEY = 'harness.ruleopen';
 const load = k => { try { return JSON.parse(localStorage.getItem(k) || '[]'); }
                     catch (e) { return []; } };
-// null, not [], is what "never opened this page before" looks like. Seeding an
-// empty set would leave every heading shut and the panel reading as a stub.
-let CMDSEEDED = localStorage.getItem(CMDKEY) !== null;
-const CMDOPEN = new Set(load(CMDKEY));
-const RULEOPEN = new Set(load(RULEKEY));
 const save = (k, s) => { try { localStorage.setItem(k, JSON.stringify([...s])); }
                          catch (e) {} };
+const RULEOPEN = new Set(load(RULEKEY));
 
-function cact(id, act, glyph, title, cls) {
-  const armed = ARMED === act + ':' + id;
-  return '<span class="cact ' + (cls || '') + (armed ? ' armed' : '') +
-    '" data-cact="' + act + '" data-cid="' + esc(id) + '" title="' + esc(title) +
-    '">' + (armed ? '?' : glyph) + '</span>';
-}
-
-function railHTML(groups) {
-  // First visit only: headings open, commands shut. Collapsed, the panel is an
-  // index of names you can scan; opening one asks the other question, which is
-  // when you would type it.
-  if (!CMDSEEDED) {
-    groups.forEach(g => CMDOPEN.add(g.id));
-    CMDSEEDED = true; save(CMDKEY, CMDOPEN);
-  }
-  const live = id => (ARMED && ARMED.endsWith(':' + id)) ? ' live' : '';
-  const body = groups.map(g => {
-    const open = CMDOPEN.has(g.id);
-    const items = (g.items || []).map(it => {
-      const io = CMDOPEN.has(it.id);
-      return '<div class="citem">' +
-        '<div class="chead" data-ctog="' + esc(it.id) + '">' +
-          '<span class="tri">' + (io ? '&#9660;' : '&#9654;') + '</span>' +
-          '<code>' + esc(it.cmd || it.name || '') + '</code>' +
-          '<span class="cacts' + live(it.id) + '">' +
-            cact(it.id, 'up', '&#9650;', 'move up') +
-            cact(it.id, 'down', '&#9660;', 'move down') +
-            cact(it.id, 'promote', '&#9664;', 'promote to a heading of its own') +
-            cact(it.id, 'delete', '&#10005;', 'delete - nothing keeps a copy', 'del') +
-          '</span></div>' +
-        (io ? '<div class="cbody2"><div class="w">' + esc(it.what || '') + '</div>' +
-              '<div class="n">' + esc(it.when || '') + '</div></div>' : '') +
-      '</div>';
-    }).join('');
-    // A promoted command is a heading that still has a command on it, so the
-    // heading row shows the command and the body keeps both its lines.
-    return '<div class="cgrp">' +
-      '<div class="chead" data-ctog="' + esc(g.id) + '">' +
-        '<span class="tri">' + (open ? '&#9660;' : '&#9654;') + '</span>' +
-        (g.cmd ? '<code>' + esc(g.cmd) + '</code>'
-               : '<span class="gname">' + esc(g.name || '') + '</span>') +
-        '<span class="cacts' + live(g.id) + '">' +
-          cact(g.id, 'up', '&#9650;', 'move up') +
-          cact(g.id, 'down', '&#9660;', 'move down') +
-          cact(g.id, 'demote', '&#9654;', 'demote - file it under the heading above') +
-          cact(g.id, 'delete', '&#10005;', 'delete - nothing keeps a copy', 'del') +
-        '</span></div>' +
-      (open ? (g.cmd && g.what ? '<div class="cnote">' + esc(g.what) + '</div>' : '') +
-              (g.note ? '<div class="cnote">' + esc(g.note) + '</div>' : '') +
-              (g.cmd && g.when ? '<div class="cnote">' + esc(g.when) + '</div>' : '') +
-              items
-            : '') +
+// ── the command bar ────────────────────────────────────────────────────────
+// What to type, packed into as few rows as it will go, with the detail on
+// hover. It is a reference, not a workspace: the outline controls live on the
+// charter, which is the thing that actually changes.
+//
+// The list is still ~/.claude/harness/commands.json and still hand-editable.
+// Delete the file to get the defaults back.
+function cmdbar(groups) {
+  if (!groups.length) return '';
+  const flat = g => (g.cmd ? [g] : []).concat(g.items || []);
+  return '<div class="cmdbar"><h3>slash commands</h3>' +
+    groups.map(g =>
+      '<span class="cbgrp"><b title="' + esc(g.note || '') + '">' +
+      esc(g.name || '') + '</b>' +
+      flat(g).map(it =>
+        '<span class="cbcmd" title="' +
+        esc((it.what || '') + (it.when ? '\n\n' + it.when : '')) + '">' +
+        esc(it.cmd || it.name || '') + '</span>').join('') +
+      '</span>').join('') +
     '</div>';
-  }).join('');
-  return '<div class="cmds"><h3>slash commands' +
-    '<span class="creset' + (ARMED === 'reset' ? ' armed' : '') + '">' +
-    (ARMED === 'reset' ? 'discard mine?' : 'reset') + '</span></h3>' +
-    '<div class="cintro">What to type, and when. Yours to reorder &mdash; a file ' +
-    'on this machine, not part of any tree, and no session reads it.</div>' +
-    (RAILMSG ? '<div class="cmsg2">' + esc(RAILMSG) + '</div>' : '') +
-    (groups.length ? body
-      : '<div class="cintro">Every entry has been deleted. <b>reset</b> brings ' +
-        'the defaults back.</div>') + '</div>';
 }
 
-function drawRail() {
-  RAILSIG = JSON.stringify(RAIL) + '|' + (ARMED || '') + '|' + RAILMSG;
-  document.getElementById('rail').innerHTML = railHTML(RAIL);
-}
+// ── the charter outline ────────────────────────────────────────────────────
+// Collapse state by feature key, the one destructive click waiting for its
+// second, and the refusal the CLI last gave. Kept out of the poll's way: the
+// page redraws every three seconds and state that lives only in the DOM is
+// state that resets itself while you are reading it.
+const OPENF = new Set(load(FKEY));
+let FSEEDED = localStorage.getItem(FKEY) !== null;
+let ARMED = null;
+let CHMSG = '';
 
-function cmdAct(act, id) {
-  fetch('/api/commands', { method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Harness-Local': '1' },
-    body: JSON.stringify({ action: act, id: id }) })
-    .then(r => r.json())
-    .then(j => { RAILMSG = j.ok ? '' : (j.message || 'refused'); RAILSIG = ''; tick(); })
-    .catch(() => { RAILMSG = 'could not reach the server'; drawRail(); });
+// Slug and feature stay two attributes rather than one packed id. There is no
+// separator that a feature name cannot contain, and picking one that "probably
+// won't appear" is a bug waiting for the first feature called "read/write".
+function cact(slug, feat, act, glyph, title, cls) {
+  const armed = ARMED === act + '\n' + slug + '\n' + feat;
+  return '<span class="cact ' + (cls || '') + (armed ? ' armed' : '') +
+    '" data-cact="' + act + '" data-cslug2="' + esc(slug) + '" data-cfeat="' +
+    esc(feat) + '" title="' + esc(title) + '">' + (armed ? '?' : glyph) + '</span>';
 }
 
 // Why a whole CLASS of item is the operator's to decide -- once, under the
@@ -1122,7 +985,7 @@ function rulesFor(items, rules) {
 function beginEdit(el, opts) {
   const box = opts.cnew ? null : el;
   const raw = box ? (box.dataset.raw || '') : '';
-  const key = opts.slug + ':' + (opts.feature || '') + (opts.retire ? ':retire' : '');
+  const key = opts.slug + ':' + (opts.feature || '');
   if (EDITING.has(key)) return;
   EDITING.add(key);
   const host = opts.cnew ? el : box;
@@ -1130,20 +993,16 @@ function beginEdit(el, opts) {
   host.classList.add('editing');
   const nameField = opts.cnew
     ? '<input class="cname" placeholder="feature name" />' : '';
-  const ph = opts.retire
-    ? 'why it left scope — it stays on the charter, marked out'
-    : (opts.cnew ? 'what this feature is, in plain prose'
-                 : 'what this is, written to be understood');
+  const ph = opts.cnew ? 'what this feature is, in plain prose'
+                       : 'what this is, written to be understood';
   host.innerHTML = nameField +
     '<textarea class="cta" placeholder="' + ph + '">' +
-    (opts.retire ? '' : esc(raw)) + '</textarea>' +
-    '<div class="crow"><span class="cbtn csave">' +
-    (opts.retire ? 'retire' : 'save') + '</span>' +
+    esc(raw) + '</textarea>' +
+    '<div class="crow"><span class="cbtn csave">save</span>' +
     '<span class="cbtn ccancel">cancel</span><span class="cmsg"></span></div>';
   host.dataset.ckey = key;
   host.dataset.cslug = opts.slug;
   host.dataset.cfeature = opts.feature || '';
-  host.dataset.cretire = opts.retire ? '1' : '';
   host.dataset.cnew = opts.cnew ? '1' : '';
   const ta = host.querySelector('.cta');
   ta.focus();
@@ -1156,7 +1015,7 @@ function endEdit(host) {
   host.innerHTML = host.dataset.stash || '';
   // Every marker goes, not just the stash. A left-behind data-ckey makes an
   // element that is no longer being edited answer a query for one that is.
-  ['stash', 'ckey', 'cslug', 'cfeature', 'cretire', 'cnew']
+  ['stash', 'ckey', 'cslug', 'cfeature', 'cnew']
     .forEach(k => delete host.dataset[k]);
 }
 
@@ -1164,38 +1023,34 @@ document.addEventListener('click', e => {
   const ca = e.target.closest('.cact');
   if (ca) {
     e.stopPropagation();
-    const act = ca.dataset.cact, id = ca.dataset.cid, k = act + ':' + id;
-    // Absolute means there is no undo, which is the whole reason it takes two
-    // clicks. The warning names what does not happen, because "delete" in the
-    // panel next door means retire-and-strike-through.
+    const act = ca.dataset.cact;
+    const slug = ca.dataset.cslug2, feature = ca.dataset.cfeat;
+    const k = act + '\n' + slug + '\n' + feature;
+    // Deleting is absolute, which is the whole reason it takes two clicks. The
+    // warning says what does NOT happen, because everything else the harness
+    // removes leaves a closed row behind and this leaves nothing.
     if (act === 'delete' && ARMED !== k) {
       ARMED = k;
-      RAILMSG = 'Click the ? again to delete it. Nothing keeps a copy — no ' +
-                'tombstone, no retired flag, no record anywhere. reset is the ' +
-                'only way back and it discards your whole list.';
-      drawRail(); return;
+      CHMSG = 'Click the ? again to delete "' + feature + '". Nothing is kept — ' +
+              'no record, no reason, no way back — and any sub-features under it ' +
+              'go too.';
+      LAST = ''; tick(); return;
     }
-    ARMED = null; RAILMSG = '';
-    cmdAct(act, id); return;
+    ARMED = null; CHMSG = '';
+    fetch('/api/charter', { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Harness-Local': '1' },
+      body: JSON.stringify({ slug: slug, feature: feature, action: act }) })
+      .then(r => r.json())
+      .then(j => { CHMSG = j.ok ? '' : (j.message || 'refused'); LAST = ''; tick(); })
+      .catch(() => { CHMSG = 'could not reach the server'; LAST = ''; tick(); });
+    return;
   }
-  const cr = e.target.closest('.creset');
-  if (cr) {
-    e.stopPropagation();
-    if (ARMED !== 'reset') {
-      ARMED = 'reset';
-      RAILMSG = 'This throws away your list — every move, every deletion — ' +
-                'and takes the defaults as shipped. Click again to do it.';
-      drawRail(); return;
-    }
-    ARMED = null; RAILMSG = '';
-    cmdAct('reset', ''); return;
-  }
-  const ct = e.target.closest('[data-ctog]');
+  const ct = e.target.closest('[data-ftog]');
   if (ct) {
     e.stopPropagation();
-    const id = ct.dataset.ctog;
-    CMDOPEN.has(id) ? CMDOPEN.delete(id) : CMDOPEN.add(id);
-    save(CMDKEY, CMDOPEN); ARMED = null; RAILMSG = ''; drawRail(); return;
+    const id = ct.dataset.ftog;
+    OPENF.has(id) ? OPENF.delete(id) : OPENF.add(id);
+    save(FKEY, OPENF); ARMED = null; CHMSG = ''; LAST = ''; tick(); return;
   }
   const rt = e.target.closest('[data-ruletog]');
   if (rt) {
@@ -1205,7 +1060,7 @@ document.addEventListener('click', e => {
     save(RULEKEY, RULEOPEN); LAST = ''; tick(); return;
   }
   // An armed delete disarms itself the moment you look somewhere else.
-  if (ARMED) { ARMED = null; RAILMSG = ''; drawRail(); }
+  if (ARMED) { ARMED = null; CHMSG = ''; LAST = ''; tick(); }
   const ce = e.target.closest('.cedit');
   if (ce) {
     e.stopPropagation();
@@ -1218,7 +1073,7 @@ document.addEventListener('click', e => {
     const target = (!cnew && ce.dataset.cfeature)
       ? ce.closest('.feat').querySelector('.cbody') : host;
     beginEdit(target, { slug: ce.dataset.cslug, feature: ce.dataset.cfeature,
-                        retire: ce.dataset.cretire === '1', cnew: cnew });
+                        cnew: cnew });
     return;
   }
   const cc = e.target.closest('.ccancel');
@@ -1239,13 +1094,13 @@ document.addEventListener('click', e => {
     fetch('/api/charter', { method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Harness-Local': '1' },
       body: JSON.stringify({ slug: host.dataset.cslug, feature: feature,
-                             retire: host.dataset.cretire === '1', text }) })
+                             text }) })
       .then(r => r.json())
       .then(j => {
         if (!j.ok) { msg.textContent = 'refused: ' + (j.message || ''); return; }
         EDITING.delete(host.dataset.ckey);
         host.classList.remove('editing');
-        ['stash', 'ckey', 'cslug', 'cfeature', 'cretire', 'cnew']
+        ['stash', 'ckey', 'cslug', 'cfeature', 'cnew']
           .forEach(k => delete host.dataset[k]);
         LAST = ''; tick();
       })
@@ -1587,11 +1442,13 @@ async function tick() {
   }
   catch (e) { document.getElementById('age').textContent = 'disconnected'; return; }
   document.getElementById('age').textContent = new Date().toLocaleTimeString();
-  // Drawn from its own signature, not the page's: the rail is the operator's
-  // list and has no business being redrawn because a node went busy, or being
-  // held back because someone is mid-sentence in a charter box.
-  RAIL = d.commands || [];
-  if (JSON.stringify(RAIL) + '|' + (ARMED || '') + '|' + RAILMSG !== RAILSIG) drawRail();
+  // First visit: the project description is open, its features shut. That is
+  // what this panel looked like before it could fold at all, so nobody arrives
+  // to find their charter apparently empty.
+  if (!FSEEDED) {
+    (d.projects || []).forEach(p => OPENF.add(p.slug + '::'));
+    FSEEDED = true; save(FKEY, OPENF);
+  }
   // `generated` changes every poll and nothing else usually does, so it is
   // excluded from the comparison: redrawing identical content is what loses a
   // text selection mid-copy.
@@ -1600,7 +1457,9 @@ async function tick() {
   LAST = sig;
   document.getElementById('ct').innerHTML = d.yours
     ? '<span style="color:#ffd08a">' + d.yours + ' waiting on you</span>' : '';
-  let h = '';
+  // Above everything, including the banners: it is the same reference whatever
+  // state the trees are in, and one row of it is cheaper than looking it up.
+  let h = cmdbar(d.commands || []);
   if (d.stale_server) {
     h += '<div class="banner"><b>This server is older than the code on disk</b> ' +
          '&mdash; it started at ' + esc(d.started) + ' and the page you are looking ' +
@@ -1664,36 +1523,59 @@ async function tick() {
 // comments on, and that is the point of it: the charter exists to be argued
 // with by the person who knows what the project is for. A description that can
 // only be corrected somewhere else is one that goes stale where nobody looks.
+// A feature is a dropdown: its name always, its prose when you open it. The
+// controls indent, reorder and delete it, and they are the same four you would
+// use on any outline -- up and down stay among siblings, promote and demote are
+// the only way a feature crosses between one heading and another.
 function feat(p, f) {
-  return '<div class="feat' + (f.retired ? ' out' : '') + '">' +
-    '<div class="fname"><b>' + esc(f.name) + '</b>' +
-    (f.retired ? ' <span class="q">out of scope</span>' : '') +
-    '<span class="cedit" data-cslug="' + esc(p.slug) + '" data-cfeature="' +
-      esc(f.name) + '">edit</span>' +
-    (f.retired ? '' : '<span class="cedit" data-cslug="' + esc(p.slug) +
-      '" data-cfeature="' + esc(f.name) + '" data-cretire="1">retire</span>') +
-    '</div>' +
-    '<div class="ftext cbody" data-raw="' + esc(f.text) + '">' + esc(f.text) +
-    (f.retired && f.retired_why ? '\n\nout of scope: ' + esc(f.retired_why) : '') +
-    '</div></div>';
+  const key = p.slug + '::' + f.key;
+  const open = OPENF.has(key);
+  return '<div class="feat' + (f.depth ? ' sub' : '') + '">' +
+    '<div class="chead fname" data-ftog="' + esc(key) + '">' +
+      '<span class="tri">' + (open ? '&#9660;' : '&#9654;') + '</span>' +
+      '<b>' + esc(f.name) + '</b>' +
+      '<span class="cacts">' +
+        cact(p.slug, f.name, 'up', '&#9650;', 'move up') +
+        cact(p.slug, f.name, 'down', '&#9660;', 'move down') +
+        (f.depth ? cact(p.slug, f.name, 'promote', '&#9664;',
+                        'promote to a feature of its own')
+                 : cact(p.slug, f.name, 'demote', '&#9654;',
+                        'demote — file it under the feature above')) +
+        cact(p.slug, f.name, 'delete', '&#10005;',
+             'delete — nothing is kept', 'del') +
+      '</span></div>' +
+    (open
+      ? '<div class="frow"><span class="cedit" data-cslug="' + esc(p.slug) +
+        '" data-cfeature="' + esc(f.name) + '">edit</span></div>' +
+        '<div class="ftext cbody" data-raw="' + esc(f.text) + '">' +
+        esc(f.text) + '</div>'
+      : '') +
+    '</div>';
 }
 
 function charter(p) {
   const c = p.charter || { description: '', features: [] };
-  const head = '<h3>what this project is' +
+  const dkey = p.slug + '::';
+  const dopen = OPENF.has(dkey);
+  // "Project" rather than "what this project is". The panel is plainly about
+  // the project; saying so twice is a heading spent on nothing.
+  const head = '<h3 class="chead" data-ftog="' + esc(dkey) + '">' +
+    '<span class="tri">' + (dopen ? '&#9660;' : '&#9654;') + '</span>Project' +
     '<span class="cedit" data-cslug="' + esc(p.slug) + '" data-cfeature="">edit</span>' +
     '</h3>';
-  const body = c.description
-    ? '<div class="ctext cbody" data-raw="' + esc(c.description) + '">' +
-      esc(c.description) + '</div>'
-    : '<div class="ctext cbody none" data-raw="">Nothing states what this project ' +
-      'is for. Until something does, the only work visible to the head lead is ' +
-      'whatever happens to be broken — and a backlog is not a plan.</div>';
+  const body = !dopen ? ''
+    : c.description
+      ? '<div class="ctext cbody" data-raw="' + esc(c.description) + '">' +
+        esc(c.description) + '</div>'
+      : '<div class="ctext cbody none" data-raw="">Nothing states what this project ' +
+        'is for. Until something does, the only work visible to the head lead is ' +
+        'whatever happens to be broken — and a backlog is not a plan.</div>';
   const fs = (c.features || []);
   const list = fs.length
     ? fs.map(f => feat(p, f)).join('')
     : '<div class="ln q">no features listed</div>';
   return '<div class="charter" data-live="charter:' + esc(p.slug) + '">' + head + body +
+    (CHMSG ? '<div class="cmsg2">' + esc(CHMSG) + '</div>' : '') +
     '<div class="feats"><h3>features in scope' +
     '<span class="cedit" data-cslug="' + esc(p.slug) + '" data-cnew="1">+ add</span>' +
     '</h3>' + list + '</div></div>';
@@ -1846,16 +1728,25 @@ def add_block_comment(slug, node, need, text):
     return r.returncode == 0, (r.stdout or r.stderr).strip()[:300]
 
 
-def save_charter(slug, feature, text, retire=False):
-    """Delegated like every other write here: the CLI decides what a charter is
-    and what may change it, and this only calls it with the session id stripped,
-    because prose typed into a page was typed by a person.
+def shape_charter(slug, feature, action):
+    """Reorder, nest or delete a feature — delegated, like every other write.
 
-    This is the one object the operator is expected to EDIT rather than comment
-    on, which is why it is the one place the viewer offers a full text box. The
-    charter is the artefact whose whole purpose is to be argued with by the
-    person who knows what the project is for, and a description nobody can
-    correct in the place they read it is one that goes stale silently."""
+    The viewer does not open charter.json. What a charter is, what may change
+    it, and what an order even means all live in the CLI; a second
+    implementation here would be a second answer to those questions, and the
+    one the operator sees would be whichever they happened to use last.
+    """
+    flag = {"up": ["--move", "up"], "down": ["--move", "down"],
+            "promote": ["--promote"], "demote": ["--demote"],
+            "delete": ["--delete"]}.get(action)
+    if not flag:
+        return False, f"unknown action {action!r}"
+    if not feature:
+        return False, "which feature?"
+    return _charter_cli(slug, ["--feature", feature] + flag)
+
+
+def _charter_cli(slug, args):
     pdir = _project_dir(slug)
     if pdir is None:
         return False, "no such project"
@@ -1864,14 +1755,23 @@ def save_charter(slug, feature, text, retire=False):
     except Exception:
         return False, "unreadable binding"
     exe = Path(__file__).resolve().with_name("harness")
+    # The session id is stripped because prose typed into a page, and a button
+    # clicked on one, were both done by a person — and the CLI gates charter
+    # writes on rank, which a person does not have.
     env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
-    argv = [sys.executable, str(exe), "charter"]
-    if feature:
-        argv += ["--feature", feature]
-    argv += ["--retire", text] if retire else ["--write", text]
-    r = subprocess.run(argv, cwd=repo, capture_output=True, text=True,
-                       timeout=20, env=env)
+    r = subprocess.run([sys.executable, str(exe), "charter"] + args, cwd=repo,
+                       capture_output=True, text=True, timeout=20, env=env)
     return r.returncode == 0, (r.stdout or r.stderr).strip()[:300]
+
+
+def save_charter(slug, feature, text):
+    """This is the one object the operator is expected to EDIT rather than
+    comment on, which is why it is the one place the viewer offers a full text
+    box. The charter is the artefact whose whole purpose is to be argued with by
+    the person who knows what the project is for, and a description nobody can
+    correct in the place they read it is one that goes stale silently."""
+    return _charter_cli(slug, (["--feature", feature] if feature else []) +
+                        ["--write", text])
 
 
 class H(BaseHTTPRequestHandler):
@@ -1924,28 +1824,26 @@ class H(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin")
         if origin and not origin.startswith(("http://127.0.0.1:", "http://localhost:")):
             self.send_error(403, "cross-origin"); return
-        if not self.path.startswith(("/api/comment", "/api/charter", "/api/commands")):
+        if not self.path.startswith(("/api/comment", "/api/charter")):
             self.send_error(404); return
         try:
             n = int(self.headers.get("Content-Length") or 0)
             body = json.loads(self.rfile.read(min(n, 64_000)) or b"{}")
         except Exception:
             self.send_error(400, "bad JSON"); return
-        # The one write here that touches nothing in any tree. The command list
-        # is the operator's own note to themselves, so it is edited in the
-        # viewer directly rather than delegated to the CLI, which has no opinion
-        # about it and should not grow one.
-        if self.path.startswith("/api/commands"):
-            ok, msg = edit_commands((body.get("action") or "").strip(),
-                                    (body.get("id") or "").strip())
-            self._send(json.dumps({"ok": ok, "message": msg}), "application/json")
-            return
         text = (body.get("text") or "").strip()
         if self.path.startswith("/api/charter"):
-            if not text:
+            # Shaping and writing go down the same route because they are the
+            # same object; an action arrives instead of text, never as well as.
+            act = (body.get("action") or "").strip()
+            if act:
+                ok, msg = shape_charter(body.get("slug", ""),
+                                        body.get("feature") or "", act)
+            elif not text:
                 self.send_error(400, "empty charter"); return
-            ok, msg = save_charter(body.get("slug", ""), body.get("feature") or "",
-                                   text, bool(body.get("retire")))
+            else:
+                ok, msg = save_charter(body.get("slug", ""),
+                                       body.get("feature") or "", text)
             self._send(json.dumps({"ok": ok, "message": msg}), "application/json")
             return
         if not text:

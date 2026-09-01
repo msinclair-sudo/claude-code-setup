@@ -313,7 +313,10 @@ out which one and write it there.
 harness charter                                  # read it
 harness charter --write "..."                    # what this project is for
 harness charter --feature "<name>" --write "..." # one feature, in scope
-harness charter --feature "<name>" --retire "why it left scope"
+harness charter --feature "<name>" --move up     # order is yours; new ones go last
+harness charter --feature "<name>" --demote      # file it under the one above
+harness charter --feature "<name>" --promote     # lift it back out
+harness charter --feature "<name>" --delete      # gone, with any sub-features
 ```
 
 Prose, written to be understood, not a specification. What the project is for,
@@ -345,9 +348,15 @@ let them correct it. **Their correction is the deliverable, not your draft.** Th
 edit it directly in `harness gui`, which is where they will actually do it.
 
 Keep it current. When a ruling changes what is in scope, that is a charter edit
-as well as a brief — and a feature that leaves scope is **retired with its
-reason**, never deleted. What the project decided not to build is part of what it
-is.
+as well as a brief — and a feature that leaves scope is **deleted, absolutely**.
+Nothing is kept: no struck-through entry, no reason, no way back. If what the
+project decided *not* to build is worth having, it is a sentence in the
+description, written as prose, not a tombstone in the feature list. A charter
+that only grows is one nobody rereads.
+
+The order is information too. Put the features in the order someone should meet
+them, and file the ones that are facets of a larger thing underneath it. Two
+levels, no more — a charter with a table of contents has stopped being prose.
 
 ## Being told is not being tasked
 

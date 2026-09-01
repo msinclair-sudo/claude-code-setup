@@ -2816,8 +2816,71 @@ def load_charter(ctx):
 
 
 def charter_features(c, include_retired=False):
-    return {k: v for k, v in sorted((c.get("features") or {}).items())
-            if include_retired or not v.get("retired_at")}
+    """Every feature, in the order the operator put them.
+
+    `include_retired` is accepted and ignored. Retiring is gone: a feature that
+    left scope is deleted outright now, so there is no second class of feature
+    to filter for, and callers that passed the flag were asking a question that
+    no longer has two answers.
+    """
+    return {k: v for k, v, _ in charter_order(c)}
+
+
+def charter_normalise(c):
+    """Give every feature a position, and keep the nesting exactly two deep.
+
+    `seq` and `parent` did not exist in the first charters and a dict has no
+    order of its own, so the panel drew them alphabetically — an order nobody
+    chose and one that moved a feature whenever it was renamed. Missing
+    positions are backfilled from that alphabetical order, once, so the first
+    read after this change looks exactly like the last read before it.
+    """
+    feats = c.get("features") or {}
+    changed = False
+    nxt = max([v["seq"] for v in feats.values()
+               if isinstance(v.get("seq"), int)] or [-1]) + 1
+    for k in sorted(feats):
+        if not isinstance(feats[k].get("seq"), int):
+            feats[k]["seq"] = nxt; nxt += 1; changed = True
+    for v in feats.values():
+        p = v.get("parent")
+        # A parent that was deleted, or one that is itself nested. Either way
+        # this is a top-level feature now, rather than an orphan nothing draws.
+        if p is not None and (p not in feats or feats[p].get("parent")):
+            v["parent"] = None; changed = True
+    return changed
+
+
+def charter_order(c):
+    """[(key, feature, depth)] — parents first, each followed by its own."""
+    feats = c.get("features") or {}
+    kids, tops = {}, []
+    for k, v in feats.items():
+        p = v.get("parent")
+        kids.setdefault(p, []).append(k) if p else tops.append(k)
+    rank = lambda k: (feats[k].get("seq", 0), k)
+    out = []
+    for k in sorted(tops, key=rank):
+        out.append((k, feats[k], 0))
+        for ck in sorted(kids.get(k, []), key=rank):
+            out.append((ck, feats[ck], 1))
+    return out
+
+
+def charter_reseq(c, parent):
+    """Renumber one sibling group 0..n and return it in order.
+
+    Every move writes a position that is deliberately out of line — 0.5 to land
+    between two others, or a big number to land last — and then calls this. The
+    alternative is arithmetic that keeps working until two features end up with
+    the same seq and the order starts depending on the key.
+    """
+    feats = c.get("features") or {}
+    sibs = sorted([k for k, v in feats.items() if (v.get("parent") or None) == parent],
+                  key=lambda k: (feats[k].get("seq", 0), k))
+    for n, k in enumerate(sibs):
+        feats[k]["seq"] = n
+    return sibs
 
 
 def cmd_charter(a):
@@ -2840,7 +2903,8 @@ def cmd_charter(a):
     who = f"{node} (session {sid[:8]})" if sid else "operator"
     now = time.strftime("%Y-%m-%dT%H:%M:%S%z")
 
-    writing = a.write is not None or a.retire is not None
+    writing = (a.write is not None or a.delete or a.move
+               or a.promote or a.demote)
     if writing and sid and ctx.rank(node) != 0:
         die(REFUSED,
             f"'{node}' is rank {ctx.rank(node)}. The charter is rank 0's, or the "
@@ -2851,23 +2915,96 @@ def cmd_charter(a):
     if a.json:
         print(json.dumps(c, indent=2)); return
 
-    if a.retire is not None:
+    # ── shaping the charter ────────────────────────────────────────────────
+    # The charter is an outline now, not a flat list: features have an order the
+    # operator set and may sit under one another. Two levels, deliberately — a
+    # charter that can nest four deep stops being prose you read top to bottom
+    # and becomes a document with a table of contents, which is the thing this
+    # was written not to be.
+    if a.delete or a.move or a.promote or a.demote:
         if not a.feature:
-            die(REFUSED, "--retire needs --feature <name>")
+            die(REFUSED, "which one? --feature <name>")
         k = tkey(a.feature)
-        if k not in (c.get("features") or {}):
-            die(REFUSED, f"no feature '{a.feature}' in the charter")
-        if not a.retire.strip():
-            die(REFUSED, "say why it left scope. A feature that vanishes without a "
-                         "reason\n           is indistinguishable from one nobody "
-                         "got to.")
-        # Retired, never deleted. What a project decided NOT to build is part of
-        # what it is, and the next person to propose it deserves the answer.
-        c["features"][k].update(retired_at=now, retired_by=who, retired_why=a.retire)
+        feats = c.get("features") or {}
+        if k not in feats:
+            near = ", ".join(v.get("name", x) for x, v in feats.items()) or "none"
+            die(REFUSED, f"no feature '{a.feature}' in the charter. In scope: {near}")
+        charter_normalise(c)
+        me = feats[k]
+        parent = me.get("parent") or None
+        name = me.get("name", k)
+
+        if a.delete:
+            # Absolute, and it says so. This is the one place the harness
+            # removes something without leaving a row behind, because the
+            # operator asked for a list they own rather than a ledger: a charter
+            # that remembers everything ever proposed is one nobody rereads.
+            kids = [x for x, v in feats.items() if v.get("parent") == k]
+            for x in [k] + kids:
+                feats.pop(x, None)
+            charter_reseq(c, parent)
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(json.dumps(c, indent=2) + "\n")
+            print(f"deleted '{name}'"
+                  + (f" and {len(kids)} sub-feature(s) under it" if kids else ""))
+            print("  Nothing was kept. If it left scope for a reason worth having,")
+            print("  that reason belongs in the description, written by you.")
+            return
+
+        if a.move:
+            sibs = charter_reseq(c, parent)
+            i = sibs.index(k)
+            j = i - 1 if a.move == "up" else i + 1
+            if j < 0 or j >= len(sibs):
+                where = "first" if a.move == "up" else "last"
+                die(REFUSED, f"'{name}' is already {where} "
+                             + ("in the charter" if parent is None
+                                else f"under '{feats[parent].get('name', parent)}'"))
+            o = sibs[j]
+            feats[k]["seq"], feats[o]["seq"] = feats[o]["seq"], feats[k]["seq"]
+
+        elif a.promote:
+            if parent is None:
+                die(REFUSED, f"'{name}' is already a feature in its own right")
+            # Lands immediately after what it used to sit under, which is where
+            # a reader was already looking for it.
+            me["parent"] = None
+            me["seq"] = feats[parent].get("seq", 0) + 0.5
+            charter_reseq(c, None)
+            charter_reseq(c, parent)
+
+        elif a.demote:
+            if parent is not None:
+                die(REFUSED, f"'{name}' is already a sub-feature, and the charter "
+                             f"nests two deep.\n           Two levels is enough to "
+                             f"group with and few enough to still read as prose.")
+            tops = charter_reseq(c, None)
+            i = tops.index(k)
+            if i == 0:
+                die(REFUSED, f"'{name}' is the first feature — there is nothing "
+                             f"above it to sit under")
+            tgt = tops[i - 1]
+            kids = [x for x, v in feats.items() if v.get("parent") == k]
+            end = max([v.get("seq", 0) for x, v in feats.items()
+                       if v.get("parent") == tgt] or [-1]) + 1
+            me["parent"] = tgt
+            me["seq"] = end
+            # Its own follow it rather than going down with it. A feature that
+            # swallowed its sub-features on the way down would take them out of
+            # the charter with no way to see that it had.
+            for n, x in enumerate(sorted(kids, key=lambda x: feats[x].get("seq", 0))):
+                feats[x]["parent"] = tgt
+                feats[x]["seq"] = end + 1 + n
+            charter_reseq(c, tgt)
+            charter_reseq(c, None)
+
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(json.dumps(c, indent=2) + "\n")
-        print(f"retired '{c['features'][k].get('name', k)}' — it stays on the "
-              f"charter, marked out of scope")
+        act = ("moved " + a.move) if a.move else ("promoted" if a.promote else "demoted")
+        par = feats[k].get("parent")
+        print(f"{act}: '{name}'"
+              + (f" — now under '{feats[par].get('name', par)}'" if par
+                 else " — now a feature in its own right" if a.promote else ""))
         return
 
     if a.write is not None:
@@ -2875,12 +3012,19 @@ def cmd_charter(a):
             die(REFUSED, "an empty charter is worse than none — it reads as though "
                          "the question\n           was answered.")
         if a.feature:
+            charter_normalise(c)
             k = tkey(a.feature)
             prev = (c["features"].get(k) or {})
+            # A new one goes last rather than wherever its name sorts to. Where
+            # it belongs is the operator's call, and --move is how they make it.
+            seq = prev.get("seq")
+            if not isinstance(seq, int):
+                seq = max([v.get("seq", 0) for v in c["features"].values()]
+                          or [-1]) + 1
             c["features"][k] = dict(prev, name=a.feature, text=a.write,
                                     revision=prev.get("revision", 0) + 1,
                                     written_by=who, written_at=now,
-                                    retired_at=None, retired_by=None, retired_why=None)
+                                    seq=seq, parent=prev.get("parent") or None)
             rev = c["features"][k]["revision"]
         else:
             prev = c.get("description") or {}
@@ -2904,14 +3048,13 @@ def cmd_charter(a):
             near = ", ".join(v.get("name", k) for k, v
                              in charter_features(c).items()) or "none"
             die(REFUSED, f"no feature '{a.feature}' in the charter. In scope: {near}")
+        par = ft.get("parent")
         print(f"{ft.get('name', k)}   revision {ft.get('revision')}"
-              + ("   OUT OF SCOPE" if ft.get("retired_at") else ""))
+              + (f"   under {(c['features'][par]).get('name', par)}"
+                 if par and par in c.get("features", {}) else ""))
         print(f"  by {ft.get('written_by')} at {str(ft.get('written_at'))[:19]}\n")
         for line in (ft.get("text") or "").splitlines() or [""]:
             print(f"  {line}")
-        if ft.get("retired_at"):
-            print(f"\n  retired {str(ft['retired_at'])[:19]} by {ft.get('retired_by')}: "
-                  f"{ft.get('retired_why')}")
         return
 
     d = c.get("description") or {}
@@ -2928,20 +3071,20 @@ def cmd_charter(a):
     print(f"  by {d.get('written_by')} at {str(d.get('written_at'))[:19]}\n")
     for line in (d.get("text") or "").splitlines():
         print(f"  {line}")
-    live = charter_features(c)
-    gone = {k: v for k, v in (c.get("features") or {}).items() if v.get("retired_at")}
+    # Indented, in the operator's order. The outline IS information — which
+    # features are facets of one thing, and which stand on their own — and a
+    # flat alphabetical list threw all of it away every time it printed.
+    live = charter_order(c)
     if live:
         print(f"\n  {len(live)} feature(s) in scope:")
-        for k, ft in live.items():
+        for k, ft, depth in live:
+            pad = "    " + "  " * depth
             first = (ft.get("text") or "").strip().splitlines()
-            print(f"    {ft.get('name', k)}")
+            print(f"{pad}{ft.get('name', k)}")
             if not a.full and first:
-                print(f"      {first[0][:96]}")
+                print(f"{pad}  {first[0][:96]}")
             for line in (ft.get("text") or "").splitlines() if a.full else []:
-                print(f"      {line}")
-    if gone:
-        print(f"\n  {len(gone)} out of scope: "
-              f"{', '.join(v.get('name', k) for k, v in gone.items())}")
+                print(f"{pad}  {line}")
     if not a.full and live:
         print(f"\n  harness charter --full        every feature in full")
         print(f"  harness charter --feature <name>")
@@ -5061,8 +5204,15 @@ def main():
     ch.add_argument("--feature", metavar="NAME", help="read or write one feature")
     ch.add_argument("--write", metavar="TEXT",
                     help="the project description, or a feature's with --feature")
-    ch.add_argument("--retire", metavar="WHY",
-                    help="take a feature out of scope; it stays on the charter")
+    ch.add_argument("--move", choices=["up", "down"],
+                    help="reorder a feature among its siblings")
+    ch.add_argument("--promote", action="store_true",
+                    help="lift a sub-feature to a feature of its own")
+    ch.add_argument("--demote", action="store_true",
+                    help="file a feature under the one above it")
+    ch.add_argument("--delete", action="store_true",
+                    help="remove it outright — no record is kept, and a feature "
+                         "with sub-features takes them with it")
     ch.add_argument("--full", action="store_true", help="every feature in full")
     ch.add_argument("--json", action="store_true")
     nt = add("note", cmd_note)

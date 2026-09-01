@@ -606,7 +606,9 @@ The ground moves only at task boundaries, so two catch-ups is frequent only if b
 
 **It does not reintroduce the drip feed.** The 39% penalty is about a **task's specification** arriving in pieces. The charter is not part of any task's specification; it is the standing frame that makes a brief interpretable, and it is available whole before the first brief exists. The failure mode to watch is the charter absorbing implementation detail while briefs shrink into pointers at it — which is the drip feed reassembled through a side door. The line: **the charter says what and why, a brief says how and done.** If a sentence would change when the code changes, it is in the wrong document.
 
-**A retired feature stays on the charter**, marked out of scope with its reason. What a project decided not to build is part of what it is, and the next person to propose it deserves the answer rather than the silence.
+**The charter is an outline, and deletion is absolute.** Features carry the order the operator put them in and may sit under one another, two levels deep — which features are facets of one thing is information, and an alphabetical list threw it away. `--move`, `--promote` and `--demote` shape it; `--delete` removes a feature outright, taking any sub-features with it, and keeps no record of what was there.
+
+This replaced retiring, which kept a struck-through feature on the charter with the reason it left scope. The argument for retiring was that what a project decided not to build is part of what it is — which is true, and belongs in the description, written as prose by the person who decided it. What retiring actually produced was a charter that grew monotonically and was read less each time it did. **The operator owns this document; a document that remembers everything ever proposed is one they curate twice and reread never.**
 
 ### I13 — A measurement travels with the command that produced it
 

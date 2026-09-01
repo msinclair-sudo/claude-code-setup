@@ -935,7 +935,15 @@ rename every node and still get them:
 | --- | --- | --- | --- |
 | root (rank 0) | `opus` | `high` | applies every document change, writes rulings, holds the widest view |
 | lead (parent *and* children) | `opus` | `medium` | holds every child's report and both sides of a conflict it did not create |
-| member (leaf) | `opus` | `medium` | one task, one worktree, then recycled — but coding is the one steep effort curve |
+| member (leaf) | `sonnet` | `medium` | one task, one worktree, then recycled — see below; effort stays medium because coding is the one steep effort curve |
+
+**A member runs Sonnet for a reason about the plan, not about the work.** On a subscription, Opus has its own weekly window that resets separately from the others. So a member on Opus is not spending *less* than its lead — it is spending the **same scarce pool** that the lead and rank 0 need, and the tree competes with itself for it. Moving members off does not reduce tokens by one; it moves them to a pool nothing else in the tree draws on.
+
+That is a different claim from *Sonnet is good enough for coding*, which this note does not make and has no evidence for. The nearest measured result is dollar-matched rather than tier-matched, is **conditional on a strong verifier**, and gets its saving from sampling five times and selecting — not from running one cheaper worker once. What the design does supply is the verifier condition: a complete brief at [[#T1 — Task assignment]], acceptance that is a measurement rather than an assertion, the repo's own instrument suite, and a lead's read before integration at [[#T4 — Integration (fast-forward up)]].
+
+**Leads and rank 0 stay on Opus.** A lead writes its children's briefs, and brief quality is where the 39% penalty lives: a bad split costs more than the tier saves, and it costs it downstream where it is hardest to see.
+
+**The mark records what actually ran** (`_model`, `_effort`), because a per-node model change otherwise produces two numbers nobody can attribute. `--done` prints it beside the band verdict and `spend` puts it in the header, so the question this table answers by judgement — whether a cheaper member causes enough rework to cost more turns than it saves — becomes one the ledger answers by subtraction.
 
 **No node uses a 1M window, and an earlier version of this note was wrong to.**
 The argument was that context follows the view: a lead accumulates every child's

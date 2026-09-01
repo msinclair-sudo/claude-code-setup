@@ -277,7 +277,14 @@ EFFORTS = ("low", "medium", "high", "xhigh", "max")
 ROLE_DEFAULTS = {
     "root":     ("opus", "high"),        # rank 0: applies documents, writes rulings
     "lead":     ("opus", "medium"),      # no 1M: a wider window is a measured null at equal occupancy
-    "member":   ("opus",     "medium"),  # coding: the one steep curve; `low` costs ~8 points
+    # Sonnet, and the reason is the plan rather than the work. On a subscription
+    # Opus has its own weekly window that resets separately, so a member on Opus
+    # is not spending "less" than a lead — it is spending the SAME scarce pool
+    # the lead and rank 0 need. Moving members off it does not reduce tokens; it
+    # moves them to a pool nothing else in the tree competes for.
+    # Effort stays medium: coding is the one steep effort curve, `low` costs
+    # ~8 points, and effort is a different dial from tier.
+    "member":   ("sonnet",   "medium"),
 }
 
 
@@ -1456,6 +1463,8 @@ def cmd_mark(a):
                  "text": a.note})
         f.write_text(json.dumps(rec, indent=2) + "\n")
         parent = ctx.tree["nodes"].get(node, {}).get("parent")
+        if rec.get("_model"):
+            print(f"ran as {rec['_model']}, effort {rec.get('_effort')}")
         if rec.get("_band") and rec.get("_delta"):
             u, dn, _ = split(rec["_delta"])
             actual = band_of(u + dn)
@@ -1593,6 +1602,10 @@ def cmd_mark(a):
             die(REFUSED, f"band must be one of {', '.join(BANDS)} "
                          f"({', '.join(f'{k} < {tok(v[1])}' for k, v in BANDS.items())})")
         tot["_band"] = band
+    # Which model actually ran this. Without it a per-node model change produces
+    # two numbers nobody can attribute, and the comparison that would settle
+    # whether a cheaper member causes rework cannot be made at all.
+    tot["_model"], tot["_effort"] = assignment_for(ctx, node)
     tot["_task"] = a.task
     tot["_note"] = a.note or ""
     tot["_node"] = node
@@ -1636,6 +1649,8 @@ def cmd_spend(a):
                 f"the difference is not a measurement of anything. Report both totals "
                 f"separately.")
     label = f"since mark '{a.task}'" if base else "whole session"
+    if base and base.get("_model"):
+        label += f"   {base['_model']}/{base.get('_effort')}"
     print(f"{label}   session {sid[:8]}   {now['_records']} usage records")
     d = {k: now[k] - (base[k] if base else 0) for k in TOKEN_KINDS}
     up, down, resent = split(d)

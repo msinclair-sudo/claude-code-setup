@@ -399,6 +399,30 @@ def _whoami(a):
                   f"{', '.join(sorted(u))} — harness brief <task>")
     except Exception:
         pass
+    # Both directions of a wait, because orientation is the one moment either
+    # party is reachable. A child that asked and stopped is the state the
+    # R-table could not tell apart from working, and a lead that never learns
+    # of it is how a stopped lane stays stopped across a whole session.
+    try:
+        waits = open_waits(ctx)
+        me = waits.get(node)
+        if me:
+            print(f"waiting  you are marked as waiting on "
+                  f"{me.get('parent') or 'your lead'} "
+                  f"({wait_age(me.get('since'))}) — {me.get('asked')}")
+            print(f"         If it has been answered, say so: harness waiting --clear")
+        stopped = sorted((r for r in waits.values() if r.get("parent") == node),
+                         key=lambda r: r.get("since") or "")
+        if stopped:
+            print(f"answer   {len(stopped)} child(ren) stopped waiting on YOU — "
+                  f"harness waiting --list")
+            for r in stopped:
+                print(f"         {r['node']} ({wait_age(r.get('since'))}): "
+                      f"{r.get('asked')}")
+                if r.get("still_moving"):
+                    print(f"           still moving: {r['still_moving']}")
+    except Exception:
+        pass
     try:
         # Every rank below 0 starts cold. A child with nothing in flight is a
         # session accumulating context for no reason — and since its knowledge
@@ -680,6 +704,11 @@ def cmd_release(a):
         die(REFUSED, f"'{node}' is held by another session ({held['name']}). "
                      f"Use --force only after checking liveness.")
     lock.unlink()
+    # A released node is not waiting on anything. Leaving the record behind
+    # would have the next session inherit a question the last one asked, and a
+    # lead answering into an empty worktree.
+    if clear_wait(ctx, node):
+        print(f"  cleared the wait on this node — it was released, not answered")
     print(f"released {node}")
 
 
@@ -4427,6 +4456,143 @@ def unread_block_comments(ctx, who):
     return out
 
 
+# ── waiting on a lead (T12, T7) ────────────────────────────────────────────
+# A block says a lane needs the OPERATOR. This says it needs its LEAD, which is
+# the other half of the same problem and had no record at all: R-table put
+# "mid-task" and "awaiting a reply to T12" behind the same `busy` session, so a
+# node that asked a question and stopped looked exactly like a node that was
+# working. The operator saw a busy tree; the lead saw nothing at all until it
+# happened to orient.
+def waiting_path(ctx, node):
+    return ctx.state_file("waiting", node, ".json")
+
+
+def open_waits(ctx):
+    """Every node in this tree that has asked upward and stopped.
+
+    Its own record, not a field on the claim: a claim says who is here, this
+    says what they are doing, and the two have different lifetimes — a wait
+    outlives a compact and ends with the answer, not with the session.
+    """
+    d = ctx.state / "waiting"
+    out = {}
+    for f in (sorted(d.glob("*.json")) if d.is_dir() else []):
+        try:
+            r = json.loads(f.read_text())
+        except Exception:
+            continue
+        if r.get("node") in ctx.tree["nodes"]:
+            out[r["node"]] = r
+    return out
+
+
+def clear_wait(ctx, node):
+    """Silently does nothing when nothing is waiting.
+
+    Every caller is a moment where the node has plainly stopped waiting —
+    released, or marked onto other work — and none of them should have to check
+    first. The record is removed rather than tombstoned; what happened is in
+    the inbox, where the rest of the history already lives, and a directory of
+    cleared waits nobody reads is a directory that hides the live ones.
+    """
+    f = waiting_path(ctx, node)
+    if not f.exists():
+        return False
+    f.unlink()
+    append_inbox({"event": "wait-cleared", "node": node, "repo": str(ctx.repo),
+                  "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")})
+    return True
+
+
+def wait_age(since):
+    """How long it has been stopped, in the units a person answers in."""
+    try:
+        t = time.mktime(time.strptime((since or "")[:19], "%Y-%m-%dT%H:%M:%S"))
+    except Exception:
+        return ""
+    m = int(max(0, time.time() - t) // 60)
+    return f"{m}m" if m < 60 else f"{m // 60}h{m % 60:02d}"
+
+
+def cmd_waiting(a):
+    """A member says, on the record, that it asked and stopped.
+
+    The point is not the flag. It is that `--still-moving` is asked for at the
+    same moment: a lane that is waiting on one answer and working on four other
+    things is not the same event as a lane that has halted, and a lead reading
+    a list of stopped children needs to know which it is before it decides what
+    to answer first.
+
+    It does not notify. A lead reads it when it orients, exactly like every
+    other thing that climbs — anything that interrupts a lead mid-task is a
+    message, and messages arrive out of order and are read once.
+    """
+    ctx = Ctx(); ctx.require_enrolled()
+    node, spec = ctx.node()
+    parent = spec.get("parent")
+
+    if a.list:
+        rows = open_waits(ctx)
+        if not rows:
+            print("nobody in this tree is waiting on an answer")
+            return
+        for n in sorted(rows):
+            r = rows[n]
+            print(f"{n:<12} → {(r.get('parent') or 'rank 0'):<12} "
+                  f"{wait_age(r.get('since')):>6}  {r.get('asked') or '—'}")
+            if r.get("still_moving"):
+                print(f"{'':<12}   still moving: {r['still_moving']}")
+        return
+
+    if a.clear:
+        if clear_wait(ctx, node):
+            print(f"{node} is no longer marked as waiting")
+        else:
+            print(f"{node} was not marked as waiting")
+        return
+
+    if not a.asked:
+        # Reading the state is the commonest use, so it is what the bare verb
+        # does. Both directions, because a lead wants the other one.
+        waits = open_waits(ctx)
+        mine = waits.get(node)
+        if mine:
+            print(f"waiting  on {mine.get('parent') or 'your lead'} for "
+                  f"{wait_age(mine.get('since'))} — {mine.get('asked')}")
+            if mine.get("still_moving"):
+                print(f"         still moving: {mine['still_moving']}")
+            print(f"         harness waiting --clear, the moment you have the answer")
+        else:
+            print(f"{node} is not waiting on anything")
+        for r in sorted((r for r in waits.values() if r.get("parent") == node),
+                        key=lambda r: r.get("since") or ""):
+            print(f"asked    {r['node']} has been stopped on you for "
+                  f"{wait_age(r.get('since'))} — {r.get('asked')}")
+        return
+
+    if parent is None:
+        die(REFUSED,
+            "rank 0 has no lead to wait on. What rank 0 waits for is the "
+            "operator,\n           and that is a block:\n\n"
+            "           harness blocked <need> --why \"...\" --still-moving \"...\"")
+    rec = {"node": node, "parent": parent, "asked": a.asked,
+           "still_moving": a.still_moving or "",
+           "repo": str(ctx.repo),
+           "since": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+           "session": os.environ.get("CLAUDE_CODE_SESSION_ID", "")}
+    f = waiting_path(ctx, node)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(rec, indent=2) + "\n")
+    append_inbox(dict(rec, event="waiting"))
+    print(f"{node} is marked as waiting on {parent}")
+    print(f"  {parent} sees it at its next harness command, and the viewer shows it now.")
+    if not a.still_moving:
+        print(f"  Nothing was recorded as still moving, so this reads as a full stop.")
+        print(f"  If it is not one, say so: harness waiting {shlex.quote(a.asked)} "
+              f"--still-moving \"...\"")
+    print(f"  Clear it yourself when the answer lands: harness waiting --clear")
+
+
 def cmd_blocked(a):
     """A member raises a block as a RECORD, not a message.
 
@@ -4835,6 +5001,15 @@ def main():
     gt.add_argument("--for-block", dest="for_block", help="the `harness blocked` need this answers")
     gt.add_argument("--revoke", action="store_true", help="end a grant; it stays on the record")
     gt.add_argument("--list", action="store_true", help="every grant, live and revoked")
+    wt = add("waiting", cmd_waiting)
+    wt.add_argument("asked", nargs="?", help="what you asked your lead, in one line")
+    wt.add_argument("--still-moving", dest="still_moving",
+                    help="what carries on while you wait — without it this reads "
+                         "as a full stop, and gets answered as one")
+    wt.add_argument("--clear", action="store_true",
+                    help="the answer arrived; you are working again")
+    wt.add_argument("--list", action="store_true",
+                    help="every node in this tree that is waiting, and on whom")
     bk = add("blocked", cmd_blocked)
     bk.add_argument("need", nargs="?", help="what you need — a path, a command, a permission")
     bk.add_argument("--why", help="what it is for, in one line")

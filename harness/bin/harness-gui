@@ -18,7 +18,7 @@ The default port is 8791 and it walks upward if that is taken. 8787 is RStudio
 Server's, 8888 is Jupyter's, and a viewer that refuses to start because someone
 else's long-running service got there first is a viewer nobody opens.
 """
-import argparse, importlib.util, json, os, subprocess, sys, threading, time, webbrowser
+import argparse, importlib.util, json, os, subprocess, sys, threading, time, uuid, webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.machinery import SourceFileLoader
 from urllib.parse import parse_qs, urlparse
@@ -124,6 +124,351 @@ def install_drift():
         return None
 
 
+# ── the slash-command dictionary ───────────────────────────────────────────
+# What to type, and when — the one thing on this page that is not read out of a
+# tree. It answers the question the tree cannot: you are looking at a node that
+# is cold, or misnamed, or holding work it should have presented, and the next
+# move is something you type into a session rather than a harness verb.
+#
+# It is a FILE, not a constant. The defaults below seed it once and are never
+# merged into an existing list again, because deleting an entry here is
+# absolute — no tombstone, no retired flag, no record — and a merge on the next
+# release would quietly put back exactly the entries someone removed on
+# purpose. The cost is that new defaults do not reach a list you have already
+# edited; `reset` is the deliberate way to take them.
+COMMANDS_FILE = CLI.HOME_STATE / "commands.json"
+
+# Machine-level, like the viewer itself: what to type does not vary by project,
+# and a copy per tree is four lists to curate and four to disagree.
+DEFAULT_COMMANDS = [
+ {"name": "Harness — where you are",
+  "note": "Position is derived, never declared. These four are skills; whoami "
+          "names which of them this session should load, and loading the "
+          "others is reading somebody else's instructions.",
+  "items": [
+   {"cmd": "/harness",
+    "what": "Resolve this session's node, claim it, prove the guards.",
+    "when": "First thing in an enrolled worktree, and any time you have lost "
+            "track of which node you are. It runs whoami, claim and doctor, "
+            "then names the role skills to load. Exit 3 is not enrolled — one "
+            "line and stop. Exit 5 is a misnamed session: /rename it, never "
+            "rename the node."},
+   {"cmd": "/harness-upward",
+    "what": "Act toward your parent: catch up, propose, ask, escalate, present, release.",
+    "when": "Every leaf and every mid-lead. Load it because whoami named it, "
+            "not because the work looks upward-ish."},
+   {"cmd": "/harness-downward",
+    "what": "Act toward your children: brief, review, integrate by fast-forward, mediate.",
+    "when": "Leads only. This is where a task gets its recorded intent, and "
+            "where a child's work becomes the parent's by fast-forward."},
+   {"cmd": "/harness-root",
+    "what": "Rank-0 duties: rulings, the manifest, the guards, the scope registry.",
+    "when": "Only the top lead. It is the single node that writes documents; "
+            "everything else sends a request up and waits."}]},
+
+ {"name": "Name, model, effort",
+  "note": "A session's name is what the harness matches against the branch. "
+          "Get it wrong and two sessions can end up holding one node, which is "
+          "the whole failure the lock exists to prevent.",
+  "items": [
+   {"cmd": "/rename",
+    "what": "Rename the current conversation.",
+    "when": "The fix when whoami exits 5. The name must be <project>-<node>; "
+            "the node name comes from the committed tree, so the session is "
+            "the thing that moves."},
+   {"cmd": "/model",
+    "what": "Set the model for this session.",
+    "when": "whoami prints the pair this node was meant to run as under 'run "
+            "as'. A leaf running a lead's model is not wrong, only expensive."},
+   {"cmd": "/effort",
+    "what": "Set the effort level.",
+    "when": "The effort curve is steep for coding and shallow for reading, "
+            "which is why a leaf and a lead are given different defaults."},
+   {"cmd": "/status",
+    "what": "Version, model, account, connectivity, tool status.",
+    "when": "The quickest check that a node is actually running as what the "
+            "tree says it should be."}]},
+
+ {"name": "Context, and what a node costs",
+  "note": "Idle is free. Resuming is not: past the cache lifetime the next "
+          "turn re-reads the whole conversation at full rate, so a cold node "
+          "carrying 340k is a bill waiting for you to say hello to it.",
+  "items": [
+   {"cmd": "/context",
+    "what": "Visualise current context usage as a coloured grid.",
+    "when": "Before accepting a size band. If the grid is already full the "
+            "honest answer is a recycle, not an L."},
+   {"cmd": "/compact",
+    "what": "Free up context by summarising the conversation so far.",
+    "when": "Mid-task, when the work is not finished but the window is. A "
+            "finished task wants a recycle instead — a clean node is cheaper "
+            "than a summarised one."},
+   {"cmd": "/autocompact",
+    "what": "Set how full context gets before auto-summarising.",
+    "when": "Worth raising on a lead, which accumulates reports and conflicts "
+            "and wants them intact."},
+   {"cmd": "/usage",
+    "what": "Session cost, plan usage, activity stats.",
+    "when": "What this page's 'COLD — N to re-read' warning looks like in money."},
+   {"cmd": "/clear",
+    "what": "Start a new session with empty context; the old one stays resumable.",
+    "when": "How a node is recycled. Release the claim first — a lock outlives "
+            "the conversation that took it, and a cleared session still holds "
+            "the node until harness release says otherwise."},
+   {"cmd": "/resume",
+    "what": "Resume a previous conversation.",
+    "when": "Reading back what a node did after it was cleared, without "
+            "claiming anything."}]},
+
+ {"name": "Running the tree",
+  "note": "Spawned nodes are background sessions. A subagent is not a node and "
+          "cannot become one: no session id, no lock, no row in the ledger.",
+  "items": [
+   {"cmd": "/tasks",
+    "what": "View and manage everything running in the background.",
+    "when": "Where harness spawn's sessions actually live."},
+   {"cmd": "/list-agents",
+    "what": "List subagents, teammates and other sessions you can message.",
+    "when": "The same roster the CLI reads to decide who holds a node. A node "
+            "claimed by a session that is absent here is a stale claim, and "
+            "the only case where claim --force is allowed."},
+   {"cmd": "/background",
+    "what": "Send this session to the background and free the terminal.",
+    "when": "Anything long enough that watching it is the expensive part."},
+   {"cmd": "/stop",
+    "what": "Stop this background session; transcript and worktree are kept.",
+    "when": "Stopping is not releasing. Run harness release first, or the node "
+            "stays held by a session that is gone."},
+   {"cmd": "/subtask",
+    "what": "Send a subagent off with your full context; its result comes back here.",
+    "when": "A bounded lookup, and nothing more. You may use its answer; what "
+            "you cannot do is give it a node, a claim, or a transaction."},
+   {"cmd": "/fork",
+    "what": "Spawn a background agent that inherits the full conversation.",
+    "when": "Same rule as /subtask. A cheap second reading of a brief without "
+            "spending this node's window on it."},
+   {"cmd": "/loop",
+    "what": "Run a prompt or slash command on an interval; omit the interval to self-pace.",
+    "when": "Watching an integration land, or a lead checking whether anything "
+            "has been presented, without a human in the polling seat."},
+   {"cmd": "/schedule",
+    "what": "Create and manage scheduled remote agents.",
+    "when": "Work that should happen whether or not this machine is awake."}]},
+
+ {"name": "Before you integrate",
+  "note": "A lead reads before it fast-forwards. Reviewing after the merge is "
+          "reviewing something you already own.",
+  "items": [
+   {"cmd": "/code-review",
+    "what": "Review the diff, a PR, or a branch for correctness and cleanups.",
+    "when": "The read that unblocks integration. 'ultra' runs a deeper "
+            "multi-agent pass in the cloud; --fix applies findings here."},
+   {"cmd": "/security-review",
+    "what": "Security review of the pending changes on this branch.",
+    "when": "Any lane that touched auth, a guard hook, or anything that widens "
+            "what a worktree may write."},
+   {"cmd": "/plan",
+    "what": "Enable plan mode, or view this session's plan.",
+    "when": "Proposing the approach before writing is a transaction, not a "
+            "courtesy. This is the surface for it."},
+   {"cmd": "/rewind",
+    "what": "Step the conversation, the files, or both back to an earlier point.",
+    "when": "Cheaper than a revert while the wrong turn is still inside one "
+            "worktree and has not been presented."}]},
+
+ {"name": "Guards, skills, settings",
+  "note": "The harness's real guards are git hooks under core.hooksPath, and "
+          "harness doctor is what proves them, by demanding a refusal. These "
+          "are the Claude-side settings around them.",
+  "items": [
+   {"cmd": "/hooks",
+    "what": "View hook configuration for tool events.",
+    "when": "Where scaffold's orientation hook shows up. It is not the guard — "
+            "it is what tells a session where it is."},
+   {"cmd": "/permissions",
+    "what": "Manage allow and deny tool rules.",
+    "when": "A lane that keeps stopping for the same prompt is losing more to "
+            "the prompt than the rule was ever protecting."},
+   {"cmd": "/skills",
+    "what": "List available skills.",
+    "when": "Checking that the four harness skills are actually installed."},
+   {"cmd": "/reload-skills",
+    "what": "Pick up skills added or changed on disk during this session.",
+    "when": "After re-running install.sh. Without it every open session keeps "
+            "reading the instructions it loaded at startup, silently."},
+   {"cmd": "/memory",
+    "what": "Edit CLAUDE.md files and memory settings.",
+    "when": "A standing instruction for the repo. A brief is for one task; "
+            "this is for every session in it."},
+   {"cmd": "/mcp",
+    "what": "Manage MCP servers.",
+    "when": "A server that failed to connect is a missing capability that "
+            "looks exactly like a missing feature."}]},
+]
+
+_CMDLOCK = threading.Lock()
+
+
+def _ids(groups):
+    """Give every entry a stable id.
+
+    The page addresses an entry by id and never by position, because a position
+    is a fact about the list at the moment it was drawn, and the whole point of
+    this panel is that the list moves.
+    """
+    changed = False
+    for g in groups:
+        if not g.get("id"):
+            g["id"] = uuid.uuid4().hex[:8]; changed = True
+        for it in g.get("items") or []:
+            if not it.get("id"):
+                it["id"] = uuid.uuid4().hex[:8]; changed = True
+    return groups, changed
+
+
+def write_commands(groups):
+    COMMANDS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = COMMANDS_FILE.with_name(COMMANDS_FILE.name + ".tmp")
+    tmp.write_text(json.dumps({"version": 1, "groups": groups}, indent=2) + "\n")
+    tmp.replace(COMMANDS_FILE)
+
+
+def read_commands():
+    """The file if there is one, the defaults if there is not — never both."""
+    try:
+        if COMMANDS_FILE.exists():
+            g = json.loads(COMMANDS_FILE.read_text()).get("groups")
+            if isinstance(g, list):
+                g, changed = _ids(g)
+                if changed:
+                    write_commands(g)
+                return g
+    except Exception:
+        pass
+    g, _ = _ids(json.loads(json.dumps(DEFAULT_COMMANDS)))
+    write_commands(g)
+    return g
+
+
+def _find(groups, ident):
+    """(heading index, item index) — the item index is None for a heading."""
+    for i, g in enumerate(groups):
+        if g.get("id") == ident:
+            return i, None
+        for j, it in enumerate(g.get("items") or []):
+            if it.get("id") == ident:
+                return i, j
+    return None, None
+
+
+def edit_commands(action, ident):
+    """Two levels, five verbs, no history.
+
+    Promote and demote are the only way an entry crosses between headings: up
+    and down stay among siblings, so a click meant to reorder cannot quietly
+    re-file something under a heading it does not belong to. Promote lifts a
+    command to a heading of its own; demote pushes a heading, and whatever hung
+    off it, into the heading above.
+
+    Delete is absolute. Nothing is retired, marked out or kept — this is a list
+    the operator owns, and a list that remembers what you removed is one you
+    have to curate twice.
+    """
+    with _CMDLOCK:
+        groups = read_commands()
+        if action == "reset":
+            groups, _ = _ids(json.loads(json.dumps(DEFAULT_COMMANDS)))
+            write_commands(groups)
+            return True, "back to the defaults"
+        gi, ii = _find(groups, ident)
+        if gi is None:
+            return False, "no such entry — the list moved; it will redraw"
+
+        if ii is None:                                    # a heading
+            if action == "up":
+                if gi == 0:
+                    return False, "already at the top"
+                groups[gi - 1], groups[gi] = groups[gi], groups[gi - 1]
+            elif action == "down":
+                if gi == len(groups) - 1:
+                    return False, "already at the bottom"
+                groups[gi + 1], groups[gi] = groups[gi], groups[gi + 1]
+            elif action == "promote":
+                return False, "this is already a heading"
+            elif action == "demote":
+                if gi == 0:
+                    return False, "nothing above it to sit under"
+                tgt = groups[gi - 1]
+                e = groups.pop(gi)
+                kids = e.pop("items", None) or []
+                tgt.setdefault("items", []).append(e)
+                # Its children follow it rather than going with it. A heading
+                # that swallowed its own list on the way down would lose
+                # entries with no way to see that it had.
+                tgt["items"].extend(kids)
+            elif action == "delete":
+                groups.pop(gi)
+            else:
+                return False, f"unknown action {action!r}"
+        else:                                             # a command under one
+            items = groups[gi]["items"]
+            if action == "up":
+                if ii == 0:
+                    return False, "already first under this heading"
+                items[ii - 1], items[ii] = items[ii], items[ii - 1]
+            elif action == "down":
+                if ii == len(items) - 1:
+                    return False, "already last under this heading"
+                items[ii + 1], items[ii] = items[ii], items[ii + 1]
+            elif action == "promote":
+                e = items.pop(ii)
+                e["items"] = []
+                groups.insert(gi + 1, e)
+            elif action == "demote":
+                return False, "there is no level below a command"
+            elif action == "delete":
+                items.pop(ii)
+            else:
+                return False, f"unknown action {action!r}"
+        write_commands(groups)
+        return True, ""
+
+
+# Why a whole CLASS of item is the operator's to decide. This does not vary
+# between two grants, or between two approvals, so it is said once under the
+# panel heading and folded away, instead of under every item — where, repeated,
+# it pushed the one or two lines that differ off the bottom of the box.
+RULES = {
+    "grant": {
+        "title": "why a grant is yours and nobody else's",
+        "text": "A member writes inside its own worktree and nowhere else, "
+                "because anything outside it has no owner, no scope, and no "
+                "check that can go red on it. Only you can widen that: a lead "
+                "doing the write instead would be routing your decision around "
+                "rather than making it, and the CLI refuses that by rank."},
+    "approval": {
+        "title": "why an approval is yours and nobody else's",
+        "text": "Nobody asked for this, so no session in the tree may put a "
+                "session on it. It is not queued, harness mark refuses it, and "
+                "nothing is idle waiting — the lane carried on with its queue."},
+    "unanswered": {
+        "title": "why an unanswered question reaches you at all",
+        "text": "A question is its lead's to answer, and normally it never "
+                "appears here — it is drawn on the node instead. It only "
+                "climbs when the lead has no live session, because then there "
+                "is nothing in the tree that can answer it, and a lane stopped "
+                "on a lead that will never wake is stopped for good."},
+}
+
+
+def _wait_mins(since):
+    try:
+        t = time.mktime(time.strptime((since or "")[:19], "%Y-%m-%dT%H:%M:%S"))
+    except Exception:
+        return 0
+    return int(max(0, time.time() - t) // 60)
+
+
 def read_state():
     rows, roster_error = roster()
     att = []
@@ -225,6 +570,19 @@ def read_state():
             openn = [x for x in (r.get("suggestions") or []) if not x.get("resolved_at")]
             if openn and r.get("node"):
                 suggestions[bf.stem] = (r["node"], openn)
+        # A node that asked its lead something and stopped. Until this record
+        # existed the tree drew it as idle, which is the one reading that is
+        # certainly wrong: it is not free, it is stuck, and the difference is
+        # who has to do something about it.
+        waits = {}
+        wd = pdir / "waiting"
+        for wf in (sorted(wd.glob("*.json")) if wd.is_dir() else []):
+            try:
+                r = json.loads(wf.read_text())
+            except Exception:
+                continue
+            if r.get("node") in tree:
+                waits[r["node"]] = r
         blocks = [x for x in needs if x.get("_repo") == repo]
         nodes = []
         for name, spec in tree.items():
@@ -258,9 +616,46 @@ def read_state():
                 "blocks": [x for x in blocks if x.get("node") == name
                            and x.get("_kind") != "approval"
                            and not x.get("_answered")],
+                # Both ends of it on the same card: what this node is stopped
+                # on, and who is stopped on this node. A lead looking at its
+                # own card should not have to read its children's to find out
+                # that two of them are waiting on it.
+                "waiting": (dict(waits[name],
+                                 age=CLI.wait_age(waits[name].get("since")))
+                            if name in waits else None),
+                "awaited_by": sorted(n for n, r in waits.items()
+                                     if r.get("parent") == name),
             })
         nodes.sort(key=lambda n: (n["rank"], n["name"]))
         pname = Path(repo).name
+
+        # A wait is its LEAD's to answer, and tree state belongs in the tree —
+        # so a wait is drawn on the card and stays out of this panel. The one
+        # exception is a wait whose lead is not running: then no session in the
+        # tree can answer it, which is exactly the test this panel applies to
+        # everything else it shows. Occupancy has to be KNOWN for that; when
+        # the roster could not be read, nothing is claimed either way.
+        live_of = {n["name"]: n["sessions"] for n in nodes}
+        for wn, wr in sorted(waits.items()):
+            par = wr.get("parent")
+            if rows is None or live_of.get(par) is None or live_of.get(par):
+                continue
+            if _wait_mins(wr.get("since")) < 20:
+                continue
+            att.append({
+                "kind": "unanswered", "owner": "operator",
+                "where": f"{pname} / {wn}",
+                "what": f"stopped on {par} for {CLI.wait_age(wr.get('since'))}",
+                "why": f"{wn} asked {par} something and stopped waiting for the "
+                       f"answer. {par} has no live session, so nothing in the tree "
+                       f"is going to give it one.\n\nasked: "
+                       f"{wr.get('asked') or '(nothing recorded)'}",
+                "still": wr.get("still_moving") or "",
+                "rule": "unanswered",
+                "do": f"(cd {shlex.quote(repo)} && harness spawn {par})\n"
+                      f"(cd {shlex.quote(repo)} && harness waiting --list)",
+                "project": pname, "slug": pdir.name, "node": wn,
+                "need": None, "comments": []})
 
         # ONLY what no agent in the tree has the authority to fix. A sign-off is
         # dev's; a node with nothing briefed is its lead's; both were told at
@@ -277,14 +672,16 @@ def read_state():
                 "kind": "approval", "owner": "operator",
                 "where": f"{pname} / {b.get('node')}",
                 "what": f"start '{b.get('task')}'?",
+                # Only what is different about THIS one. The paragraph
+                # explaining why an approval is the operator's at all is the
+                # same on every approval, and it now lives in RULES, said once
+                # per panel rather than under each item.
                 "why": (f"A lane noticed this while doing something else"
                         + (f" — the finding '{b['from_finding']}'"
                            if b.get("from_finding") else "")
-                        + f", and {b.get('asked_by')} wrote it up as a task. Nobody "
-                          f"asked for it, so no session in the tree may put a session "
-                          f"on it. It is not queued, `harness mark` refuses it, and "
-                          f"nothing is idle waiting: the lane carried on with its "
-                          f"queue.\n\n" + (b.get("why") or "")),
+                        + f", and {b.get('asked_by')} wrote it up as a task."
+                        + ("\n\n" + b["why"] if b.get("why") else "")),
+                "rule": "approval",
                 "do": f"(cd {shlex.quote(repo)} && harness brief "
                       f"{shlex.quote(b.get('task') or '')} --approve)\n"
                       f"(cd {shlex.quote(repo)} && harness brief "
@@ -302,14 +699,17 @@ def read_state():
             att.append({
                 "kind": "grant", "owner": "operator",
                 "where": f"{pname} / {b.get('node')}", "what": b.get("need"),
-                "why": f"{b.get('why') or 'A lane needs a path outside its worktree.'} "
-                       f"A member writes inside its own worktree and nowhere else, because "
-                       f"anything outside it has no owner, no scope and no check that can "
-                       f"go red on it. Only you can widen that: a lead doing the write "
-                       f"instead would be routing your decision around rather than making "
-                       f"it, and the CLI refuses that by rank."
-                       + (f" Still moving without it: {b['still_moving']}"
-                          if b.get("still_moving") else ""),
+                # The two lines that actually differ between one of these and
+                # the next: what this lane wants the path for, and what it is
+                # still getting done without it. They used to be a clause and a
+                # tail on a five-line invariant that was identical every time,
+                # and a reader who has seen that paragraph twice stops reading
+                # the item it is attached to.
+                "why": (b.get("why")
+                        or "A lane needs a path outside its worktree, and the "
+                           "block record does not say what for."),
+                "still": b.get("still_moving") or "",
+                "rule": "grant",
                 "do": f"(cd {shlex.quote(repo)} && harness grant {b.get('node')} "
                       f"{shlex.quote(b.get('need') or '')} --reason "
                       f"{shlex.quote((b.get('why') or 'see the block record')[:60])})",
@@ -357,14 +757,15 @@ def read_state():
             "attention": att, "yours": len(att),
             "roster_error": roster_error, "stale_server": stale_server(),
             "started": time.strftime("%H:%M:%S", time.localtime(STARTED)),
-            "projects": projects, "needs": needs}
+            "projects": projects, "needs": needs,
+            "rules": RULES, "commands": read_commands()}
 
 
 PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <title>harness</title><style>
 :root{--bg:#12150f;--panel:#1a1e16;--line:#333b28;--ink:#e8ece0;--dim:#98a288;
 --busy:#8fbf5f;--idle:#6aa3c8;--none:#5a6350;--unk:#8a7fb0;
---warn:#e0894a;--warnbg:#3a2313}
+--warn:#e0894a;--warnbg:#3a2313;--wait:#5fb3a1}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.45 ui-monospace,
 SFMono-Regular,Menlo,Consolas,monospace}
@@ -441,6 +842,15 @@ border:1px solid var(--line);border-radius:9px;padding:8px 11px;text-align:left;
 overflow-wrap:anywhere}
 .card.busy{border-color:#4a6b30}
 .card.blocked{border-color:#6b4526;background:#241a12}
+/* Its own colour, because it is its own state. A stopped node is not idle and
+   not blocked: idle means free, blocked means the operator, and this means a
+   lead owes it an answer. */
+.card.waitc{border-color:#2f6157;background:#101f1c}
+.wt{color:var(--wait);font-size:11px;margin-top:4px;line-height:1.45;
+overflow-wrap:anywhere}
+.wt.q{color:var(--dim);font-style:italic}
+.wt.s{color:var(--dim);font-style:normal}
+.wt.o{color:var(--wait);border-top:1px dotted #2f6157;padding-top:3px}
 .hdr{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
 .dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--none)}
 .busy .dot{background:var(--busy);box-shadow:0 0 0 3px #8fbf5f26}
@@ -469,7 +879,8 @@ letter-spacing:.09em;display:flex;align-items:baseline}
 .needs .who.mine{color:#ffd08a;font-weight:700}
 .kd2{color:var(--none);font-size:10px;text-transform:uppercase;letter-spacing:.07em;
 min-width:110px}
-.why{color:var(--dim);margin-bottom:8px;line-height:1.55;max-width:76ch}
+.why{color:var(--dim);margin-bottom:8px;line-height:1.55;max-width:76ch;
+white-space:pre-wrap}
 .clear{color:var(--none);border:1px dashed var(--line);border-radius:9px;
 padding:9px 13px;margin-bottom:18px}
 .need{padding:7px 0;border-top:1px solid #4a2d17;cursor:pointer}
@@ -518,9 +929,67 @@ border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit;resize:v
 .row button{background:#24301a;color:var(--busy);border:1px solid #40562e;
 border-radius:7px;padding:5px 13px;font:inherit;cursor:pointer}
 .row button:hover{background:#2c3b20}
+
+/* Said once, under the heading, and folded away. Every grant carries the same
+   reason for being the operator's, and printing it under each one buried the
+   line that was actually different. */
+.rule{color:var(--none);font-size:11px;cursor:pointer;margin:2px 0 6px;
+display:flex;gap:5px;align-items:baseline}
+.rule:hover{color:var(--dim)}
+.ruletext{color:var(--dim);font-size:11px;line-height:1.55;max-width:76ch;
+margin:0 0 9px 14px;padding-left:9px;border-left:1px solid #4a2d17}
+.still{color:var(--busy);margin:6px 0 2px;line-height:1.55;max-width:76ch}
+.still b{color:var(--dim);font-weight:400}
+
+/* The command dictionary lives beside the whole page, not inside a project:
+   what to type does not vary by tree, and one per project would be four lists
+   to curate and four to disagree. */
+.page{display:flex;align-items:flex-start;gap:22px;padding:16px 20px 70px;
+max-width:1820px}
+main{padding:0;max-width:none;flex:1;min-width:0}
+.cmdrail{width:min(350px,29%);flex:none;position:sticky;top:57px;
+max-height:calc(100vh - 76px);overflow-y:auto}
+@media (max-width:1150px){.page{flex-direction:column}
+.cmdrail{width:100%;position:static;max-height:none}}
+.cmds{background:var(--panel);border:1px solid var(--line);padding:11px 13px}
+.cmds>h3{font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+color:var(--dim);margin:0 0 4px;display:flex;align-items:baseline;gap:8px}
+.creset{margin-left:auto;font-size:10px;color:var(--none);cursor:pointer;
+text-transform:none;letter-spacing:0;border-bottom:1px dotted var(--line)}
+.creset:hover{color:var(--warn)}
+.creset.armed{color:var(--warn);border-bottom-color:var(--warn)}
+.cintro{color:var(--none);font-size:11px;line-height:1.5;margin-bottom:9px}
+.cmsg2{color:var(--warn);font-size:11px;line-height:1.45;margin-bottom:7px}
+.cgrp{border-top:1px solid var(--line);padding:5px 0}
+.cgrp:first-of-type{border-top:0}
+.chead{display:flex;align-items:baseline;gap:5px;cursor:pointer;padding:1px 0}
+.chead:hover{color:#fff}
+.tri{color:var(--none);flex:none;font-size:9px;width:8px}
+.gname{font-weight:600}
+.chead code{color:var(--busy);font:inherit}
+.cwhat{color:var(--dim);overflow-wrap:anywhere}
+/* Present but faint, and full strength under the pointer. Hiding them entirely
+   until hover reads as a list of commands with no controls at all, and a
+   control nobody finds is one that is not there. */
+.cacts{margin-left:auto;display:flex;gap:1px;flex:none;opacity:.28;
+transition:opacity .12s}
+.chead:hover .cacts,.cacts:focus-within,.cacts.live{opacity:1}
+.cact{color:var(--none);cursor:pointer;padding:0 3px;border-radius:4px;
+font-size:10px;line-height:1.6}
+.cact:hover{color:var(--ink);background:#00000050}
+.cact.del:hover{color:var(--warn)}
+.cact.armed{color:var(--warn);background:var(--warnbg);opacity:1}
+.cnote{color:var(--dim);font-size:11px;line-height:1.5;margin:3px 0 6px 13px}
+.citem{margin:2px 0 2px 13px;border-left:1px solid var(--line);padding-left:8px}
+.cbody2{margin:1px 0 6px 13px}
+.cbody2 .w{color:var(--ink)}
+.cbody2 .n{color:var(--dim);line-height:1.55;margin-top:3px}
 </style></head><body>
 <header><h1>harness</h1><span id="ct"></span><span id="age"></span></header>
+<div class="page">
 <main id="root"><div class="empty">loading...</div></main>
+<aside class="cmdrail" id="rail"></aside>
+</div>
 <div id="modal"></div>
 <script>
 // No inline onclick anywhere. Nested quoting inside an HTML attribute inside a
@@ -531,6 +1000,120 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
 const EDITING = new Set();
+
+// ── the command dictionary ─────────────────────────────────────────────────
+// A list the operator owns. Reorder it, promote the one you reach for to a
+// heading of its own, delete the ones you never type. Delete is absolute --
+// nothing is retired or marked out, because a list that remembers what you
+// removed is one you have to curate twice.
+let RAIL = [];        // the groups, as last served
+let RAILSIG = '';     // what is currently drawn, so a poll redraws nothing
+let ARMED = null;     // the one destructive click waiting for its second
+let RAILMSG = '';     // a refusal or a warning, shown until the next click
+const CMDKEY = 'harness.cmdopen', RULEKEY = 'harness.ruleopen';
+const load = k => { try { return JSON.parse(localStorage.getItem(k) || '[]'); }
+                    catch (e) { return []; } };
+// null, not [], is what "never opened this page before" looks like. Seeding an
+// empty set would leave every heading shut and the panel reading as a stub.
+let CMDSEEDED = localStorage.getItem(CMDKEY) !== null;
+const CMDOPEN = new Set(load(CMDKEY));
+const RULEOPEN = new Set(load(RULEKEY));
+const save = (k, s) => { try { localStorage.setItem(k, JSON.stringify([...s])); }
+                         catch (e) {} };
+
+function cact(id, act, glyph, title, cls) {
+  const armed = ARMED === act + ':' + id;
+  return '<span class="cact ' + (cls || '') + (armed ? ' armed' : '') +
+    '" data-cact="' + act + '" data-cid="' + esc(id) + '" title="' + esc(title) +
+    '">' + (armed ? '?' : glyph) + '</span>';
+}
+
+function railHTML(groups) {
+  // First visit only: headings open, commands shut. Collapsed, the panel is an
+  // index of names you can scan; opening one asks the other question, which is
+  // when you would type it.
+  if (!CMDSEEDED) {
+    groups.forEach(g => CMDOPEN.add(g.id));
+    CMDSEEDED = true; save(CMDKEY, CMDOPEN);
+  }
+  const live = id => (ARMED && ARMED.endsWith(':' + id)) ? ' live' : '';
+  const body = groups.map(g => {
+    const open = CMDOPEN.has(g.id);
+    const items = (g.items || []).map(it => {
+      const io = CMDOPEN.has(it.id);
+      return '<div class="citem">' +
+        '<div class="chead" data-ctog="' + esc(it.id) + '">' +
+          '<span class="tri">' + (io ? '&#9660;' : '&#9654;') + '</span>' +
+          '<code>' + esc(it.cmd || it.name || '') + '</code>' +
+          '<span class="cacts' + live(it.id) + '">' +
+            cact(it.id, 'up', '&#9650;', 'move up') +
+            cact(it.id, 'down', '&#9660;', 'move down') +
+            cact(it.id, 'promote', '&#9664;', 'promote to a heading of its own') +
+            cact(it.id, 'delete', '&#10005;', 'delete - nothing keeps a copy', 'del') +
+          '</span></div>' +
+        (io ? '<div class="cbody2"><div class="w">' + esc(it.what || '') + '</div>' +
+              '<div class="n">' + esc(it.when || '') + '</div></div>' : '') +
+      '</div>';
+    }).join('');
+    // A promoted command is a heading that still has a command on it, so the
+    // heading row shows the command and the body keeps both its lines.
+    return '<div class="cgrp">' +
+      '<div class="chead" data-ctog="' + esc(g.id) + '">' +
+        '<span class="tri">' + (open ? '&#9660;' : '&#9654;') + '</span>' +
+        (g.cmd ? '<code>' + esc(g.cmd) + '</code>'
+               : '<span class="gname">' + esc(g.name || '') + '</span>') +
+        '<span class="cacts' + live(g.id) + '">' +
+          cact(g.id, 'up', '&#9650;', 'move up') +
+          cact(g.id, 'down', '&#9660;', 'move down') +
+          cact(g.id, 'demote', '&#9654;', 'demote - file it under the heading above') +
+          cact(g.id, 'delete', '&#10005;', 'delete - nothing keeps a copy', 'del') +
+        '</span></div>' +
+      (open ? (g.cmd && g.what ? '<div class="cnote">' + esc(g.what) + '</div>' : '') +
+              (g.note ? '<div class="cnote">' + esc(g.note) + '</div>' : '') +
+              (g.cmd && g.when ? '<div class="cnote">' + esc(g.when) + '</div>' : '') +
+              items
+            : '') +
+    '</div>';
+  }).join('');
+  return '<div class="cmds"><h3>slash commands' +
+    '<span class="creset' + (ARMED === 'reset' ? ' armed' : '') + '">' +
+    (ARMED === 'reset' ? 'discard mine?' : 'reset') + '</span></h3>' +
+    '<div class="cintro">What to type, and when. Yours to reorder &mdash; a file ' +
+    'on this machine, not part of any tree, and no session reads it.</div>' +
+    (RAILMSG ? '<div class="cmsg2">' + esc(RAILMSG) + '</div>' : '') +
+    (groups.length ? body
+      : '<div class="cintro">Every entry has been deleted. <b>reset</b> brings ' +
+        'the defaults back.</div>') + '</div>';
+}
+
+function drawRail() {
+  RAILSIG = JSON.stringify(RAIL) + '|' + (ARMED || '') + '|' + RAILMSG;
+  document.getElementById('rail').innerHTML = railHTML(RAIL);
+}
+
+function cmdAct(act, id) {
+  fetch('/api/commands', { method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Harness-Local': '1' },
+    body: JSON.stringify({ action: act, id: id }) })
+    .then(r => r.json())
+    .then(j => { RAILMSG = j.ok ? '' : (j.message || 'refused'); RAILSIG = ''; tick(); })
+    .catch(() => { RAILMSG = 'could not reach the server'; drawRail(); });
+}
+
+// Why a whole CLASS of item is the operator's to decide -- once, under the
+// heading, folded away. It is identical on every grant, and printed under each
+// one it pushed the two lines that differ off the bottom of the box.
+function rulesFor(items, rules) {
+  const kinds = [...new Set(items.map(a => a.rule).filter(Boolean))];
+  return kinds.map(k => {
+    const r = (rules || {})[k] || {};
+    const open = RULEOPEN.has(k);
+    return '<div class="rule" data-ruletog="' + esc(k) + '">' +
+      '<span class="tri">' + (open ? '&#9660;' : '&#9654;') + '</span>' +
+      esc(r.title || k) + '</div>' +
+      (open ? '<div class="ruletext">' + esc(r.text || '') + '</div>' : '');
+  }).join('');
+}
 
 // The swap happens in the DOM rather than through a re-render, so the textarea
 // is created once and keeps its cursor, its selection and its scroll. Cancel
@@ -578,6 +1161,51 @@ function endEdit(host) {
 }
 
 document.addEventListener('click', e => {
+  const ca = e.target.closest('.cact');
+  if (ca) {
+    e.stopPropagation();
+    const act = ca.dataset.cact, id = ca.dataset.cid, k = act + ':' + id;
+    // Absolute means there is no undo, which is the whole reason it takes two
+    // clicks. The warning names what does not happen, because "delete" in the
+    // panel next door means retire-and-strike-through.
+    if (act === 'delete' && ARMED !== k) {
+      ARMED = k;
+      RAILMSG = 'Click the ? again to delete it. Nothing keeps a copy — no ' +
+                'tombstone, no retired flag, no record anywhere. reset is the ' +
+                'only way back and it discards your whole list.';
+      drawRail(); return;
+    }
+    ARMED = null; RAILMSG = '';
+    cmdAct(act, id); return;
+  }
+  const cr = e.target.closest('.creset');
+  if (cr) {
+    e.stopPropagation();
+    if (ARMED !== 'reset') {
+      ARMED = 'reset';
+      RAILMSG = 'This throws away your list — every move, every deletion — ' +
+                'and takes the defaults as shipped. Click again to do it.';
+      drawRail(); return;
+    }
+    ARMED = null; RAILMSG = '';
+    cmdAct('reset', ''); return;
+  }
+  const ct = e.target.closest('[data-ctog]');
+  if (ct) {
+    e.stopPropagation();
+    const id = ct.dataset.ctog;
+    CMDOPEN.has(id) ? CMDOPEN.delete(id) : CMDOPEN.add(id);
+    save(CMDKEY, CMDOPEN); ARMED = null; RAILMSG = ''; drawRail(); return;
+  }
+  const rt = e.target.closest('[data-ruletog]');
+  if (rt) {
+    e.stopPropagation();
+    const k = rt.dataset.ruletog;
+    RULEOPEN.has(k) ? RULEOPEN.delete(k) : RULEOPEN.add(k);
+    save(RULEKEY, RULEOPEN); LAST = ''; tick(); return;
+  }
+  // An armed delete disarms itself the moment you look somewhere else.
+  if (ARMED) { ARMED = null; RAILMSG = ''; drawRail(); }
   const ce = e.target.closest('.cedit');
   if (ce) {
     e.stopPropagation();
@@ -811,7 +1439,12 @@ function attnItem(a, i) {
     '</div>' +
     '<div class="detail">' +
       '<div data-live="body:' + esc(key) + '">' +
-        '<div class="why">' + esc(a.why) + '</div>' + cs +
+        '<div class="why">' + esc(a.why) + '</div>' +
+        // Its own line, in its own colour. Glued to the end of a paragraph it
+        // read as more of the same boilerplate, and it is the opposite: the
+        // measure of how much this block is actually costing you.
+        (a.still ? '<div class="still"><b>still moving without it:</b> ' +
+                   esc(a.still) + '</div>' : '') + cs +
         '<pre id="a' + i + '">' + esc(a.do) + '</pre>' +
         '<button class="cp" data-c="a' + i + '">copy</button>' +
       '</div>' + box +
@@ -906,12 +1539,29 @@ function card(n) {
                   '&lt;task&gt; in that session">no task record</div>' + briefedChips(n)
                 : briefedChips(n));
   const coldc = ss.some(s => s.cold) ? ' coldc' : '';
-  return '<div class="card ' + cls + coldc + (n.blocks.length ? ' blocked' : '') +
+  // Asked and stopped. Drawn on the node because it is the node's state and
+  // its lead's to clear -- not in the operator's panel, which is for what no
+  // session in the tree can fix. The count of children stopped on THIS node
+  // sits on the same card, so a lead can see what it owes without reading its
+  // children's cards one at a time.
+  const w = n.waiting;
+  const wait = w
+    ? '<div class="wt">stopped on <b>' + esc(w.parent || 'its lead') + '</b> &middot; ' +
+      esc(w.age || '') + '</div>' +
+      '<div class="wt q">' + esc(w.asked || 'nothing recorded') + '</div>' +
+      (w.still_moving ? '<div class="wt s">still moving: ' + esc(w.still_moving) +
+                        '</div>' : '')
+    : '';
+  const owes = (n.awaited_by || []).length
+    ? '<div class="wt o">' + n.awaited_by.length + ' waiting on you: ' +
+      esc(n.awaited_by.join(', ')) + '</div>' : '';
+  return '<div class="card ' + cls + coldc + (w ? ' waitc' : '') +
+    (n.blocks.length ? ' blocked' : '') +
     '" data-live="card:' + esc(n._slug + ':' + n.name) + '">' +
     '<div class="hdr"><span class="dot"></span><span class="nm">' + esc(n.name) +
     '</span><span class="kd">' + esc(n.kind || '') + '</span></div>' +
     '<div class="ln q">' + esc(n.branch || '') + (n.indexed ? '' : ' (not indexed)') + '</div>' +
-    who + task +
+    who + wait + owes + task +
     (n.blocks.length ? '<span class="bell">' + n.blocks.length + ' needs you</span>' : '') +
     '</div>';
 }
@@ -937,6 +1587,11 @@ async function tick() {
   }
   catch (e) { document.getElementById('age').textContent = 'disconnected'; return; }
   document.getElementById('age').textContent = new Date().toLocaleTimeString();
+  // Drawn from its own signature, not the page's: the rail is the operator's
+  // list and has no business being redrawn because a node went busy, or being
+  // held back because someone is mid-sentence in a charter box.
+  RAIL = d.commands || [];
+  if (JSON.stringify(RAIL) + '|' + (ARMED || '') + '|' + RAILMSG !== RAILSIG) drawRail();
   // `generated` changes every poll and nothing else usually does, so it is
   // excluded from the comparison: redrawing identical content is what loses a
   // text selection mid-copy.
@@ -963,6 +1618,7 @@ async function tick() {
   if (machine.length) {
     h += '<div class="needs"><h3>' + machine.length + ' waiting on you &middot; ' +
       'this machine</h3>' +
+      '<div data-live="rules:machine">' + rulesFor(machine, d.rules) + '</div>' +
       machine.map((a, i) => attnItem(a, 'x' + i)).join('') + '</div>';
   }
   h += d.projects.map((p, pi) => {
@@ -973,7 +1629,10 @@ async function tick() {
         '<span class="collapse" data-collapse="' + esc(p.project) + '">collapse all</span>' +
         '</h3><div class="ln q" style="margin:-4px 0 8px">only what no session can ' +
         'fix itself &mdash; click one for why it matters and the command that clears ' +
-        'it</div>' + mine.map((a, i) => attnItem(a, 'p' + pi + '-' + i)).join('') + '</div>'
+        'it</div>' +
+        '<div data-live="rules:' + esc(p.project) + '">' + rulesFor(mine, d.rules) +
+        '</div>' +
+        mine.map((a, i) => attnItem(a, 'p' + pi + '-' + i)).join('') + '</div>'
       : '<div class="clear">nothing is waiting on you here</div>';
     return '<div class="proj"><h2>' + esc(p.project) + '</h2>' +
       '<div class="repo">' + esc(p.repo) + '</div>' +
@@ -1265,13 +1924,22 @@ class H(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin")
         if origin and not origin.startswith(("http://127.0.0.1:", "http://localhost:")):
             self.send_error(403, "cross-origin"); return
-        if not self.path.startswith(("/api/comment", "/api/charter")):
+        if not self.path.startswith(("/api/comment", "/api/charter", "/api/commands")):
             self.send_error(404); return
         try:
             n = int(self.headers.get("Content-Length") or 0)
             body = json.loads(self.rfile.read(min(n, 64_000)) or b"{}")
         except Exception:
             self.send_error(400, "bad JSON"); return
+        # The one write here that touches nothing in any tree. The command list
+        # is the operator's own note to themselves, so it is edited in the
+        # viewer directly rather than delegated to the CLI, which has no opinion
+        # about it and should not grow one.
+        if self.path.startswith("/api/commands"):
+            ok, msg = edit_commands((body.get("action") or "").strip(),
+                                    (body.get("id") or "").strip())
+            self._send(json.dumps({"ok": ok, "message": msg}), "application/json")
+            return
         text = (body.get("text") or "").strip()
         if self.path.startswith("/api/charter"):
             if not text:

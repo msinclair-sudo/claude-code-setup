@@ -35,6 +35,26 @@ Reconstructing it later during a conflict costs several times more.
 Answer from scope, intent and seams. **"I don't know, escalating" is a correct
 answer.** Do not guess; escalate under `T5`/`T9` instead.
 
+Orientation names the children that asked and stopped, oldest first, with what
+each said is still moving:
+
+```
+answer   2 child(ren) stopped waiting on YOU — harness waiting --list
+         dev_1 (41m): which pH bound applies to a derived reading
+           still moving: the parser and its tests; only the bound is blocked
+         dev_2 (3h12): whether the mirror may be written outside the worktree
+```
+
+Answer the halted one before the one that is still moving — the age alone will
+mislead you, because a child that has been waiting three hours while working is
+costing you less than one that stopped forty minutes ago. **Answer, then
+recycle**, in that order. Recycling a child that is waiting on you throws away
+the question along with the session.
+
+The child clears its own wait when the answer lands. If a name is still on that
+list after you answered it, the answer did not arrive — say it again in the
+place the child will actually read, which is a brief, not a message.
+
 ## `I9` — you own the seams
 
 Interfaces between your children are yours. Insides are theirs. This is what
@@ -205,10 +225,11 @@ a node's starting effort in `tree.json` over retrying it higher. Reach for
 the routine recovery. If it fails a second time, that is a finding, not a budget
 problem — read it.
 
-The one it cannot judge is whether you owe that child an answer. A member idling
-on an unanswered `T12` question looks exactly like a member idling with nothing
-to do. You are the only one who knows, which is why this is your call and not a
-timer's. Answer first, then recycle.
+The one it cannot judge is whether you owe that child an answer — unless the
+child said so. A member that ran `harness waiting` is named at your orientation
+and drawn as stopped in the viewer; a member that only asked in a message is
+indistinguishable from a member with nothing to do, and that is the case this
+is still your call and not a timer's. Either way: answer first, then recycle.
 
 Never `claude rm` — it deletes the worktree, and the worktree is the node.
 

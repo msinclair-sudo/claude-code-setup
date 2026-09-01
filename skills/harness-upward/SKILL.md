@@ -128,6 +128,32 @@ plan genuinely does not reach — roughly half of specifications contain an
 ambiguity their own author did not see, and work done on a guess is wrong far
 more often than it is right.
 
+**Say so if the question stops you.** Asking is a message; it arrives once, in
+a transcript, and if your lead is mid-task it is read late or not at all. If
+you can carry on, carry on and say nothing more. If you cannot:
+
+```bash
+harness waiting "which pH bound applies to a derived reading" \
+  --still-moving "the parser and its tests; only the bound is blocked"
+harness waiting --clear          # the moment the answer lands
+```
+
+That is a record, not a message: your lead sees it at its next orientation and
+the viewer draws your node as stopped rather than idle, which are opposite
+readings of the same silence. **`--still-moving` is the part that matters** — a
+lane blocked on one answer and working on four other things is not the same
+event as a halt, and a lead deciding what to answer first cannot tell them
+apart otherwise. Clearing it is yours; nobody clears it for you, and `harness
+release` clears it only because a released node is not waiting for anything.
+
+`harness waiting` with no argument prints both directions: what you are stopped
+on, and who is stopped on you.
+
+What you do **not** do is raise a block. A block is for something only the
+operator can widen — a path outside your worktree, a permission. A question for
+your lead is not one, and routing it to the operator asks them to answer
+something they did not scope.
+
 **`T2` catch-up 2** — immediately before presenting. This is where a conflict
 surfaces, while your own work is still warm. It is also what makes your lead's
 merge a fast-forward.

@@ -1443,6 +1443,89 @@ def orphan_marks(ctx):
     return stale, unattributable
 
 
+def unreported(ctx, node):
+    """Open marks on this node that were never presented AND have work to show.
+
+    Evidence matters. A mark opened and not started is a member that has not
+    begun — blocking on that would trap a lane that is waiting on something. A
+    mark whose HEAD has moved, or whose worktree is dirty, is work that exists
+    and that its lead has not been told about, which is the whole failure: the
+    member finished and stopped, and the record said nothing.
+    """
+    out = []
+    head = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
+    dirty = bool(git("status", "--porcelain", cwd=ctx.worktree)[1].strip())
+    for t, r in open_marks(ctx).items():
+        if r.get("_node") != node or r.get("_presented_at"):
+            continue
+        moved = bool(r.get("_sha")) and r["_sha"] != head
+        if moved or dirty:
+            out.append((mark_label(r, t), moved, dirty))
+    return out
+
+
+def cmd_hook_stop(a):
+    """Claude Code's Stop hook: the one moment a member that has finished and
+    said nothing is still reachable.
+
+    Everything else in the harness reaches a session when it runs a command, and
+    the failure here is precisely that it runs none — it finishes the work and
+    ends its turn. This fires there, blocks once, and names the command.
+
+    Three things it must never do. It must never raise: a hook that errors on
+    every turn is worse than no enforcement. It must never print on the allow
+    path, because plain stdout on exit 0 becomes context on EVERY turn of every
+    session in the repository. And it must never block twice — `stop_hook_active`
+    says a block already happened this turn, and one nudge is the whole of what
+    is proportionate.
+    """
+    try:
+        payload = json.loads(sys.stdin.read() or "{}")
+    except Exception:
+        return
+    if payload.get("stop_hook_active"):
+        return
+    # Not inside a git worktree is the common case for this hook: it is
+    # installed per repository, but a session can sit anywhere. Ctx() calls
+    # die() there, which raises SystemExit and exits 3 — a non-blocking error
+    # that still writes a notice into the transcript, on every turn, forever.
+    # SystemExit is not an Exception, so the guard below would not have caught
+    # it. Check first, and catch it anyway.
+    if git("rev-parse", "--git-dir")[0]:
+        return
+    try:
+        ctx = Ctx()
+        if not ctx.tree_path.exists() or not ctx.binding_path.exists():
+            return
+        ctx.tree = json.loads(ctx.tree_path.read_text())
+        node, _ = ctx.node()
+        if ctx.rank(node) == 0:
+            return          # rank 0 closes its own; it presents to nobody
+        rows = unreported(ctx, node)
+        if not rows:
+            return
+        lead = ctx.tree["nodes"].get(node, {}).get("parent") or "your lead"
+        task, moved, dirty = rows[0]
+        why = ("the worktree has uncommitted changes" if dirty
+               else "HEAD has moved since you opened the mark")
+        nl = chr(10)
+        step = (f"Commit it, then present it:{nl}  harness mark {task} --done"
+                if dirty else f"Present it:{nl}  harness mark {task} --done")
+        reason = (
+            f"You are about to stop with work on '{task}' that {lead} has not "
+            f"been told about: {why}, and the task record still says it was never "
+            f"presented.{nl}{nl}{step}{nl}{nl}"
+            f"Presenting is what ends the task and frees the node; {lead} signs it "
+            f"off and starts the next one. If you cannot finish it, say so on the "
+            f"record: harness blocked for something you need, or harness brief "
+            f"{task} --suggest if the plan is wrong. Do not stop silently, because "
+            f"nothing else in the tree can see that you are done.")
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "Stop", "decision": "block", "reason": reason}}))
+    except (Exception, SystemExit):
+        return
+
+
 def cmd_mark(a):
     """Record the token position when a T1 is accepted, so the actual at T10 is a
     subtraction rather than an apportionment.
@@ -1638,6 +1721,18 @@ def cmd_mark(a):
         die(REFUSED, f"'{a.task}' is briefed for '{b.get('node')}', not '{node}'. "
                      f"A task belongs to one node.")
 
+    held = [x for x in unreported(ctx, node)
+            if tkey(x[0]) != tkey(a.task)] if not a.force else []
+    if held:
+        t, moved, dirty = held[0]
+        nl = chr(10)
+        die(REFUSED,
+            f"'{t}' is open on this node, has work in it, and was never presented."
+            f"{nl}           Finish that first: "
+            + ("commit, then " if dirty else "")
+            + f"harness mark {t} --done{nl}"
+              f"           Opening a second task would leave the first invisible "
+              f"to everyone above you.")
     if awaiting(b):
         die(REFUSED,
             f"'{a.task}' is not approved. It was written from something noticed rather "
@@ -4484,6 +4579,16 @@ def cmd_scaffold(a):
                "hooks": [{"type": "command", "timeout": 10,
                           "command": "~/.claude/harness/bin/harness whoami --quiet --no-check",
                           "statusMessage": "Resolving harness position..."}]})
+    # The one moment a member that has finished and said nothing is still
+    # reachable. Everything else here reaches a session when it runs a command,
+    # and the failure this catches is that it runs none: it finishes the work and
+    # ends its turn. Blocks once, names the command, then lets the stop proceed.
+    st = hooks.setdefault("Stop", [])
+    for e in st:
+        e["hooks"] = [h for h in e.get("hooks", []) if "harness" not in h.get("command", "")]
+    st[:] = [e for e in st if e["hooks"]]
+    st.append({"hooks": [{"type": "command", "timeout": 10,
+                          "command": "~/.claude/harness/bin/harness hook-stop"}]})
     cs.write_text(json.dumps(conf, indent=2) + "\n")
     print(f"scaffolded {dst}")
     print(f"orientation hook → {cs}  (this repo only; commit it)")
@@ -4694,6 +4799,7 @@ def main():
                     help="required when rank 0 reorders past a lead")
     qu.add_argument("--order", metavar="A,B,C",
                     help="set the order of a child's queue; unnamed keep their place behind")
+    add("hook-stop", cmd_hook_stop)
     add("needs", cmd_needs)
     add("index", cmd_index)
     ps = add("position", cmd_position)

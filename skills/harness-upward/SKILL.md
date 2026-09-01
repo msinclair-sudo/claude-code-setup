@@ -184,6 +184,26 @@ open     specter2-embed — finishing it means presenting UP to main, not to
 
 **Presenting is your last act. Then stop.**
 
+This one is enforced, because it is the failure that keeps happening: a member
+finishes, ends its turn, and the work is invisible to everyone above it. Two
+things will stop you.
+
+The `Stop` hook blocks your turn once if you try to end it with an open mark that
+has work in it and was never presented — HEAD moved, or the worktree is dirty. It
+names the command. Answer it by presenting, not by stopping again.
+
+And `harness mark` refuses to open a second task while the first is unpresented:
+
+```
+harness: 'job-a' is open on this node, has work in it, and was never presented.
+         Finish that first: harness mark job-a --done
+```
+
+If you genuinely cannot finish, that is not a reason to go quiet — it is
+`harness blocked` for something you need, or `harness brief <task> --suggest` if
+the plan is wrong. Both are records your lead can act on. Silence is not.
+
+
 `--done` records the work, releases the node, and tells you plainly:
 
 ```

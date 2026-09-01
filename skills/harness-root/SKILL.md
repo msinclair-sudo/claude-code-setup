@@ -258,6 +258,28 @@ on record beside it as the reason.
 Comments on a brief follow the same rule one level down: they prompt the lead
 who *writes* that brief, not the lane it is for.
 
+## Priority is yours, anywhere in the tree
+
+```bash
+harness queue dev_1 --order doi-index,ingest-2024 \
+        --why "the operator ruled the paper store lands first"
+```
+
+You order any node's queue, not just your own children's — a wider reach than you
+have over briefs, and deliberately so. Writing a grandchild's brief is refused
+because it skips the translation its lead exists to perform. Reordering changes
+no brief's text: it says which of them matters first, and that is yours, because
+you hold the charter and you are the one talking to the operator.
+
+**`--why` is required when you reach past a lead.** It wrote those and sequenced
+them for a reason; a change with none reads as noise and gets changed back. The
+lead sees your reason at its next `harness queue`, and so does the lane.
+
+**A lead can override you, with a reason.** That is not a hole in the rule. It
+may know a dependency you do not, and the harness cannot tell a correction from
+an override — so it records both and shows you. Read the queue after you reorder
+one; if it has moved back, the reason will be sitting there.
+
 ## You are the only session that persists — everything under you starts cold
 
 You are never recycled, and that exception is narrower than it looks. It is not

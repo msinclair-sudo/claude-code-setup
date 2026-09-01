@@ -412,6 +412,26 @@ harness queue dev_1                 # one node, in the order you set
 harness queue dev_1 --order a,b,c   # set it; unnamed keep their place behind
 ```
 
+**Rank 0 can reorder any queue in the tree, including your children's.** It has
+to say why, and you see it the next time you run `harness queue`:
+
+```
+dev_1
+    ordered by main: The operator ruled the paper store lands first.
+    next doi-index   ...
+```
+
+That is a wider reach than it has over briefs, and the difference is real:
+ordering changes no brief's text. It says which of them matters first, which is
+rank 0's call because it holds the charter and it is the one talking to the
+operator. If the *work* should change rather than its place in the queue, that is
+your rewrite, not its reorder.
+
+**You can change it back, and you have to say why.** Not refused — you may know a
+dependency rank 0 does not, and that is worth more than deference. But silently
+undoing it is refused, the record names whoever ordered it last, and rank 0 reads
+the same queue.
+
 Briefs queue in the order you write them. **Order them deliberately** — a member
 holding four briefs and no order does not have a backlog, it has a choice, and
 a member choosing which task to do first is choosing its own work. It is also

@@ -3172,9 +3172,41 @@ def cmd_queue(a):
     if a.order:
         target = a.node or me
         parent = ctx.tree["nodes"].get(target, {}).get("parent")
-        if parent != me and not (target == me and ctx.rank(me) == 0):
+        own = parent == me or (target == me and ctx.rank(me) == 0)
+        # Ordering is not authorship, and that is the whole reason this can be
+        # granted where writing a grandchild's brief cannot. A brief written past
+        # a lead skips the translation that rank exists to perform, and rebuilds
+        # the drip feed one rank down. Reordering changes no brief's text: it
+        # says which of them matters first, and what matters is rank 0's — it
+        # holds the charter and it is the one talking to the operator.
+        if not own and ctx.rank(me) != 0:
             die(REFUSED, f"'{me}' does not order '{target}'s queue. A lead orders "
-                         f"its CHILDREN's;\n           rank 0 orders its own.")
+                         f"its CHILDREN's;\n           rank 0 orders anywhere in "
+                         f"the tree.")
+        if not own and not (a.why or "").strip():
+            die(REFUSED,
+                f"reaching past '{parent}' to reorder its child needs --why.\n"
+                f"           '{parent}' wrote these and sequenced them for a reason; "
+                f"if you change that\n           without saying why, it reads as "
+                f"noise and gets changed back.")
+        # Symmetric, and it is what keeps the permission from being hollow. A
+        # lead orders its own children freely — until a higher rank has ordered
+        # them, at which point undoing that silently is the same act as reaching
+        # past a rank, performed downward. It is not refused: the lead may know a
+        # dependency rank 0 does not. It is recorded, and rank 0 reads the queue.
+        prior = sorted(
+            {b["ordered_by"] for b in queue(ctx, target) if b.get("ordered_by")}
+            - {me},
+            key=lambda n: ctx.rank(n) if n in ctx.tree["nodes"] else 99)
+        above = [n for n in prior if n in ctx.tree["nodes"]
+                 and ctx.rank(n) < ctx.rank(me)]
+        if own and above and not (a.why or "").strip():
+            die(REFUSED,
+                f"'{above[0]}' ordered this queue and gave a reason. Changing it "
+                f"back needs one too:\n           harness queue {target} --order ... "
+                f"--why \"...\"\n           It is not refused — you may know a "
+                f"dependency it does not — but it is\n           recorded, and "
+                f"'{above[0]}' reads this queue.")
         want = [t.strip() for t in a.order.split(",") if t.strip()]
         # Only the head of each coupled chain is orderable. A coupled task is
         # reached through its predecessor by construction, so giving it a
@@ -3192,8 +3224,16 @@ def cmd_queue(a):
             die(REFUSED, f"not queued for '{target}': {', '.join(missing)}\n"
                          f"           queued: "
                          f"{', '.join(b['task'] for b in have.values())}")
+        # The stamp always names who ordered it LAST. Leaving a superseded one in
+        # place would have the queue claiming an authority that no longer holds.
+        stamp = ({"ordered_by": me,
+                  "ordered_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                  "ordered_why": a.why or ""}
+                 if (not own or a.why) else
+                 {"ordered_by": None, "ordered_at": None, "ordered_why": None})
         for i, t in enumerate(want):
             b = have[tkey(t)]
+            b.update(stamp)
             b["seq"] = i
             ctx.state_file("briefs", b["task"], ".json").write_text(
                 json.dumps(b, indent=2) + "\n")
@@ -3201,11 +3241,20 @@ def cmd_queue(a):
         # being silently promoted by a partial reorder.
         for j, b in enumerate((x for x in have.values() if tkey(x["task"]) not in
                                {tkey(t) for t in want}), start=len(want)):
+            b.update(stamp)
             b["seq"] = j
             ctx.state_file("briefs", b["task"], ".json").write_text(
                 json.dumps(b, indent=2) + "\n")
         print(f"{target}: " + " → ".join(b["task"] for b in queue(ctx, target)
                                          if not b.get("coupled_to")))
+        if own and above:
+            print(f"  overrides {above[0]}'s ordering: {a.why}")
+            print(f"  '{above[0]}' reads this queue and will see it.")
+        elif not own:
+            print(f"  ordered by {me}, past {parent}: {a.why}")
+            print(f"  '{parent}' sees it at its next `harness queue`. It changes no "
+                  f"brief's text —\n  if the work itself should change, that is "
+                  f"{parent}'s rewrite, not this.")
         return
 
     nodes = [a.node] if a.node else sorted(ctx.tree["nodes"])
@@ -3229,10 +3278,24 @@ def cmd_queue(a):
             print(f"    gate {gb['task']:<24} waiting on the operator "
                   f"({_ago((gb.get('approval') or {}).get('asked_at'))})")
         head = [b for b in q if not b.get("coupled_to")]
+        # One stamp for the whole queue is the usual case — say it once. Repeating
+        # the same sentence against every row is how a useful line becomes
+        # wallpaper.
+        stamps = {(b.get("ordered_by"), b.get("ordered_why"))
+                  for b in head if b.get("ordered_by")}
+        stamps.discard((None, None))
+        if len(stamps) == 1:
+            who_o, why_o = stamps.pop()
+            print(f"    ordered by {who_o}: {why_o}")
+            stamps = set()
         for i, b in enumerate(head):
             mark = "next" if i == 0 and not openm else f"  {i + 1}."
             print(f"    {mark:<4} {b['task']:<24} "
                   f"{(b.get('text') or '').strip().splitlines()[0][:44] if b.get('text') else ''}")
+
+            if b.get("ordered_by") and stamps:
+                print(f"    {'':<4} {'':<24} ordered by {b['ordered_by']}: "
+                      f"{(b.get('ordered_why') or '')[:40]}")
             for c in couple_chain(ctx, b["task"]):
                 why = (c.get("coupled_why") or "").strip().replace("\n", " ")
                 print(f"         ↳ {c['task']:<22} same session: "
@@ -3609,6 +3672,8 @@ def cmd_brief(a):
                else "  [the tree has moved since]")
         print(f"  fact      {nm} = {o.get('value')}{tag}")
         print(f"            {_ago(o.get('at'))} · {o.get('command')}")
+    if b.get("ordered_by"):
+        print(f"  placed    where it is by {b['ordered_by']}: {b.get('ordered_why')}")
     if b.get("coupled_to"):
         print(f"  follows   {b['coupled_to']} in the same session: "
               f"{b.get('coupled_why') or ''}")
@@ -4537,6 +4602,8 @@ def main():
     il.add_argument("--roster", help="a `claude agents --json` capture, for testing")
     qu = add("queue", cmd_queue)
     qu.add_argument("node", nargs="?", help="one node; every node in the tree if omitted")
+    qu.add_argument("--why", metavar="TEXT",
+                    help="required when rank 0 reorders past a lead")
     qu.add_argument("--order", metavar="A,B,C",
                     help="set the order of a child's queue; unnamed keep their place behind")
     add("needs", cmd_needs)

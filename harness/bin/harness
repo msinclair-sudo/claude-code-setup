@@ -409,9 +409,21 @@ def _whoami(a):
             busy = {r.get("_node") for r in open_marks(ctx).values()
                     if not r.get("_presented_at")}
             spare = [k for k in kids if k not in busy]
-            if spare:
-                print(f"recycle  {', '.join(spare)} — nothing in flight. "
+            # Two different states, and they had one message. Recycling a child
+            # with an empty queue buys a fresh session with nothing to open,
+            # which is the state T15 exists to prevent — the advice was wrong,
+            # not merely coarse.
+            ready = [k for k in spare
+                     if [b for b in queue(ctx, k) if not b.get("coupled_to")]]
+            bare = [k for k in spare if k not in ready]
+            if ready:
+                print(f"recycle  {', '.join(ready)} — idle with work queued. "
                       f"harness recycle --idle")
+            if bare:
+                print(f"brief    {', '.join(bare)} — idle with an EMPTY queue. "
+                      f"Nothing to recycle onto;")
+                print(f"         write the work or leave the node down. "
+                      f"harness queue")
     except Exception:
         pass
     try:
@@ -511,9 +523,24 @@ def _whoami(a):
         q = queue(ctx, node)
         head = [b for b in q if not b.get("coupled_to")]
         openm = [t for t, r in open_marks(ctx).items() if r.get("_node") == node]
-        if head and ctx.children(node):
-            print(f"handed   {len(head)} brief(s) to split or start: "
-                  f"{', '.join(b['task'] for b in head)} — harness brief <task>")
+        # A LEAD used to get a bare list here and no order — "handed 3 briefs" —
+        # which names no first thing and does not say to begin. So it asked, and
+        # having nobody in the tree obviously to ask, it asked the operator. The
+        # line is the same at every rank now; only the verb changes.
+        if head and ctx.children(node) and not openm:
+            b0 = head[0]
+            print(f"next     {b0['task']} — your brief is the instruction, not a "
+                  f"proposal. Read it,")
+            print(f"         then split it for {', '.join(ctx.children(node))} or "
+                  f"open it yourself:")
+            print(f"           harness brief {b0['task']}")
+            rest = head[1:]
+            if rest:
+                print(f"queue    {len(rest)} after it, in {parent or 'your lead'}'s "
+                      f"order: {', '.join(b['task'] for b in rest)}")
+        elif head and ctx.children(node):
+            print(f"queue    {len(head)} after your open task: "
+                  f"{', '.join(b['task'] for b in head)}")
         elif head and not openm:
             # The line that answers "shall I start?" before it is asked. A member
             # arriving to four briefs and no order holds an ambiguity at the top
@@ -534,6 +561,16 @@ def _whoami(a):
         elif head:
             print(f"queue    {len(head)} after your open task: "
                   f"{', '.join(b['task'] for b in head)}")
+        elif not openm and ctx.rank(node) != 0:
+            # Genuinely nothing. The one case where asking is right — and the
+            # answer is that it is not the operator's to give. A node with an
+            # empty queue is its LEAD's problem, and the lead is told the same
+            # thing from the other side at its own orientation.
+            print(f"empty    nothing queued and nothing open. That is "
+                  f"{parent or 'your lead'}'s to fix, not")
+            print(f"         the operator's — do not ask them. Say it in your report "
+                  f"to {parent or 'your lead'}")
+            print(f"         and stop; it sees the same gap when it next orients.")
     except Exception:
         pass
     if ctx.rank(node) == 0:

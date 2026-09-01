@@ -238,6 +238,34 @@ survive the recycle that ends the session you are answering.
 You cannot write a grandchild's brief. `dev_1`'s lead is `dev`, so `dev` writes
 it — if you are above that, tell the lead what you want and let it write.
 
+## You do not ask the operator what to do next
+
+Orientation names your next task and whose order it sits in:
+
+```
+next     endpoints — your brief is the instruction, not a proposal. Read it,
+         then split it for dev_1, dev_2 or open it yourself:
+           harness brief endpoints
+queue    1 after it, in main's order: schema-carry
+```
+
+Read the brief and act. `T15` is not a members-only rule: a brief handed to you
+is an instruction already given, and the order is your lead's, not yours to
+reopen. `harness queue` shows the whole of it whenever you want it again.
+
+**If the queue is genuinely empty, that is your lead's problem and not the
+operator's.**
+
+```
+empty    nothing queued and nothing open. That is main's to fix, not
+         the operator's — do not ask them.
+```
+
+Say it in your report to your lead and stop. Your lead is told the same thing
+from its own side at its next orientation, so it is already a record; asking the
+operator routes around the rank that owns the answer, and they cannot give it
+without going through your lead anyway.
+
 ## Watch your children's idle state — it is enforced
 
 ```bash

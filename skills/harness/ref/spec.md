@@ -325,6 +325,10 @@ A brief exists **before** its mark: the lead writes it, then the member accepts.
 
 **Ambiguity is what produces the question, and the queue is what removes it.** A member holding four briefs and no order does not have a backlog, it has a choice — and a member choosing which of its tasks to do first is choosing its own work, one notch smaller than choosing its own task and refused on the same grounds. So orientation names **one** task, prints the two commands that begin it, and says plainly that the brief is the instruction. What follows it is listed and marked *not yours to start*.
 
+**It is not a members-only rule, and treating it as one caused the same failure one rank up.** A lead used to be told `handed 3 brief(s)` — a list with no first item and no instruction to begin. So it asked what to do; and having nobody obvious in the tree to ask, it asked the **operator**, which routes around the rank that owns the answer. Orientation now names one task and whose order it sits in at every rank, and only the verb changes: a member opens it, a lead splits it or opens it.
+
+**The one case where asking is right has a correct target, and it is never the operator.** A node with an empty queue and nothing open says so to its **lead** and stops. The lead is told the same gap from its own side at its next orientation, so it is already a record before anyone speaks. The operator could not answer it without going through the lead in any case.
+
 **Enforcement** None, and there cannot be. A CLI cannot make a session begin. What it can do is remove every ambiguity the question could be about, and say the thing at the moment the question would otherwise be asked. If it is still asked, that is a prompt failure and not a design gap.
 **Fails when** The queue is empty and orientation says so. A node with nothing briefed asking what to do is correct; that question belongs to its lead, and `spawn` and `recycle` both warn before it can happen.
 

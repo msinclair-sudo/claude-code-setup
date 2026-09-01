@@ -524,7 +524,7 @@ harness spend              # no task: the session total, labelled as such
 
 Without a mark it **refuses** rather than apportioning. Marked in a different
 session it **refuses** rather than subtracting — a recycled member
-([[#R13 — Members are recycled, not accumulated]]) starts a new transcript, so a
+([[#R13 — Everything below rank 0 starts cold]]) starts a new transcript, so a
 mark taken before the recycle measures nothing afterwards.
 
 **That second refusal is the mechanism working, and it will look like a bug.** A
@@ -755,9 +755,9 @@ A single small CLI performs atomic file operations and the checks in [[#R8 — T
 
 **A downward message is executed on receipt, and there is no recall.** Two rules follow, and the second is the one that costs money when it is missing. *Sender*: by the time you send, assume it is done — do not send anything whose value depends on it not yet having been acted on, unless you also say what to do if it has. *Recipient*: an instruction that arrives after the state it depended on has changed is **reported, not reconstructed**. Say what the state is and stop.
 
-Measured 2026-08-31: rank 0 told a lead to hold a member so it could carry its context into the next task; the lead had already recycled it, correctly, on the standing rule. The lead could not have avoided receiving that message. It could have avoided trying to satisfy it, and the attempt is where the tokens went. The instruction was also **wrong on its merits** — [[#R13 — Members are recycled, not accumulated]] says nothing a member knows survives unless it is in a commit, a report or the ledger, so a request to preserve a session for its context is a request to skip writing a document. The coordination failure was downstream of a documentation one, and [[#T10 — Release]]'s close record is where that document belongs.
+Measured 2026-08-31: rank 0 told a lead to hold a member so it could carry its context into the next task; the lead had already recycled it, correctly, on the standing rule. The lead could not have avoided receiving that message. It could have avoided trying to satisfy it, and the attempt is where the tokens went. The instruction was also **wrong on its merits** — [[#R13 — Everything below rank 0 starts cold]] says nothing a member knows survives unless it is in a commit, a report or the ledger, so a request to preserve a session for its context is a request to skip writing a document. The coordination failure was downstream of a documentation one, and [[#T10 — Release]]'s close record is where that document belongs.
 
-**Transport is the agent's, which sets a hard limit on what can be guarded.** `SendMessage` does not pass through the CLI, so no instrument here can count exchanges, notice that a thread has stopped producing artefacts, or decline to send. A rule of the form "stop replying after n rounds with no ref moved" is therefore a *rule with a diagnostic*, never a guard — and a guard that depends on a participant staying alert is the thing this design exists to remove. Only two mechanisms actually terminate an exchange, and neither is a tripwire: making the artefact a document, so the correction becomes a [[#T5 — Document request (upward)]] pair with a terminal state; and [[#R13 — Members are recycled, not accumulated]], which ends it by the counterparty no longer existing in that context. The diagnostic half is real and worth having — `harness status` marks a live node with no open task as `unassigned`, and `harness spend` prices the exchange — but it informs a decision rather than making one.
+**Transport is the agent's, which sets a hard limit on what can be guarded.** `SendMessage` does not pass through the CLI, so no instrument here can count exchanges, notice that a thread has stopped producing artefacts, or decline to send. A rule of the form "stop replying after n rounds with no ref moved" is therefore a *rule with a diagnostic*, never a guard — and a guard that depends on a participant staying alert is the thing this design exists to remove. Only two mechanisms actually terminate an exchange, and neither is a tripwire: making the artefact a document, so the correction becomes a [[#T5 — Document request (upward)]] pair with a terminal state; and [[#R13 — Everything below rank 0 starts cold]], which ends it by the counterparty no longer existing in that context. The diagnostic half is real and worth having — `harness status` marks a live node with no open task as `unassigned`, and `harness spend` prices the exchange — but it informs a decision rather than making one.
 
 ### R7 — The name is cosmetic
 
@@ -956,7 +956,7 @@ that hurts.
 **A member is the opposite by construction.** One short task
 ([[#I8 — Tasks are short]]) in one worktree, ending at a commit. It is not given
 a large window because it is not asked to hold anything; instead it is recycled
-([[#R13 — Members are recycled, not accumulated]]) so it never accumulates one.
+([[#R13 — Everything below rank 0 starts cold]]) so it never accumulates one.
 `opus[1m]` resolves to `claude-opus-5[1m]`; plain `opus` to `claude-opus-5`. Both
 were checked against the CLI rather than assumed.
 
@@ -1081,11 +1081,32 @@ The one thing it must get right is the same thing `harness needs` must: the entr
 
 `needs.json` beside the project directories is a derived cache, rebuilt on every raise, grant and resolve, and it exists for exactly one reader: the statusline renders on every prompt and cannot walk every project's block directory. The per-project block records are the truth; `inbox.jsonl` is the append-only history of both raising and clearing ([[#I6 — The ledger is append-only]]).
 
-### R13 — Members are recycled, not accumulated
+### R13 — Everything below rank 0 starts cold
 
-A member's session is ended and a fresh one started on the same node once its
-work has landed. `harness recycle <node>` or `--children` does it; a lead drives
-it for its own children.
+A session is ended and a fresh one started on the same node once its work has
+landed. `harness recycle <node>`, `--children`, `--idle` or `--cold` does it; a
+node drives it for its own children.
+
+**It applies to leads, not only to members, and that is a change of scope rather
+than of mechanism.** A lead used to be worth keeping because it held what nobody
+else did: which briefs it had written, which blocks had been answered and what
+they produced, what its children were carrying, which figures it had measured.
+All of that is a record now — the charter, briefs and their queue, marks with
+derived state, findings, facts, block consequences — so a fresh lead **reads it
+back instead of remembering it**, and the only thing lost by replacing one is
+context it should never have been the sole holder of. A rank-1 lead should
+therefore be recycled often, not exceptionally.
+
+**Rank 0 is the single exception, and the reason is narrow.** It is not that it
+holds more; it is that it holds the one thing no record reconstructs — the
+conversation with the operator. Everything else rank 0 knows has been moved out
+of its transcript deliberately, which is what makes the exception small rather
+than a licence.
+
+**The parent is the actor, so the parent is told.** A session cannot recycle
+itself, so orientation prints the line on the node above: `recycle dev —
+nothing in flight`. It fires only when no child holds an unpresented mark, so a
+node mid-task is never offered up.
 
 It is a teardown and relaunch, not a clear. A background session cannot clear
 itself, and a session that stopped itself could not start its replacement — so
@@ -1100,7 +1121,7 @@ worktree*, and on a node the worktree is the node.
 
 `harness idle` lists every session holding a node, oldest first, with how long it has been quiet, whether it is past the cache lifetime, and how much context it would have to re-read. `harness recycle --cold` sweeps the ones that are, and the viewer marks the card. Both refuse a node with an **unpresented** open mark and a dirty worktree, so the sweep never destroys work in progress; where a session's transcript cannot be read the age is unknown and the node is kept, on the same rule that makes a failed roster read mean *unknown* rather than *empty*.
 
-This is [[#R13 — Members are recycled, not accumulated]] arriving at the same answer from cost that it already reached from quality. A member is stateless by design — position comes from git, orientation from the hook, scope from the task record — so replacing a cold session costs one orientation, while resuming it costs everything it was carrying **and** keeps the accumulated errors.
+This is [[#R13 — Everything below rank 0 starts cold]] arriving at the same answer from cost that it already reached from quality. A member is stateless by design — position comes from git, orientation from the hook, scope from the task record — so replacing a cold session costs one orientation, while resuming it costs everything it was carrying **and** keeps the accumulated errors.
 
 **Recycling is the best-evidenced thing in this design.** A persistent worker
 accumulates its own errors: measured, per-step accuracy falls as steps grow, and

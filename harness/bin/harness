@@ -393,6 +393,21 @@ def _whoami(a):
     except Exception:
         pass
     try:
+        # Every rank below 0 starts cold. A child with nothing in flight is a
+        # session accumulating context for no reason — and since its knowledge
+        # now lives in records rather than its own transcript, replacing it
+        # loses nothing. Only the parent can do it, so only the parent is told.
+        kids = ctx.children(node)
+        if kids:
+            busy = {r.get("_node") for r in open_marks(ctx).values()
+                    if not r.get("_presented_at")}
+            spare = [k for k in kids if k not in busy]
+            if spare:
+                print(f"recycle  {', '.join(spare)} — nothing in flight. "
+                      f"harness recycle --idle")
+    except Exception:
+        pass
+    try:
         mine = {t: r for t, r in open_marks(ctx).items() if r.get("_node") == node}
         up = ctx.tree["nodes"].get(node, {}).get("parent")
         for t, r in sorted(mine.items()):
@@ -1895,8 +1910,16 @@ def cmd_recycle(a):
         if a.idle or a.cold:
             # A node with no OPEN task record is unassigned, and an unassigned
             # session with a live counterparty is what funds correspondence no
-            # transaction ends. This is the sweep at subtree close: it decides
-            # nothing, it removes the capacity.
+            # transaction ends. It decides nothing; it removes the capacity.
+            #
+            # It applies to LEADS as much as to members, and that is a change of
+            # scope rather than of mechanism. A lead used to be worth keeping
+            # because it held what nobody else did: which briefs it had written,
+            # which blocks were answered, what its children were carrying. All of
+            # that is a record now — briefs, the queue, marks with derived state,
+            # findings, facts, block consequences — so a fresh lead reads it back
+            # instead of remembering it, and the only thing lost by replacing one
+            # is context it should never have been the sole holder of.
             # Presented work does not hold a node. The member has finished and
             # measured it; the record stays open only because its LEAD has not
             # signed off yet, and waiting for that would idle a session that has
@@ -1926,7 +1949,9 @@ def cmd_recycle(a):
         if sp is None:
             print(f"  skip {n:<12} not a node"); continue
         if sp["rank"] == 0:
-            print(f"  skip {n:<12} rank 0 is never recycled — it holds the rulings"); continue
+            print(f"  skip {n:<12} rank 0 is never recycled — it is the only "
+                  f"session holding a\n       {'':<12} conversation with the "
+                  f"operator, and no record reconstructs that"); continue
         if not sp["worktree"]:
             print(f"  skip {n:<12} no worktree"); continue
 

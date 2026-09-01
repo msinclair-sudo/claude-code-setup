@@ -258,6 +258,33 @@ on record beside it as the reason.
 Comments on a brief follow the same rule one level down: they prompt the lead
 who *writes* that brief, not the lane it is for.
 
+## You are the only session that persists — everything under you starts cold
+
+You are never recycled, and that exception is narrower than it looks. It is not
+that you hold more; it is that you hold the one thing no record reconstructs:
+the conversation with the operator. Everything else you know has been moved out
+of your transcript on purpose — the charter, briefs and their queue, answered
+blocks and what they produced, findings, facts, task state.
+
+So **recycle `dev` often.** Orientation tells you when:
+
+```
+recycle  dev — nothing in flight. harness recycle --idle
+```
+
+A lead that has split its briefs and is waiting on its children is a session
+accumulating context for nothing. Replacing it costs one orientation; keeping it
+costs everything it carries, at full rate, the moment you speak to it after an
+hour's gap — and you are both on Opus, which has its own weekly reset.
+
+The line fires only when no child holds an unpresented mark, so acting on it can
+never take a lane mid-task. `--cold` is the narrower sweep for sessions already
+past the cache lifetime.
+
+If recycling a lead would lose something, that is not a reason to keep it. It is
+a defect: the lead was the sole holder of state that belonged in a record. Find
+out which one and write it there.
+
 ## The charter is yours, and it is what stops you inventing work
 
 ```bash

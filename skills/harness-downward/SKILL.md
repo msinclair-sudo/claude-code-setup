@@ -238,6 +238,58 @@ survive the recycle that ends the session you are answering.
 You cannot write a grandchild's brief. `dev_1`'s lead is `dev`, so `dev` writes
 it — if you are above that, tell the lead what you want and let it write.
 
+## Recycle your children often, and expect to be recycled yourself
+
+```bash
+harness recycle --idle      # every child with nothing in flight
+harness recycle --cold      # every child past the cache lifetime
+```
+
+Orientation tells you when: `recycle dev_1, dev_2 — nothing in flight`. It fires
+only when no child holds an unpresented mark, so acting on it can never take a
+node mid-task.
+
+**Do it often, including when your children are leads.** This used to be a
+members-only rule because a lead held things nobody else did — the briefs it
+wrote, which blocks were answered, what its children carried, the figures it
+measured. All of that is a record now, so a fresh lead reads it back rather than
+remembering it. What you lose by replacing one is context it should never have
+been the sole holder of.
+
+**You are on the same rule.** Every rank below 0 starts cold. If your lead
+recycles you, nothing is lost that mattered — and if something would be lost,
+that is a signal you were holding state that belonged in a brief, a fact or a
+finding. Write it down before it goes.
+
+Rank 0 is the only exception, and only because it holds the conversation with
+the operator, which no record reconstructs.
+
+## Recycle your children often, and expect to be recycled yourself
+
+```bash
+harness recycle --idle      # every child with nothing in flight
+harness recycle --cold      # every child past the cache lifetime
+```
+
+Orientation tells you when: `recycle dev_1, dev_2 — nothing in flight`. It fires
+only when no child holds an unpresented mark, so acting on it can never take a
+node mid-task.
+
+**Do it often, including when your children are leads.** This used to be a
+members-only rule because a lead held things nobody else did — the briefs it
+wrote, which blocks were answered, what its children carried, the figures it
+measured. All of that is a record now, so a fresh lead reads it back rather than
+remembering it. What you lose by replacing one is context it should never have
+been the sole holder of.
+
+**You are on the same rule.** Every rank below 0 starts cold. If your lead
+recycles you, nothing is lost that mattered — and if something would be lost,
+that is a signal you were holding state that belonged in a brief, a fact or a
+finding. Write it down before it goes.
+
+Rank 0 is the only exception, and only because it holds the conversation with
+the operator, which no record reconstructs.
+
 ## Sweep cold sessions before you speak to them
 
 ```bash

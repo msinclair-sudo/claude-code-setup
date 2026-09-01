@@ -2474,8 +2474,11 @@ def scan_needs():
 def write_needs(rows):
     """A derived cache, for readers that must be cheap and must never fail.
 
-    The statusline renders on every prompt, so it cannot walk every project's
-    block directory; it reads this one small file. Same split as index.json:
+    Written for the statusline, which rendered on every prompt and could not
+    walk every project's block directory. That reader is gone — a count shown in
+    every session on the machine, enrolled or not, shouts about a project you are
+    not in from a place you cannot act on it. What remains is the `notify` hook,
+    handed the same rows as HARNESS_JSON. Same split as index.json either way:
     the records are the truth, this is a convenience rebuilt from them.
     """
     p = HOME_STATE / "needs.json"

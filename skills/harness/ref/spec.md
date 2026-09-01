@@ -1036,8 +1036,12 @@ rejects it — by then the session is already spawned and detached.
 | surface | reaches the operator when |
 | --- | --- |
 | `~/.claude/harness/notify` | immediately, if they installed one — run with `HARNESS_SUMMARY`, `HARNESS_COUNT`, `HARNESS_JSON` in the environment |
-| the statusline badge | next prompt, in **any** session, enrolled or not |
+| `harness gui` | while it is open, on its next poll |
 | `harness needs` | when they ask, from anywhere |
+
+**The statusline used to carry a count and no longer does.** It was wrong in the one way a statusline cannot be: it rendered in **every** session on the machine, enrolled or not, so a block raised in one project shouted at every unrelated shell — and there is nothing to be done about it from where it appears. The statusline still shows tree **position**, which is a fact about the repository you are standing in and stops at its edge. The queue belongs where the commands that clear it are.
+
+**The viewer does not seize the browser.** It prints its URL and opens nothing unless asked with `--open`. It starts often — from `harness gui`, from a restart after an edit, from a second port when the first is taken — and a viewer that takes the screen every time is one that interrupts whatever was on it.
 
 **The harness does not choose the channel.** `notify-send` is wrong over ssh, wrong on a Mac and wrong in WSL, which is three of three on the machines this has run on. The hook is absent by default and the record is written either way; a notifier that fails, hangs or is missing must never take the block record down with it.
 
@@ -1087,7 +1091,7 @@ Because the server has no authentication, a page merely *visited* in the same br
 
 The one thing it must get right is the same thing `harness needs` must: the entry expands to the exact `grant` and `recycle` lines, ready to copy. Structure comes from `tree.json` rather than the index, so a node the index has not caught up with is **shown as unknown rather than hidden** — a viewer that silently omits a node is worse than no viewer.
 
-`needs.json` beside the project directories is a derived cache, rebuilt on every raise, grant and resolve, and it exists for exactly one reader: the statusline renders on every prompt and cannot walk every project's block directory. The per-project block records are the truth; `inbox.jsonl` is the append-only history of both raising and clearing ([[#I6 — The ledger is append-only]]).
+`needs.json` beside the project directories is a derived cache, rebuilt on every raise, grant and resolve. It was written for the statusline, which rendered on every prompt and could not walk every project's block directory; that reader is gone, and what remains is the `notify` hook, which is handed the same rows as `HARNESS_JSON`. The per-project block records are the truth; `inbox.jsonl` is the append-only history of both raising and clearing ([[#I6 — The ledger is append-only]]).
 
 ### R13 — Everything below rank 0 starts cold
 

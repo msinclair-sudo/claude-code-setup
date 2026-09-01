@@ -55,33 +55,14 @@ if sid:
     except Exception:
         pass
 
-# Things only the operator can clear, across EVERY enrolled project — not just
-# this one, and not only inside a repository. A blocked lane that is only
-# visible where it happened is one the operator finds hours later, so this reads
-# the machine-wide derived file (needs.json, rebuilt by the harness whenever a
-# block is raised, granted or resolved) rather than walking any project. Same
-# contract as everything else here: '' for any reason at all, never raise.
-def needs_badge():
-    RED, RST = '\033[31m', '\033[0m'
-    try:
-        f = os.path.expanduser('~/.claude/harness/needs.json')
-        if not os.path.isfile(f):
-            return ''
-        n = int(json.load(open(f)).get('count') or 0)
-        if n < 1:
-            return ''
-        return RED + '\u26a0 ' + str(n) + ' need' + ('s' if n == 1 else '') + ' you' + RST
-    except Exception:
-        return ''
-
-
 # Harness tree position — contract: return '' for ANY reason it can't produce
 # a segment (not a repo, not enrolled, no index, branch not a node, malformed
 # state). Never raise. '!N' (N sessions sharing one worktree) is coloured red.
-# The needs badge is joined on here rather than printed as its own line so the
-# shell side keeps parsing a fixed number of lines; it survives an empty
-# position, which is the case that matters, since the operator is usually not
-# standing in the repository that wants them.
+# Position only. The count of things needing the operator used to be joined on
+# here, and it was wrong in the one way a statusline cannot be: it rendered in
+# EVERY session on the machine, enrolled or not, so a block raised in one
+# project shouted at every unrelated shell. The viewer shows the same queue
+# where it belongs, in one place, with the commands that clear it.
 def harness_segment(cdir):
     RED, RST = '\033[31m', '\033[0m'
     try:
@@ -157,8 +138,7 @@ def harness_segment(cdir):
 
 
 def harness_line(cdir):
-    parts = [x for x in (harness_segment(cdir), needs_badge()) if x]
-    return '  '.join(parts)
+    return harness_segment(cdir)
 
 print(model)
 print(cdir)

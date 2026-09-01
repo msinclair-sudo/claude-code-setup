@@ -1328,7 +1328,14 @@ def main():
     ap.add_argument("--port", type=int, default=DEFAULT_PORT,
                     help=f"default {DEFAULT_PORT}, walking upward if taken; "
                          f"an explicit --port is honoured exactly or refused")
-    ap.add_argument("--no-open", action="store_true")
+    # Opt-in, not opt-out. A viewer that seizes the browser every time it starts
+    # is one that interrupts whatever was on screen, and it starts often — from
+    # `harness gui`, from a restart after an edit, from a second port when the
+    # first is taken. The URL is printed; that is enough to click.
+    ap.add_argument("--open", dest="open_browser", action="store_true",
+                    help="also open it in a browser")
+    ap.add_argument("--no-open", action="store_true",
+                    help=argparse.SUPPRESS)      # accepted and ignored; now the default
     ap.add_argument("--once", action="store_true", help="print the JSON and exit")
     a = ap.parse_args()
     if a.once:
@@ -1358,7 +1365,7 @@ def main():
         print(f"harness-gui: {a.port} was taken, using {port}", flush=True)
     url = f"http://127.0.0.1:{port}/"
     print(f"harness-gui  {url}   (read-only; ctrl-c to stop)", flush=True)
-    if not a.no_open:
+    if a.open_browser:
         open_browser(url)
     try:
         srv.serve_forever()

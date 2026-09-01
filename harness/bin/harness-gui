@@ -425,25 +425,28 @@ border-top:1px solid var(--line);width:50%;height:22px}
 .tree ul ul::before{content:'';position:absolute;top:0;left:50%;
 border-left:1px solid var(--line);width:0;height:22px}
 
-.card{display:inline-block;min-width:158px;background:var(--panel);
-border:1px solid var(--line);border-radius:9px;padding:8px 11px;text-align:left}
+.card{display:inline-block;min-width:158px;max-width:300px;background:var(--panel);
+border:1px solid var(--line);border-radius:9px;padding:8px 11px;text-align:left;
+overflow-wrap:anywhere}
 .card.busy{border-color:#4a6b30}
 .card.blocked{border-color:#6b4526;background:#241a12}
-.hdr{display:flex;align-items:center;gap:7px}
+.hdr{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
 .dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--none)}
 .busy .dot{background:var(--busy);box-shadow:0 0 0 3px #8fbf5f26}
 .idle .dot{background:var(--idle)}
 .unknown .dot{background:var(--unk)}
 .nm{font-weight:600}
 .kd{margin-left:auto;color:var(--none);font-size:10px;text-transform:uppercase}
-.ln{color:var(--dim);font-size:11px;margin-top:3px;white-space:nowrap}
+.ln{color:var(--dim);font-size:11px;margin-top:3px;line-height:1.5;
+overflow-wrap:anywhere}
 .ln.q{color:var(--none);font-style:italic}
 .ln.u{color:var(--unk)}
 .dup{color:var(--warn)}
 .bell{display:inline-block;margin-top:5px;background:var(--warnbg);color:var(--warn);
 border:1px solid #5a3a1e;border-radius:20px;padding:1px 9px;font-size:11px;cursor:pointer}
 
-.orph{margin:2px 0 8px;padding-left:20px;color:var(--warn);font-size:11px}
+.orph{margin:2px 0 8px;padding-left:20px;color:var(--warn);font-size:11px;
+overflow-wrap:anywhere}
 .orph li{margin:1px 0}
 .orph .q{color:var(--none)}
 .banner{background:#3a1c1c;border:1px solid #6b2f2f;color:#e5a0a0;border-radius:9px;
@@ -472,7 +475,8 @@ button.cp{margin-top:5px;background:#00000040;color:var(--dim);border:1px solid 
 border-radius:6px;padding:3px 9px;font:inherit;font-size:11px;cursor:pointer}
 .empty{color:var(--none);padding:30px 0}
 .chip{display:inline-block;background:#00000038;border:1px solid var(--line);
-border-radius:5px;padding:0 6px;margin:1px 2px 1px 0;cursor:pointer}
+border-radius:5px;padding:0 6px;margin:1px 2px 1px 0;cursor:pointer;
+max-width:100%;overflow-wrap:anywhere}
 .chip:hover{border-color:var(--busy);color:var(--busy);background:#1c2614}
 .cct{margin-left:auto;color:var(--warn);font-size:11px}
 .bbox{width:100%;min-height:66px;background:var(--bg);color:var(--ink);

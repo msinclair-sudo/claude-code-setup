@@ -164,6 +164,24 @@ tells you whether you landed in it. **Say so in your report when you did not.**
 A band that was wrong is the only thing that improves the next estimate, and it
 was your lead's estimate — not your work — that missed.
 
+**This applies to you even when you are a lead.** A lead is both a closer and a
+closee, and the second half is easy to miss: you sign off your children's work,
+*and* the task you were given is signed off by the node above you. Rank is
+irrelevant to it — the only thing that matters is who issued the task.
+
+It is not the operator's to close. They approve **unrequested** work before it
+starts ([[T16]]); they have nothing to do with finishing work that was asked for.
+A task issued by `main` is closed by `main`, and if you tell the operator to
+close it you have stalled your own lane behind someone who cannot act.
+
+Orientation says so while you hold one:
+
+```
+open     specter2-embed — finishing it means presenting UP to main, not to
+           the operator:
+           harness mark specter2-embed --done      then main closes it
+```
+
 **You present; your lead closes.** `--done` records what the task cost and that
 you believe it finished. It does **not** close it — `--close` refuses you by
 rank, and that is the same rule as `T4`: you cannot check your own work, so you

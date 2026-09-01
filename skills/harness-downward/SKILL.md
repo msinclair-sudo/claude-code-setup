@@ -238,6 +238,16 @@ survive the recycle that ends the session you are answering.
 You cannot write a grandchild's brief. `dev_1`'s lead is `dev`, so `dev` writes
 it — if you are above that, tell the lead what you want and let it write.
 
+## You are also somebody's child
+
+You close your children's tasks. The task **you** were given is closed by the
+node above you, on exactly the same rule, and being a lead does not change it:
+`harness mark <task> --done`, then your lead signs it off.
+
+Do not hand it to the operator. They approve unrequested work before it starts;
+finishing work that was asked for is not theirs, and routing it to them stalls
+your lane behind someone who cannot act on it.
+
 ## Findings come up to you, and become work only with approval
 
 `whoami` tells you when a child has handed one up:

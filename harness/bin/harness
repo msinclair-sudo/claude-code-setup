@@ -393,8 +393,26 @@ def _whoami(a):
     except Exception:
         pass
     try:
+        mine = {t: r for t, r in open_marks(ctx).items() if r.get("_node") == node}
+        up = ctx.tree["nodes"].get(node, {}).get("parent")
+        for t, r in sorted(mine.items()):
+            lbl = mark_label(r, t)
+            if r.get("_presented_at"):
+                print(f"open     {lbl} — presented, waiting on {up or 'rank 0'} to "
+                      f"sign it off")
+            elif up:
+                print(f"open     {lbl} — finishing it means presenting UP to {up}, "
+                      f"not to the operator:")
+                print(f"           harness mark {lbl} --done      "
+                      f"then {up} closes it")
+            else:
+                print(f"open     {lbl} — you are rank 0 and close your own: "
+                      f"harness mark {lbl} --close")
+    except Exception:
+        pass
+    try:
         kids = set(ctx.children(node))
-        waiting = sorted(t for t, r in open_marks(ctx).items()
+        waiting = sorted(mark_label(r, t) for t, r in open_marks(ctx).items()
                          if r.get("_presented_at") and r.get("_node") in kids)
         if waiting:
             print(f"sign off {len(waiting)} presented task(s) waiting on you: "
@@ -1208,6 +1226,14 @@ def band_of(n):
     return "XL"
 
 
+def mark_label(rec, stem):
+    """The id its lead typed, not the filename it became. A mark is stored under
+    the sanitised name, so a reader printing the key hands back `specter2_embed`
+    for a task everyone else calls `specter2-embed` — including in a command it
+    tells someone to run."""
+    return (rec or {}).get("_task") or stem
+
+
 def open_marks(ctx):
     """Task records that were opened and never closed, keyed by task.
 
@@ -1435,6 +1461,7 @@ def cmd_mark(a):
             die(REFUSED, f"band must be one of {', '.join(BANDS)} "
                          f"({', '.join(f'{k} < {tok(v[1])}' for k, v in BANDS.items())})")
         tot["_band"] = band
+    tot["_task"] = a.task
     tot["_note"] = a.note or ""
     tot["_node"] = node
     tot["_branch"] = ctx.branch
@@ -3022,7 +3049,7 @@ def cmd_queue(a):
         for t in openm:
             r = open_marks(ctx)[t]
             state = "presented, waiting on sign-off" if r.get("_presented_at") else "OPEN"
-            print(f"    ▸ {t:<24} {state}")
+            print(f"    ▸ {mark_label(r, t):<24} {state}")
         for gb in gated:
             print(f"    gate {gb['task']:<24} waiting on the operator "
                   f"({_ago((gb.get('approval') or {}).get('asked_at'))})")

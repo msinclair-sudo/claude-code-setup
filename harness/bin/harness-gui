@@ -248,7 +248,9 @@ def read_state():
                     (b for b in briefs.get(name, []) if b["task"] not in ever_marked),
                     key=lambda b: (b.get("seq") if b.get("seq") is not None else 10**6,
                                    b.get("written_at") or "", b["task"])),
-                "blocks": [x for x in blocks if x.get("node") == name],
+                "blocks": [x for x in blocks if x.get("node") == name
+                           and x.get("_kind") != "approval"
+                           and not x.get("_answered")],
             })
         nodes.sort(key=lambda n: (n["rank"], n["name"]))
         pname = Path(repo).name

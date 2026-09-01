@@ -1096,6 +1096,12 @@ worktree*, and on a node the worktree is the node.
 
 **Coupling is the exception, and is justified in writing.** Two tasks may be declared to run in one session (`harness brief <b> --with <a> --why "..."`) when the context the first built is worth more than the reset the second would get. The `--why` is required and refused when empty, because the default is the evidenced one and an exception with no stated reason is indistinguishable from forgetting. A coupled task holds no queue position of its own — it is reached through its predecessor or not at all, and ordering one directly is refused.
 
+**A cold session is the expensive one, and it does not look expensive.** An idle session costs nothing while it is idle. It costs when you speak to it: every turn resends the whole conversation, and the prompt cache holds that for **one hour on a subscription** — five minutes once usage credits are being drawn on. Past it, the next thing anyone says re-processes the entire context as new work rather than as a cache read. So a node walked away from three hours ago is not free to pick up; the first word costs its whole history at full rate, and nothing on screen said so.
+
+`harness idle` lists every session holding a node, oldest first, with how long it has been quiet, whether it is past the cache lifetime, and how much context it would have to re-read. `harness recycle --cold` sweeps the ones that are, and the viewer marks the card. Both refuse a node with an **unpresented** open mark and a dirty worktree, so the sweep never destroys work in progress; where a session's transcript cannot be read the age is unknown and the node is kept, on the same rule that makes a failed roster read mean *unknown* rather than *empty*.
+
+This is [[#R13 — Members are recycled, not accumulated]] arriving at the same answer from cost that it already reached from quality. A member is stateless by design — position comes from git, orientation from the hook, scope from the task record — so replacing a cold session costs one orientation, while resuming it costs everything it was carrying **and** keeps the accumulated errors.
+
 **Recycling is the best-evidenced thing in this design.** A persistent worker
 accumulates its own errors: measured, per-step accuracy falls as steps grow, and
 the cause is not only long context but self-conditioning on its own earlier

@@ -1138,6 +1138,123 @@ TOKEN_KINDS = ("input", "cache_write", "cache_read", "output")
 BANDS = {"S": (0, 40_000), "M": (40_000, 120_000), "L": (120_000, 300_000)}
 
 
+# The prompt cache holds for an hour on a subscription, and five minutes once
+# you are drawing on usage credits. Past it, the next thing you say to a session
+# re-processes its whole context.
+CACHE_TTL = 60 * 60
+
+
+def last_turn(sid):
+    """When a session last did anything, and how much context it is carrying.
+
+    Both come off its own transcript. The file's mtime is the last turn; the
+    last usage record's cache-read count is what that turn handed back, which is
+    the closest honest proxy for what the NEXT turn would have to re-read.
+    """
+    t = transcript_for(sid)
+    if t is None:
+        return None, None
+    try:
+        age = time.time() - t.stat().st_mtime
+    except OSError:
+        return None, None
+    carry = None
+    try:
+        for line in t.open(errors="replace"):
+            try:
+                u = (json.loads(line).get("message") or {}).get("usage")
+            except Exception:
+                continue
+            if u:
+                carry = (u.get("cache_read_input_tokens", 0)
+                         + u.get("cache_creation_input_tokens", 0)
+                         + u.get("input_tokens", 0))
+    except OSError:
+        pass
+    return age, carry
+
+
+def human_age(sec):
+    if sec is None:
+        return "?"
+    m = int(sec // 60)
+    return f"{m}m" if m < 60 else f"{m // 60}h{m % 60:02d}m"
+
+
+def cmd_idle(a):
+    """Sessions holding a node and not doing anything, oldest first.
+
+    An idle session costs nothing while it is idle. It costs when you speak to
+    it: every turn resends the whole conversation, and past the cache lifetime
+    that resend is charged as new work rather than as a cache read. So a node
+    you walked away from three hours ago is not free to pick up — the first
+    thing you say to it pays for its entire history at full rate.
+
+    Which makes the answer the one [[R13]] already gives for a different reason.
+    A member is stateless by design: position comes from git, orientation from
+    the hook, scope from the task record. Replacing a cold session costs its
+    orientation. Resuming one costs everything it was carrying, and carries the
+    accumulated errors too.
+    """
+    rows = live_rows(agents_json(read_roster(a.roster)))
+    by_cwd = {}
+    for r in rows:
+        by_cwd.setdefault(r.get("cwd"), []).append(r)
+    out = []
+    for pdir in sorted(p for p in HOME_STATE.glob("*") if p.is_dir()):
+        try:
+            repo = json.loads((pdir / "binding.json").read_text()).get("repo", "")
+            idx = json.loads((pdir / "index.json").read_text())
+        except Exception:
+            continue
+        marks = {}
+        md = pdir / "marks"
+        for f in (sorted(md.glob("*.json")) if md.is_dir() else []):
+            try:
+                m = json.loads(f.read_text())
+            except Exception:
+                continue
+            if not m.get("_closed_at"):
+                marks.setdefault(m.get("_node"), []).append(
+                    (m.get("_task") or f.stem, bool(m.get("_presented_at"))))
+        for node, sp in (idx.get("nodes") or {}).items():
+            for r in by_cwd.get(sp.get("worktree"), []):
+                if r.get("status") == "busy" and not a.all:
+                    continue
+                age, carry = last_turn(r.get("sessionId") or "")
+                held = marks.get(node, [])
+                out.append({"project": Path(repo).name, "repo": repo, "node": node,
+                            "name": r.get("name"), "age": age, "carry": carry,
+                            "held": held, "sid": (r.get("sessionId") or "")[:8]})
+    if not out:
+        print("no idle sessions holding a node"); return
+    out.sort(key=lambda x: -(x["age"] or 0))
+    cold = 0
+    for x in out:
+        is_cold = (x["age"] or 0) > CACHE_TTL
+        cold += is_cold
+        work = ", ".join(t for t, pres in x["held"] if not pres)
+        pres = ", ".join(t for t, pres in x["held"] if pres)
+        print(f"{x['project']} · {x['node']:<10} idle {human_age(x['age']):>7}"
+              + ("   COLD" if is_cold else "")
+              + (f"   carrying {tok(x['carry'])}" if x["carry"] else ""))
+        if work:
+            print(f"  {'':<12} mid-task: {work} — do not recycle, it has not presented")
+        elif pres:
+            print(f"  {'':<12} presented {pres}, waiting on its lead to sign off")
+        elif is_cold:
+            print(f"  {'':<12} (cd {shlex.quote(x['repo'])} && harness recycle "
+                  f"{x['node']})")
+    if cold:
+        print(f"\n{cold} past the {CACHE_TTL // 60}m cache lifetime. The next thing "
+              f"you say to one of those\nre-processes everything it is carrying, at "
+              f"full rate. A fresh session on the\nsame node costs its orientation "
+              f"instead — and R13 wanted it replaced anyway.")
+    else:
+        print(f"\nnone past the {CACHE_TTL // 60}m cache lifetime — their context is "
+              f"still cached.")
+
+
 def read_spend(sid):
     """Cumulative billed tokens for a session, from its own transcript.
 
@@ -1749,15 +1866,33 @@ def cmd_recycle(a):
     """
     ctx = Ctx(); ctx.require_enrolled()
     idx = load_index(ctx, refresh=True)
-    rows = live_rows(agents_json())
+    rows = live_rows(agents_json(read_roster(a.__dict__.get("roster"))))
     by_wt = idx["byWorktree"]
     mine = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     here = idx["byBranch"].get(ctx.branch)
-    if a.children or a.idle:
+    if a.children or a.idle or a.cold:
         if here is None:
             die(NOT_ENROLLED, "not standing in a node, so --children has no meaning")
         targets = idx["nodes"][here]["children"]
-        if a.idle:
+        if a.cold:
+            # Narrower than --idle, and for a different reason. --idle removes
+            # capacity with nothing to do; --cold replaces a session whose
+            # context has fallen out of the prompt cache, where resuming costs a
+            # full re-read of everything it carries and starting fresh costs one
+            # orientation.
+            warm = []
+            for n in targets:
+                wt = idx["nodes"].get(n, {}).get("worktree")
+                ages = [last_turn(r.get("sessionId") or "")[0] for r in rows
+                        if r.get("cwd") == wt]
+                ages = [x for x in ages if x is not None]
+                if not ages or max(ages) <= CACHE_TTL:
+                    warm.append(n)
+            for n in warm:
+                print(f"  keep {n:<12} still inside the {CACHE_TTL // 60}m cache "
+                      f"lifetime")
+            targets = [n for n in targets if n not in warm]
+        if a.idle or a.cold:
             # A node with no OPEN task record is unassigned, and an unassigned
             # session with a live counterparty is what funds correspondence no
             # transaction ends. This is the sweep at subtree close: it decides
@@ -1772,12 +1907,12 @@ def cmd_recycle(a):
                 print(f"  keep {n:<12} has an open task record")
             targets = [n for n in targets if n not in busy]
         if not targets:
-            print(f"every child of '{here}' has an open task" if a.idle
+            print("nothing to recycle" if (a.idle or a.cold)
                   else f"'{here}' has no children"); return
     else:
         targets = a.node
     if not targets:
-        die(REFUSED, "name at least one node, or pass --children / --idle")
+        die(REFUSED, "name at least one node, or pass --children / --idle / --cold")
 
     occ = {}
     for r in rows:
@@ -4237,6 +4372,10 @@ def main():
     rcy = add("recycle", cmd_recycle)
     rcy.add_argument("node", nargs="*", help="nodes to restart with fresh context")
     rcy.add_argument("--children", action="store_true", help="every child of this node")
+    rcy.add_argument("--roster", help="a `claude agents --json` capture, for testing")
+    rcy.add_argument("--cold", action="store_true",
+                     help="children whose sessions are past the cache lifetime, so "
+                          "resuming them costs a full context re-read")
     rcy.add_argument("--idle", action="store_true",
                      help="every child with no OPEN task record — the sweep at subtree close")
     rcy.add_argument("--dry-run", action="store_true")
@@ -4352,6 +4491,10 @@ def main():
                     help="re-run the recorded command here and append what it says")
     ft.add_argument("--timeout", type=int, default=120, metavar="SECONDS")
     ft.add_argument("--list", action="store_true", help="every fact, with its age")
+    il = add("idle", cmd_idle)
+    il.add_argument("--all", action="store_true",
+                    help="include busy sessions, not just idle ones")
+    il.add_argument("--roster", help="a `claude agents --json` capture, for testing")
     qu = add("queue", cmd_queue)
     qu.add_argument("node", nargs="?", help="one node; every node in the tree if omitted")
     qu.add_argument("--order", metavar="A,B,C",

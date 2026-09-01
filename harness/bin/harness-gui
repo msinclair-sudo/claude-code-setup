@@ -235,9 +235,16 @@ def read_state():
                 "kind": spec.get("kind"), "rank": _rank(tree, name), "worktree": wt,
                 "indexed": name in idx.get("nodes", {}),
                 # null, meaning unknown, is deliberately distinct from [] here.
+                # Idle age and carried context, so a node you walked away from
+                # says what picking it back up would cost. Past the cache
+                # lifetime the next turn re-reads all of it at full rate.
                 "sessions": (None if rows is None else
-                             [{"name": r.get("name"), "status": r.get("status"),
-                               "id": (r.get("sessionId") or "")[:8]} for r in here]),
+                             [dict({"name": r.get("name"), "status": r.get("status"),
+                                    "id": (r.get("sessionId") or "")[:8]},
+                                   **(lambda a, c: {"idle": a, "carry": c,
+                                                    "cold": bool(a and a > CLI.CACHE_TTL)}
+                                      )(*CLI.last_turn(r.get("sessionId") or "")))
+                              for r in here]),
                 "claimed": name in locks,
                 "tasks": sorted(tasks.get(name, []), key=lambda x: x["task"]),
                 # The QUEUE, in the order its lead set — not alphabetical. What a
@@ -398,6 +405,8 @@ border-bottom:1px dotted var(--none)}
 .cmsg{font-size:11px;color:var(--dim)}
 .editing{outline:1px solid var(--warn)}
 .chip.coupled{border-style:dashed}
+.cold{color:var(--warn)}
+.card.coldc{border-color:#6b4526}
 .nextlbl{color:var(--busy);font-size:10px;letter-spacing:.05em;text-transform:uppercase}
 .collapse{margin-left:auto;font-size:10px;letter-spacing:.04em;text-transform:none;
 color:var(--dim);cursor:pointer;border-bottom:1px dotted var(--none)}
@@ -852,6 +861,24 @@ function briefedChips(n) {
     '</div>';
 }
 
+// How long since this session did anything, and what picking it back up would
+// cost. Idle is free; RESUMING is not. Past the cache lifetime the next turn
+// re-reads the whole conversation at full rate, so a cold node carrying 340k is
+// a bill waiting for you to say hello to it.
+function tokf(n) {
+  if (!n) return '';
+  return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : n;
+}
+function age(s) {
+  if (s.status === 'busy' || !s.idle) return '';
+  const m = Math.floor(s.idle / 60);
+  const t = m < 60 ? m + 'm' : Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0');
+  return s.cold
+    ? ' &middot; <span class="cold">idle ' + t + ' &middot; COLD' +
+      (s.carry ? ' &middot; ' + tokf(s.carry) + ' to re-read' : '') + '</span>'
+    : ' &middot; idle ' + t;
+}
+
 function card(n) {
   const unknown = n.sessions === null;
   const ss = n.sessions || [];
@@ -862,7 +889,7 @@ function card(n) {
   else if (ss.length > 1) who = '<div class="ln dup">' + ss.length +
       ' sessions in one worktree</div>';
   else if (ss.length)     who = '<div class="ln">' + esc(ss[0].name) + ' &middot; ' +
-      esc(ss[0].status) + '</div>';
+      esc(ss[0].status) + age(ss[0]) + '</div>';
   else if (n.claimed)     who = '<div class="ln dup">claimed, no session</div>';
   else                    who = '<div class="ln q">no session</div>';
   // "unassigned" read as "nothing is there", which is the opposite of what it
@@ -878,7 +905,8 @@ function card(n) {
                 ? '<div class="ln q" title="no harness mark — run harness mark ' +
                   '&lt;task&gt; in that session">no task record</div>' + briefedChips(n)
                 : briefedChips(n));
-  return '<div class="card ' + cls + (n.blocks.length ? ' blocked' : '') +
+  const coldc = ss.some(s => s.cold) ? ' coldc' : '';
+  return '<div class="card ' + cls + coldc + (n.blocks.length ? ' blocked' : '') +
     '" data-live="card:' + esc(n._slug + ':' + n.name) + '">' +
     '<div class="hdr"><span class="dot"></span><span class="nm">' + esc(n.name) +
     '</span><span class="kd">' + esc(n.kind || '') + '</span></div>' +

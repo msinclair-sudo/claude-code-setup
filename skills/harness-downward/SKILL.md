@@ -238,6 +238,31 @@ survive the recycle that ends the session you are answering.
 You cannot write a grandchild's brief. `dev_1`'s lead is `dev`, so `dev` writes
 it — if you are above that, tell the lead what you want and let it write.
 
+## Sweep cold sessions before you speak to them
+
+```bash
+harness idle                  # every session holding a node, oldest first
+harness recycle --cold        # replace the ones past the cache lifetime
+```
+
+An idle child costs nothing while idle. It costs the moment anyone speaks to it:
+every turn resends the whole conversation, and the prompt cache holds it for
+**one hour** on a subscription. Past that, your next message re-processes its
+entire context at full rate — a node quiet for three hours carrying 349k is a
+bill waiting for someone to say hello to it.
+
+```
+repo · dev     idle   5h00m   COLD   carrying 223k
+               (cd /path/to/repo && harness recycle dev)
+repo · dev_1   idle   3h00m   COLD   carrying 349k
+               mid-task: job-a — do not recycle, it has not presented
+```
+
+Replacing a cold child costs one orientation. Resuming it costs everything it
+carries **and** keeps the errors it accumulated, which is the same conclusion
+`R13` reaches from quality. Both commands keep a node with an unpresented mark
+or a dirty worktree, so the sweep never destroys work in flight.
+
 ## You are also somebody's child
 
 You close your children's tasks. The task **you** were given is closed by the

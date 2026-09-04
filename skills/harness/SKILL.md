@@ -33,8 +33,10 @@ Position is derived, never declared (`R1`). The CLI reads it from
    and asserts the session name against the branch.
 2. `harness claim`
 3. `harness doctor` — proves this worktree is actually guarded by demanding a
-   refusal, rather than reading config and trusting it. Non-zero means unguarded;
-   stop and report which arm failed.
+   refusal, rather than reading config and trusting it. Exit 6 means unguarded;
+   stop and report which arm failed. It proves the DOCUMENT guard fires, and
+   only checks that the other hooks are present and match what was installed —
+   a green run is not a demonstration that the integration gate fires.
 4. Load exactly the skills `whoami` names under `skills`. Nothing else.
 
 You do **not** gather a roster. The CLI calls `claude agents --json` itself, which
@@ -56,6 +58,7 @@ top lead  → harness + harness-downward + harness-root
 | 3 | not enrolled | one line, stop |
 | 4 | refused | the harness declined: a live session holds the node, a recycle would strand work, or a measurement was asked for that cannot be derived. Not a fault — read the line and do what it says |
 | 5 | name/position mismatch | the session is misnamed — rename it, never rename the node |
+| 6 | `doctor` says this worktree is not guarded as configured | **Stop working, then repair it.** A hook is missing, inert, or no longer the one that was installed. Nothing about Claude has changed and this is not a code you work around: read which arm failed. Drift is `harness scaffold` — *after* reading the diff it prints, because a guard change alters what is refused. |
 
 `C1`–`C5` assert the undocumented Claude state this harness reads (`R8`). A
 failure means refuse, not degrade: a mis-identified session is how two of them

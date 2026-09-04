@@ -13,6 +13,14 @@ import argparse, datetime, json, os, re, shlex, shutil, socket, subprocess, sys,
 from pathlib import Path
 
 OK, CONTRACT, NOT_ENROLLED, REFUSED, MISMATCH = 0, 2, 3, 4, 5
+# doctor's failures used to exit 2 alongside the platform contract, and 2 tells
+# a session that Claude's internals have changed and not to work around it. A
+# stale hook is not Claude state and the remedy is `harness scaffold`, so the
+# table sent whoever met it to stop and report the wrong thing — and read as a
+# prohibition on the one command that fixes it. Two conditions, one symbol,
+# reading identically at the call site and diverging only when something acts
+# on them. That is the fault this codebase writes up as one word, two contracts.
+UNGUARDED = 6
 
 HOME_STATE = Path.home() / ".claude" / "harness"
 TEMPLATES = Path.home() / ".claude" / "harness" / "templates"
@@ -1126,10 +1134,14 @@ def cmd_doctor(a):
         that did not, and it was the one a document node took."""
         if fs:
             print()
-            die(CONTRACT,
+            die(UNGUARDED,
                 f"{len(fs)} check(s) failed — this worktree is NOT guarded as "
                 f"configured.\n           Do not trust config that looks right. "
-                f"Failed: {', '.join(fs)}")
+                f"Failed: {', '.join(fs)}\n\n"
+                f"           Exit 6, not 2. This is not the platform contract: "
+                f"nothing about Claude\n           has changed, and this is a "
+                f"repository you can repair. Read what failed —\n           a hook "
+                f"that drifted is `harness scaffold`, after you have read the diff.")
 
     # 1. wiring — necessary, not sufficient
     rc, hp, _ = git("config", "--get", "core.hooksPath")
@@ -1186,8 +1198,8 @@ def cmd_doctor(a):
                   f"         diff -u {tpl}/_guard {hp}/_guard")
 
     if fails and not (guard and guard.exists()):
-        die(CONTRACT, "hooksPath does not contain a usable _guard — this worktree is "
-                      "UNGUARDED.\n           Failed: " + ", ".join(fails))
+        die(UNGUARDED, "hooksPath does not contain a usable _guard — this worktree "
+                       "is UNGUARDED.\n           Failed: " + ", ".join(fails))
     if spec.get("kind") == "doc":
         print(f"\n  '{node}' is the document node; there is nothing for the guard to refuse here.")
         # ...but everything ABOVE this line still had to pass. The wiring arms

@@ -23,8 +23,15 @@ node above fast-forwards up. Never the reverse.
 **`T3` guard check** — run `harness doctor`. It demands a refusal rather than
 reading config: it stages content the document node has never held in a throwaway
 index and requires the guard to reject it, then requires a document that *arrived*
-from the document node to pass. Non-zero exit means this worktree is not guarded —
-stop, and say which arm failed. Never work around it.
+from the document node to pass. Exit 6 means this worktree is not guarded — stop,
+and say which arm failed. Never work around the guard; do repair it, and a hook
+that has drifted from the installed template is `harness scaffold` after you have
+read the diff it prints.
+
+What it does **not** prove is that the integration gate fires. It demands a real
+refusal from the document guard and only checks that the other hooks are present
+and match what was installed, so a green run means the files are right, not that
+every guard in them works.
 
 **`T11` comprehension check** — before the first commit, restate the plan you were
 given in your own words: what you will change, which seams you touch, what you

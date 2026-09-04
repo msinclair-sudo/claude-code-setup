@@ -2566,7 +2566,7 @@ def cmd_recycle(a):
                           f"{parent} — present them first"); continue
                 print(f"       {n:<12} {ahead.strip()} commit(s) ahead of {parent}, "
                       f"and all of them presented\n"
-                      f"       {'':<12} at {str(pres.get('_presented_at'))[:19]}. "
+                      f"       {'':<12} at {_when(pres.get('_presented_at'))}. "
                       f"Nothing to strand: the work is\n"
                       f"       {'':<12} committed and on a ref, and {parent} has been "
                       f"told. It is behind\n"
@@ -3097,6 +3097,28 @@ def _epoch(ts):
         return time.mktime(time.strptime(t[:19], "%Y-%m-%dT%H:%M:%S"))
     except Exception:
         return None
+
+
+def _when(ts):
+    """A stored instant, rendered in the reader's own clock, with its offset.
+
+    The companion to `_epoch`, and it exists for the same reason one turn later.
+    `_epoch` fixed derived AGES across the two timestamp shapes; nothing fixed
+    absolute DISPLAY, so `str(ts)[:19]` kept being written — which truncates the
+    `Z` off a UTC instant and prints it bare in a tree where every other
+    timestamp a reader meets carries `+10:00`.
+
+    That is not decoration when the timestamp is the evidence for a claim in the
+    same sentence. `recycle` prints "all of them presented at T. Nothing to
+    strand." A reader checking whether the work really was offered upward
+    compares T against a commit time git gives them in local, finds a ten-hour
+    gap that does not exist, and stops — so the more careful the reader, the
+    more likely the message is to fail. It did exactly that.
+    """
+    e = _epoch(ts)
+    if e is None:
+        return str(ts or "?")
+    return time.strftime("%Y-%m-%d %H:%M:%S %z", time.localtime(e))
 
 
 def _ago(ts):
@@ -4900,10 +4922,13 @@ def cmd_note(a):
         node = rec.get("_node") or "— names no node (it predates the field)"
         print(f"{a.task}")
         print(f"  node     {node}")
-        print(f"  opened   {str(rec.get('_at'))[:19]}   "
+        # Both in the reader's clock. These were adjacent lines in two
+        # different zones — `_at` comes from a transcript in UTC, `_closed_at`
+        # from this CLI in local — each truncated so neither said which.
+        print(f"  opened   {_when(rec.get('_at'))}   "
               f"session {str(rec.get('_session'))[:8]}")
         if rec.get("_closed_at"):
-            print(f"  closed   {str(rec['_closed_at'])[:19]}")
+            print(f"  closed   {_when(rec['_closed_at'])}")
     if b:
         print(f"  brief    revision {b.get('revision')} by {b.get('written_by')} "
               f"— harness brief {a.task}")

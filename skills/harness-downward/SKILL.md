@@ -605,6 +605,38 @@ Do it. A segment that is never closed sits on your card forever looking exactly
 like work you have ignored, and it is how a lead ends up appearing to hold
 thirteen tasks when seven are real.
 
+**Withdraw a brief structurally, never in prose.** Writing SUPERSEDED — DO NOT
+START at the top of a brief warns a reader, and the things that choose what to
+run are not readers. `spawn --dry-run` will offer it; the recycle after a
+`--close` will start a session on it; neither prints anything unusual while
+doing so.
+
+```bash
+harness brief <task> --supersede "what overtook it" --by <the-task-that-replaces-it>
+```
+
+The brief stays and stays readable — what was proposed and dropped is part of
+what the project is — but nothing offers it again: not the queue, not a recycle,
+not spawn, and `mark` refuses it. It is the same authority as writing it, and it
+refuses while a mark is open, because withdrawing work under a session that is
+doing it is throwing that work away without telling anyone.
+
+**Park a task that stopped, instead of lying about it.** A mark opened by a
+session that has since died survives every recycle and gets named as the work in
+front of each fresh session. `--done` says it is finished and records a cost;
+`--close` says somebody signed it off. Both are false.
+
+```bash
+harness mark <task> --abandon "why it stopped, and what was left of it"
+```
+
+Recorded as UNFINISHED, off the board, and it does not come back by itself.
+Measure what the dead session actually left before you decide — 0 commits ahead
+and a clean worktree means there is nothing to resume and the honest answer is
+to abandon it. Orientation names an inherited mark for you, because its cost is
+not your spend: leaving one open puts a figure in the ledger that no transcript
+measured.
+
 Splitting is a rewrite, not a forward. Each child gets its own whole
 specification — scope, approach, checks, what done means — in one go. Passing
 your brief down verbatim, or in pieces with the rest to follow, is the 39%

@@ -20,6 +20,15 @@ running inside a repository configured to use it, and absence is a defect rather
 than permission. Only a branch that is not a node in the tree is passed over.
 """
 import fnmatch, json, os, re, subprocess, sys
+
+# Answered before anything else is read, because the point of it is to be
+# answerable by a guard that is otherwise broken, and unanswerable by one that
+# is merely OLD. A guard without this prints nothing here — it treats the flag
+# as noise, reads its empty stdin and exits 0 — which is exactly the signal the
+# caller needs, and exactly the signal an exit code could not carry.
+if "--capabilities" in sys.argv:
+    print("gate")
+    sys.exit(0)
 from pathlib import Path
 
 def git(*a):

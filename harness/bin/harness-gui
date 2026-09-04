@@ -497,6 +497,8 @@ def read_state():
                                     if r.get("coupled_to") else None),
                      "coupled_why": r.get("coupled_why") or "",
                      "from": r.get("from") or None,
+                     "gone": r.get("superseded_why") or None,
+                     "gone_for": r.get("superseded_for") or None,
                      "open_suggestions": sum(1 for x in (r.get("suggestions") or [])
                                              if not x.get("resolved_at"))})
         suggestions = {}
@@ -581,9 +583,17 @@ def read_state():
                 # broken up — nobody will ever work on it — so drawing it beside
                 # the work that is actually next made a lead look like it was
                 # ignoring twelve tasks when seven were real.
+                # Withdrawn briefs come out of the queue chips for the same
+                # reason the CLI stops offering them: nothing will start one.
+                # They are drawn below, struck through, because a brief that
+                # vanished entirely has the next lead propose the same thing
+                # again and get no answer.
+                "gone": [b for b in briefs.get(name, [])
+                         if b.get("gone") and b["task"] not in ever_marked],
                 "briefed": sorted(
                     (b for b in briefs.get(name, [])
-                     if b["task"] not in ever_marked and b["task"] not in split_of),
+                     if b["task"] not in ever_marked and b["task"] not in split_of
+                     and not b.get("gone")),
                     key=lambda b: (b.get("seq") if b.get("seq") is not None else 10**6,
                                    b.get("written_at") or "", b["task"])),
                 "split": [dict(s, task=t) for t, s in sorted(split_of.items())
@@ -928,6 +938,7 @@ border-radius:7px;padding:5px 13px;font:inherit;cursor:pointer}
 .chip.sp b{color:var(--dim);font-weight:400}
 .chip.sp.ready{color:var(--busy);border-color:#40562e;background:#1c2614}
 .chip.sp.ready b{color:var(--busy)}
+.chip.out{border-style:dotted;color:var(--none);text-decoration:line-through}
 .chip.presented{border-color:#40562e;color:var(--busy);background:#1c2614}
 .veil{position:fixed;inset:0;background:#000000b0;display:flex;align-items:flex-start;
 justify-content:center;padding:60px 16px;z-index:20;overflow-y:auto}
@@ -1450,6 +1461,18 @@ function briefedChips(n) {
 // pending chip, because they are opposite facts: a queued task is work about to
 // happen and a split one is work that already left. Ticked when every part has
 // come back, which is the moment it can finally be marked off.
+// Withdrawn, and kept visible. A brief that disappeared entirely has the next
+// lead propose the same thing and get the same silence back.
+function goneChips(n) {
+  if (!n.gone || !n.gone.length) return '';
+  return '<div class="ln q"><span class="splitlbl">gone</span> ' +
+    n.gone.map(g =>
+      '<span class="chip out" data-task="' + esc(g.task) + '" data-slug="' +
+      esc(n._slug) + '" title="' + esc('superseded: ' + (g.gone || '') +
+        (g.gone_for ? '\nreplaced by ' + g.gone_for : '')) + '">' +
+      esc(g.label || g.task) + '</span>').join(' ') + '</div>';
+}
+
 function splitChips(n) {
   if (!n.split || !n.split.length) return '';
   return '<div class="ln q"><span class="splitlbl">split</span> ' +
@@ -1530,7 +1553,7 @@ function card(n) {
     '<div class="hdr"><span class="dot"></span><span class="nm">' + esc(n.name) +
     '</span><span class="kd">' + esc(n.kind || '') + '</span></div>' +
     '<div class="ln q">' + esc(n.branch || '') + (n.indexed ? '' : ' (not indexed)') + '</div>' +
-    who + wait + owes + task + splitChips(n) +
+    who + wait + owes + task + splitChips(n) + goneChips(n) +
     (n.blocks.length ? '<span class="bell">' + n.blocks.length + ' needs you</span>' : '') +
     '</div>';
 }

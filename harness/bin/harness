@@ -378,6 +378,20 @@ def _whoami(a):
     model, effort = assignment_for(ctx, node)
     print(f"skills   {', '.join(skills_for(ctx, node))}")
     print(f"run as   {model}, effort {effort}   ({role_of(ctx, node)})")
+    # The CLI and the skills are installed together and loaded apart: a session
+    # holds the skill text it read at startup and calls a binary that may have
+    # been replaced under it since. One node closed five segments tonight using
+    # behaviour its loaded skill said did not exist — it worked, and only
+    # because the mismatch happened to fall the safe way round. The other
+    # direction is a session confidently running a command that is not there.
+    # Printing it costs a line and makes the mismatch checkable.
+    try:
+        v = json.loads((HOME_STATE / "VERSION").read_text())
+        print(f"cli      {str(v.get('commit'))[:8]} installed "
+              f"{str(v.get('installed_at'))[:16]}   "
+              f"(if the skills you loaded disagree with it, /reload-skills)")
+    except Exception:
+        pass
 
     # Rank 0 only, and only when there is something. Orientation runs on every
     # start, resume and compact, so a line that is usually absent costs nothing
@@ -439,6 +453,37 @@ def _whoami(a):
         if len(deleg) - len(ready):
             print(f"split    {len(deleg) - len(ready)} more still out with your "
                   f"children — harness queue {node}")
+    except Exception:
+        pass
+    # Two states nobody can report, because in both of them nobody believes
+    # there is anything to report: a mark whose opener is dead, and a child that
+    # stopped without asking. Both are derived from the roster the CLI already
+    # reads, so neither costs anyone any discipline.
+    try:
+        rows = live_rows(agents_json(read_roster(a.roster)))
+        live_ids = {r.get("sessionId") for r in rows}
+        idx = load_index(ctx)
+        here = {n: any(r.get("cwd") == sp.get("worktree") for r in rows)
+                for n, sp in (idx.get("nodes") or {}).items()}
+        mine = [x for x in inherited_marks(ctx, live_ids) if x["node"] == node]
+        for x in mine:
+            print(f"inherit  '{x['task']}' was opened by session {x['session']}, "
+                  f"which is gone.")
+            print(f"         It is not your work and its cost is not your spend. "
+                  f"Measure what is\n         actually left before resuming — if the "
+                  f"answer is nothing, say so:")
+            print(f"           harness mark {x['task']} --abandon \"nothing was "
+                  f"left of it\"")
+            print(f"           harness mark {x['task']} --force   "
+                  f"(you are doing it, from here)")
+        stuck = [k for k in ctx.children(node)
+                 if stopped_without_asking(ctx, k, rows, here.get(k, False))]
+        if stuck:
+            print(f"stalled  {len(stuck)} child(ren) are up, holding nothing, with "
+                  f"nothing queued: {', '.join(stuck)}")
+            print(f"         They did not ask, because they do not think they are "
+                  f"stuck. Brief one,\n         or recycle it — a live session with "
+                  f"an empty queue waits forever.")
     except Exception:
         pass
     try:
@@ -1094,6 +1139,41 @@ def cmd_doctor(a):
         bad = [l.split("\t")[-1] for l in tracked if not l.startswith("100755")]
         arm("hooks are 100755 in git's index", not bad,
             "" if not bad else f"{len(bad)} at 100644 — inert in every fresh clone")
+
+    # The hooks in this REPO against the ones that were installed. Every arm
+    # above asks whether a hook is present, executable and wired; none asked
+    # whether it is the current one, and the first line of this command reports
+    # the CLI's version — which reads, to anyone who has just updated, as "your
+    # guards are current". A repo can run guards several releases behind while
+    # every arm here is green, and doctor is the one instrument this design
+    # calls proof that a guard fires. Content, not mtime: a hook copied about
+    # or re-saved is not a hook that changed.
+    tpl = HOME_STATE / "templates" / "hooks"
+    if hp and tpl.is_dir():
+        drift, missing = [], []
+        for t in sorted(tpl.glob("*")):
+            if not t.is_file():
+                continue
+            here = Path(hp) / t.name
+            if not here.exists():
+                missing.append(t.name)
+            elif here.read_bytes() != t.read_bytes():
+                drift.append(t.name)
+        arm("hooks match the installed templates", not (drift or missing),
+            "" if not (drift or missing) else
+            ", ".join(([f"differs: {', '.join(drift)}"] if drift else [])
+                      + ([f"absent: {', '.join(missing)}"] if missing else []))
+            + f"  — re-scaffold: harness scaffold {ctx.repo}")
+        if drift or missing:
+            print(f"       The guards this repo actually runs are not the ones that "
+                  f"were installed.\n"
+                  f"       Nothing above notices that, because every other arm asks "
+                  f"whether a hook\n"
+                  f"       is THERE. Read the diff before you re-scaffold — guard "
+                  f"changes alter what\n"
+                  f"       is refused, and a live tree is the wrong place to find "
+                  f"that out:\n"
+                  f"         diff -u {tpl}/_guard {hp}/_guard")
 
     if fails and not (guard and guard.exists()):
         die(CONTRACT, "hooksPath does not contain a usable _guard — this worktree is "
@@ -1771,6 +1851,39 @@ def cmd_mark(a):
                   f"{parent or 'Your lead'} signs off and replaces you.")
         return
 
+    # Work that stopped and finished nothing. There were two verbs and both lie
+    # about this: --done says it is finished and records a cost, --close says
+    # somebody signed it off. A mark opened by a session that has since died is
+    # the common shape — it survives recycles, and every fresh session's
+    # orientation names it as the work in front of them. The harness could
+    # already SEE it, and said so in passing: "closing work nobody said was
+    # finished" is this exact condition, detected at the right moment and then
+    # used for nothing.
+    if a.abandon is not None:
+        if not f.exists():
+            die(REFUSED, f"no mark for '{a.task}' — nothing to abandon")
+        if not a.abandon.strip():
+            die(REFUSED, "say why it stopped. An abandoned task with no reason is "
+                         "indistinguishable\n           from one nobody got to, and "
+                         "the next session inherits the same silence.")
+        rec = json.loads(f.read_text())
+        if rec.get("_closed_at"):
+            die(REFUSED, f"'{a.task}' is already closed")
+        owner = rec.get("_node") or node
+        rec["_abandoned_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        rec["_abandoned_by"] = f"{node} (session {sid[:8]})" if sid else "operator"
+        rec["_abandoned_why"] = a.abandon
+        rec["_closed_at"] = rec["_abandoned_at"]
+        rec["_closed_by"] = rec["_abandoned_by"]
+        f.write_text(json.dumps(rec, indent=2) + "\n")
+        print(f"abandoned {a.task} on {owner}: {a.abandon}")
+        print(f"  It is off the board and recorded as UNFINISHED, not signed off.")
+        print(f"  It does NOT return to the queue — parking it was deliberate. The "
+              f"brief is\n  untouched and still readable; if the work is still "
+              f"wanted, its lead rewrites it\n  or `harness mark {a.task} --force` "
+              f"opens it again from here.")
+        return
+
     if a.close:
         # A segment discharged by splitting it has no mark and never will —
         # nobody opened one, because nobody executed it. That made it
@@ -1801,8 +1914,21 @@ def cmd_mark(a):
                  "_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                  "_delegated": [r["task"] for r in deleg["children"]],
                  "_note": (db or {}).get("task") or a.task}, indent=2) + "\n")
-            print(f"'{a.task}' was delegated, not executed — "
-                  f"{len(deleg['children'])} part(s), all closed.")
+            # What the close ASSERTS, printed beside what discharged it. The
+            # parts closing proves the parts were done; it does not prove they
+            # cover the segment, and the lead chose the split — so a segment
+            # broken into parts that miss a third of it closes green. Nothing
+            # can check that but a person, and a person cannot check it against
+            # a tick. Put the text and the parts on one screen and the gap, if
+            # there is one, is visible at the moment it still costs nothing.
+            print(f"'{a.task}' was delegated, not executed. You are asserting that "
+                  f"these {len(deleg['children'])} part(s) cover it:\n")
+            for line in (db or {}).get("text", "").strip().splitlines()[:12] or ["(no text)"]:
+                print(f"      {line}")
+            print()
+            for r in deleg["children"]:
+                print(f"      ✓ {r['task']:<24} {r['node']}")
+            print()
         rec = json.loads(f.read_text())
         if rec.get("_closed_at") and not a.force:
             die(REFUSED, f"'{a.task}' was closed at {rec['_closed_at']} — "
@@ -1913,6 +2039,16 @@ def cmd_mark(a):
     if b.get("node") != node:
         die(REFUSED, f"'{a.task}' is briefed for '{b.get('node')}', not '{node}'. "
                      f"A task belongs to one node.")
+
+    if b is not None and superseded(b) and not a.force:
+        die(REFUSED,
+            f"'{a.task}' was superseded at {b['superseded_at'][:19]} by "
+            f"{b.get('superseded_by')}:\n           {b.get('superseded_why')}"
+            + (f"\n           Replaced by: {b['superseded_for']} "
+               f"({task_state(ctx, b['superseded_for'])})"
+               if b.get("superseded_for") else "")
+            + f"\n\n           If that is wrong, it is your lead's to reinstate, "
+              f"not yours to override.")
 
     held = [x for x in unreported(ctx, node)
             if tkey(x[0]) != tkey(a.task)] if not a.force else []
@@ -3598,7 +3734,52 @@ def unactioned_briefs(ctx, node):
     return sorted(b["task"] for k, b in briefs.items()
                   if b.get("node") == node
                   and k not in derived
+                  and not superseded(b) and not refused(b)
                   and not ctx.state_file("marks", k, ".json").exists())
+
+
+def inherited_marks(ctx, live_ids):
+    """Open marks whose opening session is gone.
+
+    A mark outlives the session that opened it and looks identical to a live
+    one. It survives recycles, so every fresh session's orientation names it as
+    the work in front of them — and the dead session may have produced nothing
+    at all, which is a stale POSITION rather than partial work. No surface told
+    those apart, and the difference decides whether to resume or to abandon.
+
+    It also quietly corrupts the ledger. R13 means the band was measured against
+    a transcript that no longer exists, so the spend delta records a cost for
+    work this session did not do. `--band XL` is refused to keep that honest; an
+    inherited mark is a quieter way to put a fiction in the same column.
+    """
+    out = []
+    for t, r in open_marks(ctx).items():
+        s = r.get("_session") or r.get("session") or ""
+        if s and s not in live_ids:
+            out.append({"task": t, "node": r.get("_node"), "session": s[:8],
+                        "at": r.get("_at") or "",
+                        "presented": bool(r.get("_presented_at"))})
+    return sorted(out, key=lambda x: x["at"])
+
+
+def stopped_without_asking(ctx, node, live, has_session):
+    """A node that is up, holds nothing it opened, and has nothing queued.
+
+    `harness waiting` covers the node that knows it is stuck, and opt-in is
+    right there: a node that asked and stopped can say so. This is the other
+    one, and no discipline reaches it — the node does not think it is stuck, it
+    thinks it is finished. Nobody reports it because nobody believes there is
+    anything to report.
+
+    It is computable, which is the point: a live session, no open mark, and an
+    empty queue is a session that will sit there indefinitely. It is its LEAD's
+    to fix, by briefing or recycling, so that is who is told.
+    """
+    if not has_session:
+        return False
+    if any(r.get("_node") == node for r in open_marks(ctx).values()):
+        return False
+    return not queue(ctx, node)
 
 
 def delegated(ctx, node):
@@ -3673,6 +3854,23 @@ def refused(b):
     return (b.get("approval") or {}).get("state") == "declined"
 
 
+def superseded(b):
+    """Withdrawn by the lead that wrote it, structurally rather than in prose.
+
+    A brief that has been overtaken used to be marked by writing DO NOT START at
+    the top of its own text, and nothing that CHOOSES what to run can read that.
+    `spawn --dry-run` said 'dev_2 starts on layout_truncation' about a brief
+    whose first line is 'SUPERSEDED. DO NOT START THIS.' — the warning is
+    addressed to a reader, and spawn is not a reader. One eye on a queue was the
+    only thing between a fresh session and a night of withdrawn work.
+
+    Refusing is the same shape as `refused`: the brief stays, because what was
+    started and abandoned is part of what the project is, and it is never
+    offered again.
+    """
+    return bool(b.get("superseded_at"))
+
+
 def pending_approvals(ctx):
     return {k: b for k, b in all_briefs(ctx).items() if awaiting(b)}
 
@@ -3693,7 +3891,7 @@ def queue(ctx, node):
     derived = {tkey(b.get("from")) for b in briefs.values() if b.get("from")}
     rows = [b for k, b in briefs.items()
             if b.get("node") == node and k not in derived
-            and not awaiting(b) and not refused(b)
+            and not awaiting(b) and not refused(b) and not superseded(b)
             and not ctx.state_file("marks", k, ".json").exists()]
     rows.sort(key=lambda b: (b.get("seq") if b.get("seq") is not None else 10**6,
                              b.get("written_at") or ""))
@@ -3859,7 +4057,13 @@ def cmd_queue(a):
         # now they left every OTHER surface with it, so a lead had no way to see
         # what it had handed on, or that the last part had come back.
         deleg = [x for x in delegated(ctx, n) if not x["closed_at"]]
-        if not q and not openm and not gated and not deleg:
+        # Shown, never offered. A withdrawn brief that vanished entirely would
+        # have the next lead re-propose the same thing and get no answer; the
+        # point of keeping it is that somebody already decided.
+        gone = [x for x in all_briefs(ctx).values()
+                if x.get("node") == n and superseded(x)
+                and not ctx.state_file("marks", tkey(x["task"]), ".json").exists()]
+        if not q and not openm and not gated and not deleg and not gone:
             continue
         shown = True
         if occ is None:
@@ -3910,6 +4114,11 @@ def cmd_queue(a):
                 continue
             for r in x["children"]:
                 print(f"         ↳ {r['task']:<22} {r['node']:<6} {r['state']}")
+        for x in gone:
+            print(f"    gone  {x['task']:<24} superseded — "
+                  f"{(x.get('superseded_why') or '')[:44]}")
+            if x.get("superseded_for"):
+                print(f"         ↳ replaced by {x['superseded_for']}")
     if not shown:
         print("nothing queued or open anywhere in this tree")
 
@@ -4172,6 +4381,57 @@ def cmd_brief(a):
               f"harness command.")
         print(f"  It does not change the brief. If it should, {lead} rewrites it:")
         print(f"    harness brief {a.task} --write \"...\"")
+        return
+
+    # Withdrawing a brief you wrote, structurally. The prose form of this —
+    # SUPERSEDED. DO NOT START THIS. at the top of the text — is addressed to a
+    # reader, and the things that choose what to run are not readers: `spawn`
+    # offered one, and the recycle after a close offered another, both in the
+    # same evening and neither with any signal that anything was wrong.
+    if a.supersede is not None:
+        if b is None:
+            die(REFUSED, f"no brief for '{a.task}'")
+        if not a.supersede.strip():
+            die(REFUSED, "say what overtook it. A brief that vanishes without a "
+                         "reason is\n           indistinguishable from one nobody "
+                         "got to, and the next lead to\n           notice the same "
+                         "thing deserves the answer.")
+        target = b.get("node")
+        parent = ctx.tree["nodes"].get(target, {}).get("parent")
+        # The same authority as writing it. Withdrawing work is setting scope,
+        # and a node that could withdraw its own brief could choose its own
+        # task by declining everything it was given.
+        if sid and parent != me and not (target == me and ctx.rank(me) == 0):
+            die(REFUSED,
+                f"'{me}' did not write '{a.task}' — it is {target}'s, and "
+                + (f"'{target}' answers to '{parent}'.\n" if parent
+                   else f"'{target}' has no parent.\n")
+                + f"           Withdrawing work is setting scope. Say it to "
+                  f"{parent or 'your lead'} instead.")
+        if superseded(b):
+            die(REFUSED, f"'{a.task}' was already superseded at "
+                         f"{b['superseded_at'][:19]}: {b.get('superseded_why')}")
+        if a.superseded_for and load_brief(ctx, a.superseded_for)[1] is None:
+            die(REFUSED, f"no brief '{a.superseded_for}' to replace it with. Write "
+                         f"the replacement first — a\n           pointer at nothing "
+                         f"is worse than no pointer.")
+        mf = ctx.state_file("marks", a.task, ".json")
+        if mf.exists() and not json.loads(mf.read_text()).get("_closed_at"):
+            die(REFUSED,
+                f"'{a.task}' has an open mark — somebody is on it. Superseding a "
+                f"brief\n           does not stop a session, and a task withdrawn "
+                f"under a working node is\n           work thrown away without "
+                f"telling it. Say so to {target} first.")
+        b["superseded_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        b["superseded_by"] = f"{me} (session {sid[:8]})" if sid else "operator"
+        b["superseded_why"] = a.supersede
+        b["superseded_for"] = a.superseded_for or None
+        f.write_text(json.dumps(b, indent=2) + "\n")
+        print(f"superseded {a.task}: {a.supersede}")
+        if a.superseded_for:
+            print(f"  replaced by {a.superseded_for} ({task_state(ctx, a.superseded_for)})")
+        print(f"  The brief stays and is still readable. Nothing offers it again: "
+              f"not the\n  queue, not a recycle, not spawn, and mark refuses it.")
         return
 
     if a.approve or a.decline is not None:
@@ -4650,6 +4910,8 @@ def task_state(ctx, task):
     _, b = load_brief(ctx, task)
     if b is None:
         return "no brief"
+    if superseded(b):
+        return "superseded"
     ap = (b.get("approval") or {}).get("state")
     return "gated" if ap == "pending" else "declined" if ap == "declined" else "briefed"
 
@@ -5251,6 +5513,9 @@ def main():
     mk.add_argument("--force", action="store_true", help="re-mark, discarding the earlier position")
     mk.add_argument("--done", action="store_true",
                     help="present it as finished and record what it cost; your lead closes it")
+    mk.add_argument("--abandon", metavar="WHY",
+                    help="park it: work stops and nothing was finished. Not --done, "
+                         "which is a lie, and not --close, which reads as finished")
     mk.add_argument("--close", action="store_true",
                     help="sign it off — a lead closes its children's, rank 0 its own")
     spd = add("spend", cmd_spend)
@@ -5354,6 +5619,10 @@ def main():
                     help="operator only: release a gated task into its node's queue")
     br.add_argument("--decline", metavar="WHY",
                     help="operator only: refuse a gated task, on the record")
+    br.add_argument("--supersede", metavar="WHY",
+                    help="withdraw a brief you wrote — nothing will start it again")
+    br.add_argument("--by", dest="superseded_for", metavar="TASK",
+                    help="the task that replaces it, if there is one")
     br.add_argument("--fact", action="append", metavar="NAME",
                     help="cite a recorded measurement; resolved live when the brief "
                          "is read (repeatable)")

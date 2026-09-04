@@ -5,6 +5,22 @@
 [ "$1" = "prepared" ] || exit 0
 . "$(git rev-parse --path-format=absolute --git-common-dir)/../.harness/hooks/_lib.sh" || exit 1
 G="$(harness_guard)" || exit 1
+# A gate is only a gate if the guard understands the question. An older _guard
+# does not know --gate: it treats the flag as noise, reads no paths from
+# /dev/null, and exits 0. The gate would then permit every ref update on the
+# repository, silently and forever, and nothing would look wrong -- a gate that
+# passes is indistinguishable from a gate that ran. So ask what it can do, and
+# refuse when the answer does not include the gate. Asked once, with its own
+# /dev/null so it cannot eat the ref lines this hook is about to read.
+case "$("$G" --capabilities </dev/null 2>/dev/null)" in
+  *gate*) ;;
+  *)
+    echo "harness: this repository's _guard does not implement --gate." >&2
+    echo "         The integration gate would pass everything, silently, so this" >&2
+    echo "         refuses instead. The hooks and the guard move together:" >&2
+    echo "           harness scaffold $(git rev-parse --show-toplevel 2>/dev/null)" >&2
+    exit 1 ;;
+esac
 Z=0000000000000000000000000000000000000000
 while read -r old new ref; do
   case "$ref" in refs/heads/*) ;; *) continue ;; esac

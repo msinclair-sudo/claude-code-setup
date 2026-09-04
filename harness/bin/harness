@@ -423,6 +423,24 @@ def _whoami(a):
                     print(f"           still moving: {r['still_moving']}")
     except Exception:
         pass
+    # Segments this node split. Discharged for queueing the moment they were
+    # broken up, and then nowhere: no mark, no presentation, no close, and a
+    # chip on the board forever. The ones whose parts have all come back are
+    # finished work waiting to be written down, which is the only kind of
+    # backlog worth interrupting orientation for.
+    try:
+        deleg = [x for x in delegated(ctx, node) if not x["closed_at"]]
+        ready = [x for x in deleg if x["ready"]]
+        if ready:
+            print(f"close    {len(ready)} segment(s) you split are finished — every "
+                  f"part signed off:")
+            for x in ready:
+                print(f"         harness mark {x['task']} --close")
+        if len(deleg) - len(ready):
+            print(f"split    {len(deleg) - len(ready)} more still out with your "
+                  f"children — harness queue {node}")
+    except Exception:
+        pass
     try:
         # Every rank below 0 starts cold. A child with nothing in flight is a
         # session accumulating context for no reason — and since its knowledge
@@ -1754,8 +1772,37 @@ def cmd_mark(a):
         return
 
     if a.close:
+        # A segment discharged by splitting it has no mark and never will —
+        # nobody opened one, because nobody executed it. That made it
+        # uncloseable, so it stayed on the board forever looking like work not
+        # started. Closing it is bookkeeping on a segment whose parts are all
+        # signed off, and the record is written here so there is still exactly
+        # one place a finished task lives.
         if not f.exists():
-            die(REFUSED, f"no mark for '{a.task}' — nothing to close")
+            db = load_brief(ctx, a.task)[1]
+            deleg = next((x for x in delegated(ctx, (db or {}).get("node") or node)
+                          if tkey(x["key"]) == tkey(a.task)), None)
+            if deleg is None:
+                die(REFUSED, f"no mark for '{a.task}' — nothing to close")
+            if not deleg["ready"] and not a.force:
+                open_kids = [r for r in deleg["children"] if r["state"] != "closed"]
+                die(REFUSED,
+                    f"'{a.task}' was split into {len(deleg['children'])} task(s) and "
+                    f"{len(open_kids)} {'is' if len(open_kids) == 1 else 'are'} not "
+                    f"closed yet:\n"
+                    + "".join(f"           {r['task']} ({r['node']}) — {r['state']}\n"
+                              for r in open_kids)
+                    + f"           A segment is finished when its parts are. Close "
+                      f"those first, or --force.")
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(json.dumps(
+                {"_node": (db or {}).get("node") or node,
+                 "_task": a.task,
+                 "_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                 "_delegated": [r["task"] for r in deleg["children"]],
+                 "_note": (db or {}).get("task") or a.task}, indent=2) + "\n")
+            print(f"'{a.task}' was delegated, not executed — "
+                  f"{len(deleg['children'])} part(s), all closed.")
         rec = json.loads(f.read_text())
         if rec.get("_closed_at") and not a.force:
             die(REFUSED, f"'{a.task}' was closed at {rec['_closed_at']} — "
@@ -1767,13 +1814,19 @@ def cmd_mark(a):
         owner = rec.get("_node") or node
         parent = ctx.tree["nodes"].get(owner, {}).get("parent")
         own_root = (owner == node and ctx.rank(node) == 0)
-        if parent != node and not own_root and not a.force:
+        # A lead may close its OWN delegated segment. "Nobody closes their own"
+        # is there because you cannot check your own work — and here the lead
+        # did none: it split the segment and signed off each part under T4,
+        # which is the check. Requiring its own lead to close the wrapper would
+        # ask a node to certify work it never saw.
+        own_delegated = (owner == node and rec.get("_delegated"))
+        if parent != node and not own_root and not own_delegated and not a.force:
             die(REFUSED,
                 f"'{node}' does not sign off '{a.task}', which belongs to '{owner}'.\n"
                 + (f"           Its lead is '{parent}'.\n" if parent else "")
                 + f"           Present it instead:  harness mark {a.task} --done\n"
                   f"           Rank 0 closes its own; nobody else closes their own.")
-        if not rec.get("_presented_at"):
+        if not rec.get("_presented_at") and not rec.get("_delegated"):
             print(f"note: '{a.task}' was never presented — closing work nobody said "
                   f"was finished")
         rec["_closed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
@@ -1792,6 +1845,18 @@ def cmd_mark(a):
         # up doing four tasks on one accumulating context, which is the thing
         # R13 exists to prevent — so the answer is computed and printed here,
         # with the command already written out.
+        # Closing a segment you SPLIT is bookkeeping, not the end of a stint of
+        # work. The session that ticks it off did none of it — its children did,
+        # and it signed each of them off as they came back — so there is no
+        # accumulated context to be rid of. R13 replaces a session that has been
+        # working; recycling a lead because it filed a wrapper would throw away
+        # the view that made it a lead.
+        if rec.get("_delegated"):
+            still = [x for x in delegated(ctx, owner) if not x["closed_at"]]
+            if still:
+                print(f"  {owner} has {len(still)} more segment(s) out with its "
+                      f"children — harness queue {owner}")
+            return
         nxt, coupled = next_after(ctx, owner, a.task)
         if nxt and coupled:
             print(f"  '{nxt['task']}' is COUPLED to this one — the same session "
@@ -3536,6 +3601,47 @@ def unactioned_briefs(ctx, node):
                   and not ctx.state_file("marks", k, ".json").exists())
 
 
+def delegated(ctx, node):
+    """A brief this node discharged by splitting it, and what became of the parts.
+
+    Splitting IS the discharge — see `unactioned_briefs`, and it is the right
+    rule: a lead's segment is something it breaks up, not something it executes.
+    What the rule did not come with was anywhere to SEE the result. A split
+    brief leaves the queue, never opens a mark, never gets presented and never
+    closes, so it sits on the board indistinguishable from work nobody has
+    started. Thirteen briefs on one lead, six of them phantom, is what that
+    looks like after a fortnight.
+
+    `ready` is the honest completion test: every child closed. That is the only
+    moment the segment is actually finished, and it is a fact about the
+    children, so nobody has to remember to record it.
+    """
+    briefs = all_briefs(ctx)
+    out = []
+    for k, b in sorted(briefs.items()):
+        if b.get("node") != node:
+            continue
+        kids = sorted((c for c in briefs.values()
+                       if tkey(c.get("from") or "") == k),
+                      key=lambda c: c.get("task") or "")
+        if not kids:
+            continue
+        rows = [{"task": c.get("task"), "node": c.get("node"),
+                 "state": task_state(ctx, c.get("task"))} for c in kids]
+        mf = ctx.state_file("marks", k, ".json")
+        closed_at = ""
+        if mf.exists():
+            try:
+                closed_at = json.loads(mf.read_text()).get("_closed_at") or ""
+            except Exception:
+                pass
+        out.append({"task": b.get("task") or k, "key": k, "children": rows,
+                    "done": sum(1 for r in rows if r["state"] == "closed"),
+                    "ready": all(r["state"] == "closed" for r in rows),
+                    "closed_at": closed_at})
+    return out
+
+
 def briefed_unstarted(ctx, node):
     """Briefs written for a node that no mark has opened yet: work handed down
     and not picked up. This is what a session STARTS on, so a node with none of
@@ -3748,7 +3854,12 @@ def cmd_queue(a):
         openm = sorted(t for t, r in open_marks(ctx).items() if r.get("_node") == n)
         gated = [x for x in all_briefs(ctx).values()
                  if x.get("node") == n and awaiting(x)]
-        if not q and not openm and not gated:
+        # Segments this node broke up. They leave the queue the moment they are
+        # split, which is right — nobody is going to work on them — but until
+        # now they left every OTHER surface with it, so a lead had no way to see
+        # what it had handed on, or that the last part had come back.
+        deleg = [x for x in delegated(ctx, n) if not x["closed_at"]]
+        if not q and not openm and not gated and not deleg:
             continue
         shown = True
         if occ is None:
@@ -3790,6 +3901,15 @@ def cmd_queue(a):
                 why = (c.get("coupled_why") or "").strip().replace("\n", " ")
                 print(f"         ↳ {c['task']:<22} same session: "
                       f"{why[:40]}{'…' if len(why) > 40 else ''}")
+        for x in deleg:
+            done = f"{x['done']}/{len(x['children'])} parts closed"
+            print(f"    split {x['task']:<24} "
+                  + (f"ALL PARTS CLOSED — harness mark {x['task']} --close"
+                     if x["ready"] else done))
+            if x["ready"]:
+                continue
+            for r in x["children"]:
+                print(f"         ↳ {r['task']:<22} {r['node']:<6} {r['state']}")
     if not shown:
         print("nothing queued or open anywhere in this tree")
 

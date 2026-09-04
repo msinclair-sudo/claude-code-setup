@@ -584,6 +584,27 @@ exists, and nothing anywhere reports that the cascade stopped at you.
 You can only split a brief written **for you**. Lineage you could invent for work
 you were never handed is lineage not worth reading.
 
+**A split segment is discharged, not finished — and you close it.** The moment
+you derive a brief from it, the parent leaves your queue: nobody is going to
+work on it, so offering it as your next task would be wrong. But it is not done
+either. It is done when its parts are, and orientation tells you when they are:
+
+```
+close    3 segment(s) you split are finished — every part signed off:
+         harness mark field-path-declarations --close
+split    2 more still out with your children — harness queue dev
+```
+
+`harness mark <segment> --close` refuses while any part is still open and names
+which. You close your own here, and only here — "nobody closes their own" is
+about not checking your own work, and you did none of this: you split it, and
+you signed off each part under `T4` as it came back. Closing it recycles
+nothing, because there is no accumulated context to be rid of.
+
+Do it. A segment that is never closed sits on your card forever looking exactly
+like work you have ignored, and it is how a lead ends up appearing to hold
+thirteen tasks when seven are real.
+
 Splitting is a rewrite, not a forward. Each child gets its own whole
 specification — scope, approach, checks, what done means — in one go. Passing
 your brief down verbatim, or in pieces with the rest to follow, is the 39%

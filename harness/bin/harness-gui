@@ -446,6 +446,7 @@ def read_state():
             except Exception:
                 pass
         tasks, orphans, ever_marked, presented = {}, [], set(), []
+        mark_state = {}
         md = pdir / "marks"
         for mf in (sorted(md.glob("*.json")) if md.is_dir() else []):
             try:
@@ -456,6 +457,9 @@ def read_state():
             # off is not work waiting to be started, and showing it as such put
             # finished work back on the board.
             ever_marked.add(mf.stem)
+            mark_state[mf.stem] = ("closed" if r.get("_closed_at")
+                                   else "presented" if r.get("_presented_at")
+                                   else "open")
             if r.get("_closed_at"):
                 continue
             if r.get("_presented_at") and r.get("_node"):
@@ -492,6 +496,7 @@ def read_state():
                      "coupled_to": (CLI.tkey(r["coupled_to"])
                                     if r.get("coupled_to") else None),
                      "coupled_why": r.get("coupled_why") or "",
+                     "from": r.get("from") or None,
                      "open_suggestions": sum(1 for x in (r.get("suggestions") or [])
                                              if not x.get("resolved_at"))})
         suggestions = {}
@@ -503,10 +508,39 @@ def read_state():
             openn = [x for x in (r.get("suggestions") or []) if not x.get("resolved_at")]
             if openn and r.get("node"):
                 suggestions[bf.stem] = (r["node"], openn)
-        # A node that asked its lead something and stopped. Until this record
-        # existed the tree drew it as idle, which is the one reading that is
-        # certainly wrong: it is not free, it is stuck, and the difference is
-        # who has to do something about it.
+        # Segments a lead broke up: parent brief -> the briefs derived from it.
+        # The CLI drops these from the queue the moment they are split, because
+        # splitting IS the discharge and nobody will work on the parent. But it
+        # then opens no mark, is never presented and cannot be closed, so it sat
+        # on the board as an ordinary pending chip forever. Ready means every
+        # part has come back — the only honest completion test, and a fact about
+        # the children rather than something somebody has to remember.
+        split_of = {}
+        for bf in (sorted(bd.glob("*.json")) if bd.is_dir() else []):
+            try:
+                r = json.loads(bf.read_text())
+            except Exception:
+                continue
+            src = r.get("from")
+            if not src:
+                continue
+            par = split_of.setdefault(CLI.tkey(src), {"node": None, "children": []})
+            par["children"].append({"task": bf.stem, "node": r.get("node"),
+                                    "state": mark_state.get(bf.stem, "briefed")})
+        # The parent's own node, read off its brief rather than guessed.
+        for bf in (sorted(bd.glob("*.json")) if bd.is_dir() else []):
+            if bf.stem in split_of:
+                try:
+                    split_of[bf.stem]["node"] = json.loads(bf.read_text()).get("node")
+                except Exception:
+                    pass
+        for t, s in list(split_of.items()):
+            if s["node"] is None:
+                del split_of[t]; continue
+            s["done"] = sum(1 for c in s["children"] if c["state"] == "closed")
+            s["total"] = len(s["children"])
+            s["ready"] = s["done"] == s["total"]
+
         waits = {}
         wd = pdir / "waiting"
         for wf in (sorted(wd.glob("*.json")) if wd.is_dir() else []):
@@ -542,10 +576,18 @@ def read_state():
                 # node does next is a fact about the tree, and sorting it by name
                 # would invent an order and show it as though it were the one the
                 # lead chose.
+                # Queued and delegated are different facts and used to be one
+                # chip. A segment this node SPLIT is discharged the moment it is
+                # broken up — nobody will ever work on it — so drawing it beside
+                # the work that is actually next made a lead look like it was
+                # ignoring twelve tasks when seven were real.
                 "briefed": sorted(
-                    (b for b in briefs.get(name, []) if b["task"] not in ever_marked),
+                    (b for b in briefs.get(name, [])
+                     if b["task"] not in ever_marked and b["task"] not in split_of),
                     key=lambda b: (b.get("seq") if b.get("seq") is not None else 10**6,
                                    b.get("written_at") or "", b["task"])),
+                "split": [dict(s, task=t) for t, s in sorted(split_of.items())
+                          if s["node"] == name and t not in ever_marked],
                 "blocks": [x for x in blocks if x.get("node") == name
                            and x.get("_kind") != "approval"
                            and not x.get("_answered")],
@@ -881,6 +923,11 @@ resize:vertical;margin-top:4px}
 .row button.bsend{background:#24301a;color:var(--busy);border:1px solid #40562e;
 border-radius:7px;padding:5px 13px;font:inherit;cursor:pointer}
 .chip.pending{border-style:dashed;color:var(--dim)}
+.splitlbl{color:var(--none);font-size:10px;letter-spacing:.06em;text-transform:uppercase}
+.chip.sp{border-style:dotted;color:var(--none)}
+.chip.sp b{color:var(--dim);font-weight:400}
+.chip.sp.ready{color:var(--busy);border-color:#40562e;background:#1c2614}
+.chip.sp.ready b{color:var(--busy)}
 .chip.presented{border-color:#40562e;color:var(--busy);background:#1c2614}
 .veil{position:fixed;inset:0;background:#000000b0;display:flex;align-items:flex-start;
 justify-content:center;padding:60px 16px;z-index:20;overflow-y:auto}
@@ -1399,6 +1446,23 @@ function briefedChips(n) {
     '</div>';
 }
 
+// Segments this node broke up. Drawn apart from the queue and never as a
+// pending chip, because they are opposite facts: a queued task is work about to
+// happen and a split one is work that already left. Ticked when every part has
+// come back, which is the moment it can finally be marked off.
+function splitChips(n) {
+  if (!n.split || !n.split.length) return '';
+  return '<div class="ln q"><span class="splitlbl">split</span> ' +
+    n.split.map(s =>
+      '<span class="chip sp' + (s.ready ? ' ready' : '') + '" data-task="' +
+      esc(s.task) + '" data-slug="' + esc(n._slug) + '" title="' +
+      esc(s.ready
+          ? 'every part closed — harness mark ' + s.task + ' --close'
+          : s.children.map(c => c.task + ' (' + c.node + ') ' + c.state).join('\n')) +
+      '">' + (s.ready ? '&#10003; ' : '') + esc(s.task) +
+      ' <b>' + s.done + '/' + s.total + '</b></span>').join(' ') + '</div>';
+}
+
 // How long since this session did anything, and what picking it back up would
 // cost. Idle is free; RESUMING is not. Past the cache lifetime the next turn
 // re-reads the whole conversation at full rate, so a cold node carrying 340k is
@@ -1466,7 +1530,7 @@ function card(n) {
     '<div class="hdr"><span class="dot"></span><span class="nm">' + esc(n.name) +
     '</span><span class="kd">' + esc(n.kind || '') + '</span></div>' +
     '<div class="ln q">' + esc(n.branch || '') + (n.indexed ? '' : ' (not indexed)') + '</div>' +
-    who + wait + owes + task +
+    who + wait + owes + task + splitChips(n) +
     (n.blocks.length ? '<span class="bell">' + n.blocks.length + ' needs you</span>' : '') +
     '</div>';
 }

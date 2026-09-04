@@ -735,12 +735,42 @@ def cmd_claim(a):
     # Who is actually standing in this worktree right now? A session id does not
     # survive a resume — it is reissued, along with the pid, name and kind — so
     # occupancy is derived from cwd, which does.
-    here = [r for r in rows if r.get("cwd") == str(ctx.worktree)]
+    # live_rows, not the raw list, and it took four `claude stop` invocations
+    # across two sessions to find out. `claude agents --json` retains an exited
+    # session as a row with a null pid; counted as occupancy it made a node
+    # permanently claimable by nobody, and `claude stop` on it reported success
+    # and changed nothing. live_rows already excluded those — its docstring is
+    # about this exact failure — and this one call site did not use it.
+    #
+    # A missing pid is stronger evidence than absence from a roster, which is
+    # why this may infer death where `claim --force` may not: absence only says
+    # the local roster does not mention it, and the holder may be alive on
+    # another host. A row that names NO process is the roster asserting that
+    # nothing runs under it anywhere.
+    here = [r for r in live_rows(rows) if r.get("cwd") == str(ctx.worktree)]
     others = [r for r in here if r["sessionId"] != self_ref]
     if others:
-        names = ", ".join((r.get("name") or "?") for r in others)
-        die(REFUSED, f"{len(others)} other live session(s) are in this worktree: {names}.\n"
-                     f"           One session per worktree — that is the invariant.")
+        # Named with pids, because a bare count is what made hand-filtering the
+        # roster look like the only move. A session that edits the evidence its
+        # own guard reads succeeds identically whether the row it removed was a
+        # corpse or a live peer — and in the second case two sessions hold one
+        # node and nothing anywhere says so.
+        who = "\n".join(f"             {(r.get('name') or '?')}  "
+                         f"{str(r.get('sessionId'))[:8]}  pid {r.get('pid')}  "
+                         f"{r.get('status') or '?'}"
+                         for r in others)
+        die(REFUSED, f"{len(others)} other live session(s) are in this worktree:\n"
+                     f"{who}\n"
+                     f"           One session per worktree — that is the invariant, "
+                     f"and it is the only\n           guard between this design and "
+                     f"two sessions on one node.\n\n"
+                     f"           Each named above has a live process. Stop it "
+                     f"(`claude stop <short-id>`;\n           the full uuid is not "
+                     f"matched) or use its worktree. Do NOT pass a hand-edited\n"
+                     f"           roster to --roster: that flag exists to replay a "
+                     f"recorded roster in tests,\n           and using it here means "
+                     f"a session choosing what its own guard is allowed\n"
+                     f"           to see.")
     try:
         fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError:
@@ -3912,7 +3942,17 @@ def stopped_without_asking(ctx, node, live, has_session):
     """
     if not has_session:
         return False
-    if any(r.get("_node") == node for r in open_marks(ctx).values()):
+    if ctx.rank(node) == 0:
+        return False          # rank 0 marks against nobody; permanently "no task"
+    marks = open_marks(ctx).values()
+    if any(r.get("_node") == node for r in marks):
+        return False
+    # A LEAD whose children hold open marks is between integrations, which is
+    # the resting state of the rank rather than a stall — receiving those IS its
+    # next task. Without this the rule fires hardest on the healthiest shape a
+    # tree can be in, which is the wrong thing to train anyone to ignore.
+    kids = set(ctx.children(node))
+    if kids and any(r.get("_node") in kids for r in marks):
         return False
     return not queue(ctx, node)
 

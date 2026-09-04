@@ -584,6 +584,20 @@ exists, and nothing anywhere reports that the cascade stopped at you.
 You can only split a brief written **for you**. Lineage you could invent for work
 you were never handed is lineage not worth reading.
 
+**Do not name the child after the parent.** Hyphens and underscores are the same
+character here, so `properties_hide_empty` and `properties-hide-empty` are one
+record. Writing the second onto the first is not a create, it is a replace: it
+takes the parent's text, moves the brief to your child, and records it as
+splitting itself. That destroyed a brief. The three refusals that now stand in
+the way — a brief cannot split itself, a write cannot move an existing brief to
+another node without `--force`, and a replace says `REPLACED` and quotes what it
+took — are guards, not a substitute for giving the child its own name.
+
+A replaced brief keeps its last five revisions: `harness brief <task> --history`.
+Use it the moment you suspect you have overwritten something, because the
+alternative is a session that happens to still hold the text in its context, and
+that session is one recycle from gone.
+
 **A split segment is discharged, not finished — and you close it.** The moment
 you derive a brief from it, the parent leaves your queue: nobody is going to
 work on it, so offering it as your next task would be wrong. But it is not done

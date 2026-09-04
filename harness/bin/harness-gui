@@ -527,8 +527,11 @@ def read_state():
             if not src:
                 continue
             par = split_of.setdefault(CLI.tkey(src), {"node": None, "children": []})
-            par["children"].append({"task": bf.stem, "node": r.get("node"),
-                                    "state": mark_state.get(bf.stem, "briefed")})
+            par["children"].append(
+                {"task": bf.stem, "node": r.get("node"),
+                 "state": mark_state.get(bf.stem,
+                                         "superseded" if r.get("superseded_at")
+                                         else "briefed")})
         # The parent's own node, read off its brief rather than guessed.
         for bf in (sorted(bd.glob("*.json")) if bd.is_dir() else []):
             if bf.stem in split_of:
@@ -539,7 +542,12 @@ def read_state():
         for t, s in list(split_of.items()):
             if s["node"] is None:
                 del split_of[t]; continue
-            s["done"] = sum(1 for c in s["children"] if c["state"] == "closed")
+            # Superseded is terminal: never worked, never signed off. Counting
+            # it as outstanding left the segment permanently at 0/N, which reads
+            # as work being ignored -- the thing these chips exist to stop.
+            s["done"] = sum(1 for c in s["children"]
+                            if c["state"] in ("closed", "superseded"))
+            s["gone"] = sum(1 for c in s["children"] if c["state"] == "superseded")
             s["total"] = len(s["children"])
             s["ready"] = s["done"] == s["total"]
 

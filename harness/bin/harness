@@ -447,7 +447,7 @@ def _whoami(a):
         ready = [x for x in deleg if x["ready"]]
         if ready:
             print(f"close    {len(ready)} segment(s) you split are finished — every "
-                  f"part signed off:")
+                  f"part settled:")
             for x in ready:
                 print(f"         harness mark {x['task']} --close")
         if len(deleg) - len(ready):
@@ -1916,7 +1916,8 @@ def cmd_mark(a):
             if deleg is None:
                 die(REFUSED, f"no mark for '{a.task}' — nothing to close")
             if not deleg["ready"] and not a.force:
-                open_kids = [r for r in deleg["children"] if r["state"] != "closed"]
+                open_kids = [r for r in deleg["children"]
+                             if r["state"] not in ("closed", "superseded")]
                 die(REFUSED,
                     f"'{a.task}' was split into {len(deleg['children'])} task(s) and "
                     f"{len(open_kids)} {'is' if len(open_kids) == 1 else 'are'} not "
@@ -1945,7 +1946,9 @@ def cmd_mark(a):
                 print(f"      {line}")
             print()
             for r in deleg["children"]:
-                print(f"      ✓ {r['task']:<24} {r['node']}")
+                mark = "✓" if r["state"] == "closed" else "—"
+                note = "" if r["state"] == "closed" else f"  ({r['state']})"
+                print(f"      {mark} {r['task']:<24} {r['node']}{note}")
             print()
         rec = json.loads(f.read_text())
         if rec.get("_closed_at") and not a.force:
@@ -3842,9 +3845,21 @@ def delegated(ctx, node):
                 closed_at = json.loads(mf.read_text()).get("_closed_at") or ""
             except Exception:
                 pass
+        # A superseded part is TERMINAL. It will never be worked and was never
+        # signed off, so it satisfies neither "closed" nor "outstanding" — and
+        # counting it as outstanding left the segment above it permanently
+        # unclosable, reading on the lead's card as work being ignored, which is
+        # the exact failure this section exists to prevent. Worse, it fires for
+        # anyone who supersedes a lane's only queued task, which is now the
+        # recommended move: the fix for one invisible state manufactured another
+        # one rank up. `--force` is not an answer, because the honest cleanup
+        # and a lead bulldozing a genuinely unfinished part are then the same
+        # command, and a reviewer reading the log cannot tell them apart.
+        settled = [r for r in rows if r["state"] in ("closed", "superseded")]
         out.append({"task": b.get("task") or k, "key": k, "children": rows,
-                    "done": sum(1 for r in rows if r["state"] == "closed"),
-                    "ready": all(r["state"] == "closed" for r in rows),
+                    "done": len(settled),
+                    "gone": sum(1 for r in rows if r["state"] == "superseded"),
+                    "ready": len(settled) == len(rows),
                     "closed_at": closed_at})
     return out
 
@@ -3869,8 +3884,18 @@ def briefed_unstarted(ctx, node):
 
 
 def awaiting(b):
-    """A brief written, visible, and not staffable until the operator says so."""
-    return (b.get("approval") or {}).get("state") == "pending"
+    """A brief written, visible, and not staffable until the operator says so.
+
+    A superseded brief is not awaiting anything. Fixing that in the definition
+    rather than at each call site is deliberate: the alternative was five
+    callers each remembering to write `and not superseded(x)`, and the one that
+    forgot would put a withdrawn task back in front of the operator. A brief
+    gated before --supersede existed still carries `pending` in its record, and
+    nothing rewrites it — a reader that repairs records is how two writers
+    appear where the design says there is one.
+    """
+    return ((b.get("approval") or {}).get("state") == "pending"
+            and not b.get("superseded_at"))
 
 
 def refused(b):
@@ -4077,7 +4102,7 @@ def cmd_queue(a):
         q = queue(ctx, n)
         openm = sorted(t for t, r in open_marks(ctx).items() if r.get("_node") == n)
         gated = [x for x in all_briefs(ctx).values()
-                 if x.get("node") == n and awaiting(x) and not superseded(x)]
+                 if x.get("node") == n and awaiting(x)]
         # Segments this node broke up. They leave the queue the moment they are
         # split, which is right — nobody is going to work on them — but until
         # now they left every OTHER surface with it, so a lead had no way to see
@@ -4132,9 +4157,10 @@ def cmd_queue(a):
                 print(f"         ↳ {c['task']:<22} same session: "
                       f"{why[:40]}{'…' if len(why) > 40 else ''}")
         for x in deleg:
-            done = f"{x['done']}/{len(x['children'])} parts closed"
+            done = (f"{x['done']}/{len(x['children'])} parts settled"
+                    + (f" ({x['gone']} superseded)" if x.get("gone") else ""))
             print(f"    split {x['task']:<24} "
-                  + (f"ALL PARTS CLOSED — harness mark {x['task']} --close"
+                  + (f"ALL PARTS SETTLED — harness mark {x['task']} --close"
                      if x["ready"] else done))
             if x["ready"]:
                 continue
@@ -4234,6 +4260,36 @@ def cmd_brief(a):
             die(REFUSED, "an empty brief is not a brief. If there is nothing to say "
                          "about scope,\n           approach, checks, seams and what done "
                          "means, the task is not ready to issue.")
+        # A brief cannot split itself. This is free to refuse and it is the
+        # cheapest of the four things that had to line up to destroy one: a
+        # lead named its child `properties_hide_empty` after the parent
+        # `properties-hide-empty`, tkey resolves both to one record, and
+        # `--from properties-hide-empty` was in the same command line naming the
+        # record it was about to overwrite. Incoherent, and nothing objected.
+        if a.from_task and tkey(a.from_task) == tkey(a.task):
+            die(REFUSED,
+                f"'{a.task}' cannot be split from itself.\n"
+                f"           --from names the brief you were HANDED; this writes the "
+                f"brief you are\n           handing DOWN. They resolved to one record "
+                f"— hyphens and underscores are\n           the same character here, "
+                f"so '{a.from_task}' and '{a.task}' are one name.\n"
+                f"           Give the child a name of its own.")
+
+        # Replacing an existing brief is legitimate and expected — a lead
+        # rewrites a brief when the work should change. What is NOT expected is
+        # moving it to a different node: that is the shape of a create that
+        # collided with an existing name, and it reassigns work somebody may
+        # already be doing. It was indistinguishable from a fresh write.
+        if b is not None and b.get("node") and b.get("node") != target and not a.force:
+            die(REFUSED,
+                f"'{a.task}' already exists, written for '{b.get('node')}', and this "
+                f"would move it\n           to '{target}' and replace its text.\n\n"
+                f"           If you meant to create a NEW brief, the name collided: "
+                f"hyphens and\n           underscores are the same character here, so "
+                f"'{a.task}' is the record that\n           already exists. Give the "
+                f"new one a different name.\n\n"
+                f"           If you really did mean to reassign this one, --force.")
+
         parent_task = a.from_task or (b or {}).get("from")
         if parent_task:
             # Splitting is passing your OWN brief down one rank, so the parent
@@ -4277,6 +4333,20 @@ def cmd_brief(a):
         rec = {"task": a.task, "node": target, "text": a.write, "revision": rev,
                "written_by": who, "written_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                "suggestions": (b or {}).get("suggestions", [])}
+        # One brief was destroyed by a write onto a colliding name and there was
+        # nothing to recover from: `revision` counts, it does not chain, and no
+        # store here kept a prior copy. It was recovered only because a session
+        # that had read it minutes earlier was still alive to retype it, from
+        # rendered output, so possibly not byte-identical. The next reader will
+        # have been recycled. Keeping the last few costs a few kilobytes against
+        # a loss that nothing else in this design can undo.
+        if b is not None:
+            hist = list(b.get("history") or [])
+            hist.append({k: b.get(k) for k in
+                         ("revision", "node", "text", "written_by", "written_at")})
+            rec["history"] = hist[-5:]
+        elif b is None:
+            rec["history"] = []
         if parent_task:
             rec["from"] = parent_task
         fnd = None
@@ -4331,7 +4401,22 @@ def cmd_brief(a):
             rec["from_block"] = blk
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(json.dumps(rec, indent=2) + "\n")
-        print(f"brief for '{target}' / {a.task}  (revision {rev}, by {who})")
+        # Create and replace said the same words, so the line that means "I
+        # destroyed one" was indistinguishable from the line that means "I made
+        # you one" — and the one warning that did print, "the previous text is
+        # gone", had been correct twice that evening on writes where replacing
+        # WAS the intent. A correct neighbour suppresses the re-read; that is
+        # not carelessness, and telling people to look harder does not fix it.
+        # So the two say different things, and the replace quotes what it took.
+        if b is None:
+            print(f"WROTE a new brief for '{target}' / {a.task}  (by {who})")
+        else:
+            was = (b.get("text") or "").strip().splitlines()
+            print(f"REPLACED the brief '{a.task}' for '{target}'  "
+                  f"(revision {b.get('revision', 0)} → {rev}, by {who})")
+            print(f"  what it said before: {was[0][:66] if was else '(empty)'}"
+                  + ("…" if was and len(was[0]) > 66 else ""))
+            print(f"  kept, and readable:  harness brief {a.task} --history")
         if a.from_task:
             print(f"  splits '{parent_task}', the brief '{me}' was handed")
         if a.from_finding:
@@ -4414,6 +4499,28 @@ def cmd_brief(a):
     # reader, and the things that choose what to run are not readers: `spawn`
     # offered one, and the recycle after a close offered another, both in the
     # same evening and neither with any signal that anything was wrong.
+    # History you cannot read is not history. The point of keeping revisions is
+    # that somebody can get one back at the moment they discover it is gone.
+    if a.history:
+        if b is None:
+            die(REFUSED, f"no brief for '{a.task}'")
+        hist = list(b.get("history") or [])
+        if not hist:
+            print(f"'{a.task}' is at revision {b.get('revision')} and has replaced "
+                  f"nothing.")
+            if (b.get("revision") or 0) > 1:
+                print(f"  It was rewritten before revisions were kept — those are "
+                      f"gone, and nothing\n  here can get them back.")
+            return
+        print(f"'{a.task}' — {len(hist)} earlier revision(s), newest first. "
+              f"The last {min(5, len(hist))} are kept.")
+        for h in reversed(hist):
+            print(f"\n  revision {h.get('revision')}  for '{h.get('node')}'  "
+                  f"by {h.get('written_by')} at {str(h.get('written_at'))[:19]}")
+            for line in (h.get("text") or "").splitlines():
+                print(f"      {line}")
+        return
+
     if a.supersede is not None:
         if b is None:
             die(REFUSED, f"no brief for '{a.task}'")
@@ -4448,6 +4555,10 @@ def cmd_brief(a):
                 f"brief\n           does not stop a session, and a task withdrawn "
                 f"under a working node is\n           work thrown away without "
                 f"telling it. Say so to {target} first.")
+        # Read before the flag is set: awaiting() is false once a brief is
+        # superseded, which is the point of it, and asking afterwards would
+        # always say there was nothing to withdraw.
+        voided = awaiting(b)
         b["superseded_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
         b["superseded_by"] = f"{me} (session {sid[:8]})" if sid else "operator"
         b["superseded_why"] = a.supersede
@@ -4458,7 +4569,6 @@ def cmd_brief(a):
         # approving or declining — those are the operator's and stay theirs. It
         # is the node that ASKED withdrawing its own question, which is the same
         # act as withdrawing the brief the question was about.
-        voided = awaiting(b)
         if voided:
             b["approval"]["state"] = "withdrawn"
             b["approval"]["decided_at"] = b["superseded_at"]
@@ -5644,7 +5754,7 @@ def main():
     bk.add_argument("--comment", metavar="TEXT",
                     help="answer or add context; does not clear the block")
     bk.add_argument("--list", action="store_true", help="every open block")
-    br = add("brief", cmd_brief)
+    br = add("brief", cmd_brief, force=True)
     br.add_argument("task", help="task id")
     br.add_argument("--for", dest="for_node", metavar="NODE",
                     help="which node the brief is for (needed on the first write)")
@@ -5678,6 +5788,8 @@ def main():
     br.add_argument("--from-block", dest="from_block", metavar="NEED",
                     help="the answered block this task carries down")
     br.add_argument("--resolve", type=int, metavar="N", help="mark suggestion N addressed")
+    br.add_argument("--history", action="store_true",
+                    help="the revisions this brief replaced, newest first")
     ch = add("charter", cmd_charter)
     ch.add_argument("--feature", metavar="NAME", help="read or write one feature")
     ch.add_argument("--write", metavar="TEXT",

@@ -2665,11 +2665,25 @@ def scan_needs():
             if r.get("resolved_at"):
                 continue
             r["_repo"], r["_project"], r["_kind"] = repo, proj, "block"
-            # Answered and still open: it is rank 0's to turn into a task, and
-            # showing it to the operator again asks them to decide twice.
-            r["_answered"] = bool(
-                r.get("resolved_by") == "grant"
-                or any(c.get("by") == "operator" for c in (r.get("comments") or [])))
+            # Answered means the operator's word is still the LAST word, not
+            # that they once said something. It used to mean the second, and
+            # that made their own reply the thing that hid the block: a lane
+            # came back with "the reason you gave cannot be the reason", the
+            # tree discussed it for six hours, and none of it reached the one
+            # person who could settle it, because they had already spoken once.
+            #
+            # A grant is different and stays answered. There the operator did
+            # the thing rather than said something, and the reach exists now
+            # whatever anyone says about it afterwards.
+            cs = r.get("comments") or []
+            ops = [c.get("at") or "" for c in cs if c.get("by") == "operator"]
+            last_op = max(ops) if ops else ""
+            since = [c for c in cs if ops and (c.get("at") or "") > last_op]
+            r["_answered"] = bool(r.get("resolved_by") == "grant"
+                                  or (ops and not since))
+            r["_reopened"] = bool(ops and since and r.get("resolved_by") != "grant")
+            r["_new_since"] = len(since)
+            r["_answered_at"] = last_op
             out.append(r)
         # Two different things wait on the operator and they are not the same
         # question. A block asks whether a lane may REACH something. An approval
@@ -4294,19 +4308,51 @@ def cmd_needs(a):
             continue
         if r.get("_answered"):
             continue
+        repo = r.get("_repo") or "."
+        # One you already answered, that has come back. It is a different item
+        # from a fresh block and reads as one: the thing you have not seen is
+        # the reply, not the request, so the reply is what gets the space.
+        if r.get("_reopened"):
+            cs = r.get("comments") or []
+            mine = [c for c in cs if c.get("by") == "operator"]
+            since = [c for c in cs if (c.get("at") or "") > (r.get("_answered_at") or "")]
+            print(f"{r['_project']} · {node}{'':<4}YOU ANSWERED "
+                  f"{_ago(r.get('_answered_at') or '')} — "
+                  f"{len(since)} repl{'y has' if len(since) == 1 else 'ies have'} "
+                  f"come back since")
+            print(f"  asked    {need}")
+            print(f"  you said {(mine[-1].get('text') or '').strip()[:150]}")
+            for c in since[:-1]:
+                print(f"  earlier  {c.get('by')} {_ago(c.get('at') or '')}: "
+                      f"{(c.get('text') or '').strip().splitlines()[0][:100]}")
+            last = since[-1]
+            print(f"\n  {last.get('by')}, {_ago(last.get('at') or '')}:")
+            lines = (last.get("text") or "").strip().splitlines()
+            for line in lines[:16]:
+                print(f"      {line}")
+            if len(lines) > 16:
+                print(f"      … {len(lines) - 16} more line(s) — harness blocked --list")
+            print(f"\n  reply    (cd {shlex.quote(repo)} && harness blocked "
+                  f"{shlex.quote(need)} --comment \"...\")")
+            print(f"  settle   (cd {shlex.quote(repo)} && harness blocked "
+                  f"{shlex.quote(need)} --resolve --no-task \"why it produced none\")")
+            print()
+            continue
         print(f"{r['_project']} · {node}{'':<4}raised {_ago(r.get('raised_at', ''))}")
         print(f"  needs    {need}")
         print(f"  for      {r.get('why') or '—'}")
         if r.get("still_moving"):
             print(f"  moving   {r['still_moving']}")
-        repo = r.get("_repo") or "."
         reason = (r.get("why") or "").replace("'", "")[:60] or "see the block record"
         print(f"  grant    (cd {shlex.quote(repo)} && harness grant {node} "
               f"{shlex.quote(need)} --reason {shlex.quote(reason)})")
         print(f"  then     (cd {shlex.quote(repo)} && harness recycle {node})")
         print()
     nb = sum(1 for r in rows if r.get("_kind") != "approval")
-    print(f"{nb} block(s), {sum(1 for r in rows if r.get('_kind') == 'approval')} "
+    nr = sum(1 for r in rows if r.get("_reopened"))
+    print(f"{nb} block(s)"
+          + (f" ({nr} you already answered)" if nr else "")
+          + f", {sum(1 for r in rows if r.get('_kind') == 'approval')} "
           f"approval(s)"
           + (f", {len(done)} answered and with rank 0" if done else "") + ". Granting also closes a block; "
           f"the node picks\nthe reach up when it is next spawned or recycled, never "

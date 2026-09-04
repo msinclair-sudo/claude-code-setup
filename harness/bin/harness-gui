@@ -373,6 +373,17 @@ RULES = {
         "text": "Nobody asked for this, so no session in the tree may put a "
                 "session on it. It is not queued, harness mark refuses it, and "
                 "nothing is idle waiting — the lane carried on with its queue."},
+    "came back": {
+        "title": "why something you answered is here again",
+        "text": "Answering a block used to remove it from every surface you "
+                "read, for good — the test was whether you had ever spoken, not "
+                "whether you had spoken last. So a lane replying 'the reason you "
+                "gave cannot be the reason' appended to a thread you had no "
+                "reason to open again, and the block sat open in the data and "
+                "invisible in the panel. It now comes back the moment anything "
+                "is said after your answer, and leaves again the moment yours is "
+                "the last word. A block you GRANTED never returns: there you did "
+                "the thing rather than said something."},
     "unanswered": {
         "title": "why an unanswered question reaches you at all",
         "text": "A question is its lead's to answer, and normally it never "
@@ -613,11 +624,50 @@ def read_state():
                 "root": next((n for n, sp in tree.items()
                               if sp.get("parent") is None), "rank 0"),
                 "comments": []})
+        # One they answered, that the tree came back on. This is the item that
+        # was missing entirely: replying to a block used to remove it from every
+        # surface the operator reads, permanently, so a lane answering "the
+        # reason you gave cannot be the reason" appended to a thread nobody
+        # would open again. What they have not seen is the REPLY, so the reply
+        # is what this leads with — the request they already read.
+        for b in [x for x in blocks if x.get("_reopened")]:
+            cs = b.get("comments") or []
+            since = [c for c in cs
+                     if (c.get("at") or "") > (b.get("_answered_at") or "")]
+            mine = [c for c in cs if c.get("by") == "operator"]
+            last = since[-1] if since else {}
+            att.append({
+                "kind": "came back", "owner": "operator",
+                "where": f"{pname} / {b.get('node')}",
+                "what": b.get("need"),
+                "why": (f"You answered this on "
+                        f"{(b.get('_answered_at') or '')[:10]} — "
+                        f"“{(mine[-1].get('text') or '').strip()[:160]}”\n\n"
+                        f"{len(since)} "
+                        f"{'reply has' if len(since) == 1 else 'replies have'} come "
+                        f"back since, the newest from {last.get('by') or '?'}. It is "
+                        f"still open, so whatever they said, it did not settle it."),
+                "still": b.get("still_moving") or "",
+                "rule": "came back",
+                # Only what arrived AFTER their answer. The earlier thread is
+                # what they already read, and repeating it is how the two lines
+                # that are new get lost in it.
+                "comments": since,
+                "do": f"(cd {shlex.quote(repo)} && harness blocked "
+                      f"{shlex.quote(b.get('need') or '')} --comment \"...\")\n"
+                      f"(cd {shlex.quote(repo)} && harness blocked "
+                      f"{shlex.quote(b.get('need') or '')} --resolve "
+                      f"--no-task \"why it produced none\")",
+                "project": pname, "slug": pdir.name, "node": b.get("node"),
+                "need": b.get("need"),
+                "root": next((n for n, sp in tree.items()
+                              if sp.get("parent") is None), "rank 0")})
         # An answered block belongs to rank 0 now. Leaving it here asks the
         # operator to decide something they already decided, and a panel that
         # does that is one they stop reading.
         for b in [x for x in blocks
-                  if x.get("_kind") != "approval" and not x.get("_answered")]:
+                  if x.get("_kind") != "approval" and not x.get("_answered")
+                  and not x.get("_reopened")]:
             att.append({
                 "kind": "grant", "owner": "operator",
                 "where": f"{pname} / {b.get('node')}", "what": b.get("need"),

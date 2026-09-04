@@ -77,6 +77,11 @@ EOF
 `-` per command. Use it for anything naming code; for a short phrase with no
 backticks, quotes are still fine.
 
+It is also the faithful route. `--write "$(cat file)"` strips *every* trailing
+newline, so what is stored is a byte or more short of its source and a round
+trip never matches. `-` removes exactly the one the delimiter contributes and
+keeps the rest.
+
 ## Exit codes are the contract
 
 | code | meaning | what to do |

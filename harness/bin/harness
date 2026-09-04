@@ -5798,7 +5798,15 @@ def read_dash_from_stdin(a):
                      f"something to read:\n\n"
                      f"           harness ... --{dashes[0].replace('_', '-')} - "
                      f"<<'EOF'\n           ...\n           EOF")
-    setattr(a, dashes[0], sys.stdin.read().rstrip("\n"))
+    # Exactly one trailing newline, which is the one the heredoc's delimiter
+    # contributes and nobody typed. `rstrip("\n")` took ALL of them, so a body
+    # deliberately ending in blank lines arrived shorter — the same
+    # silent-truncation-under-a-success-line this route exists to prevent, at
+    # the other end of the string. `$(cat file)` strips all of them too, so this
+    # is now the faithful route as well as the safe one, which it was not
+    # before somebody asked whether it was.
+    body = sys.stdin.read()
+    setattr(a, dashes[0], body[:-1] if body.endswith("\n") else body)
 
 
 def main():

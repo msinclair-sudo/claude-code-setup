@@ -70,6 +70,21 @@ refusal at all.** A tree can hold a `reference-transaction` calling a `_guard`
 that does not implement `--gate`, and every functional arm passes while the gate
 permits everything — that happened, and the drift arm exists because of it.
 
+**Repairing drift is yours alone, and the CLI now enforces that.** `harness
+scaffold` refuses below rank 0, because `core.hooksPath` is absolute into this
+checkout: a scaffold from any worktree rewrites the hooks every node executes,
+the instant the files land, with no commit and no review between the copy and
+the effect. A member meeting the drift FAIL is told to report it to you and
+carry on — so when one does, the decision and the timing are yours.
+
+Read the diff first; a guard change alters what is refused, and a live tree is
+the wrong place to find that out. Then **commit it**. Uncommitted hooks in a
+single-checkout worktree are the worse resting state: every node is executing
+what `HEAD` does not contain, and one `git reset` anywhere disarms the tree
+silently. Scaffold also touches `.claude/settings.json` — check what it did
+there, because that changes how every session in the project terminates and is
+not what you ran it for.
+
 Do not replace it with a check comparing `core.hooksPath` to an expected value.
 Such a check goes red **because** the harness is correctly installed, and the
 remedy it prints disarms every worktree at once while reporting success.

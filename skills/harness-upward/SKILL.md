@@ -24,9 +24,14 @@ node above fast-forwards up. Never the reverse.
 reading config: it stages content the document node has never held in a throwaway
 index and requires the guard to reject it, then requires a document that *arrived*
 from the document node to pass. Exit 6 means this worktree is not guarded — stop,
-and say which arm failed. Never work around the guard; do repair it, and a hook
-that has drifted from the installed template is `harness scaffold` after you have
-read the diff it prints.
+and say which arm failed. Never work around the guard.
+
+**Repairing it is not yours.** `core.hooksPath` is absolute into the document
+node's checkout, so `harness scaffold` from your worktree rewrites the hooks
+*every* node in the tree executes, the instant the files land — no commit, no
+review, and sessions mid-task never learn it happened. The CLI refuses it below
+rank 0. Report which arm failed to your lead, say what the diff showed if you
+read it, and carry on with your task; the decision and the timing are rank 0's.
 
 What it does **not** prove is that the integration gate fires. It demands a real
 refusal from the document guard and only checks that the other hooks are present

@@ -4368,7 +4368,12 @@ def cmd_brief(a):
         rev = (b or {}).get("revision", 0) + 1
         rec = {"task": a.task, "node": target, "text": a.write, "revision": rev,
                "written_by": who, "written_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-               "suggestions": (b or {}).get("suggestions", [])}
+               "suggestions": (b or {}).get("suggestions", []),
+               # Carried, because the whole point of a comment on a brief is
+               # that it outlives the plan. A rewrite that dropped them would
+               # make the append-only channel append-until-the-next-rewrite,
+               # which is the property it exists to have.
+               "comments": (b or {}).get("comments", [])}
         # One brief was destroyed by a write onto a colliding name and there was
         # nothing to recover from: `revision` counts, it does not chain, and no
         # store here kept a prior copy. It was recovered only because a session
@@ -4548,8 +4553,15 @@ def cmd_brief(a):
                 print(f"  It was rewritten before revisions were kept — those are "
                       f"gone, and nothing\n  here can get them back.")
             return
+        # The count and the policy, said separately. "The last N are kept" with
+        # N computed from what happens to be stored is the exact grammatical
+        # shape of a policy statement — it is how you would write the policy —
+        # so a reader holding one revision read "The last 1 are kept" and
+        # concluded, carefully and wrongly, that a second rewrite loses the
+        # first. True, and unreadable in the specific way that produces a
+        # confident wrong belief.
         print(f"'{a.task}' — {len(hist)} earlier revision(s), newest first. "
-              f"The last {min(5, len(hist))} are kept.")
+              f"Up to 5 are kept.")
         for h in reversed(hist):
             print(f"\n  revision {h.get('revision')}  for '{h.get('node')}'  "
                   f"by {h.get('written_by')} at {str(h.get('written_at'))[:19]}")
@@ -4791,27 +4803,59 @@ def cmd_note(a):
     """
     ctx = Ctx(); ctx.require_enrolled()
     f = ctx.state_file("marks", a.task, ".json")
-    if not f.exists():
-        die(REFUSED, f"no task record '{a.task}'. `harness status` lists the open ones.")
-    rec = json.loads(f.read_text())
+    bf, b = load_brief(ctx, a.task)
+    # A task that is briefed and not yet marked used to have no durable channel
+    # at all, and THE WINDOW THAT EXCLUDED IS THE WINDOW THAT MATTERS: between
+    # brief and mark is exactly when a fresh session claims a node, orients, and
+    # meets whatever it is going to meet. That is how tonight's scaffold
+    # incident happened. The only thing reaching a lane before it marks was the
+    # brief, and a brief is a plan that gets rewritten — saying one sentence
+    # meant folding it into the plan and then checking the load-bearing strings
+    # survived the rewrite.
+    #
+    # The brief already carries `comments`; the viewer has been reading them all
+    # along. Nothing needed inventing, only writing to.
+    if not f.exists() and b is None:
+        die(REFUSED, f"no task '{a.task}' — neither a brief nor a task record.\n"
+                     f"           `harness status` lists the open ones, `harness "
+                     f"queue` what is briefed.")
+    rec = json.loads(f.read_text()) if f.exists() else None
 
     if a.add:
         sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
-        rec.setdefault("_comments", []).append(
-            {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-             "by": (f"session {sid[:8]}" if sid else "operator"),
-             "text": a.add})
-        f.write_text(json.dumps(rec, indent=2) + "\n")
-        print(f"added a comment to {a.task}  ({len(rec['_comments'])} total)")
+        entry = {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                 "by": (f"session {sid[:8]}" if sid else "operator"),
+                 "text": a.add}
+        if rec is not None:
+            rec.setdefault("_comments", []).append(entry)
+            f.write_text(json.dumps(rec, indent=2) + "\n")
+            print(f"added a comment to {a.task}  ({len(rec['_comments'])} total)")
+        else:
+            b.setdefault("comments", []).append(entry)
+            bf.write_text(json.dumps(b, indent=2) + "\n")
+            print(f"added a comment to the BRIEF for {a.task}  "
+                  f"({len(b['comments'])} total)")
+            print(f"  '{a.task}' is briefed for {b.get('node')} and not yet marked, "
+                  f"so it goes on the\n  brief. It is append-only and survives a "
+                  f"rewrite of the brief's text — whoever\n  opens the task reads it "
+                  f"at `harness brief {a.task}`, and it does not instruct:\n"
+                  f"  the brief is the instruction.")
         return
 
-    node = rec.get("_node") or "— names no node (it predates the field)"
-    print(f"{a.task}")
-    print(f"  node     {node}")
-    print(f"  opened   {str(rec.get('_at'))[:19]}   session {str(rec.get('_session'))[:8]}")
-    if rec.get("_closed_at"):
-        print(f"  closed   {str(rec['_closed_at'])[:19]}")
-    _, b = load_brief(ctx, a.task)
+    if rec is None:
+        # Briefed and not started. There is no mark to describe, so describe
+        # what there is; the read path used to assume the write path's subject.
+        print(f"{a.task}")
+        print(f"  node     {b.get('node')}")
+        print(f"  state    briefed, not yet marked — nobody has opened it")
+    else:
+        node = rec.get("_node") or "— names no node (it predates the field)"
+        print(f"{a.task}")
+        print(f"  node     {node}")
+        print(f"  opened   {str(rec.get('_at'))[:19]}   "
+              f"session {str(rec.get('_session'))[:8]}")
+        if rec.get("_closed_at"):
+            print(f"  closed   {str(rec['_closed_at'])[:19]}")
     if b:
         print(f"  brief    revision {b.get('revision')} by {b.get('written_by')} "
               f"— harness brief {a.task}")
@@ -4823,9 +4867,12 @@ def cmd_note(a):
             print(f"           {len(openn)} open suggestion(s)")
     else:
         print(f"  brief    — none written. Its lead writes one: harness brief {a.task}")
-    if rec.get("_note"):
+    if rec is not None and rec.get("_note"):
         print(f"  mark note {rec['_note']}")
-    cs = rec.get("_comments") or []
+    # Both stores, because which one a comment landed in is an accident of WHEN
+    # it was written, not of what it says. A reader wants the thread.
+    cs = ((b or {}).get("comments") or []) + ((rec or {}).get("_comments") or [])
+    cs.sort(key=lambda c: c.get("at") or "")
     if not cs:
         print("  no comments")
         return

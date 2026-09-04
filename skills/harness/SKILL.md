@@ -85,7 +85,7 @@ backticks, quotes are still fine.
 | 3 | not enrolled | one line, stop |
 | 4 | refused | the harness declined: a live session holds the node, a recycle would strand work, or a measurement was asked for that cannot be derived. Not a fault — read the line and do what it says |
 | 5 | name/position mismatch | the session is misnamed — rename it, never rename the node |
-| 6 | `doctor` says this worktree is not guarded as configured | **Stop working, then repair it.** A hook is missing, inert, or no longer the one that was installed. Nothing about Claude has changed and this is not a code you work around: read which arm failed. Drift is `harness scaffold` — *after* reading the diff it prints, because a guard change alters what is refused. |
+| 6 | `doctor` says this worktree is not guarded as configured | **Stop working.** A hook is missing, inert, or no longer the one that was installed. Nothing about Claude has changed and this is not a code you work around: read which arm failed. **Who repairs it depends on your rank, and the message says which you are** — below rank 0, report it upward and carry on, because `harness scaffold` rewrites the hooks every node in the tree runs and the CLI refuses it. At rank 0 it is yours, after reading the diff it prints. |
 
 `C1`–`C5` assert the undocumented Claude state this harness reads (`R8`). A
 failure means refuse, not degrade: a mis-identified session is how two of them

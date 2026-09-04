@@ -60,7 +60,15 @@ a branch runs no hook, exits 0, and warns nobody.
 ## Verifying the guards you own
 
 `harness doctor`, in each worktree, after any change to the hooks or the manifest.
-It is the only instrument that proves a guard fires; everything else infers it.
+It proves the **document** guard fires — it demands a real refusal and a real
+allow, which nothing else here does. For every other hook it checks presence,
+executability, mode, and that the file matches the template that was installed.
+Those are the weaker claim, and the difference is yours because you are the only
+rank that can act on it: a green run says the guards are the ones that were
+installed, not that each of them works. **The integration gate has no watched
+refusal at all.** A tree can hold a `reference-transaction` calling a `_guard`
+that does not implement `--gate`, and every functional arm passes while the gate
+permits everything — that happened, and the drift arm exists because of it.
 
 Do not replace it with a check comparing `core.hooksPath` to an expected value.
 Such a check goes red **because** the harness is correctly installed, and the

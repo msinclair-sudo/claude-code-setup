@@ -65,6 +65,8 @@ settings: it synthesises content the document node has never held, stages it in 
 it. It also requires the guard to *allow* a document that arrived from the
 document node, so a guard that refuses everything fails too.
 
+**It demands that behaviour of the document guard, and only that.** Every other hook is checked for presence, mode and agreement with the installed template — the weaker claim, and one that has to be stated wherever the stronger one is, or a reader takes "proves a guard fires" for all of them. The integration gate in particular has no watched refusal: a `reference-transaction` calling a `_guard` that does not implement `--gate` passed every functional arm while permitting every ref update, which is what the template-agreement arm was added to catch. Agreement is not demonstration; it is the nearest thing available without a second live tree to integrate into.
+
 It checks the wiring as well — hooksPath set and absolute, all three hooks present
 and executable, and their mode as **git records it**, since `core.fileMode=false`
 on a Windows-backed mount lets a `chmod` succeed on disk while git stores 100644

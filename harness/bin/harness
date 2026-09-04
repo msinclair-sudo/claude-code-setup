@@ -1121,6 +1121,16 @@ def cmd_doctor(a):
         if not ok:
             fails.append(label)
 
+    def wiring_failed(fs):
+        """Every exit from this command goes through here. There used to be one
+        that did not, and it was the one a document node took."""
+        if fs:
+            print()
+            die(CONTRACT,
+                f"{len(fs)} check(s) failed — this worktree is NOT guarded as "
+                f"configured.\n           Do not trust config that looks right. "
+                f"Failed: {', '.join(fs)}")
+
     # 1. wiring — necessary, not sufficient
     rc, hp, _ = git("config", "--get", "core.hooksPath")
     guard = Path(hp) / "_guard" if hp else None
@@ -1180,6 +1190,16 @@ def cmd_doctor(a):
                       "UNGUARDED.\n           Failed: " + ", ".join(fails))
     if spec.get("kind") == "doc":
         print(f"\n  '{node}' is the document node; there is nothing for the guard to refuse here.")
+        # ...but everything ABOVE this line still had to pass. The wiring arms
+        # are not about what the guard refuses, they are about whether it is
+        # installed and current, and they apply to every node. Returning here
+        # without consulting them printed FAIL and exited 0 — and the skill's
+        # contract for this command is "non-zero means unguarded; stop", so a
+        # session doing exactly what it was told read an unguarded tree as
+        # guarded. A red that exits 0 is visible to a person and invisible to
+        # everything that automates, which is the whole class of fault this
+        # command exists to close.
+        wiring_failed(fails)
         return
 
     # 2. behaviour — the part that matters
@@ -1276,9 +1296,7 @@ def cmd_doctor(a):
             "nothing here classifies as code")
 
     print()
-    if fails:
-        die(CONTRACT, f"{len(fails)} check(s) failed — this worktree is NOT guarded as configured.\n"
-                      f"           Do not trust config that looks right. Failed: {', '.join(fails)}")
+    wiring_failed(fails)
     print(f"guarded: {node} ({ctx.branch}) — refusal demonstrated, not inferred")
 
 
@@ -2898,6 +2916,14 @@ def scan_needs():
                 continue
             if (r.get("approval") or {}).get("state") != "pending":
                 continue
+            # A brief that was gated and then withdrawn. --supersede voids the
+            # request now, but a brief gated BEFORE that existed still carries
+            # both flags, and asking the operator to decide about work nothing
+            # can start is worse than not asking. Read as state rather than
+            # repaired in place: this is a reader, and rewriting somebody's
+            # brief from a scan is how two writers appear where there was one.
+            if r.get("superseded_at"):
+                continue
             out.append({"_repo": repo, "_project": proj, "_kind": "approval",
                         "task": r.get("task") or f.stem, "node": r.get("node"),
                         "need": f"approve the task '{r.get('task') or f.stem}'",
@@ -4051,7 +4077,7 @@ def cmd_queue(a):
         q = queue(ctx, n)
         openm = sorted(t for t, r in open_marks(ctx).items() if r.get("_node") == n)
         gated = [x for x in all_briefs(ctx).values()
-                 if x.get("node") == n and awaiting(x)]
+                 if x.get("node") == n and awaiting(x) and not superseded(x)]
         # Segments this node broke up. They leave the queue the moment they are
         # split, which is right — nobody is going to work on them — but until
         # now they left every OTHER surface with it, so a lead had no way to see
@@ -4426,8 +4452,25 @@ def cmd_brief(a):
         b["superseded_by"] = f"{me} (session {sid[:8]})" if sid else "operator"
         b["superseded_why"] = a.supersede
         b["superseded_for"] = a.superseded_for or None
+        # A withdrawn brief cannot need approval. Leaving the request standing
+        # wakes the operator to a decision about work nothing can start, and
+        # approving it would release something already stopped. This is not
+        # approving or declining — those are the operator's and stay theirs. It
+        # is the node that ASKED withdrawing its own question, which is the same
+        # act as withdrawing the brief the question was about.
+        voided = awaiting(b)
+        if voided:
+            b["approval"]["state"] = "withdrawn"
+            b["approval"]["decided_at"] = b["superseded_at"]
+            b["approval"]["decided_by"] = b["superseded_by"]
+            b["approval"]["why"] = f"the brief was superseded: {a.supersede}"
         f.write_text(json.dumps(b, indent=2) + "\n")
+        if voided:
+            write_needs(scan_needs())
         print(f"superseded {a.task}: {a.supersede}")
+        if voided:
+            print(f"  Its pending approval is withdrawn — the operator is no longer "
+                  f"being asked to\n  decide about work that nothing can start.")
         if a.superseded_for:
             print(f"  replaced by {a.superseded_for} ({task_state(ctx, a.superseded_for)})")
         print(f"  The brief stays and is still readable. Nothing offers it again: "

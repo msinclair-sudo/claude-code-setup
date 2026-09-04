@@ -529,6 +529,23 @@ def _whoami(a):
             if r.get("_presented_at"):
                 print(f"open     {lbl} — presented, waiting on {up or 'rank 0'} to "
                       f"sign it off")
+                # A session spawned onto a node whose mark is already presented
+                # has nothing to do at orientation, and if the lead has since
+                # integrated a sibling this node is now BEHIND — which is the
+                # thing blocking its own sign-off, and nobody tells it. Its
+                # predecessor cannot: it presented and released, which is what
+                # it was told to do.
+                if up:
+                    pb = ctx.tree["nodes"].get(up, {}).get("branch")
+                    rc, bh, _ = (git("rev-list", "--count",
+                                     f"{ctx.branch}..{pb}") if pb else (1, "", ""))
+                    if rc == 0 and bh.strip().isdigit() and int(bh.strip()) > 0:
+                        print(f"         and {bh.strip()} commit(s) BEHIND {up}, which "
+                              f"is why it cannot be\n         fast-forwarded. That is a "
+                              f"catch-up (T2) and it is yours to run, here:\n"
+                              f"           git merge {pb}\n"
+                              f"         then present again. Your predecessor cannot "
+                              f"— it released.")
             elif up:
                 print(f"open     {lbl} — finishing it means presenting UP to {up}, "
                       f"not to the operator:")
@@ -2523,8 +2540,39 @@ def cmd_recycle(a):
             pb = idx["nodes"][parent]["branch"]
             rc, ahead, _ = git("rev-list", "--count", f"{pb}..{sp['branch']}", cwd=ctx.repo)
             if rc == 0 and ahead.strip().isdigit() and int(ahead.strip()) > 0:
-                print(f"  skip {n:<12} {ahead.strip()} commit(s) not yet in {parent} — "
-                      f"present them first"); continue
+                # "Not yet in the parent" conflated two cases, and the second
+                # one deadlocked. A child that never presented would really be
+                # stranded — refuse that. A child that PRESENTED and was then
+                # left behind because its lead integrated a sibling and moved
+                # the target underneath it has nothing to strand: the work is
+                # committed, on a ref, and its lead has been told.
+                #
+                # Jointly unsatisfiable otherwise. `merge --ff-only` refuses
+                # because the child is BEHIND; recycle refused because it is
+                # AHEAD; and the only party who could run the catch-up is the
+                # child, which has presented and released — which is exactly
+                # what T10 tells it to do. Messages to it arrive at a session
+                # that correctly finished. Measured three times in one night.
+                #
+                # The tip must equal what was presented. Anything committed
+                # after presenting was never offered upward and is the first
+                # case again.
+                tip = git("rev-parse", sp["branch"], cwd=ctx.repo)[1].strip()
+                pres = next((r for r in open_marks(ctx).values()
+                             if r.get("_node") == n and r.get("_presented_at")
+                             and r.get("_presented_sha") == tip), None)
+                if pres is None:
+                    print(f"  skip {n:<12} {ahead.strip()} commit(s) not yet in "
+                          f"{parent} — present them first"); continue
+                print(f"       {n:<12} {ahead.strip()} commit(s) ahead of {parent}, "
+                      f"and all of them presented\n"
+                      f"       {'':<12} at {str(pres.get('_presented_at'))[:19]}. "
+                      f"Nothing to strand: the work is\n"
+                      f"       {'':<12} committed and on a ref, and {parent} has been "
+                      f"told. It is behind\n"
+                      f"       {'':<12} because {parent} moved, which is {parent}'s to "
+                      f"resolve, not this\n"
+                      f"       {'':<12} node's — and this node has already released.")
 
         holders = []
         for r in occ.get(n, []):

@@ -1102,6 +1102,11 @@ def cmd_doctor(a):
     ctx = Ctx(); ctx.require_enrolled()
     node, spec = ctx.node()
     fails = []
+    # Whether the reader of this report is the one who may repair it. Every
+    # remedy line below branches on it — the arm, and the failure text at the
+    # end. Fixing only the arm is what left the same rank-blind instruction in
+    # the sentence underneath it.
+    mine = ctx.rank(node) == 0 or not os.environ.get("CLAUDE_CODE_SESSION_ID")
 
     # Installed-versus-source, first, because a stale install makes every arm
     # below a measurement of the wrong thing. Three times in one day the copy
@@ -1139,9 +1144,15 @@ def cmd_doctor(a):
                 f"configured.\n           Do not trust config that looks right. "
                 f"Failed: {', '.join(fs)}\n\n"
                 f"           Exit 6, not 2. This is not the platform contract: "
-                f"nothing about Claude\n           has changed, and this is a "
-                f"repository you can repair. Read what failed —\n           a hook "
-                f"that drifted is `harness scaffold`, after you have read the diff.")
+                f"nothing about Claude has\n           changed. Read which arm "
+                f"failed.\n"
+                + (f"           A hook that drifted is `harness scaffold`, after you "
+                   f"have read the diff\n           it prints."
+                   if mine else
+                   f"           Repairing it is NOT yours: hooksPath is absolute into "
+                   f"the document node's\n           checkout, so a scaffold from here "
+                   f"rewrites the hooks every node runs.\n           Report which arm "
+                   f"failed to your lead and carry on with your task."))
 
     # 1. wiring — necessary, not sufficient
     rc, hp, _ = git("config", "--get", "core.hooksPath")
@@ -1181,12 +1192,25 @@ def cmd_doctor(a):
                 missing.append(t.name)
             elif here.read_bytes() != t.read_bytes():
                 drift.append(t.name)
+        # The remedy depends on who is reading it. This printed `harness
+        # scaffold <path>` to whoever ran it, at any rank, and a leaf meets this
+        # arm on claim before it has done anything else — so the most junior
+        # session in the tree was handed the most tree-wide command in the CLI,
+        # with --force in the obvious invocation. One did exactly that.
+        fix = (f"  — re-scaffold: harness scaffold {ctx.repo}" if mine
+               else "  — NOT yours to fix: report it to your lead")
         arm("hooks match the installed templates", not (drift or missing),
             "" if not (drift or missing) else
             ", ".join(([f"differs: {', '.join(drift)}"] if drift else [])
                       + ([f"absent: {', '.join(missing)}"] if missing else []))
-            + f"  — re-scaffold: harness scaffold {ctx.repo}")
-        if drift or missing:
+            + fix)
+        if (drift or missing) and not mine:
+            print(f"       The guards this repo runs are not the ones installed, and "
+                  f"repairing them\n       is rank 0's: hooksPath is absolute into the "
+                  f"document node's checkout, so\n       a scaffold from here would "
+                  f"rewrite the hooks EVERY node executes, with no\n       commit and "
+                  f"no review. Say which files differ and carry on with your task.")
+        elif drift or missing:
             print(f"       The guards this repo actually runs are not the ones that "
                   f"were installed.\n"
                   f"       Nothing above notices that, because every other arm asks "
@@ -5542,6 +5566,48 @@ def cmd_blocked(a):
 
 
 def cmd_scaffold(a):
+    # The most tree-wide act in this CLI, and until now it was reachable — and
+    # recommended in writing — from the most junior session in the tree.
+    # core.hooksPath is absolute into the document node's checkout, so a
+    # scaffold run from ANY worktree rewrites the hooks every node executes, at
+    # once, the moment the files land: no commit, no review, and sessions
+    # mid-task never learn it happened.
+    #
+    # A leaf met doctor's drift FAIL on claim, did exactly what the line told
+    # it, and rewrote the whole tree's guards before it had done any work. An
+    # earlier session on the same node hit the same FAIL and correctly refused
+    # — and that refusal died with it, because it lived in a message rather
+    # than in anything the next session could read. Two sessions, same node,
+    # same input, opposite acts. That is a missing rule, not a lapse of
+    # judgement, and `grant` and `trim` already refuse by rank for it.
+    # Probed without dying, because scaffolding is also how a repo that is NOT
+    # enrolled gets its first tree. The refusal is raised OUTSIDE the probe: the
+    # first version put die() inside a bare except and the gate silently never
+    # fired, which is the same fault it was written to prevent.
+    standing = None
+    try:
+        ctx = Ctx()
+        if ctx.binding_path.exists() and os.environ.get("CLAUDE_CODE_SESSION_ID"):
+            ctx.require_enrolled()
+            node, _ = ctx.node()
+            standing = (node, ctx.rank(node))
+    except SystemExit:
+        standing = None
+    except Exception:
+        standing = None
+    if standing and standing[1] != 0:
+        node, rank = standing
+        die(REFUSED,
+                    f"'{node}' is rank {rank}. Scaffolding is rank 0's, or "
+                    f"the operator's directly.\n\n"
+                    f"           core.hooksPath is absolute into the document node's "
+                    f"checkout, so this\n           would rewrite the hooks EVERY node "
+                    f"in the tree runs — including the ones\n           mid-task, which "
+                    f"would never learn it happened. There is no commit and no\n"
+                    f"           review between the copy and the effect.\n\n"
+                    f"           Report it upward instead. Say which arm of `harness "
+                    f"doctor` failed and\n           what the diff showed; the decision "
+                    f"and the timing are rank 0's.")
     repo = Path(a.repo).resolve()
     rc, common, _ = git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=repo)
     if rc:
@@ -5616,6 +5682,21 @@ def cmd_scaffold(a):
                           "command": "~/.claude/harness/bin/harness hook-stop"}]})
     cs.write_text(json.dumps(conf, indent=2) + "\n")
     print(f"scaffolded {dst}")
+    # It was sold as "make the hooks match" and also rewrote how every session
+    # in the project terminates, unstaged and unmentioned. A command that
+    # changes two things has to name both, especially when the second is not
+    # the one anybody ran it for.
+    print(f"  hooks       {dst / 'hooks'}  — live IMMEDIATELY for every node in "
+          f"this tree,\n              because core.hooksPath is absolute. No commit "
+          f"stands between the\n              copy and the effect; sessions mid-task "
+          f"will not learn of it.")
+    print(f"  settings    {cs}  — a Stop hook was added or refreshed here. That "
+          f"changes how\n              every session in this project ends, which is "
+          f"not what you ran this for.")
+    print(f"  Both are left for you to review and commit. Uncommitted hooks in a "
+          f"single-checkout\n  worktree are the worse resting state: every node runs "
+          f"what HEAD does not contain,\n  and one `git reset` anywhere disarms the "
+          f"tree silently.")
     print(f"orientation hook → {cs}  (this repo only; commit it)")
     if rc == 0 and prior and prior != target:
         print(f"core.hooksPath REPLACED: {prior}  ->  {target}")
@@ -5634,6 +5715,45 @@ def cmd_unenrol(a):
         print("this machine was not enrolled")
 
 
+def read_dash_from_stdin(a):
+    """`--write -` takes the body from stdin instead of from argv.
+
+    Every long argument this CLI takes is prose, deliberately — a brief, a
+    finding, a reason — and prose about code contains backticks and $(). Passed
+    as `--write "... the `continue` stays ..."`, bash substitutes them away
+    before this process exists: the argument arrives SHORTER, there is no way to
+    know it was ever longer, and the command prints its success line over the
+    top. Two ranks lost the central clause of a technical instruction that way
+    in one night, one of them a defect report that ended up naming no location.
+    Both were grammatical afterwards and both would have been acted on.
+
+    So the fix cannot be detection. It is a route that does not pass through a
+    shell's expansion at all:
+
+        harness brief x --for y --write - <<'EOF'
+        the `continue` stays, and $(anything) survives
+        EOF
+
+    The quoted delimiter is what makes the heredoc literal. One `-` per command:
+    two would both want the same stdin, and quietly giving it to whichever
+    argparse happened to store first is the class of fault this exists to close.
+    """
+    dashes = [k for k, v in vars(a).items() if isinstance(v, str) and v == "-"]
+    if not dashes:
+        return
+    if len(dashes) > 1:
+        die(REFUSED, f"more than one argument is '-' ({', '.join(sorted(dashes))}) "
+                     f"and there is one stdin.\n           Pass one from stdin and "
+                     f"the rest as arguments.")
+    if sys.stdin.isatty():
+        die(REFUSED, f"--{dashes[0].replace('_', '-')} is '-', which reads the body "
+                     f"from stdin, and stdin is a terminal.\n           Give it "
+                     f"something to read:\n\n"
+                     f"           harness ... --{dashes[0].replace('_', '-')} - "
+                     f"<<'EOF'\n           ...\n           EOF")
+    setattr(a, dashes[0], sys.stdin.read().rstrip("\n"))
+
+
 def main():
     # `gui` is handed off before argparse sees anything. The viewer has its own
     # flags and argparse.REMAINDER does not reliably pass a leading `--flag`
@@ -5646,7 +5766,12 @@ def main():
         os.execv(sys.executable, [sys.executable, str(exe)] + sys.argv[2:])
     p = argparse.ArgumentParser(
         prog="harness", description=__doc__.splitlines()[0],
-        epilog="gui  a read-only viewer of every tree on this machine; "
+        epilog="ANY long argument may be '-', which reads it from stdin. Use it "
+               "for prose containing backticks or $(): a shell substitutes those "
+               "away before this program runs, and the result is a shorter string "
+               "that reports success.\n"
+               "  harness brief x --for y --write - <<'EOF' ... EOF\n\n"
+               "gui  a read-only viewer of every tree on this machine; "
                "its own flags are passed straight through (harness gui --help)")
     sub = p.add_subparsers(dest="cmd", required=True)
     def add(name, fn, roster=False, force=False):
@@ -5771,7 +5896,9 @@ def main():
     br.add_argument("--for", dest="for_node", metavar="NODE",
                     help="which node the brief is for (needed on the first write)")
     br.add_argument("--write", metavar="TEXT",
-                    help="write or rewrite it; a lead writes its children's, rank 0 its own")
+                    help="write or rewrite it; a lead writes its children's, rank 0 "
+                         "its own. Use '-' and a quoted heredoc for prose containing "
+                         "backticks or $(), which a shell eats before this sees them")
     br.add_argument("--suggest", metavar="TEXT",
                     help="propose a change to your own brief; your lead decides")
     br.add_argument("--comment", metavar="TEXT",
@@ -5805,7 +5932,8 @@ def main():
     ch = add("charter", cmd_charter)
     ch.add_argument("--feature", metavar="NAME", help="read or write one feature")
     ch.add_argument("--write", metavar="TEXT",
-                    help="the project description, or a feature's with --feature")
+                    help="the project description, or a feature's with --feature. "
+                         "'-' reads it from stdin")
     ch.add_argument("--move", choices=["up", "down"],
                     help="reorder a feature among its siblings")
     ch.add_argument("--promote", action="store_true",
@@ -5822,7 +5950,9 @@ def main():
     nt.add_argument("--add", metavar="TEXT", help="append a comment; never edits an earlier one")
     fd = add("finding", cmd_finding)
     fd.add_argument("name", nargs="?", help="short name for the thing you noticed")
-    fd.add_argument("--what", metavar="TEXT", help="the claim, in full")
+    fd.add_argument("--what", metavar="TEXT",
+                    help="the claim, in full. '-' reads it from stdin, which is the "
+                         "only safe route for prose naming code")
     fd.add_argument("--how", metavar="TEXT", help="how you came to it — required")
     fd.add_argument("--fact", metavar="NAME", help="a recorded measurement behind it")
     fd.add_argument("--drop", metavar="WHY", help="the lead declines it, on the record")
@@ -5861,6 +5991,7 @@ def main():
                     help="print nothing and exit 0 when not enrolled")
     add("unenrol", cmd_unenrol)
     a = p.parse_args()
+    read_dash_from_stdin(a)
     a.fn(a)
 
 

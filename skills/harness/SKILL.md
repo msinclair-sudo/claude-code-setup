@@ -50,6 +50,33 @@ mid-lead  → harness + harness-upward + harness-downward
 top lead  → harness + harness-downward + harness-root
 ```
 
+## Prose goes in on stdin, not in quotes
+
+Every long argument here is prose — a brief, a finding, a reason — and prose
+about code contains backticks and `$()`. Written the obvious way, a shell eats
+them **before this program runs**:
+
+```bash
+harness brief x --for y --write "the `continue` stays"   # arrives as "the  stays"
+```
+
+The argument is simply shorter. Nothing can detect that, the command prints its
+success line, and what is stored is grammatical and wrong. It has already turned
+an instruction into one that named nothing and a defect report into one with no
+location. Both would have been acted on.
+
+Any long argument may be `-`, which reads it from stdin instead:
+
+```bash
+harness brief x --for y --write - <<'EOF'
+the `continue` stays, and $(anything) survives
+EOF
+```
+
+**The quoted delimiter is what makes it literal** — `<<'EOF'`, not `<<EOF`. One
+`-` per command. Use it for anything naming code; for a short phrase with no
+backticks, quotes are still fine.
+
 ## Exit codes are the contract
 
 | code | meaning | what to do |

@@ -2403,9 +2403,26 @@ def cmd_review(a):
             print(f"   ⚠ {untrailered} commit(s) carry no Task: trailer — an ancestor "
                   f"holding a conflicted hunk would have names and no route to a ledger")
 
-        rc, names, _ = git("diff", "--name-only", f"{base}..{cb}", cwd=ctx.repo)
+        # THREE dots. `git diff A..B` is `git diff A B` — symmetric, and it reads
+        # as directional, which is the trap this repository documents and warns
+        # humans away from. This command then committed it, under a name that
+        # implies the directional question has been answered.
+        #
+        # What it produced: a child six commits behind its lead, holding one
+        # commit of its own that touched two files, reported as 9 files and 612
+        # deletions — every deletion being the LEAD's own work the child has not
+        # merged yet. Worse for the seam check below, which then names a sibling
+        # whose work is already integrated in the parent and is therefore behind
+        # the reviewer rather than beside it.
+        #
+        # `A...B` is `git diff $(git merge-base A B) B`: what THIS node did since
+        # it diverged, which is the only question a lead is asking. It is also
+        # correct in the other two modes — `--since REF` reads as work since the
+        # divergence from REF, and the integrated-child fallback bases on an
+        # ancestor of cb, where the merge base IS the base.
+        rc, names, _ = git("diff", "--name-only", f"{base}...{cb}", cwd=ctx.repo)
         files = [f for f in names.splitlines() if f]
-        rc, stat, _ = git("diff", "--shortstat", f"{base}..{cb}", cwd=ctx.repo)
+        rc, stat, _ = git("diff", "--shortstat", f"{base}...{cb}", cwd=ctx.repo)
         print(f"   {stat.strip() or 'no file changes'}")
 
         # A code node touching a document is the guard's business, and the lead's.
@@ -2432,7 +2449,11 @@ def cmd_review(a):
                 if not sback:
                     continue
                 sbase = f"{sb}~{sback}"          # same-size window as ours
-            rc, sn, _ = git("diff", "--name-only", f"{sbase}..{sb}", cwd=ctx.repo)
+            # Same three dots, and this is where it hurt most: a sibling's
+            # already-integrated work showed as a live seam, so the tool named a
+            # conflict with a node that is behind the reviewer rather than
+            # beside it.
+            rc, sn, _ = git("diff", "--name-only", f"{sbase}...{sb}", cwd=ctx.repo)
             shared = sorted(set(files) & {f for f in sn.splitlines() if f})
             if shared:
                 overlaps[sib] = shared
@@ -2446,7 +2467,7 @@ def cmd_review(a):
             print("   no files shared with a sibling")
 
         if a.diff:
-            rc, d, _ = git("diff", f"{base}..{cb}", cwd=ctx.repo)
+            rc, d, _ = git("diff", f"{base}...{cb}", cwd=ctx.repo)
             print("\n" + d)
 
         if a.record:

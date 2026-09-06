@@ -2586,11 +2586,42 @@ def cmd_recycle(a):
 
         # "At the end of commits" means the commits have LANDED. Work sitting
         # unintegrated is work whose author is about to be replaced.
+        #
+        # Except across an edge that never integrates. Code does not land on the
+        # document branch — the guard refuses it there, and this file already
+        # says so where the doctor draws its samples ("the document node may
+        # track no code at all"). So for the top of the code subtree, `pb..cb`
+        # is not a backlog waiting to be integrated; it is the project, and it
+        # only grows. Counted as unintegrated work it made the arm permanently
+        # unsatisfiable: `recycle dev` refused for the life of the repository,
+        # `recycle --idle` recycled zero every time, and orientation went on
+        # recommending both. A refusal nobody can ever clear is worse than no
+        # check, because it reads as a fact about tonight's tree.
+        #
+        # Derived, not declared. `kind` is already on the node and already in
+        # the index, so nothing needs to be marked by hand and no existing tree
+        # needs migrating. A doc child of a doc parent still integrates.
         parent = sp["parent"]
+        integrates = not (parent
+                          and idx["nodes"].get(parent, {}).get("kind") == "doc"
+                          and sp.get("kind") != "doc")
         if parent and not a.force:
             pb = idx["nodes"][parent]["branch"]
             rc, ahead, _ = git("rev-list", "--count", f"{pb}..{sp['branch']}", cwd=ctx.repo)
-            if rc == 0 and ahead.strip().isdigit() and int(ahead.strip()) > 0:
+            n_ahead = int(ahead.strip()) if rc == 0 and ahead.strip().isdigit() else 0
+            # Said out loud, and only where it changes the answer. Silently
+            # passing an arm that would otherwise have refused leaves a reader
+            # to guess which rule applied — and the count is large and rising,
+            # so anyone who checks by hand will find it and conclude the tool
+            # missed it.
+            if n_ahead and not integrates:
+                print(f"       {n:<12} {n_ahead} commit(s) ahead of {parent}, and "
+                      f"that edge never integrates:\n"
+                      f"       {'':<12} {parent} is the document node and receives no "
+                      f"code. Nothing to\n"
+                      f"       {'':<12} prove and nothing to strand — that count is "
+                      f"the project, not a backlog.")
+            elif n_ahead:
                 # "Not yet in the parent" conflated two cases, and the second
                 # one deadlocked. A child that never presented would really be
                 # stranded — refuse that. A child that PRESENTED and was then
@@ -2625,19 +2656,37 @@ def cmd_recycle(a):
                       f"resolve, not this\n"
                       f"       {'':<12} node's — and this node has already released.")
 
-        holders = []
+        # `continue` here continues the HOLDER loop, not the node — so every
+        # refusal below used to be printed and then contradicted, two lines
+        # later, by the same command. Measured: with a busy holder and no
+        # --force it printed `skip dev  busy`, then `recycled dev`, then
+        # `recycled 1`, and started a session beside the one it had just
+        # declined to stop. Same shape when `claude stop` returned non-zero.
+        # Two sessions in one worktree is the exact state the claim lock exists
+        # to prevent, reached by the command that is supposed to maintain it.
+        holders, unstopped = [], []
         for r in occ.get(n, []):
             if r["sessionId"] == mine:
                 print(f"  skip {n:<12} that is this session"); continue
-            if r.get("status") == "busy" and not a.force:
-                print(f"  skip {n:<12} busy — it may be mid-task or awaiting a reply"); continue
             label = f"{r.get('name') or '?'} [{r['sessionId'][:8]}]"
+            if r.get("status") == "busy" and not a.force:
+                print(f"  skip {n:<12} {label} is busy — it may be mid-task or "
+                      f"awaiting a reply")
+                unstopped.append(label); continue
             holders.append(label)
             if not a.dry_run:
                 res = subprocess.run(["claude", "stop", r["sessionId"][:8]],
                                      capture_output=True, text=True)
                 if res.returncode:
-                    print(f"  FAILED {n:<12} {label}: {res.stderr.strip()[:80]}"); continue
+                    print(f"  FAILED {n:<12} {label}: {res.stderr.strip()[:80]}")
+                    unstopped.append(label); continue
+        if unstopped:
+            # Starting one anyway is not a partial success, it is the worse
+            # outcome: the old session keeps the node and the new one cannot
+            # claim it.
+            print(f"  skip {n:<12} not recycled — still in this worktree: "
+                  f"{', '.join(unstopped)}")
+            continue
 
         # Resolved BEFORE the dry-run branch: a dry run that cannot show the
         # effort it would use cannot check the flag you ran it to check.

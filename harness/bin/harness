@@ -2490,6 +2490,41 @@ def cmd_review(a):
     print()
 
 
+STOP_SETTLE = 6.0     # seconds to wait for a stopped session to leave the roster
+STOP_POLL = 0.5
+
+
+def stop_took(a, sid):
+    """Did the session actually go? A zero from `claude stop` does not say so.
+
+    Exit 0 is a claim that it ASKED. Whether the process died is a separate
+    fact, and the roster is the one that reports it — so verify the outcome
+    rather than the call. The gap is not theoretical for a spawn path: a
+    session that ignores the signal, shuts down slowly, or outlives the request
+    leaves the caller free to start a second one beside it, with a clean exit
+    code certifying the result.
+
+    `live_rows`, so a row that lingers with a null pid counts as gone: the
+    roster naming no process is the roster saying nothing runs under it.
+
+    Raised by biblion2-main 2026-09-07 while reading the fix for the previous
+    version of this bug. Its supporting history is about `claude stop`'s exit
+    code being misread through a pipe (`${PIPESTATUS[0]}`, three recurrences)
+    — which is NOT this call's problem, since `subprocess.run` reads the real
+    code. The argument survives its own citation being inapplicable, and that
+    is why it is implemented: the fault here is trusting a request as a result.
+    """
+    waited = 0.0
+    while True:
+        rows = live_rows(agents_json(read_roster(a.__dict__.get("roster"))))
+        if not any(r.get("sessionId") == sid for r in rows):
+            return True
+        if waited >= STOP_SETTLE:
+            return False
+        time.sleep(STOP_POLL)
+        waited += STOP_POLL
+
+
 def cmd_recycle(a):
     """R13: end a member's session and start a fresh one on the same node.
 
@@ -2666,9 +2701,20 @@ def cmd_recycle(a):
         # to prevent, reached by the command that is supposed to maintain it.
         holders, unstopped = [], []
         for r in occ.get(n, []):
-            if r["sessionId"] == mine:
-                print(f"  skip {n:<12} that is this session"); continue
             label = f"{r.get('name') or '?'} [{r['sessionId'][:8]}]"
+            if r["sessionId"] == mine:
+                # Skipping the stop was right; carrying on to the spawn was not.
+                # A session cannot stop itself, so this arm ended with the
+                # caller still in the worktree and a second session started
+                # beside it — and `--force` made no difference, because the
+                # thing being forced was never the obstacle. `spawn` has always
+                # refused its own worktree; this is the same refusal.
+                print(f"  skip {n:<12} that is this session — it cannot stop itself, "
+                      f"and a second\n       {'':<12} session in this worktree is "
+                      f"what the claim lock exists to forbid.\n"
+                      f"       {'':<12} Recycling is the parent's, from the parent's "
+                      f"worktree.")
+                unstopped.append(label); continue
             if r.get("status") == "busy" and not a.force:
                 print(f"  skip {n:<12} {label} is busy — it may be mid-task or "
                       f"awaiting a reply")
@@ -2679,6 +2725,11 @@ def cmd_recycle(a):
                                      capture_output=True, text=True)
                 if res.returncode:
                     print(f"  FAILED {n:<12} {label}: {res.stderr.strip()[:80]}")
+                    unstopped.append(label); continue
+                if not stop_took(a, r["sessionId"]):
+                    print(f"  FAILED {n:<12} {label}: `claude stop` exited 0, but it "
+                          f"is still\n       {'':<12} running {STOP_SETTLE:g}s later. "
+                          f"Zero says it asked, not that it died.")
                     unstopped.append(label); continue
         if unstopped:
             # Starting one anyway is not a partial success, it is the worse

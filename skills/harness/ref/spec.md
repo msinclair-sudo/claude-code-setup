@@ -364,6 +364,12 @@ A brief exists **before** its mark: the lead writes it, then the member accepts.
 
 Enforced by git, not by agreement. `git worktree add` refuses a branch another worktree holds: `fatal: 'dev' is already used by worktree at …`
 
+**That sentence covers only half of it, and the uncovered half is the dangerous half.** Git refuses one *branch* in two *worktrees*. It has nothing to say about two *sessions* in one *worktree* — that is the claim lock's job, and the lock is a file, so it binds only the tools that consult it. Anything that starts a session without one can produce the state git is being credited with preventing.
+
+**And that failure is silent by construction.** Two sessions in one tree are both writing it, so one's `reset`, `checkout` or `stash` reaches the other's uncommitted work — and a destroyed uncommitted edit leaves no artefact at all: no error, no diff, and a clean `git status` that positively asserts there was never a change. This is not hypothetical and it is not the harness's own history: biblion2 added per-session worktrees on 2026-08-26 after edits vanished twice from one shared checkout, which is why that repository's CLAUDE.md leads with it.
+
+**Measured 2026-09-07: `harness recycle` could manufacture it.** Every refusal in its holder loop ended in `continue`, which continued the HOLDER loop rather than the node — so with a busy holder and no `--force` it printed `skip dev  busy`, then `recycled dev`, then `recycled 1`, and started a session beside the one it had just declined to stop. The command that maintains the lock was the one able to break it, and had the two sessions then collided the evidence would have been a clean tree. It was findable only because it printed the refusal and the contradiction in the same breath. Fixed — a refusal now abandons the node — but the general rule is the durable part: **any path that spawns must treat "I did not stop the holder" as fatal to that node, never as a note.**
+
 ### I2 — Nobody pushes
 
 The owner of a node integrates contributors into it. Pushing to a checked-out branch is rejected outright, so the invariant costs nothing to maintain while every node stays checked out.

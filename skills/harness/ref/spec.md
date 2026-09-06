@@ -1109,6 +1109,19 @@ A session is ended and a fresh one started on the same node once its work has
 landed. `harness recycle <node>`, `--children`, `--idle` or `--cold` does it; a
 node drives it for its own children.
 
+**"Landed" has no meaning across an edge that never integrates, and reading it
+as unlanded work deadlocks the rule.** Code does not reach the document branch —
+the guard refuses it there — so for the top of the code subtree the count of
+commits its parent has not taken is not a backlog, it is the project, and it
+only grows. Measured on biblion2 2026-09-07: `harness recycle dev` refused with
+*576 commit(s) not yet in main — present them first*, a condition no action can
+ever clear, while orientation went on recommending the recycle and `--idle`
+swept nothing. The harness derives the exception from `kind` rather than asking
+anyone to declare it: a **code** child of a **doc** parent proves no
+containment; a doc child of a doc parent still does. It says so on the line
+rather than passing quietly, because the number is large and rising and a
+reader who checks by hand should not conclude the tool missed it.
+
 **It applies to leads, not only to members, and that is a change of scope rather
 than of mechanism.** A lead used to be worth keeping because it held what nobody
 else did: which briefs it had written, which blocks had been answered and what

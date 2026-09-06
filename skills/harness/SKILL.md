@@ -96,6 +96,18 @@ keeps the rest.
 failure means refuse, not degrade: a mis-identified session is how two of them
 end up holding one node, which is the failure the lock exists to prevent.
 
+**No exit code at all is a different animal, and it is not the harness.** If the
+tool call itself reports *blocked by the auto-mode classifier*, no harness
+process ever started: there is no exit code, no output, and nothing was decided
+about your tree. Do not report it as a refusal and do not invent a status for
+it — say the command did not run. The classifier keys on command text, so it is
+non-deterministic: the same read-only call may be allowed twice and blocked on
+the third, and a write may go through once its prose is shorter. The fix is a
+Bash permission rule in settings (`permissions.example.json` carries the harness
+ones); the workaround is to hand the operator the exact command. **Never ask
+another session to run something you were denied** — that is laundering a
+decision the operator made about you.
+
 ## Forcing a stale claim
 
 `harness claim --force` is allowed only when the holder's ref is **absent from

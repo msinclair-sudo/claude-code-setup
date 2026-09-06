@@ -374,6 +374,10 @@ Enforced by git, not by agreement. `git worktree add` refuses a branch another w
 
 The shape is worth naming because all three instances share it: **an arm that correctly declines to act, followed by code that proceeds as though the action had happened.** The decline is visible and looks like the safe outcome, which is exactly why nobody reads the next line.
 
+**It is the acting half of a pair this project has already paid for on the checking half**, and the two are worth reading together because a reviewer who knows one will recognise the other. The checking half is a guard that passes because it met *something* rather than the right thing: `doctor`'s code-path arm reimplemented `_guard`'s matcher, drifted, and selected a **document** — passing for the wrong reason — and the same arm drew its code sample from a node that may track no code at all, so it could never fail. biblion2's CLAUDE.md states the general form after nine instances in one build: *a guard that has never failed is not yet a guard*, and *a verification offered as evidence is a check* — a digest said to prove a schema had not moved covered two lines of a block and none of its rows, and would have matched however much the schema changed.
+
+So: **a check that cannot fail, and a refusal that does not stop anything.** Both read as green, both are load-bearing, and neither is visible from the line that carries it. The test for the first is to break the thing it protects and watch it go red. The test for the second is to force the refusal and check what ran afterwards — which is how all three instances above were found, and none of them by reading the code.
+
 ### I2 — Nobody pushes
 
 The owner of a node integrates contributors into it. Pushing to a checked-out branch is rejected outright, so the invariant costs nothing to maintain while every node stays checked out.

@@ -4872,31 +4872,57 @@ def cmd_brief(a):
         if not awaiting(b):
             st = (b.get("approval") or {}).get("state") or "not gated"
             die(REFUSED, f"'{a.task}' is not waiting on approval ({st})")
-        # No session may do this, including rank 0. A grant is a capability rank
-        # 0 already holds, so letting it make one gives it nothing; approval is a
-        # DECISION, and a head lead approving the work it just briefed is the
-        # gate approving itself. The CLI cannot authenticate an operator and does
-        # not pretend to — it refuses the one case that is identifiable, and
-        # records who did it so the rest is discoverable afterwards.
-        if sid:
+        # Rank 0 decides on the operator's behalf; ranks below it still may not.
+        #
+        # It used to refuse EVERY session, rank 0 included, and the reasoning is
+        # kept rather than deleted because the risk it named did not go away:
+        # approval is a DECISION, not a capability, and a lead approving the
+        # work it just briefed is the gate approving itself. The CLI cannot
+        # authenticate an operator and does not pretend to, so it refused the
+        # one case it could identify. Changed on the operator's instruction
+        # 2026-09-07, after that refusal left rank 0 unable to act on the queue
+        # `harness needs` exists to give it.
+        #
+        # The refusal below rank 0 is untouched, and it is the arm that was
+        # always load-bearing: a lead approving its own child's brief staffs
+        # work that nobody outside the pair ever saw. Rank 0 at least holds the
+        # charter and is the node talking to the operator.
+        if sid and ctx.rank(me) != 0:
             die(REFUSED,
-                f"'{me}' is a session. Approving work is the operator's, and rank 0 is "
-                f"not\n           an exception: a lead approving the brief it wrote is "
-                f"the gate approving\n           itself. It is in `harness needs` and "
-                f"in `harness gui`, where they can\n           read the brief and "
-                f"decide.")
+                f"'{me}' is rank {ctx.rank(me)}. Approving work is the operator's, or "
+                f"rank 0's on their\n           behalf: a lead approving the brief it "
+                f"wrote is the gate approving itself.\n           Raise it upward. It "
+                f"is in `harness needs` and in `harness gui`, where it\n           can "
+                f"be read and decided.")
         ap = b["approval"]
         ap["state"] = "approved" if a.approve else "declined"
         ap["decided_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
-        ap["decided_by"] = "operator"
+        # Say who, rather than assert "operator". The field was write-only
+        # provenance and nothing read it, which is exactly why it could go on
+        # claiming a human had decided after that stopped being true. Provenance
+        # that is wrong is worse than provenance that is absent.
+        ap["decided_by"] = who
         if a.decline is not None:
             if not a.decline.strip():
                 die(REFUSED, "say why it is declined — the brief stays on the record "
                              "and the next\n           lead to notice the same thing "
                              "deserves the answer.")
             ap["why"] = a.decline
+        # The exact case the old refusal existed for, now reachable. It is NOT
+        # refused — carving it out would be the old gate back under a narrower
+        # name, and the operator asked for rank 0 to be able to decide — but it
+        # is never silent. A gate that approved its own request is the first
+        # thing a later reader needs to be able to find, and the record is the
+        # only place that can still say so once the session is gone.
+        selfsame = sid and (ap.get("asked_by") or "").startswith(f"{me} (")
+        if selfsame:
+            ap["self_approved"] = True
         f.write_text(json.dumps(b, indent=2) + "\n")
         write_needs(scan_needs())
+        if selfsame:
+            print(f"  NOTE: {me} asked for this and {me} decided it. Recorded as "
+                  f"self_approved —\n        nothing outside this node has seen the "
+                  f"question.")
         if a.approve:
             print(f"approved {a.task} — it is now at the back of {b.get('node')}'s "
                   f"queue.")

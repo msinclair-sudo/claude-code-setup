@@ -433,9 +433,11 @@ harness finding pixel-depth --drop "why it is not worth a session"
 
 **A brief written from a finding is gated on the operator.** It is written in
 full, everyone can read it, and it is in no queue — `harness mark` refuses it and
-`recycle` will not start on it — until the operator approves. **You cannot
-approve it yourself, and neither can rank 0**: a lead approving the brief it just
-wrote is the gate approving itself.
+`recycle` will not start on it — until it is approved. **You cannot approve it
+yourself**: a lead approving the brief it just wrote is the gate approving
+itself. Raise it upward instead; it appears in `harness needs` and in the
+viewer. The operator decides, and since 2026-09-07 so may rank 0 on their
+behalf — but not you, and not for your own children.
 
 Nobody is idle over it. The lane that raised the finding carried on with its
 queue, which is what makes gating safe.

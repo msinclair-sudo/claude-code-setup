@@ -173,9 +173,30 @@ it when the task that needed it closes.
 
 ## Being told rather than looking
 
-`harness needs` is the operator's queue, not yours to clear — but you will often
-be the one who notices it is not empty. It runs from anywhere, including outside
-a repository, and prints the `grant` and `recycle` lines already written out.
+`harness needs` is the operator's queue, and since 2026-09-07 you may act on the
+approvals in it on their behalf. It runs from anywhere, including outside a
+repository, and prints the `grant` and `recycle` lines already written out.
+
+```bash
+harness brief <task> --approve            # yours now; it was refused before
+harness brief <task> --decline "why"      # the why is required
+```
+
+**It was refused to every session including you, and the reason still stands
+even though the rule changed.** Approval is a decision about whether work nobody
+asked for is worth a session, and a lead approving the brief it wrote is the
+gate approving itself. What the old rule cost was a tree that stopped: this
+queue would name pending approvals you could read and not one you could move, so
+the whole subtree waited on a human who was not at the keyboard.
+
+So decide, and decide sparingly. **Declining on the record is a first-class
+outcome and costs one line.** Two things you cannot do anything about, by
+design: the CLI cannot tell you apart from the operator except in the record, and
+approving a brief *you* asked for records `self_approved` and says so on the
+line. That is not a warning you can clear — it is there so a later reader can
+find the decisions nothing outside this node ever saw. When one matters, put it
+to the operator instead; they are one message away and the brief is already
+readable in the viewer.
 
 Nothing polls, because nothing is running to poll (`R4`). A block notifies at the
 moment it is recorded or not at all, through three surfaces: the operator's own

@@ -369,10 +369,14 @@ RULES = {
                 "doing the write instead would be routing your decision around "
                 "rather than making it, and the CLI refuses that by rank."},
     "approval": {
-        "title": "why an approval is yours and nobody else's",
-        "text": "Nobody asked for this, so no session in the tree may put a "
-                "session on it. It is not queued, harness mark refuses it, and "
-                "nothing is idle waiting — the lane carried on with its queue."},
+        "title": "why an approval is yours, and who else may make it",
+        "text": "Nobody asked for this, so the lane that noticed it may not put "
+                "a session on it. It is not queued, harness mark refuses it, and "
+                "nothing is idle waiting — the lane carried on with its queue. "
+                "Every rank below rank 0 is refused; rank 0 may decide on your "
+                "behalf, and the record names whoever did. If rank 0 approves "
+                "something rank 0 asked for, that is marked self_approved, "
+                "which is the one case worth reading twice."},
     "came back": {
         "title": "why something you answered is here again",
         "text": "Answering a block used to remove it from every surface you "

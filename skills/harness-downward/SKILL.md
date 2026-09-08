@@ -323,9 +323,18 @@ pieces afterwards — the same information delivered in pieces costs 39%, and th
 penalty lands at two pieces.
 
 **This is a gate, not advice.** `harness mark` refuses a task with no brief and
-has no override, so a child you have not briefed cannot open one. `spawn` and
-`recycle` warn you when a node has nothing briefed, which is your cue to write
-it rather than let a fresh session start and ask.
+has no override, so a child you have not briefed cannot open one. `spawn` does
+not start a node with nothing briefed either — it skips it and names both
+remedies, because it used to warn and start it in the same output, and a warning
+you read after the session has launched is a caption. Write the brief, or say
+`--empty` and mean it.
+
+**`spawn` starts your children, not the tree.** Bare `spawn` used to take every
+node with a worktree regardless of who ran it, so a lead could start a member
+under a sibling lead — it happened, to a node that had nothing briefed. It is
+now scoped to your own children, and naming somebody else's is refused with the
+name of the node that owns it. The operator, who is not a node, still drives the
+whole tree.
 
 **A brief is a plan, not a record.** Rewriting it replaces the earlier text and
 that is correct; a working document that behaves like provenance is one nobody

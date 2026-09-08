@@ -564,10 +564,18 @@ def _whoami(a):
         deleg = [x for x in delegated(ctx, node) if not x["closed_at"]]
         ready = [x for x in deleg if x["ready"]]
         if ready:
-            print(f"close    {len(ready)} segment(s) you split are finished — every "
-                  f"part settled:")
+            # "every part settled" read as "every part done", and `settled`
+            # counts a SUPERSEDED part -- terminal, never worked. A segment
+            # whose parts were all abandoned rendered identically to one whose
+            # parts were all delivered, and the difference is the whole question
+            # the close is answering.
+            print(f"close    {len(ready)} segment(s) you split have no part still "
+                  f"outstanding:")
             for x in ready:
-                print(f"         harness mark {x['task']} --close")
+                _g = x.get("gone") or 0
+                _tail = (f"   — but {_g} of {len(x['children'])} part(s) were "
+                         f"superseded, not done" if _g else "")
+                print(f"         harness mark {x['task']} --close{_tail}")
         if len(deleg) - len(ready):
             print(f"split    {len(deleg) - len(ready)} more still out with your "
                   f"children — harness queue {node}")
@@ -702,10 +710,33 @@ def _whoami(a):
             age = time.time() - then
             if age > STALLED_SIGNOFF:
                 grand.setdefault(lead, []).append((mark_label(r, t), n, age))
+        _marks = open_marks(ctx)
         for lead, items in sorted(grand.items()):
             names = ", ".join(f"{t} ({n}, {human_age(age)})" for t, n, age in items)
             print(f"unsigned {names}")
-            print(f"         {lead} has not signed off. harness recycle {lead}")
+            # `harness recycle {lead}` was printed here unconditionally, which is
+            # both the wrong remedy and a destructive one. Wrong, because a
+            # sign-off is owed after the lead's last turn and a fresh session
+            # orients and stops with the same debt -- observed twice on
+            # 2026-09-08 before the operator prompted it by hand. Destructive,
+            # because a lead holding an unpresented mark loses that work, and
+            # the line fired without looking.
+            _addr, _ = lead_address(ctx, lead)
+            _holding = [t for t, r in _marks.items()
+                        if r.get("_node") == lead and not r.get("_presented_at")]
+            if _addr:
+                print(f"         {lead} has not signed off and nothing will tell it — "
+                      f"the debt was")
+                print(f"         created after its last turn. It is running as "
+                      f"'{_addr}': message it.")
+            elif _holding:
+                print(f"         {lead} is not running and left '{_holding[0]}' open "
+                      f"and unpresented.")
+                print(f"         Recycling discards that — read it first:  "
+                      f"harness queue {lead}")
+            else:
+                print(f"         {lead} is not running and holds nothing open:  "
+                      f"harness recycle {lead}")
     except Exception:
         pass
     try:
@@ -1216,7 +1247,7 @@ def cmd_spawn(a):
     """
     ctx = Ctx(); ctx.require_enrolled()
     idx = load_index(ctx, refresh=True)
-    rows = live_rows(agents_json())
+    rows = live_rows(agents_json(read_roster(a.roster)))
     by_wt = idx["byWorktree"]
     occupied = {}
     for r in rows:
@@ -1229,7 +1260,27 @@ def cmd_spawn(a):
     # they had just stopped, and could not start a replacement from the one place
     # it is natural to try. When there is no session id there is no this-session.
     here = idx["byBranch"].get(ctx.branch) if os.environ.get("CLAUDE_CODE_SESSION_ID") else None
-    targets = a.node or sorted(n for n, sp in idx["nodes"].items() if sp["worktree"])
+    # A node starts its OWN children and nobody else's. There was no parentage
+    # test here at all -- bare `spawn` took every node in the tree with a
+    # worktree -- so a rank-1 lead ran it and started a member two ranks away
+    # under a sibling lead. Measured 2026-09-08: dev ran bare `spawn` and
+    # started panel_1, which is panel's child and has never been dev's business.
+    #
+    # Every other downward command is already gated this way; `brief --for`
+    # refuses a node that is not yours. Spawn is the one that starts a SESSION,
+    # so it is where the gate mattered most and it was the one that had none.
+    #
+    # `here` is the caller's node, and it is None exactly when there is no
+    # session id -- the operator, who is not a node, legitimately drives the
+    # whole tree, and is the one caller that should keep the old behaviour.
+    mine = set(ctx.children(here)) if here else None
+    if a.node:
+        targets = a.node
+    elif mine is not None:
+        targets = sorted(n for n in mine
+                         if (idx["nodes"].get(n) or {}).get("worktree"))
+    else:
+        targets = sorted(n for n, sp in idx["nodes"].items() if sp["worktree"])
     launched = skipped = 0
     for n in targets:
         sp = idx["nodes"].get(n)
@@ -1240,20 +1291,37 @@ def cmd_spawn(a):
         if n == here:
             print(f"  skip {n:<12} this session — it cannot spawn into its own worktree")
             skipped += 1; continue
+        if mine is not None and n not in mine:
+            _p = (ctx.tree["nodes"].get(n) or {}).get("parent")
+            print(f"  skip {n:<12} not your child — "
+                  + (f"{_p} starts it, and only {_p} knows what it is for"
+                     if _p else "it is rank 0; the operator starts it"))
+            skipped += 1; continue
         if n in occupied:
             who = occupied[n][0].get("name") or "?"
             print(f"  skip {n:<12} occupied by {who}"); skipped += 1; continue
         name = f"{idx['project']}-{n}"
         model, effort = assignment_for(ctx, n)
         model, effort = a.model or model, a.effort or effort
-        # Not a refusal: standing up an empty node is legitimate, and a node
-        # can be occupied with nothing to do (that is the `unassigned` state).
-        # But a lead should learn its child has nothing to start on BEFORE it
-        # spends a session finding out and asking.
+        # This was a note printed in the same breath as the spawn it was warning
+        # about, which is a caption, not a warning: the session is already
+        # starting by the time anyone reads it. The spec states the rule for the
+        # holder check and states it generally -- any path that spawns treats a
+        # doubt about a node as fatal to THAT NODE, never as a note -- and this
+        # was the same command family with the same shape, left standing.
+        #
+        # Standing up an empty node stays legitimate, and it keeps a command.
+        # What it no longer is, is the default outcome of a bare `spawn` that
+        # meant "start my lanes on their work".
         nq = [b for b in queue(ctx, n) if not b.get("coupled_to")]
+        if not nq and not a.empty:
+            print(f"  skip {n:<12} nothing briefed — it would have no task to open.")
+            print(f"  {'':<17} harness brief <task> --for {n} --write \"...\"   "
+                  f"then spawn it")
+            print(f"  {'':<17} or start it empty on purpose:  harness spawn {n} --empty")
+            skipped += 1; continue
         if not nq:
-            print(f"  note {n:<12} nothing briefed — it will have no task to open. "
-                  f"harness brief <task> --for {n} --write \"...\"")
+            print(f"  note {n:<12} nothing briefed — starting it empty, as asked.")
         else:
             print(f"       {n:<12} starts on {nq[0]['task']}"
                   + (f", then {len(nq) - 1} more" if len(nq) > 1 else ""))
@@ -7613,8 +7681,11 @@ def main():
     st.add_argument("--children", action="store_true", help="every child of this node")
     st.add_argument("--dry-run", action="store_true")
     sp = add("spawn", cmd_spawn)
-    sp.add_argument("node", nargs="*", help="nodes to spawn (default: all unoccupied)")
+    sp.add_argument("node", nargs="*",
+                    help="nodes to spawn (default: your unoccupied children)")
     sp.add_argument("--dry-run", action="store_true")
+    sp.add_argument("--empty", action="store_true",
+                    help="start a node that has nothing briefed (otherwise skipped)")
     sp.add_argument("--roster", metavar="FILE")
     sp.add_argument("--model", help="override the model for every node spawned")
     sp.add_argument("--effort", choices=list(EFFORTS),

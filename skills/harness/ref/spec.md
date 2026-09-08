@@ -258,7 +258,7 @@ No command can close this from below: checked against the CLI 2026-09-08, `claud
 
 Three arms, each refusing for its own reason: **no brief at all** (with the remedy addressed to whoever is standing there — write it, if rank 0; ask your lead, if not); **a brief for another node**, since a task belongs to one node; and **an empty brief**, because a task nobody can describe is not ready to issue.
 
-The gate sits at `mark` rather than at `spawn`, because the requirement is on the *task*, not on the session — a node may legitimately be occupied with nothing to do. But `spawn` and `recycle` **warn** when a node has nothing briefed, so a lead learns its child will have no task to open before it spends a session finding out and asking. That warning is the round trip this gate exists to prevent, caught one step earlier.
+The gate sits at `mark` rather than at `spawn`, because the requirement is on the *task*, not on the session — a node may legitimately be occupied with nothing to do. But a node with nothing briefed is not started: `spawn` **skips** it and names both remedies, and `--empty` stands one up on purpose. It warned and started it anyway until 2026-09-08, which is a caption rather than a warning — the session is already launching by the time the line is read. Standing up an empty node stays legitimate; what it stopped being is the silent outcome of a bare `spawn` that meant *start my lanes on their work*.
 
 **The brief is written by the lead, and `harness brief` enforces that.** A lead writes the briefs of its **children**; rank 0 writes its **own**, because there is nobody above it; and no node writes its own anywhere else. A node that sets its own task is the failure the tree exists to prevent, and it is also this transaction — everything the lead knows goes down at once, *from the lead*.
 
@@ -355,7 +355,7 @@ A brief exists **before** its mark: the lead writes it, then the member accepts.
 **The one case where asking is right has a correct target, and it is never the operator.** A node with an empty queue and nothing open says so to its **lead** and stops. The lead is told the same gap from its own side at its next orientation, so it is already a record before anyone speaks. The operator could not answer it without going through the lead in any case.
 
 **Enforcement** None, and there cannot be. A CLI cannot make a session begin. What it can do is remove every ambiguity the question could be about, and say the thing at the moment the question would otherwise be asked. If it is still asked, that is a prompt failure and not a design gap.
-**Fails when** The queue is empty and orientation says so. A node with nothing briefed asking what to do is correct; that question belongs to its lead, and `spawn` and `recycle` both warn before it can happen.
+**Fails when** The queue is empty and orientation says so. A node with nothing briefed asking what to do is correct; that question belongs to its lead, and `spawn` does not start the node that would ask it.
 
 ### T16 — A finding crosses one rank, and becomes work only with approval
 
@@ -415,7 +415,9 @@ Enforced by git, not by agreement. `git worktree add` refuses a branch another w
 
 **And that failure is silent by construction.** Two sessions in one tree are both writing it, so one's `reset`, `checkout` or `stash` reaches the other's uncommitted work — and a destroyed uncommitted edit leaves no artefact at all: no error, no diff, and a clean `git status` that positively asserts there was never a change. This is not hypothetical and it is not the harness's own history: biblion2 added per-session worktrees on 2026-08-26 after edits vanished twice from one shared checkout, which is why that repository's CLAUDE.md leads with it.
 
-**Measured 2026-09-07: `harness recycle` could manufacture it.** Every refusal in its holder loop ended in `continue`, which continued the HOLDER loop rather than the node — so with a busy holder and no `--force` it printed `skip dev  busy`, then `recycled dev`, then `recycled 1`, and started a session beside the one it had just declined to stop. The command that maintains the lock was the one able to break it, and had the two sessions then collided the evidence would have been a clean tree. It was findable only because it printed the refusal and the contradiction in the same breath. Fixed — a refusal now abandons the node — but the general rule is the durable part: **any path that spawns must treat "I did not stop the holder" as fatal to that node, never as a note.**
+**Measured 2026-09-07: `harness recycle` could manufacture it.** Every refusal in its holder loop ended in `continue`, which continued the HOLDER loop rather than the node — so with a busy holder and no `--force` it printed `skip dev  busy`, then `recycled dev`, then `recycled 1`, and started a session beside the one it had just declined to stop. The command that maintains the lock was the one able to break it, and had the two sessions then collided the evidence would have been a clean tree. It was findable only because it printed the refusal and the contradiction in the same breath. Fixed — a refusal now abandons the node — but the general rule is the durable part: **any path that spawns must treat a doubt about a node as fatal to that node, never as a note.**
+
+**Stated once for the holder check, and left unapplied everywhere else in the same command.** `spawn` went on printing *nothing briefed — it will have no task to open* in the same output as the spawn it described, which is the identical shape one refusal to the left. A warning emitted in the same breath as the action it warns about is read afterwards, and by then the only question left is what to do about it. Three instances were found in one evening — this one, a `--close` prompt claiming *every part settled* for a segment whose parts were superseded rather than done, and an `unsigned` line offering `harness recycle <lead>` without looking at whether that lead held an unpresented mark. The test is mechanical: if a line describes a reason not to do something, the something must not already be happening on the next line.
 
 **And that rule needs two qualifications, both found by biblion2-main reading the fix rather than the code.** First, *"I stopped the holder"* has to be **measured, not requested**: `claude stop` exiting 0 says it asked, and whether the process died is a separate fact that only the roster reports. A session that ignores the signal or shuts down slowly left the caller free to start a second one beside it, with a clean exit code certifying the result. `recycle` now waits for the holder to leave the roster and treats exit 0 with a surviving session as a failed stop. Second, **the caller is a holder too**: recycling the node you are standing in printed *that is this session*, correctly declined to stop itself, and then spawned — so the one participant guaranteed to still be there was the one exempted from the check. `--force` changed nothing there, because the thing being forced was never the obstacle.
 
@@ -908,10 +910,23 @@ One human starts the rank-0 session. It builds the tree and launches the rest:
 
 ```
 harness spawn [--dry-run]        one `claude --bg -n <project>-<node>` per
-                                 unoccupied node, in that node's worktree
+                                 unoccupied CHILD of the caller
+harness spawn <node> --empty     start a node that has nothing briefed
 harness stop  <node> ...         end those sessions
 harness stop  --children         reap a whole layer
 ```
+
+**A node starts its own children and nobody else's, and until 2026-09-08 it
+could start anything.** Bare `spawn` targeted every node in the tree with a
+worktree, with no test of who was asking — so a rank-1 lead ran it and started a
+member two ranks away under a sibling lead. Measured: `dev` ran bare `spawn` and
+started `panel_1`, which is `panel`'s child, has never been `dev`'s business,
+and had nothing briefed for it. Every other downward command was already gated
+this way — `brief --for` refuses a node that is not yours — and `spawn` is the
+one that starts a *session*, so it is where the gate mattered most and it was
+the one that had none. The operator is not a node, legitimately drives the whole
+tree, and is exactly the caller with no session id; that is the one case that
+keeps the old reach.
 
 Each spawned session is a real session with its own id, lock and row in the
 session table. It is told nothing about where it is: it derives its position from

@@ -372,6 +372,19 @@ if [[ "$INSTALL_BIBLION" == true ]]; then
     fi
 fi
 
+# ── Install hooks ─────────────────────────────────────────────────────────────
+# Registered further down, in the settings.json merge. Copied here so the file
+# exists before anything points at it: a registered hook whose script is missing
+# fails on every Bash call in every session on the machine.
+
+if [[ -d "$SCRIPT_DIR/hooks" ]]; then
+    echo "Installing hooks..."
+    mkdir -p "$HOME/.claude/hooks"
+    cp "$SCRIPT_DIR/hooks/"*.py "$HOME/.claude/hooks/"
+    chmod +x "$HOME/.claude/hooks/"*.py
+    echo "  Installed hooks to $HOME/.claude/hooks/"
+fi
+
 # ── Install statusline ────────────────────────────────────────────────────────
 
 STATUSLINE_SCRIPT="$HOME/.claude/statusline.sh"
@@ -424,7 +437,18 @@ if repo_dir not in dirs:
     dirs.append(repo_dir)
 settings["additionalDirectories"] = dirs
 
-# Hooks — strip out any previously-registered strip_cd PreToolUse hook
+# Hooks — register the strip_cd PreToolUse guard, replacing any earlier copy.
+#
+# It was removed on 2026-06-18 as collateral in the vault-MCP retirement rather
+# than on its own merits, and the gap it left was measured on 2026-09-08: a
+# background lane ran `cd "/abs/path" && harness note ...`, which matches no
+# allow rule despite BOTH halves being allowed, so it asked for permission in a
+# session with no terminal on it and stopped there for the best part of an hour.
+#
+# Rewritten to REFUSE rather than strip, because a PreToolUse hook cannot alter
+# tool input — only allow, deny or ask. That turns out to be the better tool:
+# an `ask` waits for a human, a `deny` goes back to the model, which reissues
+# the command without the prefix and keeps moving with nobody at a keyboard.
 hooks = settings.get("hooks", {})
 pre_tool = hooks.get("PreToolUse", [])
 cleaned_pre_tool = []
@@ -435,10 +459,12 @@ for entry in pre_tool:
     ]
     if entry["hooks"]:
         cleaned_pre_tool.append(entry)
-if cleaned_pre_tool:
-    hooks["PreToolUse"] = cleaned_pre_tool
-elif "PreToolUse" in hooks:
-    del hooks["PreToolUse"]
+cleaned_pre_tool.append({
+    "matcher": "Bash",
+    "hooks": [{"type": "command", "timeout": 5,
+               "command": f"python3 {os.path.expanduser('~/.claude/hooks/strip_cd.py')}"}],
+})
+hooks["PreToolUse"] = cleaned_pre_tool
 if hooks:
     settings["hooks"] = hooks
 elif "hooks" in settings:

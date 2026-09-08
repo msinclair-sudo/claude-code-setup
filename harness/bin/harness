@@ -1314,13 +1314,28 @@ def cmd_spawn(a):
         # What it no longer is, is the default outcome of a bare `spawn` that
         # meant "start my lanes on their work".
         nq = [b for b in queue(ctx, n) if not b.get("coupled_to")]
-        if not nq and not a.empty:
+        # Rank 0 is exempt, and the gate was wrong about it twice over. The
+        # refusal exists to stop a node starting with nothing to open and then
+        # asking its lead what to do; rank 0 has no lead, and writing the queue
+        # is its job rather than a precondition of it. A fresh rank-0 session
+        # reads the charter and briefs the tree, so requiring a brief first asks
+        # the operator to do rank 0's work before rank 0 exists to do it -- and
+        # `spawn main` is the ordinary way to start a project. The remedy it
+        # printed was wrong too: rank 0's self-write is `harness brief <task>
+        # --write`, with no `--for`, the only self-write in the tree.
+        try:
+            _rank0 = ctx.rank(n) == 0
+        except Exception:
+            _rank0 = False                 # unresolvable rank: keep the gate
+        if not nq and not a.empty and not _rank0:
             print(f"  skip {n:<12} nothing briefed — it would have no task to open.")
             print(f"  {'':<17} harness brief <task> --for {n} --write \"...\"   "
                   f"then spawn it")
             print(f"  {'':<17} or start it empty on purpose:  harness spawn {n} --empty")
             skipped += 1; continue
-        if not nq:
+        if not nq and _rank0:
+            print(f"       {n:<12} nothing queued — it writes its own briefs")
+        elif not nq:
             print(f"  note {n:<12} nothing briefed — starting it empty, as asked.")
         else:
             print(f"       {n:<12} starts on {nq[0]['task']}"

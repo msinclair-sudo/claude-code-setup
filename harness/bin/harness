@@ -6253,10 +6253,17 @@ def cmd_needs(a):
             if r.get("from_finding"):
                 print(f"  from     '{r['from_finding']}', something a lane noticed "
                       f"while doing something else")
-            print()
-            for line in (r.get("why") or "(no text)").splitlines()[:14]:
-                print(f"      {line}")
-            print()
+            # The first line and the size, not the brief. Fourteen lines of
+            # somebody else's plan is a document in a queue entry, and this
+            # output reaches a session's context when a session runs the
+            # command. Reading the task is still the right thing before
+            # deciding -- it is one command away and named here.
+            _txt = (r.get("why") or "").strip().splitlines()
+            print(f"  gist     {_txt[0][:88] if _txt else '(no text)'}")
+            if len(_txt) > 1:
+                print(f"  read it  (cd {shlex.quote(r.get('_repo') or '.')} && "
+                      f"harness brief {shlex.quote(r.get('task') or '')})"
+                      f"   [{len(_txt)} lines]")
             repo = r.get("_repo") or "."
             print(f"  approve  (cd {shlex.quote(repo)} && harness brief "
                   f"{shlex.quote(r.get('task') or '')} --approve)")

@@ -316,7 +316,12 @@ if [[ -d "$SCRIPT_DIR/harness" ]]; then
     mkdir -p "$HOME/.claude/harness/bin"
     # Every executable in bin/, not just the CLI: harness-gui is a second one,
     # and naming them individually is how the next one gets forgotten.
-    cp "$SCRIPT_DIR/harness/bin/"* "$HOME/.claude/harness/bin/"
+    # Files only. A stray __pycache__/ from a py_compile or an in-place import
+    # makes this glob hand cp a directory, and cp without -r fails the whole
+    # install under set -e -- twice now, both times leaving the skills updated
+    # and the runtime not, which is the worst of the three outcomes.
+    find "$SCRIPT_DIR/harness/bin/" -maxdepth 1 -type f \
+        -exec cp {} "$HOME/.claude/harness/bin/" \;
     chmod +x "$HOME/.claude/harness/bin/"*
     rm -rf "$HOME/.claude/harness/templates"
     cp -r "$SCRIPT_DIR/harness/templates" "$HOME/.claude/harness/templates"

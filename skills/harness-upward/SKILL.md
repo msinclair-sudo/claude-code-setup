@@ -242,7 +242,7 @@ open     specter2-embed — finishing it means presenting UP to main, not to
            harness mark specter2-embed --done      then main closes it
 ```
 
-**Presenting is your last act. Then stop.**
+**Presenting is your last act — and telling your lead is part of it.**
 
 This one is enforced, because it is the failure that keeps happening: a member
 finishes, ends its turn, and the work is invisible to everyone above it. Two
@@ -282,8 +282,21 @@ when it applies.
 **You present; your lead closes.** `--done` records what the task cost and that
 you believe it finished. It does **not** close it — `--close` refuses you by
 rank, and that is the same rule as `T4`: you cannot check your own work, so you
-do not sign it off either. Your lead is told at its next orientation that
-something is waiting.
+do not sign it off either.
+
+**Then tell it. Presenting is not finished until your lead knows.** The line
+that used to sit here said your lead is told at its next orientation, and that
+was wrong in the one case that matters. Orientation fires when your lead takes
+a turn; presenting gives it no reason to take one. Measured on a live tree
+2026-09-08: a lead stopped at 11:21, its two members presented at 11:25 and
+11:44, and neither the Stop hook nor orientation could fire for either — the
+condition became true after the last moment anything could test it. Both sat
+unsigned until the operator intervened by hand, twenty-eight minutes later.
+
+So the record is inert, and you are the only one who can fix that, because you
+are mid-turn and your lead is not. `--done` prints the message to send and the
+name to send it to. Send it before you stop. If your lead is not running it says
+so instead, and then there is nothing to send.
 
 Say what you are presenting: `--done --note "..."` appends to the task record,
 so the sentence that explains the work outlives the session that did it.

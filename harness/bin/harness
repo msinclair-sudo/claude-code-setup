@@ -2332,6 +2332,53 @@ def cmd_hook_stop(a):
         return
 
 
+def lead_address(ctx, parent):
+    """The parent's live session, as (name, session_id) -- or (None, None).
+
+    Presenting writes a record; it does not reach anybody. The parent learns of
+    it only when it next takes a turn, and the debt is created AFTER the turn it
+    would have been told on. Measured on a live tree 2026-09-08: dev stopped at
+    11:21:10, its children presented at 11:25:47 and 11:44:14, and so neither
+    the Stop hook nor the orientation hook could fire for either one -- there
+    was no turn left to fire on. Both sat unsigned until the operator prompted
+    rank 0 by hand, twenty-eight minutes later. That was the third time in one
+    evening, and every time it was read as a lead that forgot.
+
+    It is not forgetting. The ageing thresholds guarantee it: a presentation is
+    only owed after STALLED_SIGNOFF, by which point the lead has been standing
+    still for at least that long, so the condition becomes true strictly after
+    the last moment anything could have tested it.
+
+    Nothing in a shell can wake a stopped session -- checked against the CLI on
+    2026-09-08, `claude` offers attach, logs, stop, rm and respawn, and not one
+    of them delivers a prompt. The only transport into a running session is a
+    message from another session, which means it must be sent by somebody who is
+    mid-turn. The child that has just presented IS mid-turn. That is the whole
+    reason this is said here and not anywhere upward of here.
+    """
+    if not parent:
+        return None, None
+    try:
+        h = json.loads(ctx.lock_path(parent).read_text())
+    except Exception:
+        return None, None                  # no claim: nothing is holding it
+    sid, name = h.get("session_id"), h.get("name")
+    if not sid:
+        return None, None
+    try:
+        live = {r.get("sessionId"): r for r in live_rows(agents_json())}
+    except Exception:
+        # An unreadable roster is UNKNOWN, not empty -- the same call
+        # claim_conflict makes, and for the same reason. Naming a lead that may
+        # already be gone costs one wasted message; staying silent costs the
+        # sign-off this exists to deliver.
+        return name, sid
+    row = live.get(sid)
+    if not row:
+        return None, None                  # claimed by a session that has exited
+    return (row.get("name") or name), sid
+
+
 def claim_conflict(ctx, node):
     """Is this node's claim held by a DIFFERENT live session?
 
@@ -2485,6 +2532,23 @@ def cmd_mark(a):
         print(f"  It is NOT closed. {parent or 'your lead'} signs it off: "
               f"harness mark {a.task} --close")
         print(f"  You cannot close your own work — you cannot check it either (T4).")
+        # Nothing above this line reaches anybody. See lead_address: the record
+        # is inert until the lead takes a turn, and the lead has no reason to
+        # take one. So the last act of presenting is to say so, out loud, to a
+        # session that is running right now.
+        _lead, _lsid = lead_address(ctx, parent)
+        if _lead:
+            print(f"\n  NOT DONE YET — tell {parent}. It is running as '{_lead}'.")
+            print(f"  Send this before you stop, in this turn:")
+            print(f"    SendMessage(to: \"{_lead}\", message: \"{node}: '{a.task}' is "
+                  f"presented at {rec['_presented_sha'][:8]} and waiting on your "
+                  f"sign-off — harness mark {a.task} --close\")")
+            print(f"  The record alone does not reach it. It is read when {parent} next")
+            print(f"  takes a turn, and presenting gives it no reason to take one — which")
+            print(f"  is exactly how finished work sits invisible for half an hour.")
+        elif parent:
+            print(f"\n  {parent} is not running, so there is nobody to tell. It is on the")
+            print(f"  record and the operator can see it:  harness needs")
         # What happens to this session next, said here rather than left to be
         # worked out. A member that has presented and does not know whether it is
         # continuing will fill the gap, and what it fills it with is a question.

@@ -23,6 +23,45 @@ A request arrives as an exact old→new pair with a rationale and a pinned base.
 - The pair has been reviewed once per rank on the way up. You are the last
   reviewer, not the first.
 
+## Asking the operator for a ruling (`T17`)
+
+You are the only node that may. A lead with a question asks its lead (`T12`);
+reaching past that rank is refused.
+
+```bash
+harness decision embed-model \
+  --ask     "Re-embed the corpus on the new model, or keep both?" \
+  --turns   "dev_1's similarity work and the coverage report" \
+  --options "re-embed | keep both | defer to next cycle" \
+  --gates   similarity-rework
+```
+
+**`--turns` is required** and it is the only required prose argument in the CLI.
+What is waiting on the answer is the one thing the operator cannot work out from
+the question, and it is how yours gets ordered against everything else asking for
+them. `--options` is not required, but name them when you can: an open question
+costs them a paragraph where a shortlist costs a word.
+
+**Do not use a block for this.** A block is *I cannot reach X*. It renders to the
+operator as a grant, unconditionally, and offering them `harness grant` for a
+question about scope is asking them to answer a different question. Before this
+existed, rank 0 wrote its questions into its own away-summary, where exactly
+nobody read them.
+
+**An answer is not a task.** Recording their ruling leaves the decision open on
+purpose — `T13` — and it closes when you say what work it produced:
+
+```bash
+harness blocked embed-model --task similarity-rework   # or --no-task "why not"
+```
+
+**You may answer your own.** It is recorded `self_answered` and said on every
+surface, and it is not refused, because a queue that waits on an absent operator
+is the overnight stall. Use it when you are confident and say so in your report.
+
+**`--gates` stalls the lanes it names, and nothing else.** Use it only where
+doing the work twice is worse than waiting.
+
 ## Rulings (`T9`)
 
 One rulings file. Leads submit; you write. A ruling *is* a document change and

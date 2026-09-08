@@ -377,6 +377,28 @@ A brief exists **before** its mark: the lead writes it, then the member accepts.
 **Enforcement** `--how` required; the addressed lead only; every rank below 0 refused at `--approve`, with rank 0's own approval recorded `self_approved` and said on the line; `mark` and the queue both exclude a gated or declined brief. It reaches the operator through `harness needs` and the viewer's attention panel, carrying the brief's own text — deciding whether a task is worth a session means reading the task.
 **Fails when** A lead turns every finding into a gated brief. The queue is the operator's attention and it is finite; declining on the record is a first-class outcome and costs one line.
 
+### T17 — Rank 0 asks, and the answer becomes work
+
+**Direction** upward, out of the tree, to the operator; the answer returns as a task.
+**Rule** Rank 0 raises a **decision** when it needs a ruling the tree may not make for itself. It carries the question, what turns on it, and — when there is a shortlist — the candidate answers.
+
+**The channel existed and was the wrong shape.** Rank 0's only route out was [[#I11 — Reach beyond the worktree is granted at enrolment]]'s block, whose own help says what it is for — *a path, a command, a permission* — and which renders to the operator as a grant **unconditionally**, in `harness needs` and in the viewer alike. So a question about scope arrived dressed as a permission request, offering a `harness grant` command that made no sense for it. What actually happened instead was worse and is the reason this exists: `biblion2-main` wrote *"Next action is yours: run `claude attach …`"* into its own away-summary, where it was found by reading the transcript by hand. **The most expensive thing rank 0 knew had nowhere to go.**
+
+**One store, two kinds.** A decision is a block record with `kind: "decision"`, in the same directory. `answered()`, `settle()`, `decided_blocks()`, `in_flight()`, `stamp_consequence()`, `unread_block_comments()`, `--task`, `--no-task`, `--resolve` and `harness brief --from-block` all work on it unchanged; only the rendering forks, and the rendering was the defect. A second store would have put [[#T13 — Unblocking is a task]]'s *answered is not closed* in two places, which is the thing `task_state` refuses in one line: every state is read off records that already exist, with no second store to fall out of step.
+
+**Rank 0 only, and a lead that tries is pointed at T12.** A lead with a question asks its lead. The gate refuses a session below rank 0 and passes a bare shell, because the CLI cannot authenticate an operator and does not pretend to ([[#I11 — Reach beyond the worktree is granted at enrolment]]).
+
+**`--turns` is required, and it is the only required prose argument in the CLI.** A block names a thing you cannot reach, which is legible on its own; a question is not. What is waiting on the answer is the one thing the operator cannot work out from the question, and it is how this gets ordered against everything else asking for them. `--options` is **not** required — some questions have no shortlist, and refusing those would push them back into a transcript, which is what this exists to stop — but its absence is said on the line, because an open question costs a paragraph where a shortlist costs a word.
+
+**Answering is a comment, deliberately.** An operator comment already sets `by: "operator"`, which is already what `answered()` tests, which already flips the row into `decided_blocks` and rank 0's queue. Making `--answer` an alias rather than a new field is what keeps [[#T13 — Unblocking is a task]]'s hardest rule working for free: **answered means their word is the LAST word**, so a lane replying afterwards brings the item back. Storing an answer in a field of its own would have quietly dropped that.
+
+**Rank 0 may answer its own question, and it is flagged rather than refused.** `self_answered` is recorded and said on every surface. This is [[#T16 — A finding crosses one rank, and becomes work only with approval]]'s trade, made again for the same reason: refusing would leave the tree waiting on a human who may not be at the keyboard, and a queue that waits on an absent operator is the overnight stall [[#R13 — Everything below rank 0 starts cold]] exists to prevent. Forging `by: "operator"` was the other way to make it pass, and it would have put a false signature in the one record that exists to be trusted.
+
+**`--gates` is the one thing here that can stall a lane, and it says so.** A brief named by `--gates` is refused at `harness mark` beside the approval gate, naming the decision, the operator, and the escape — `--no-task`, which is rank 0 deciding the work needs no answer. Answering does not lift the gate; **closing** does, because that is the moment the answer became work. Nothing else waits: the lanes that were not named carry on.
+
+**Enforcement** `harness decision <name> --ask … --turns … [--options …] [--gates TASK]`; `--answer` records and does not close; `--task` / `--no-task` close, exactly as for a block. It reaches the operator through `harness needs`, the viewer's column and the `notify` hook.
+**Fails when** It is used for something a lead could have answered. That is [[#T12 — Question]], and routing it here asks the operator to adjudicate a conversation they are not in.
+
 ---
 
 ## Invariants
@@ -787,7 +809,11 @@ only the first survives.
 | in the repository, versioned | on the machine, never committed |
 | --- | --- |
 | logical tree (node → parent) | worktree → node binding |
-| ledger, rulings, manifest, guards | locks, session ids, enrolment |
+| rulings, manifest, guards | **the ledger**, locks, session ids, enrolment |
+
+**The ledger was in the wrong column until 2026-09-08, and had been all along.** This table said `ledger` was versioned. It is not: marks, briefs, blocks, findings, facts, checks and reviews all live under `~/.claude/harness/<slug>/`, and an enrolled repository's committed `.harness/` holds exactly three things — `hooks`, `manifest.json`, `tree.json`. Checked against biblion2.
+
+Two consequences follow, and the first is why it went unnoticed. [[#I6 — The ledger is append-only]] says any ancestor can resolve a conflicted hunk to a ledger entry, and [[#T8 — Deep conflict]] resolves from the ledger — but both actually work through the `Task:` trailers **in the commits**, which are in git and do travel. The ledger files are a convenience over the top of that. The second is real and unfixed: a second machine joining the tree gets the structure and none of the history, and nothing says so at enrolment.
 
 Worktree paths are machine-specific, so the physical binding cannot live in the repo; the logical tree must, because it has to merge. Machine-local state lives at `~/.claude/harness/<slug>/`, where `<slug>` is the project root with every non-alphanumeric character replaced by `-`. Keep it on a native filesystem — atomic claims are not dependable on a mounted Windows drive.
 

@@ -2666,6 +2666,30 @@ def cmd_mark(a):
             f"than\n           asked for, and the operator has not said it is worth a "
             f"session yet.\n           It is in `harness needs`. Carry on with what is "
             f"queued.")
+    # The decision gate, a sibling of the approval gate above and refused the
+    # same way. Answering does not lift it; CLOSING does -- that is the point at
+    # which the answer has become work, and it is the same rule T13 applies to a
+    # block. The escape is named, because a gate with no escape is how a lane
+    # sits idle overnight waiting for a human who is not there.
+    _gb = b.get("gated_by")
+    if _gb:
+        # Sanitised before matching, because the stem IS sanitised: a decision
+        # named `corpus-preprints` is stored as `main_corpus_preprints`, and the
+        # raw name is not a substring of it. Matching what was TYPED against what
+        # was STORED is the same defect T14 fixed for task ids, and it made this
+        # gate silently never fire.
+        _gk = re.sub(r"[^A-Za-z0-9]", "_", _gb)
+        _gf = next((f for f in (ctx.state / "blocks").glob("*.json")
+                    if f.stem.endswith(_gk)), None)
+        _gr = json.loads(_gf.read_text()) if _gf else None
+        if _gr and not _gr.get("consequence"):
+            die(REFUSED,
+                f"'{a.task}' waits on an open decision: {_gr.get('need')}\n"
+                f"           Raised by '{_gr.get('node')}' and it is the operator's to "
+                f"answer, not\n           yours and not your lead's. It is in `harness "
+                f"needs`.\n           If the work should go ahead regardless, that is "
+                f"rank 0 closing it:\n             harness blocked "
+                f"{shlex.quote(_gb)} --no-task \"why it needs no answer\"")
     if ((b.get("approval") or {}).get("state")) == "declined":
         die(REFUSED, f"'{a.task}' was declined by the operator: "
                      f"{(b['approval'].get('why'))}")
@@ -4097,7 +4121,11 @@ def scan_needs(rows=None):
                 continue
             if r.get("resolved_at"):
                 continue
-            r["_repo"], r["_project"], r["_kind"] = repo, proj, "block"
+            # Off the record, not assumed. A block and a decision share this
+            # store deliberately -- one consequence machinery, one definition of
+            # "answered" -- and only the rendering forks.
+            r["_repo"], r["_project"] = repo, proj
+            r["_kind"] = "decision" if r.get("kind") == "decision" else "block"
             # Answered means the operator's word is still the LAST word, not
             # that they once said something. It used to mean the second, and
             # that made their own reply the thing that hid the block: a lane
@@ -6294,6 +6322,22 @@ def cmd_needs(a):
         if r.get("_answered"):
             continue
         repo = r.get("_repo") or "."
+        if r.get("_kind") == "decision" and not r.get("_reopened"):
+            print(f"{r['_project']} · {node}{'':<4}DECISION   asked "
+                  f"{_ago(r.get('raised_at') or '')}")
+            print(f"  {need}")
+            print(f"  turns on   {r.get('still_moving')}")
+            if r.get("options"):
+                print(f"  options    {r.get('options')}")
+            if r.get("gates"):
+                print(f"  gates      {', '.join(r['gates'])} — refused at mark until "
+                      f"this closes")
+            # No grant line. There is nothing to grant, and offering one was the
+            # whole defect this record kind exists to fix.
+            print(f"  answer     (cd {shlex.quote(repo)} && harness decision "
+                  f"{shlex.quote(r.get('name') or '')} --answer \"...\")")
+            print()
+            continue
         # One you already answered, that has come back. It is a different item
         # from a fresh block and reads as one: the thing you have not seen is
         # the reply, not the request, so the reply is what gets the space.
@@ -6338,9 +6382,11 @@ def cmd_needs(a):
     # which it did, and the tally read `1 block(s)` over a stopped session.
     ns = sum(1 for r in rows if r.get("_kind") == "stopped")
     nb = sum(1 for r in rows if r.get("_kind") == "block")
+    ndc = sum(1 for r in rows if r.get("_kind") == "decision")
     na = sum(1 for r in rows if r.get("_kind") == "approval")
     nr = sum(1 for r in rows if r.get("_reopened"))
     print((f"{ns} stopped, " if ns else "")
+          + (f"{ndc} decision(s), " if ndc else "")
           + f"{nb} block(s)"
           + (f" ({nr} you already answered)" if nr else "")
           + f", {na} approval(s)"
@@ -6556,7 +6602,8 @@ def in_flight(ctx):
 
 
 def answered(r):
-    return (r.get("resolved_by") == "grant"
+    return (r.get("self_answered")
+            or r.get("resolved_by") == "grant"
             or any(c.get("by") == "operator" for c in (r.get("comments") or [])))
 
 
@@ -6989,6 +7036,146 @@ def cmd_blocked(a):
     print("  Do not route around it, do not ask a session with looser settings to do")
     print("  it for you, and do not stop: carry on with everything this does not")
     print("  block, and say in your report what it does.")
+
+
+def cmd_decision(a):
+    """T17: rank 0 asks the operator a ruling question.
+
+    THE GAP. Rank 0's only upward channel was `harness blocked`, whose help says
+    what it is for -- "a path, a command, a permission" -- and every block
+    renders to the operator as a grant, unconditionally, in both `cmd_needs` and
+    the viewer. So a question about SCOPE rather than reach had to be dressed as
+    a permission request, and the operator was offered a `harness grant` command
+    that made no sense for it. The alternative was prose in rank 0's own
+    transcript, which is what the live tree actually did: `biblion2-main` wrote
+    "Next action is yours: run claude attach ..." into its away-summary, where it
+    was found only by reading the .jsonl by hand.
+
+    ONE STORE, TWO KINDS, and that split is the whole design. The record is a
+    block record with `kind: "decision"`, in the same `blocks/` directory, so
+    `answered()`, `settle()`, `decided_blocks()`, `in_flight()`,
+    `stamp_consequence()`, `unread_block_comments()`, `--task`, `--no-task`,
+    `--resolve` and `harness brief --from-block` all work on it UNCHANGED. What
+    forks is the rendering, which was the defect. A second store would have
+    duplicated T13's "answered is not closed" in a second place, and
+    `task_state`'s own docstring is the argument against that: every state is
+    read off records that already exist, with no second store to fall out of
+    step.
+
+    ANSWERING IS `--comment`. An operator comment already sets `by: "operator"`,
+    which is already what `answered()` tests, which already flips `_answered` in
+    `scan_needs` and already moves the row into `decided_blocks` and
+    `rank0_owes`. `--answer` is a thin alias, and being one is what makes
+    `_reopened` work for free: a lane replying after the operator's answer brings
+    the item back, which is T13's most expensive lesson and would have been lost
+    by storing an answer in a field of its own.
+    """
+    ctx = Ctx(); ctx.require_enrolled()
+    node, _ = ctx.node()
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    # Idiom B, as used by `grant`, `brief --approve` and `charter`: refuse only
+    # the case that can be identified. A session below rank 0 raising this is
+    # reaching past the rank that owns the question -- a lead with a question
+    # asks ITS lead, which is T12. No session id means a human at a shell, and
+    # the CLI cannot authenticate an operator, so it does not pretend to.
+    if sid and ctx.rank(node) != 0:
+        die(REFUSED,
+            f"'{node}' is rank {ctx.rank(node)}. A decision is a question for the operator,\n"
+            f"           and only rank 0 holds that conversation. Yours goes to your lead:\n"
+            "           harness waiting '...' --still-moving '...'   (T12)")
+
+    f = ctx.state_file("blocks", f"{node}-{a.name}", ".json")
+    f.parent.mkdir(parents=True, exist_ok=True)
+
+    if a.answer is not None:
+        # Delegated to the comment path rather than reimplemented, so there is
+        # one definition of what answering is and one thing `answered()` tests.
+        if not f.exists():
+            die(REFUSED, f"no decision '{a.name}' on '{node}' — harness needs lists them")
+        r = json.loads(f.read_text())
+        by = f"{node} (session {sid[:8]})" if sid else "operator"
+        r.setdefault("comments", []).append(
+            {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "by": by, "text": a.answer})
+        # The T16 remedy, not a refusal. Rank 0 answering its own question from a
+        # session is a closed loop wearing the operator's signature, and refusing
+        # it would leave the tree waiting for a human who may not be there. So it
+        # is recorded and said on the line: provenance nobody reads is provenance
+        # nobody corrects.
+        if sid:
+            r["self_answered"] = True
+        f.write_text(json.dumps(r, indent=2) + "\n")
+        write_needs(scan_needs())
+        print(f"answered {a.name}")
+        if sid:
+            print(f"  self_answered — this was answered by {node}, not by the operator.")
+        print(f"  It is NOT closed. An answer is not a task (T13): say what work it")
+        print(f"  produced, or that it produced none:")
+        print(f"    harness blocked {shlex.quote(a.name)} --task <task>")
+        print(f"    harness blocked {shlex.quote(a.name)} --no-task \"why not\"")
+        return
+
+    if not (a.ask or "").strip():
+        die(REFUSED, "--ask is the question, and there is no decision without one")
+    if not (a.turns or "").strip():
+        # Stricter than `blocked`, whose --still-moving is optional, and the
+        # difference is deliberate rather than inherited: a block names a thing
+        # you cannot reach, which is legible on its own. A question is not. What
+        # turns on it is the only thing that lets the operator order it against
+        # everything else asking for them, and without it they must reconstruct
+        # that from the question every time.
+        die(REFUSED,
+            "--turns is required: what is waiting on this answer.\n"
+            "           It is how the operator judges urgency without "
+            "reconstructing it,\n           and it is the one thing they cannot "
+            "work out from the question.")
+    if f.exists() and not json.loads(f.read_text()).get("resolved_at"):
+        print(f"already asked: {a.name} on {node}"); return
+
+    rec = {"node": node, "need": a.ask, "why": a.ask,
+           "still_moving": a.turns,
+           "kind": "decision",
+           # `need` carries the QUESTION so every existing reader -- needs, the
+           # viewer, --list, the notifier summary -- shows something meaningful
+           # without knowing this kind exists. `name` is the handle the file is
+           # keyed on and the only thing --answer can be given.
+           "name": a.name,
+           "options": a.options or "",
+           "gates": list(a.gates or []),
+           "repo": str(ctx.repo),
+           "raised_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+           "session": sid}
+    f.write_text(json.dumps(rec, indent=2) + "\n")
+
+    # The gate, recorded on both ends. A brief that names an open decision is
+    # refused at `mark` beside the approval gate it sits next to.
+    gated = []
+    for t in (a.gates or []):
+        bf, b = load_brief(ctx, t)
+        if b is None:
+            die(REFUSED, f"no brief '{t}' to gate. --gates names work that is "
+                         f"waiting on this answer.")
+        b["gated_by"] = a.name
+        bf.write_text(json.dumps(b, indent=2) + "\n")
+        gated.append(t)
+
+    rows = scan_needs()
+    write_needs(rows)
+    append_inbox(dict(rec, event="asked"))
+    told = notify("raised", rows)
+    print(f"asked: {a.ask}")
+    print(f"  {len(rows)} thing(s) now need the operator"
+          + ("  (notifier fired)" if told else "  (no notifier installed — "
+             "it is in `harness needs`)"))
+    if gated:
+        print(f"  gates {', '.join(gated)} — harness mark refuses them until this "
+              f"closes")
+    if not (a.options or "").strip():
+        # Warned, not refused: some questions genuinely have no shortlist, and
+        # refusing those would push them back into a transcript, which is the
+        # thing this command exists to stop.
+        print(f"  No --options given, so this costs the operator a paragraph to "
+              f"answer\n  rather than a word. Name the candidates when you can.")
+    print(f"  Nobody waits on the answer except what --gates named. Carry on.")
 
 
 def cmd_scaffold(a):
@@ -7446,6 +7633,17 @@ def main():
     ck = add("check", cmd_check)
     ck.add_argument("--timeout", type=int, default=900, metavar="SEC",
                     help="per-check timeout (default 900)")
+    dc = add("decision", cmd_decision)
+    dc.add_argument("name", help="short name for the question")
+    dc.add_argument("--ask", help="the question, one line")
+    dc.add_argument("--turns", help="what is waiting on the answer — required, and "
+                                    "it is how the operator judges urgency")
+    dc.add_argument("--options", help="candidate answers, e.g. 'a | b | c'. Not "
+                                      "required; an open question costs a paragraph")
+    dc.add_argument("--gates", action="append", metavar="TASK",
+                    help="a brief that may not start until this closes (repeatable)")
+    dc.add_argument("--answer", help="the operator's ruling. Records it and leaves "
+                                     "the decision OPEN — an answer is not a task")
     add("hook-stop", cmd_hook_stop)
     add("hook-orient", cmd_hook_orient)
     wh.add_argument("--delta", action="store_true",

@@ -368,6 +368,17 @@ RULES = {
                 "check that can go red on it. Only you can widen that: a lead "
                 "doing the write instead would be routing your decision around "
                 "rather than making it, and the CLI refuses that by rank."},
+    "decision": {
+        "title": "why a decision is yours",
+        "text": "Rank 0 is asking, not requesting reach. Its only channel used "
+                "to be a block, which is permission-shaped, so a question about "
+                "scope arrived dressed as a grant with a `harness grant` command "
+                "that made no sense for it — or it did not arrive at all and sat "
+                "in a transcript. No rank in the tree may answer this: a lead "
+                "with a question asks its lead, and rank 0's counterpart is you. "
+                "Answering does not close it. What closes it is naming the work "
+                "the answer produced, or saying it produced none — being told is "
+                "not being tasked."},
     "approval": {
         "title": "why an approval is yours, and who else may make it",
         "text": "Nobody asked for this, so the lane that noticed it may not put "
@@ -827,6 +838,29 @@ def read_state():
         # subtraction, so the day a third kind appeared it silently became a
         # grant — which is the same defect the `needs` footer counter had, fixed
         # there and missed here on the same afternoon.
+        # A decision IS what this column is for -- a ruling no rank in the tree
+        # may take -- so unlike a waiting session or an approval it stays here.
+        # What it must not do is borrow the grant builder below, which appends a
+        # `harness grant` line unconditionally. There is nothing to grant.
+        for b in [x for x in blocks
+                  if x.get("_kind") == "decision" and not x.get("_answered")
+                  and not x.get("_reopened")]:
+            att.append({
+                "kind": "decision", "owner": "operator",
+                "where": f"{pname} / {b.get('node')}",
+                "what": b.get("need"),
+                "why": (f"options: {b['options']}" if b.get("options")
+                        else "No options were named, so this wants a sentence "
+                             "rather than a word."),
+                "still": b.get("still_moving") or "",
+                "rule": "decision",
+                "do": f"(cd {shlex.quote(repo)} && harness decision "
+                      f"{shlex.quote(b.get('name') or '')} --answer \"...\")",
+                "project": pname, "slug": pdir.name, "node": b.get("node"),
+                "need": b.get("need"),
+                "root": next((n for n, sp in tree.items()
+                              if sp.get("parent") is None), "rank 0"),
+                "comments": b.get("comments") or []})
         for b in [x for x in blocks
                   if x.get("_kind") == "block" and not x.get("_answered")
                   and not x.get("_reopened")]:

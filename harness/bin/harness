@@ -4143,6 +4143,16 @@ def scan_needs(rows=None):
     except Exception:
         live = []
     for r in stopped_rows(live):
+        # Aged, like everything else that climbs. A session waiting on a reply
+        # is the ordinary state between turns and belongs to its lead, who is
+        # told at orientation and can see it on the node in the viewer. Only
+        # one that has been sitting there long enough to be a genuine halt is
+        # the operator's, and putting the fresh ones here filled their queue
+        # with the tree working normally -- which teaches a reader to stop
+        # opening it, and the queue only works when it is usually empty.
+        _age, _ = last_turn(r.get("sessionId") or "")
+        if not _age or _age < STALLED_APPROVAL:
+            continue
         cwd = r.get("cwd") or ""
         for pdir in sorted(p for p in HOME_STATE.glob("*")
                        if p.is_dir() and (p / "binding.json").exists()):
@@ -4158,7 +4168,8 @@ def scan_needs(rows=None):
                         "_kind": "stopped", "node": node,
                         "session": r.get("sessionId") or "",
                         "name": r.get("name") or "?",
-                        "need": f"'{node}' is stopped at a prompt",
+                        "need": f"'{node}' is waiting on you",
+                        "_age": _age,
                         "raised_at": None})
             break
     # Stopped rows carry no raised_at — nothing recorded them, which is the
@@ -6228,21 +6239,12 @@ def cmd_needs(a):
     for r in rows:
         node, need = r.get("node", "?"), r.get("need", "")
         if r.get("_kind") == "stopped":
-            print(f"{r['_project']} · {node}{'':<4}WAITING    on you")
-            print(f"  session  {r.get('name')} [{(r.get('session') or '')[:8]}]")
-            print(f"  It reports `idle` to everything that does not read `state`, which "
-                  f"is the\n  same word as free. Nothing in the tree can clear it, and "
-                  f"the lane cannot\n  even raise a block about it — raising takes a "
-                  f"turn and it does not get one.")
-            print(f"\n  The runtime reports ONE state for two situations and they have "
-                  f"different\n  remedies. Try the first; it is the commoner one and it "
-                  f"costs a sentence.")
-            print(f"    waiting on a reply   send it a prompt (claude agents, pick it, "
-                  f"type)")
-            print(f"    on a permission ask  claude attach "
-                  f"{(r.get('session') or '')[:8]}, then answer it")
-            print(f"  Recycling is not the remedy for either: a replacement starts cold "
-                  f"and, if\n  it was a permission prompt, walks into the same one.\n")
+            # Three lines. What, how long, what to type. The paragraph that
+            # explained the runtime's two meanings was the same on every one of
+            # these and is in the spec, said once.
+            print(f"{r['_project']} · {node}{'':<4}WAITING {human_age(r.get('_age') or 0)}"
+                  f"  — prompt it, or attach if it is a permission ask")
+            print(f"  claude attach {(r.get('session') or '')[:8]}\n")
             continue
         if r.get("_kind") == "approval":
             print(f"{r['_project']} · {node}{'':<4}APPROVAL   asked "

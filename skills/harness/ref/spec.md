@@ -1127,7 +1127,22 @@ Nothing outside the session can tell those apart. So every surface says **waitin
 
 **It is `stopped` in the record and `waiting` on every surface, never `blocked`.** `harness blocked` is already a record asking the operator to widen a permission, raised deliberately by a session that is still running and often still working. A session the runtime has halted is a different fact about a different thing, and one word over two contracts is a fault this project has already paid for. The runtime's value is read at exactly one boundary.
 
-**A stopped lane belongs in `harness needs`, and it is the only item there that never asked.** A block and an approval are raised — some session chose to put them there. A halted session raised nothing and *can* raise nothing, because raising takes a turn and it does not get one. It passes this section's own narrow test cleanly: only the operator can clear it, no rank in the tree has the authority, and it is not somebody else's work-in-progress.
+**Two streams, split by who can act — and this one was got wrong first.** The operator's column is for a **ruling only they can make**. Everything else is **traffic between nodes**: a lane waiting on its lead, a lead asking for unrequested work to be staffed. Rendering that as an item in their queue asks them to adjudicate a conversation they are not in, and the rule against it was already written here and already in the viewer's own code comments. It was broken anyway on 2026-09-08, by this section's first attempt at reporting halted sessions.
+
+The operator said what it looked like from their side: *"it all looks like noise if these are the messages going between nodes."* One approval on biblion2 had inlined **4,133 characters over 58 lines** into a queue item — not an entry, a document.
+
+So node traffic is drawn **on the node it is directed at, naming the node it came from**, in the muted colour the tree already uses, never the warning colour, because it is not a fault:
+
+```
+dev_2   ← dev   APPROVAL     Read build/graph.dot back and assert its shape.   approve
+dev_2   ← dev   UNANSWERED   asked dev and stopped — dev is not running        spawn
+```
+
+One line: direction, kind, the point, the verb. The full text is one click away. **Rich about what it is, short about saying it** — the reverse of the first attempt, which was long about why the category exists and silent about which item this was. The paragraph explaining what a grant *is* was identical on every grant; it is said once, in the viewer's rules panel, and never again per item.
+
+What remains in the column is [[#I11 — Reach beyond the worktree is granted at enrolment]]'s **grant** and a **stale install** — R14's original list, restored. Approvals moved out on the same reasoning plus a second: [[#T16 — A finding crosses one rank, and becomes work only with approval]] gave rank 0 the authority on 2026-09-07, so the operator stopped being the only route long before this stopped looking like one.
+
+**A stopped lane reaches `harness needs` only once it is old.** A block and an approval are raised — some session chose to put them there. A halted session raised nothing and *can* raise nothing, because raising takes a turn and it does not get one. A session waiting on a reply is the ordinary state between turns and is its lead's — told at orientation, drawn on the node. Only one that has sat long enough to be a genuine halt is the operator's, and the fresh ones filled their queue with the tree working normally. Three lines when it does appear: what, how long, what to type.
 
 **Recycling is not the remedy and looks exactly like it.** A replacement starts cold, walks the same path and stops at the same prompt, so the sweep costs a session and changes nothing — while discarding whatever the halted one was waiting to be told. `recycle` and `recycle --cold` now refuse a stopped node and name `claude attach` instead; `--force` still overrides, and says what it is throwing away.
 

@@ -571,6 +571,34 @@ def read_state():
             if r.get("node") in tree:
                 waits[r["node"]] = r
         blocks = [x for x in needs if x.get("_repo") == repo]
+        # Two streams, and the split is by WHO CAN ACT, not by what raised it.
+        #
+        # The operator's column is for a ruling only they can make. Everything
+        # else here is traffic between nodes -- one session waiting on another,
+        # a lead asking for a task to be staffed -- and rendering that as an
+        # item in their queue asks them to adjudicate a conversation they are
+        # not in. R14 already says this ("the panel holds only what no agent in
+        # the tree has the authority to fix") and the card renderer already says
+        # it in a comment; this file stopped obeying both on 2026-09-08.
+        #
+        # So node traffic goes ON THE NODE, beside the one it is directed at,
+        # naming where it came from, in the muted colour the tree already uses
+        # for it -- never the warning colour, because it is not a fault.
+        sig = {}
+        def _sig(node, **kw):
+            sig.setdefault(node, []).append(kw)
+        for b in blocks:
+            if b.get("_kind") == "approval":
+                frm = str(b.get("asked_by") or "").split(" ")[0] or "its lead"
+                first = (b.get("why") or "").strip().splitlines()
+                _sig(b.get("node"), kind="approval", frm=frm,
+                     text=(first[0][:90] if first else b.get("task") or ""),
+                     task=b.get("task") or "",
+                     do=f"harness brief {b.get('task')} --approve")
+            elif b.get("_kind") == "stopped":
+                _sig(b.get("node"), kind="waiting", frm="",
+                     text="waiting on a reply, or a permission nobody answered",
+                     task="", do=f"claude attach {(b.get('session') or '')[:8]}")
         nodes = []
         for name, spec in tree.items():
             wt = wt_of.get(name)
@@ -596,6 +624,7 @@ def read_state():
                                                     "cold": bool(a and a > CLI.CACHE_TTL)}
                                       )(*CLI.last_turn(r.get("sessionId") or "")))
                               for r in here]),
+                "signals": sig.get(name, []),
                 "claimed": name in locks,
                 "tasks": sorted(tasks.get(name, []), key=lambda x: x["task"]),
                 # The QUEUE, in the order its lead set — not alphabetical. What a
@@ -651,6 +680,14 @@ def read_state():
                 continue
             if _wait_mins(wr.get("since")) < 20:
                 continue
+            # Same class as the two above: a child waiting on its lead. The
+            # card already draws the wait; this only added that nobody is there
+            # to answer it. That belongs on the node too, as the reason, rather
+            # than in a column where it reads as something to rule on.
+            _sig(wn, kind="unanswered", frm=par or "its lead",
+                 text=f"asked {par} and stopped — {par} is not running",
+                 task="", do=f"harness spawn {par}")
+            continue
             att.append({
                 "kind": "unanswered", "owner": "operator",
                 "where": f"{pname} / {wn}",
@@ -672,11 +709,16 @@ def read_state():
         # of somebody else's work-in-progress above the one item that was
         # actually the operator's, which trains a reader to stop looking. Tree
         # state belongs in the tree, where the chips already show it.
-        # An approval is squarely what this panel is for: work nobody requested,
-        # which no session in the tree may authorise for itself. It carries the
-        # brief's own text, because deciding whether a task is worth a session
-        # means reading the task.
-        for b in [x for x in blocks if x.get("_kind") == "approval"]:
+        # An approval used to live here, carrying the brief's own text, on the
+        # argument that deciding whether a task is worth a session means reading
+        # the task. The argument is sound and the placement was not: one on
+        # biblion2 inlined 4,133 characters over 58 lines into a queue item,
+        # which is not an entry, it is a document. And T16 moved the authority
+        # on 2026-09-07 -- rank 0 may approve, recorded `self_approved` -- so
+        # this stopped being the only route long before it stopped looking like
+        # one. It is drawn on the node it is FOR, naming the node it came FROM,
+        # with the text one click away.
+        for b in []:
             att.append({
                 "kind": "approval", "owner": "operator",
                 "where": f"{pname} / {b.get('node')}",
@@ -748,7 +790,12 @@ def read_state():
         # "A lane needs a path outside its worktree, and the block record does
         # not say what for." There was no lane asking for a path and nothing to
         # grant. Reported by the operator, who could not tell what it wanted.
-        for b in [x for x in blocks if x.get("_kind") == "stopped"]:  # noqa: kind is the record's, the CARD says waiting
+        # Deliberately empty. A halted session and a pending approval are drawn
+        # on their own node above; see the `sig` map. What remains in this
+        # column is a GRANT (permission is the operator's and the CLI refuses a
+        # lead by rank) and a STALE INSTALL (only they run install.sh) -- which
+        # is R14's original list, restored.
+        for b in []:
             att.append({
                 "kind": "waiting", "owner": "operator",
                 "where": f"{pname} / {b.get('node')}",
@@ -785,9 +832,12 @@ def read_state():
                 # tail on a five-line invariant that was identical every time,
                 # and a reader who has seen that paragraph twice stops reading
                 # the item it is attached to.
+                # The lane's own words, and nothing else. The paragraph that
+                # explains what a grant IS was identical on every one of these,
+                # and a reader who has met it twice stops reading the item it is
+                # attached to. It is said once, in RULES.
                 "why": (b.get("why")
-                        or "A lane needs a path outside its worktree, and the "
-                           "block record does not say what for."),
+                        or "no reason recorded — ask the lane before granting"),
                 "still": b.get("still_moving") or "",
                 "rule": "grant",
                 "do": f"(cd {shlex.quote(repo)} && harness grant {b.get('node')} "
@@ -933,6 +983,19 @@ overflow-wrap:anywhere}
 .wt.q{color:var(--dim);font-style:italic}
 .wt.s{color:var(--dim);font-style:normal}
 .wt.o{color:var(--wait);border-top:1px dotted #2f6157;padding-top:3px}
+/* Traffic between nodes. Teal and small, deliberately NOT --warn: an approval
+   waiting on a decision and a lane stopped on its lead are the tree working,
+   not faults, and painting them like faults is what made the operator's column
+   unreadable. The line says direction, then the point, in that order. */
+.sig{display:flex;gap:7px;align-items:baseline;font-size:11px;margin-top:3px}
+.sig .frm{color:var(--dim);flex:none}
+.sig .kind{color:var(--wait);flex:none;text-transform:uppercase;font-size:10px;
+letter-spacing:.05em}
+.sig .txt{color:var(--wait);overflow:hidden;text-overflow:ellipsis;
+white-space:nowrap;min-width:0}
+.sig .act{margin-left:auto;flex:none;color:var(--none);font-size:10px;
+cursor:pointer;border-bottom:1px dotted var(--none)}
+.sig .act:hover{color:var(--dim)}
 .hdr{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
 .dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--none)}
 .busy .dot{background:var(--busy);box-shadow:0 0 0 3px #8fbf5f26}
@@ -1274,8 +1337,11 @@ document.addEventListener('click', e => {
   const cp = e.target.closest('.cp');
   if (cp) {
     e.stopPropagation();
-    const el = document.getElementById(cp.dataset.c);
-    navigator.clipboard.writeText(el.textContent).then(
+    // Either an element to read, or the text itself. A one-line signal on a
+    // card has nowhere to hide a <pre>, and inventing one to satisfy the older
+    // form would put the command on screen twice.
+    const el = cp.dataset.c ? document.getElementById(cp.dataset.c) : null;
+    navigator.clipboard.writeText(el ? el.textContent : (cp.dataset.copy || '')).then(
       () => { cp.textContent = 'copied'; },
       () => { cp.textContent = 'select and copy'; });
     return;
@@ -1611,13 +1677,25 @@ function card(n) {
   const owes = (n.awaited_by || []).length
     ? '<div class="wt o">' + n.awaited_by.length + ' waiting on you: ' +
       esc(n.awaited_by.join(', ')) + '</div>' : '';
+  // Beside the node it is directed AT, naming where it came FROM. One line, the
+  // point first, the command behind a click -- rich about what it is, short
+  // about saying it.
+  const VERB = {approval: 'approve', waiting: 'attach', unanswered: 'spawn'};
+  const sigs = (n.signals || []).map(g =>
+    '<div class="sig" title="' + esc(g.do) + '">' +
+      '<span class="frm">&larr; ' + esc(g.frm || '?') + '</span>' +
+      '<span class="kind">' + esc(g.kind) + '</span>' +
+      '<span class="txt">' + esc(g.text) + '</span>' +
+      '<span class="act cp" data-copy="' + esc(g.do) + '">' +
+        esc(VERB[g.kind] || 'copy') + '</span>' +
+    '</div>').join('');
   return '<div class="card ' + cls + coldc + (w ? ' waitc' : '') +
     (n.blocks.length ? ' blocked' : '') +
     '" data-live="card:' + esc(n._slug + ':' + n.name) + '">' +
     '<div class="hdr"><span class="dot"></span><span class="nm">' + esc(n.name) +
     '</span><span class="kd">' + esc(n.kind || '') + '</span></div>' +
     '<div class="ln q">' + esc(n.branch || '') + (n.indexed ? '' : ' (not indexed)') + '</div>' +
-    who + wait + owes + task + splitChips(n) + goneChips(n) +
+    who + wait + owes + sigs + task + splitChips(n) + goneChips(n) +
     (n.blocks.length ? '<span class="bell">' + n.blocks.length + ' needs you</span>' : '') +
     '</div>';
 }

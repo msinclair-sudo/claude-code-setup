@@ -415,7 +415,13 @@ def read_state():
     by_cwd = {}
     for r in (rows or []):
         by_cwd.setdefault(r.get("cwd"), []).append(r)
-    needs = CLI.scan_needs()
+    # The roster this poll already read, never a fresh one: this runs every three
+    # seconds for as long as a tab is open, and a fetch here would be a `claude`
+    # process on that timer forever — which is why `roster()` is cached at all.
+    # `rows` is None when the read FAILED, and `[]` is passed rather than a
+    # refetch: the banner already says occupancy is unknown, and a failed read
+    # must not become a silent "nothing is stopped" for the panel below it.
+    needs = CLI.scan_needs(rows or [])
     projects = []
     for pdir in sorted(p for p in CLI.HOME_STATE.glob("*") if p.is_dir()):
         b = pdir / "binding.json"
@@ -578,7 +584,13 @@ def read_state():
                 # says what picking it back up would cost. Past the cache
                 # lifetime the next turn re-reads all of it at full rate.
                 "sessions": (None if rows is None else
+                             # `stopped` is carried beside `status`, never folded
+                             # into it. A halted session reports `status: idle`,
+                             # so a card that renders status alone paints the one
+                             # node needing a human exactly like the ones needing
+                             # nobody.
                              [dict({"name": r.get("name"), "status": r.get("status"),
+                                    "stopped": CLI.is_stopped(r),
                                     "id": (r.get("sessionId") or "")[:8]},
                                    **(lambda a, c: {"idle": a, "carry": c,
                                                     "cold": bool(a and a > CLI.CACHE_TTL)}
@@ -729,8 +741,40 @@ def read_state():
         # An answered block belongs to rank 0 now. Leaving it here asks the
         # operator to decide something they already decided, and a panel that
         # does that is one they stop reading.
+        # A halted session is the operator's, and it is not a grant. It arrives
+        # with no `why` because nothing raised it — raising takes a turn and a
+        # stopped lane does not get one — so under the old filter it fell into
+        # the grant branch below and rendered with that branch's placeholder:
+        # "A lane needs a path outside its worktree, and the block record does
+        # not say what for." There was no lane asking for a path and nothing to
+        # grant. Reported by the operator, who could not tell what it wanted.
+        for b in [x for x in blocks if x.get("_kind") == "stopped"]:  # noqa: kind is the record's, the CARD says waiting
+            att.append({
+                "kind": "waiting", "owner": "operator",
+                "where": f"{pname} / {b.get('node')}",
+                "what": "waiting on you",
+                "why": "This session is waiting at a keyboard. It reports `idle` "
+                       "to everything that does not read `state`, which is the "
+                       "same word as free, and it cannot raise a block about it "
+                       "either — raising takes a turn and it does not get one. "
+                       "The runtime reports one state for two situations: it may "
+                       "be waiting on a REPLY, or halted on a PERMISSION prompt. "
+                       "Nothing out here can tell them apart. Send it a prompt "
+                       "first — that is the commoner case and it costs a "
+                       "sentence; attach if it turns out to be a permission ask.",
+                "still": "",
+                "rule": "waiting",
+                "do": f"claude attach {(b.get('session') or '')[:8]}",
+                "project": pname, "slug": pdir.name, "node": b.get("node"),
+                "root": next((n for n, sp in tree.items()
+                              if sp.get("parent") is None), "rank 0"),
+                "comments": []})
+        # Selected by what it IS, never by what it is not. `!= "approval"` was a
+        # subtraction, so the day a third kind appeared it silently became a
+        # grant — which is the same defect the `needs` footer counter had, fixed
+        # there and missed here on the same afternoon.
         for b in [x for x in blocks
-                  if x.get("_kind") != "approval" and not x.get("_answered")
+                  if x.get("_kind") == "block" and not x.get("_answered")
                   and not x.get("_reopened")]:
             att.append({
                 "kind": "grant", "owner": "operator",
@@ -1519,12 +1563,20 @@ function age(s) {
 function card(n) {
   const unknown = n.sessions === null;
   const ss = n.sessions || [];
+  // A stopped session outranks every other class here. It reports status 'idle',
+  // so without this the one card that needs a human is painted the same as the
+  // cards that need nobody — which is how a lead sat halted for forty minutes on
+  // a board that was open the whole time.
+  const halted = ss.some(s => s.stopped);
   const cls = unknown ? 'unknown'
+            : halted ? 'dup'
             : (ss.some(s => s.status === 'busy') ? 'busy' : (ss.length ? 'idle' : ''));
   let who;
   if (unknown)            who = '<div class="ln u">occupancy unknown</div>';
   else if (ss.length > 1) who = '<div class="ln dup">' + ss.length +
       ' sessions in one worktree</div>';
+  else if (halted)        who = '<div class="ln dup">' + esc(ss[0].name) +
+      ' &middot; STOPPED at a prompt &middot; claude attach ' + esc(ss[0].id) + '</div>';
   else if (ss.length)     who = '<div class="ln">' + esc(ss[0].name) + ' &middot; ' +
       esc(ss[0].status) + age(ss[0]) + '</div>';
   else if (n.claimed)     who = '<div class="ln dup">claimed, no session</div>';

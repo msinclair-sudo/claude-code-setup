@@ -26,8 +26,14 @@ import fnmatch, json, os, re, subprocess, sys
 # is merely OLD. A guard without this prints nothing here — it treats the flag
 # as noise, reads its empty stdin and exits 0 — which is exactly the signal the
 # caller needs, and exactly the signal an exit code could not carry.
+#
+# The list GROWS and old entries are never removed or repurposed. A caller
+# needing the stricter contract asks for the newer word: `gate2` is the gate
+# that takes the ref's OLD sha and checks who recorded the review, and a hook
+# that needs it must not settle for `gate`, which is the tip-equality form that
+# a `--no-ff` merge walks straight past.
 if "--capabilities" in sys.argv:
-    print("gate")
+    print("gate gate2 publish classify")
     sys.exit(0)
 from pathlib import Path
 
@@ -138,6 +144,37 @@ if "--classify" in sys.argv:
             print(("doc " if matches(p, docs) else "code ") + p)
     sys.exit(0)
 
+# ── I2: a node branch is not published ───────────────────────────────────────
+#
+# reference-transaction cannot carry this. On a push it sees only
+# refs/remotes/*, which is exactly what a FETCH updates too, and the hook has no
+# way to tell the two apart — refusing there would break every fetch. pre-push
+# is the one hook that runs on the sending side knowing it is a push, so the
+# rule lives there and this answers the question it asks.
+#
+# What is at stake is not tidiness. Every guarantee in this design is a LOCAL
+# hook; a remote runs none of them. A pushed node branch is work no rank has
+# integrated, exported to somewhere the guard cannot reach and cannot undo.
+if "--publish" in sys.argv:
+    i = sys.argv.index("--publish")
+    pbranch = sys.argv[i + 1] if len(sys.argv) > i + 1 else ""
+    pnode = next((n for n, sp in tree["nodes"].items()
+                  if sp.get("branch") == pbranch), None)
+    if pnode is None:
+        sys.exit(0)                  # a branch outside the tree is not our business
+    if matches(pbranch, man.get("publish", [])):
+        sys.exit(0)
+    refuse(f"'{pnode}' ({pbranch}) is a node branch and is not published.",
+           ["I2 — nobody pushes. The owner of a node integrates contributors",
+            "into it; a push exports work no rank has integrated, to a remote",
+            "where none of these hooks run.",
+            "",
+            "If this repository genuinely publishes a branch, name it in",
+            ".harness/manifest.json:",
+            '    "publish": ["main"]',
+            "which is a document, so rank 0 makes that change deliberately."])
+    sys.exit(1)
+
 # ── the integration gate (T4) ────────────────────────────────────────────────
 #
 # A member cannot verify its own work: revisiting your own output without an
@@ -145,50 +182,115 @@ if "--classify" in sys.argv:
 # when an oracle is present. The lead is that oracle, so integration requires
 # that the lead has read the diff.
 #
-# Detection: a fast-forward integration moves the parent's ref to a commit that
-# IS the tip of one of its children. An ordinary commit on the parent is not,
-# and a T2 catch-up moves the child's own ref to a fresh merge commit, so
-# neither trips this.
+# Detection is by ANCESTRY, not by tip equality. The first form asked whether
+# the parent's new sha IS a child's tip, which is true of the fast-forward this
+# design uses and false of every other way the same work can arrive: `git merge
+# --no-ff <child>` produces a merge commit whose sha is nobody's tip, and it
+# walked past the gate untouched. The general question is the right one and is
+# no more expensive to ask — did a child's tip become reachable from this branch
+# when it was not reachable before?
+#
+# An ordinary commit on the parent makes no child newly reachable, and a T2
+# catch-up moves the CHILD's ref, so neither trips this.
 #
 # The record is keyed on the child's exact sha, so any new commit invalidates it
 # automatically. There is nothing to expire and nothing to remember to clear.
+#
+# It also checks WHO recorded it. A file's existence was the whole test, and
+# `harness review --record` defaults to the node you are standing in and asks
+# nobody's rank — so a member could write the record that unblocked its own
+# integration, and the gate justified by "a member cannot verify its own work"
+# was satisfiable by that member. The record has always carried who wrote it.
+# Nothing read the field, which is how it could have gone on certifying an
+# oracle that was never there.
 if "--gate" in sys.argv:
     i = sys.argv.index("--gate")
     gbranch, gnew = sys.argv[i + 1], sys.argv[i + 2]
+    # The ref's OLD sha, so "newly reachable" is answerable. A hook that does
+    # not pass it gets the old tip-equality form rather than a free pass: a
+    # newer guard under an older hook must be WEAKER, never open. The hooks ask
+    # for `gate2` in --capabilities to refuse that pairing outright, and this is
+    # what happens if one ever slips through anyway.
+    gold = sys.argv[i + 3] if len(sys.argv) > i + 3 else ""
+    Z40 = "0" * 40
     gnode = next((n for n, sp in tree["nodes"].items() if sp.get("branch") == gbranch), None)
     if gnode is None:
         sys.exit(0)                  # not a node in this tree
+    if gold == Z40:
+        # Creating a branch is not integrating into one. Every child of a
+        # freshly created node is trivially "newly reachable" from it, so the
+        # ancestry test alone would demand a review of work nobody presented and
+        # refuse `git worktree add` at set-up time.
+        sys.exit(0)
+
+    def _anc(a, b):
+        return git("merge-base", "--is-ancestor", a, b)[0] == 0
+
     kids = [n for n, sp in tree["nodes"].items() if sp.get("parent") == gnode]
-    hit = None
+    hits = []
     for k in kids:
         kb = tree["nodes"][k].get("branch")
         if not kb:
             continue
         rc, tip, _ = git("rev-parse", kb)
-        if rc == 0 and tip.strip() == gnew:
-            hit = k
-            break
-    if hit is None:
+        if rc:
+            continue
+        tip = tip.strip()
+        if gold:
+            arrived = _anc(tip, gnew) and not _anc(tip, gold)
+        else:
+            arrived = tip == gnew     # older hook: tip equality, as before
+        if arrived:
+            hits.append((k, tip))
+    if not hits:
         sys.exit(0)                  # not an integration
+
     slug = re.sub(r"[^A-Za-z0-9]", "-", str(repo))
-    # Same sanitiser as Ctx.state_file in the CLI. If these two ever disagree
-    # the gate looks for a file the recorder never wrote, and refuses forever.
-    stem = re.sub(r"[^A-Za-z0-9]", "_", f"{hit}-{gnew}")
-    rec = (Path.home() / ".claude" / "harness" / slug / "reviews" / (stem + ".json"))
-    if rec.exists():
-        sys.exit(0)
-    refuse(f"integrating '{hit}' into '{gnode}' without a recorded review — refusing.",
-           ["A member cannot check its own work, so the lead reads it (T4):",
-            f"    harness review {hit} --record",
-            "which records the read against this exact commit. A new commit on",
-            "the child invalidates it automatically.",
-            "",
-            "YOUR WORKING TREE HAS ALREADY BEEN UPDATED. git checks out the",
-            "fast-forward before the ref update this hook aborts, and there is",
-            "no earlier hook on that path. The branch is unmoved and safe; the",
-            "files are not. Recover with:",
-            "    git reset --hard HEAD"])
-    sys.exit(1)
+    # EVERY child that arrived, not the first one found. Two children can sit on
+    # the same sha — one just created from the other, or two idle at the same
+    # commit — and picking the first match in dict order let a review recorded
+    # for one satisfy the gate for the other. A check that passes for the wrong
+    # reason reads exactly like one that passed.
+    for hit, tip in hits:
+        # Same sanitiser as Ctx.state_file in the CLI. If these two ever
+        # disagree the gate looks for a file the recorder never wrote, and
+        # refuses forever.
+        stem = re.sub(r"[^A-Za-z0-9]", "_", f"{hit}-{tip}")
+        rec = (Path.home() / ".claude" / "harness" / slug / "reviews" / (stem + ".json"))
+        recover = ["",
+                   "YOUR WORKING TREE MAY ALREADY BE UPDATED. git checks out a",
+                   "fast-forward before the ref update this hook aborts, and there",
+                   "is no earlier hook on that path. The branch is unmoved and",
+                   "safe; the files are not. Recover with:",
+                   "    git reset --hard HEAD"]
+        if not rec.exists():
+            refuse(f"integrating '{hit}' into '{gnode}' without a recorded review — refusing.",
+                   ["A member cannot check its own work, so the lead reads it (T4):",
+                    f"    harness review {hit} --record",
+                    "which records the read against this exact commit. A new commit",
+                    "on the child invalidates it automatically."] + recover)
+        try:
+            data = json.loads(rec.read_text())
+        except Exception as e:
+            refuse(f"the review record for '{hit}' is unreadable ({e}) — refusing.",
+                   [f"    harness review {hit} --record"] + recover)
+        by = data.get("reviewed_by_node")
+        if by is None:
+            refuse(f"the review record for '{hit}' does not say which node read it.",
+                   ["It was written before the gate checked, so it cannot show that",
+                    "anyone but the author read this work. Re-record it from the",
+                    f"lead's own worktree — one command:",
+                    f"    harness review {hit} --record"] + recover)
+        if by != gnode:
+            refuse(f"'{hit}' was reviewed by '{by}', which is not its lead.",
+                   [f"Integration into '{gnode}' requires that '{gnode}' read the diff.",
+                    "A member cannot check its own work — measured, revisiting your",
+                    "own output without an external check degrades it in every",
+                    "configuration tested, and improves only when an oracle is",
+                    "present. The lead is that oracle, and a record the author",
+                    "wrote is not one.",
+                    f"    harness review {hit} --record   (from {gnode})"] + recover)
+    sys.exit(0)
 
 branch = os.environ.get("HARNESS_BRANCH") or git("rev-parse", "--abbrev-ref", "HEAD")[1]
 node = next((n for n, s in tree["nodes"].items() if s.get("branch") == branch), None)

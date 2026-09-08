@@ -1,0 +1,41 @@
+#!/bin/sh
+# I2 -- nobody pushes. This is the only hook that can say so.
+#
+# The invariant used to rest on git refusing a push to a checked-out branch,
+# which is true between local branches and says nothing whatever about a remote.
+# `reference-transaction` cannot cover it either: on a push it sees only
+# refs/remotes/*, and a FETCH updates exactly the same refs, so a refusal there
+# would break every fetch in the repository. pre-push runs on the sending side
+# knowing it is a push, and nothing else does.
+#
+# What is at stake: every guarantee in this design is a local hook, and a remote
+# runs none of them. A pushed node branch is work no rank has integrated,
+# exported to somewhere the guard cannot reach and cannot undo.
+#
+# `git push --no-verify` skips this, as it skips pre-commit. That is not a hole
+# this hook can close -- nothing local is proof against --no-verify -- and it is
+# the reason the invariant is stated as a rule with a guard rather than as a
+# property of git.
+. "$(git rev-parse --path-format=absolute --git-common-dir)/../.harness/hooks/_lib.sh" || exit 1
+G="$(harness_guard)" || exit 1
+# Ask what it can do, on the same rule as reference-transaction: a guard that
+# does not implement --publish treats the flag as noise and exits 0, and this
+# hook would then permit every push while looking exactly like one that checked.
+case "$("$G" --capabilities </dev/null 2>/dev/null)" in
+  *publish*) ;;
+  *)
+    echo "harness: this repository's _guard does not implement --publish." >&2
+    echo "         The push gate would pass everything, silently, so this" >&2
+    echo "         refuses instead. The hooks and the guard move together:" >&2
+    echo "           harness scaffold $(git rev-parse --show-toplevel 2>/dev/null)" >&2
+    exit 1 ;;
+esac
+while read -r lref lsha rref rsha; do
+  # A deletion pushes nothing outward. It is still a change to a remote, but the
+  # thing this guards is work leaving the tree unreviewed, and a delete is not
+  # that.
+  [ "$lref" = "(delete)" ] && continue
+  case "$lref" in refs/heads/*) ;; *) continue ;; esac
+  "$G" --publish "${lref#refs/heads/}" </dev/null || exit 1
+done
+exit 0

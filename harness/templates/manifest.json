@@ -16,6 +16,16 @@
     }
   ],
   "never_travels": [],
+  "publish": [],
+  "_publish": [
+    "Branches pre-push will let out of this machine. Empty means none, which is",
+    "I2 stated exactly: nobody pushes, and the owner of a node integrates",
+    "contributors into it. A remote runs none of these hooks, so a pushed node",
+    "branch is work no rank has integrated, somewhere the guard cannot reach.",
+    "If this repository genuinely publishes, name the branch here -- e.g.",
+    "[\"main\"] -- and note that this file is a document, so rank 0 makes that",
+    "change deliberately and every node reads the same answer."
+  ],
   "_globs": [
     "'*' does NOT cross '/'. '**' does. Ordinary gitignore semantics.",
     "  design/*.md      -> design/A.md only",

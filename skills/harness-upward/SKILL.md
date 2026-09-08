@@ -15,6 +15,12 @@ this session under another role, do not read it again: it is the same file.
 claimed ──T2──► current ──T11──► working ──T2──► presenting ──T4──► integrated
 ```
 
+Twice is **your** count, not the worktree's. If your lead integrates a sibling
+after you present, you are left behind and your lead catches you up itself with
+`harness integrate` — it can, because you have released and nobody is standing
+there. That is not a third catch-up you owe. Present, release, and do not go back
+to fix your position: if you are still holding the worktree, your lead cannot.
+
 **`T2` catch-up 1** — after claiming, before the first commit:
 `git merge <parent-branch>`. This is a real merge commit; you hold your own work,
 so it cannot be a fast-forward. The direction is fixed: *you* merge down, the
@@ -172,9 +178,11 @@ merge a fast-forward.
 
 **`T4` present** — your lead reads your diff and records the read, then runs
 `git merge --ff-only`. The merge is **refused** without that record: you cannot
-check your own work, so your lead does. If you skipped catch-up 2 it also fails,
-with `fatal: Not possible to fast-forward, aborting.` Never push: a checked-out
-branch rejects pushes outright.
+check your own work, so your lead does — a record you wrote yourself is refused
+by the guard, which reads which node made it. If you skipped catch-up 2 it also
+fails, with `fatal: Not possible to fast-forward, aborting.` Never push: a
+checked-out branch rejects a local push outright, and `pre-push` refuses a node
+branch to a remote.
 
 **`T10` release** — `harness mark <task-id> --done`, then `harness release`,
 then `harness spend <task-id>` for the measured actual against the band
@@ -197,8 +205,11 @@ every turn, so it grows with how long you talked rather than with what you did �
 a task banded at 40k once measured 261.7M that way. **New** is the figure that
 answers "how big was this", and it is the one a band is set in.
 
-If you were given a band (`--band S|M|L` when you opened the mark), `--done`
-tells you whether you landed in it. **Say so in your report when you did not.**
+The band comes from your brief — your lead sets it there, and the mark reads it.
+`--done` tells you whether you landed in it. **Say so in your report when you did
+not.** If you think the estimate is wrong when you open the task, `harness mark
+<task> --band S|M|L` records your figure *beside* your lead's rather than over
+it; that disagreement is useful to them and it costs one flag.
 A band that was wrong is the only thing that improves the next estimate, and it
 was your lead's estimate — not your work — that missed.
 

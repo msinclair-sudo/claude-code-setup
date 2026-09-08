@@ -79,15 +79,44 @@ working directory, so it cannot hold a lock or be attached to.
 ## `T4` — integrating
 
 ```bash
-git merge --ff-only <child-branch>
+harness integrate <child> --dry-run    # what it would do, in order
+harness integrate <child> ...          # one, or several, in the order you name
+harness integrate --children           # every child that has presented
 ```
 
-Performed in **your** worktree, because you own the node. Nobody pushes — a
-checked-out branch rejects pushes. If it is not a fast-forward the child skipped
-catch-up 2; hand it back rather than merging manually.
+Performed in **your** worktree, because you own the node. Underneath it is
+`git merge --ff-only <child-branch>`, which you may still run by hand for a
+single child.
+
+**Use the command once you have two.** A fast-forward only works while the child
+is an ancestor of you, so the moment you integrate the first one you MOVE, and
+every sibling that caught up before presenting — exactly as it was told — is now
+behind and unmergeable. It needs a third catch-up that `T2` forbids it. Nobody is
+standing in that worktree to run one anyway: it presented and released, which is
+what `T10` tells it to do. That is the deadlock, it is not rare, and it is what
+this command exists to walk through:
+
+- refuses an **occupied** child worktree — that is what `T2` is protecting, and
+  occupancy is the one thing nothing overrides
+- refuses a **dirty** one: nobody is there to explain uncommitted work
+- refuses work that was never **presented**, or that grew commits after it was
+- catches the child up itself, in its own worktree, then fast-forwards you to it
+- **aborts and hands back** a conflict rather than resolving one — that needs the
+  two intents and it is `T7` or `T8`
+- does not run the child's checks. The one place you run a member's checks is
+  `T7`, where a conflict has already made it necessary
+
+A clean catch-up **carries the recorded review** across the new sha, because the
+child's side you read has not changed, your side is your own integrated history,
+and git wrote the merge mechanically. A conflicted one does not, because somebody
+decided something.
 
 Because every integration is a fast-forward, `pre-merge-commit` never fires on
 this path. `reference-transaction` is the primary guard here, not a backstop.
+
+**Nobody pushes**, and that is now a hook rather than a hope: `pre-push` refuses
+any node branch. A remote runs none of these guards, so a pushed branch is work
+no rank has integrated, somewhere nothing here can reach it.
 
 ## `T7` / `T8` — mediating a conflict
 
@@ -170,10 +199,18 @@ cannot verify its own work: measured, a model revisiting its own output without
 an external check gets worse in every configuration tested, and improves only
 when an oracle is present. You are the oracle.
 
+**Record it from your own worktree.** The record now carries which node read it
+and the guard checks that field — it must be you, the node being integrated into.
+Recording a review of your own node is refused outright. That gap was open for a
+while: the gate's whole test was that a file existed, so a member could write the
+record that unblocked its own integration and the check justified by *a member
+cannot verify its own work* was satisfied by that member.
+
 The record is keyed to the child's exact commit, so a new commit invalidates it
-automatically. If you meet the refusal, note that git checks out the fast-forward
-before the ref update it aborts: the branch is unmoved and safe, the working tree
-is not, and `git reset --hard HEAD` restores it.
+automatically — except a clean catch-up merge run by `harness integrate`, which
+carries it forward for you. If you meet the refusal, note that git checks out the
+fast-forward before the ref update it aborts: the branch is unmoved and safe, the
+working tree is not, and `git reset --hard HEAD` restores it.
 
 Attend to two lines in particular. **`SEAM with <sibling>`** means two of your
 children changed the same file: that is yours to judge under `I9`, neither of
@@ -459,8 +496,23 @@ work written up but not started.
 | L | 120k – 300k | needs design, touches more than one seam |
 | XL | > 300k | **not a task** — a decomposition you have not done yet |
 
-`harness mark <task> --band XL` is refused outright. If you cannot bring a piece
-under L, split it or escalate; that is the whole of `I8`.
+**You set the band, and you set it on the brief:**
+
+```bash
+harness brief <task> --for <node> --write - --band M <<'EOF'
+...
+EOF
+```
+
+`--band XL` is refused outright. If you cannot bring a piece under L, split it or
+escalate; that is the whole of `I8`. The refusal is yours to meet because the
+estimate is yours — it used to be entered at `harness mark`, which the member
+runs, so your XL was refused at the keyboard of the one party that may not split
+the task and can dissolve the refusal by typing `L`.
+
+A member may still pass `--band` at the mark to disagree. Both letters are kept.
+That disagreement is the earliest signal you will get that a brief was mis-sized,
+so read it as one.
 
 **New tokens means up + down** — what was sent for the first time plus what was
 generated. It excludes resent context, which is the conversation handed back

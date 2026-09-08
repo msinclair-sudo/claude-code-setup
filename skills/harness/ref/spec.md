@@ -49,10 +49,16 @@ Every node is checked out in exactly one worktree held by exactly one session.
 ### T2 — Catch-up (merge down)
 
 **Direction** downward, node into worktree.
-**Performed by** the worktree's own session, never by the node.
+**Performed by** the worktree's own session, never by the node — while the worktree is occupied. See below.
 **Rule** Twice per task, and only twice: once after claiming, before the first commit; once immediately before presenting. Never between.
 **Enforcement** `git merge <parent>`. This produces a real merge commit, because the worktree holds its own work.
 **Fails when** Attempted from outside. Merging into a worktree that is in use aborts with `error: Your local changes to the following files would be overwritten by merge` when the incoming change touches dirty files, and succeeds silently when it does not — so it lands in the harmless cases and refuses in the colliding ones. A node therefore publishes `git rev-list --count <child>..<node>` and lets the recipient act at its own boundary.
+
+**Two catch-ups is the MEMBER's count, and reading it as the worktree's count made the two rules here unsatisfiable together.** [[#T4 — Integration (fast-forward up)]] is `--ff-only`, which succeeds only while the child is an ancestor of the parent. Integrate the first child and the parent moves: every sibling that caught up before presenting — exactly as this rule instructs — is now behind, cannot be fast-forwarded, and needs a third catch-up this rule forbids. With *k* children at most one per round can satisfy both. It is not a rare race; it is what happens the second time a lead integrates anything.
+
+**The prohibition protects the worktree, not the ref, so it ends where occupancy ends.** Everything in the *Fails when* line above is about a tree somebody is working in. A member that has presented and released is not working in it, the roster says so, and the merge that was dangerous a minute earlier is now ordinary. So: **the member catches up twice; a third catch-up into an unoccupied worktree belongs to the lead, and is part of T4 rather than an exception here.** `harness integrate` is that act and refuses an occupied worktree outright — occupancy is the one thing nothing overrides.
+
+**Found three times in one night, and worked around in the wrong place first.** `harness recycle` was taught to release a presented child that had been left behind, which is correct — the member has genuinely finished — but it clears the *node* and leaves the *work* precisely where it was. Both are needed and they are different jobs.
 
 ### T3 — Guard verification
 
@@ -82,10 +88,18 @@ its construction warns you about.
 **Direction** upward, worktree into the node above.
 **Performed by** the owner of the target node, in the owner's own worktree.
 **Rule** The node is fast-forwarded to the worktree. The worktree is never fast-forwarded to the node — that direction is T2.
-**Enforcement** `git merge --ff-only <child>`. A contributor that has not completed T2 is refused with `fatal: Not possible to fast-forward, aborting.`
+**Enforcement** `git merge --ff-only <child>`, or `harness integrate <child> | --children`, which is that merge with the catch-up and the ordering around it. A contributor that has not caught up is refused with `fatal: Not possible to fast-forward, aborting.`
 **Fails when** Treated as a push. Pushing to a checked-out branch is rejected: `! [remote rejected] … (branch is currently checked out)`.
 
+**A lead with more than one child should use the command**, because serialising is the part that was left to be remembered and [[#T2 — Catch-up (merge down)]] is where that bill came due. It refuses an occupied or dirty child worktree, refuses work that was never presented, aborts and hands a conflict back rather than resolving one, and does not run the child's checks — nothing in this CLI executes a manifest command, and the one place the design has a lead run a member's checks is [[#T7 — Conflict escalation]], where a conflict has already made it necessary. It is a merge with the bookkeeping, not a reviewer.
+
 **A review is required, and it is enforced.** `harness review <node> --record` reads the diff and records the read against the child's exact commit; `reference-transaction` refuses the parent's fast-forward without that record. A new commit on the child invalidates it automatically, so there is nothing to expire.
+
+**The record says who read it, and for a long time nothing asked.** The gate's whole test was that a file existed. `harness review --record` defaults its target to the node you are standing in and asked nobody's rank, so a member could write the record that unblocked its own integration — and the gate justified by *a member cannot verify its own work* was satisfiable by that member, silently, with a green result. The record had carried `reviewed_by` and `session` from the start. **Provenance nobody reads is provenance nobody corrects**, which is the same sentence [[#T16 — A finding crosses one rank, and becomes work only with approval]] wrote about `decided_by`, arriving a second time in a place nobody thought to look. The guard now reads `reviewed_by_node` — derived from git in the recording session under [[#R1 — Position is derived, never declared]], so it cannot be claimed — and refuses unless it is the node being integrated into. Refused in the CLI too, but the guard's is the one that holds: a check in the CLI is bypassed by writing the file.
+
+**A clean catch-up carries the review; a conflicted one does not.** The record is keyed on the child's sha, so the lead's own catch-up under T2 invalidates the read it just did — and a lead integrating *k* children would re-read every one of them, *k* times, for merges git performed mechanically. So `integrate` carries the record across a clean merge, recording `carried_from`, because the child's side was read, the parent's side is the lead's own integrated history, and nobody decided anything in between. A conflict never reaches that path: somebody chose something, and it is read.
+
+**Detection is by ancestry, not by shape.** The first gate asked whether the parent's new sha *is* a child's tip, which is true of the fast-forward this design uses and false of every other way the same work arrives — `git merge --no-ff <child>` produces a merge commit that is nobody's tip and walked past the gate untouched. The question that holds is whether a child's tip became reachable when it was not reachable before, which costs the same to ask. It also checks **every** child that newly arrived rather than the first match: two children can sit on the same sha, and a review recorded for one satisfied the gate for the other.
 
 Why enforced rather than expected: a member cannot verify its own work. Measured, a model revisiting its own output without an external check gets **worse** in every configuration tested, one case falling from 75.8 to 38.1, while the same procedure improves results when an oracle is available. The lead is that oracle. This reverses an earlier decision in this note that left the read optional.
 
@@ -108,10 +122,13 @@ An unavailable check must never render as a clean one — the first draft of thi
 command returned an empty result in that case and silently read as "no
 violations".
 
-**Reading is optional; being able to read is not.** A lead may integrate without
-reading the diff — that is a judgement about pace, and the harness does not gate
-the merge on a review. But the view must never be unavailable, and there is a
-sharp reason it was: **a fast-forward leaves no boundary.** After `T4`, parent
+**Being able to read it is a separate requirement, and it survives the gate.**
+This paragraph used to open *reading is optional* and say the harness does not
+gate the merge on a review, which stopped being true when the gate was built and
+sat here for weeks afterwards contradicting the section above it — the expensive
+direction, because a lead that believes it meets the refusal *after* git has
+already checked out the fast-forward. What the paragraph is actually about is
+unchanged and is not about pace: **a fast-forward leaves no boundary.** After `T4`, parent
 and child point at the same commit, no merge commit records where the
 contribution began, and `parent..child` is empty. Measured in a live tree, five
 of six children sat at zero ahead and `review` said *nothing to present* for
@@ -357,7 +374,7 @@ A brief exists **before** its mark: the lead writes it, then the member accepts.
 
 **Nobody waits.** The lane that raised the finding carried on with its queue, and the gate holds no session idle. That is what makes it safe to gate at all.
 
-**Enforcement** `--how` required; the addressed lead only; every session refused at `--approve`; `mark` and the queue both exclude a gated or declined brief. It reaches the operator through `harness needs` and the viewer's attention panel, carrying the brief's own text — deciding whether a task is worth a session means reading the task.
+**Enforcement** `--how` required; the addressed lead only; every rank below 0 refused at `--approve`, with rank 0's own approval recorded `self_approved` and said on the line; `mark` and the queue both exclude a gated or declined brief. It reaches the operator through `harness needs` and the viewer's attention panel, carrying the brief's own text — deciding whether a task is worth a session means reading the task.
 **Fails when** A lead turns every finding into a gated brief. The queue is the operator's attention and it is finite; declining on the record is a first-class outcome and costs one line.
 
 ---
@@ -384,7 +401,13 @@ So: **a check that cannot fail, and a refusal that does not stop anything.** Bot
 
 ### I2 — Nobody pushes
 
-The owner of a node integrates contributors into it. Pushing to a checked-out branch is rejected outright, so the invariant costs nothing to maintain while every node stays checked out.
+The owner of a node integrates contributors into it. Pushing to a checked-out branch is rejected outright, so the invariant costs nothing to maintain *between the branches of this tree*, while every node stays checked out.
+
+**That covers the direction nobody was going to take, and for a while nothing covered the other one.** git's refusal is about a local branch that a worktree holds. It says nothing whatever about a remote, so `git push origin w_m1` was unguarded — and [[#I4 — `reference-transaction` is the primary guard]]'s table said that hook fired on a push, which is true and useless: on a push it sees `refs/remotes/*`, which is exactly what a **fetch** updates, so it cannot tell the two apart and a refusal there would break every fetch in the repository. A row reading *fires* over a hook that cannot act is a check that cannot fail, which is the shape this note tells its own readers to hunt.
+
+**`pre-push` is the one hook that runs on the sending side knowing it is a push**, so the rule lives there. It asks `_guard --publish <branch>`: a branch outside the tree is not the guard's business, a branch named in the manifest's `publish` list is allowed, and a node branch is refused. `publish` is empty by default, which is this invariant stated exactly. It is a document, so widening it is rank 0's deliberate act and every node reads the same answer.
+
+What is at stake is not tidiness. Every guarantee here is a **local** hook and a remote runs none of them, so a pushed node branch is work no rank has integrated, sitting somewhere the guard cannot reach and cannot undo. `git push --no-verify` skips this exactly as it skips `pre-commit`; nothing local is proof against it, which is why this is an invariant with a guard rather than a property of git.
 
 ### I3 — Scopes are globally disjoint
 
@@ -396,16 +419,19 @@ No two open tasks anywhere in the tree may claim the same path, checked against 
 
 ### I4 — `reference-transaction` is the primary guard
 
-| operation | `pre-commit` | `pre-merge-commit` | `reference-transaction` |
-| --- | --- | --- | --- |
-| commit in a worktree | fires | n/a | fires |
-| fast-forward up (T4) | silent | **silent** | fires |
-| merge down (T2) | silent | fires | fires |
-| `reset --hard` | silent | silent | fires |
-| `push` | silent | silent | fires |
-| `branch -f` | silent | silent | fires |
+| operation | `pre-commit` | `pre-merge-commit` | `pre-push` | `reference-transaction` |
+| --- | --- | --- | --- | --- |
+| commit in a worktree | fires | n/a | silent | fires |
+| fast-forward up (T4) | silent | **silent** | silent | fires |
+| merge down (T2) | silent | fires | silent | fires |
+| `reset --hard` | silent | silent | silent | fires |
+| `branch -f` | silent | silent | silent | fires |
+| `branch <new>` | silent | silent | silent | fires — see below |
+| `push` | silent | silent | **fires** | fires on `refs/remotes/*`, and cannot act |
 
 Every T4 is a fast-forward by design, so `pre-merge-commit` is silent on the path documents would take. `reference-transaction` alone covers it. It must be POSIX `sh` with an explicit `exit 0`: a non-zero exit gives `fatal: ref updates aborted by hook` and the repository stops accepting any ref update.
+
+**The last two rows are each a hole that was closed, and they close differently.** A push reaches `reference-transaction` only as a remote-tracking ref update, indistinguishable from a fetch, so that hook cannot refuse it and [[#I2 — Nobody pushes]] moved to `pre-push`. **Branch creation** is the other: there is no `old` to diff from, so the document arm was skipped and the ref update passed — a branch outside the tree may author documents freely, and `git worktree add` of a new *node* branch at that commit was then the whole bypass, in two ordinary commands. With no diff to take, the guard classifies the whole tree instead; only paths matching `docs` are read at all, so it costs the size of the document set rather than of the repository, and branch creation is rare.
 
 
 #### Trust model — what the guard does not cover
@@ -502,9 +528,11 @@ Every task carries an estimated cost band at [[#T1 — Task assignment]] and a m
 
 **The band counts NEW tokens** (up + down), not billed total. Resent context is excluded, or every band would be exceeded by the second turn and the estimate would measure conversation length instead of work.
 
-**XL is a refusal, not a size, and is now enforced.** It is the operational definition of [[#I8 — Tasks are short]]: `harness mark <task> --band XL` is refused outright, so a lead that cannot bring a task under L splits it or escalates. This is the only number in the harness that decides whether work may be issued at all.
+**XL is a refusal, not a size, and is now enforced.** It is the operational definition of [[#I8 — Tasks are short]]: `--band XL` is refused outright, so a lead that cannot bring a task under L splits it or escalates. This is the only number in the harness that decides whether work may be issued at all.
 
-**The band is recorded on the mark, and checked at presentation.** `--band S|M|L` at open, and `--done` prints the measured band beside the estimated one. A band that was wrong is the only thing that improves the next estimate, and it is the lead's estimate that was wrong rather than the member's work — which is why the member is told to report it rather than to explain it.
+**The estimate goes in with the brief, because that is whose it is.** `harness brief <task> --for <node> --write - --band S|M|L`. The only place to enter it used to be `harness mark`, which the **member** runs — so a lead's XL was refused at the member's keyboard: the one party that may not split the task ([[#T15 — Acceptance is not a decision]]) and can make the refusal disappear by typing a smaller letter. An enforcement pointed at the wrong actor is not an enforcement, and this one had the additional property that obeying it required disobeying something else. [[#T1 — Task assignment]] always said a task record carries an estimated band *at issue*; the number simply had nowhere to live until the brief did.
+
+**The band is read from the brief at the mark, and checked at presentation.** `--done` prints the measured band beside the estimated one. A member may still pass `--band` to disagree, and the disagreement is recorded as one — both letters are kept, with `_band_source` naming who set which. That is the earliest possible signal that a brief was mis-sized, and it is worth nothing if it silently overwrites the estimate it disagrees with. A band that was wrong is the only thing that improves the next estimate, and it is the lead's estimate that was wrong rather than the member's work — which is why the member is told to report it rather than to explain it.
 
 Rough per-transaction cost, for budgeting a task's overhead:
 
@@ -820,6 +848,9 @@ The harness reads Claude's own state. It never writes it. Those files and variab
 | `C3` | `CLAUDE_PID` is set and live | second liveness source, independent of `ListAgents` |
 | `C4` | `slug(cwd)` resolves to an existing project directory | the anchoring rule still holds |
 | `C5` | `claude agents --json` returns an array listing this session, with the expected fields | the liveness oracle is readable |
+| `C6` | those rows carry `state` | a session **stopped** at a prompt is distinguishable from an idle one |
+
+`C6` is its own id and not part of `C5` on purpose. `C5` failing means the harness cannot identify a session at all and must stop; `C6` failing means it can, but has gone blind to the one condition only a human can clear. That is a different fault, not a smaller one, and sending its reader after `C5`'s cause would waste the trip — the same *one word, two contracts* rule this note applies to exit codes.
 
 Refusing is the correct response because the failure is silent otherwise: a harness that mis-identifies a session can let two of them hold one node, and that is the one failure the lock exists to prevent. The check runs at claim time, not once at install.
 
@@ -872,8 +903,12 @@ harness hook has no business existing outside an enrolled repository, so it goes
 in the second and travels with `.harness/tree.json`. In every other project the
 command is never spawned at all — not run-and-silent, simply absent.
 
-`SessionStart` is one of three events whose **plain stdout is added to the model's
-context**, so no JSON envelope is needed; `whoami` output is the payload.
+`SessionStart` is one of **four** events whose plain stdout on exit 0 is added to
+the model's context — the others are `UserPromptSubmit`, `UserPromptExpansion`
+and `PostModelSwitch` — so no JSON envelope is needed; `whoami` output is the
+payload. Everywhere else, including `Stop`, exit-0 stdout goes to the debug log.
+Checked against the reference 2026-09-08; this note said *three* and did not say
+which, which is a count nobody can act on.
 `--no-check` skips the cosmetic name warning, which would otherwise cost a
 `claude agents --json` call at every session start.
 
@@ -1042,12 +1077,15 @@ saturates at `max` and says so rather than pretending a retry is available. Use
 it for the saving, not the lift, and price in the doubled wall clock. A second
 failure at a higher level is a finding — read it rather than escalating again.
 
-**The split has a cost, and it is not zero.** `opus[1m]` and `opus` are separate
-cache namespaces — measured: a request on one immediately after the other rewrote
-12,521 tokens rather than reading them, while a repeat on the same model read all
-22,491 and wrote none. Sessions in one repo share a static prefix, so running two
-models across the ranks caches that prefix twice. The wide window is still worth
-it for a lead; this is the bill for it, stated rather than hidden.
+**The split has a cost, and it is not zero.** Two models across the ranks are two
+cache namespaces, and sessions in one repo share a static prefix, so that prefix
+is cached twice. The measurement to hand is next door rather than on the nose:
+`opus[1m]` against `opus` rewrote 12,521 tokens rather than reading them, while a
+repeat on the same model read all 22,491 and wrote none. That was taken when this
+note still put a lead on a wide window; the pairing it measured is gone and the
+property it demonstrates — a change of model is a cold cache — is what applies to
+`opus` against `sonnet`. Stated rather than hidden, and labelled as the near-miss
+it is rather than passed off as the figure for the split actually in use.
 
 Re-measure all of this from closed ledger rows under
 [[#I10 — Cost is estimated, then measured]] rather than trusting the table.
@@ -1059,7 +1097,23 @@ rejects it — by then the session is already spawned and detached.
 
 ### R14 — The operator is told, and does not have to look
 
-**The platform cannot tell you which session wants you.** Measured 2026-08-31: `claude agents --json` carries `status` (busy/idle) and `state` (working/done) and nothing else. A session stopped dead on a refused permission is `busy`, indistinguishable from one that is working. So the harness has to say so itself, and the mechanism is constrained by [[#R4 — No arbiter process]]: nothing polls, because nothing is running to poll. **The event notifies at the moment it is recorded**, or not at all.
+**The platform could not tell you which session wants you, and now it can — the measurement expired and this note went on quoting it.** Measured 2026-08-31: `claude agents --json` carried `status` (busy/idle) and `state` (working/done) and nothing else, so a session stopped dead on a refused permission was indistinguishable from one that was working. Everything below was built on that.
+
+Re-derived 2026-09-08: rows carry **`state: "blocked"`**. What it cost to keep the old reading is exact. `biblion2-dev` sat halted at a prompt for forty minutes holding three briefs written for it, while `status`, `idle`, `whoami` and the viewer all rendered it `idle` — the same word as free — because every occupancy call in the CLI read `status` and nothing anywhere read `state`. `recycle` would not even have refused it: the remedy was reachable the whole time and no instrument could see the condition.
+
+This is [[#I13 — A measurement travels with the command that produced it]] landing in the worst available place. A figure written into prose ages silently; **this one aged into a premise**, and nothing re-derives a premise. So the assertion is now `C6` in [[#R8 — The platform contract fails loud]] — if the field ever goes away, the harness says so instead of quietly going blind again.
+
+**One state, two situations, and the first reading of it prescribed the wrong remedy.** Measured 2026-09-08, an hour after the above: `biblion2-main` reported `blocked` because it had **ended its turn and was waiting for a reply** — prompting it cleared it at once, and attaching did nothing because there was nothing to approve. `biblion2-dev` reported the same value while genuinely **halted on a permission prompt**, for a compound `cd … && harness note …` command that matched no allow rule despite both of its halves being allowed.
+
+Nothing outside the session can tell those apart. So every surface says **waiting on you** and offers both remedies cheapest first — send it a prompt; attach and answer if it turns out to be a permission ask — rather than naming one confidently. The first draft said *halted at a prompt* and told the operator to attach, which was wrong for the commoner of the two and sent them at the wrong action twice in a row. **A queue that confidently prescribes the wrong action is worse than one that says it does not know**, and it is the same failure as a check that passes for the wrong reason: the output looks like knowledge either way.
+
+**It is `stopped` in the record and `waiting` on every surface, never `blocked`.** `harness blocked` is already a record asking the operator to widen a permission, raised deliberately by a session that is still running and often still working. A session the runtime has halted is a different fact about a different thing, and one word over two contracts is a fault this project has already paid for. The runtime's value is read at exactly one boundary.
+
+**A stopped lane belongs in `harness needs`, and it is the only item there that never asked.** A block and an approval are raised — some session chose to put them there. A halted session raised nothing and *can* raise nothing, because raising takes a turn and it does not get one. It passes this section's own narrow test cleanly: only the operator can clear it, no rank in the tree has the authority, and it is not somebody else's work-in-progress.
+
+**Recycling is not the remedy and looks exactly like it.** A replacement starts cold, walks the same path and stops at the same prompt, so the sweep costs a session and changes nothing — while discarding whatever the halted one was waiting to be told. `recycle` and `recycle --cold` now refuse a stopped node and name `claude attach` instead; `--force` still overrides, and says what it is throwing away.
+
+The rest of this section stands: what remains genuinely unpushable is constrained by [[#R4 — No arbiter process]], nothing polls, and **the event notifies at the moment it is recorded**, or not at all.
 
 | surface | reaches the operator when |
 | --- | --- |
@@ -1072,6 +1126,8 @@ rejects it — by then the session is already spawned and detached.
 **The viewer does not seize the browser.** It prints its URL and opens nothing unless asked with `--open`. It starts often — from `harness gui`, from a restart after an edit, from a second port when the first is taken — and a viewer that takes the screen every time is one that interrupts whatever was on it.
 
 **The harness does not choose the channel.** `notify-send` is wrong over ssh, wrong on a Mac and wrong in WSL, which is three of three on the machines this has run on. The hook is absent by default and the record is written either way; a notifier that fails, hangs or is missing must never take the block record down with it.
+
+**Machine-wide for the operator, this project only for a session.** The reasoning below is about the operator and it still holds — but `whoami` points rank-0 **sessions** at this command too, and a session reading another project's queue is a leak in the one direction the design is otherwise strict about: it can neither act on those rows nor should it know they exist. Reported by the operator, who found one tree's items inside another tree's session. So inside an enrolled repository `harness needs` is that repository's queue and says so; outside one — the operator standing anywhere at all — it is the whole machine; `--all` restores the wide view from anywhere. `needs.json` stays machine-wide, because the notify hook is handed every project.
 
 **Everything a decision needs is in one place, with the command already written.** `harness needs` scans every enrolled project on the machine, deliberately building no `Ctx` — the operator is usually not standing in the repository that wants them, and often not in a repository at all. A command that only works from the right directory is one that does not get run. Each entry prints what is needed, what it is for, **what is still moving without it** (which is how urgency gets judged rather than guessed), and the exact `harness grant` and `harness recycle` lines, `cd`-wrapped and shell-quoted.
 
@@ -1120,6 +1176,33 @@ Because the server has no authentication, a page merely *visited* in the same br
 The one thing it must get right is the same thing `harness needs` must: the entry expands to the exact `grant` and `recycle` lines, ready to copy. Structure comes from `tree.json` rather than the index, so a node the index has not caught up with is **shown as unknown rather than hidden** — a viewer that silently omits a node is worse than no viewer.
 
 `needs.json` beside the project directories is a derived cache, rebuilt on every raise, grant and resolve. It was written for the statusline, which rendered on every prompt and could not walk every project's block directory; that reader is gone, and what remains is the `notify` hook, which is handed the same rows as `HARNESS_JSON`. The per-project block records are the truth; `inbox.jsonl` is the append-only history of both raising and clearing ([[#I6 — The ledger is append-only]]).
+
+### R15 — Orientation is edge-triggered, and change is what travels
+
+**The cost of telling a session something is not paid once.** A line printed at turn *k* of an *n*-turn conversation is resent on every turn after it, so it costs roughly *n − k* times. Periodic orientation is therefore **quadratic in session length**, and that one fact rules out the obvious design — print the queue every so often — before any other consideration. What is left is the only shape that works: **report a change, never a state.** A session already told about an item does not pay for it again, the bill is *O(changes)* rather than *O(turns)*, and a quiet tree costs nothing at all.
+
+This is [[#R11 — Orientation is a hook in the enrolled repo, not a global one]]'s existing rule — *a line that is usually absent costs nothing and a line that appears has earned its tokens* — applied to the whole surface instead of to one hook.
+
+**Three channels, and each is chosen by what it can reach.**
+
+| channel | reaches | costs |
+| --- | --- | --- |
+| `UserPromptSubmit` → `harness hook-orient` | the session, every turn | nothing unless something changed |
+| the delta footer after any harness command | the session, while it works | nothing unless something changed |
+| `Stop` → `harness hook-stop` | the session, by **blocking** it | a turn, so it is reserved for work that is owed |
+| `~/.claude/harness/notify` | the operator | zero tokens — it never enters a transcript |
+
+`Stop` cannot do the first job. Exit-0 stdout becomes context for four events — `UserPromptSubmit`, `UserPromptExpansion`, `SessionStart`, `PostModelSwitch` — and goes to the debug log for everything else, `Stop` included. So a `Stop` hook reaches a session only by refusing to let it stop, which is the right instrument for a duty and the wrong one for news.
+
+**The footer is the cheap half and it is nearly free.** A working session runs `mark`, `brief`, `review`, `integrate` all day and is already reading their output, so orientation rides along for the price of the lines it actually prints — none, unless the queue moved. It is deliberately silent after a refusal: the reader is dealing with the refusal, and a queue notice underneath it is noise at the worst moment.
+
+**Keyed on the session, not the node.** A recycled session has been told nothing, which is exactly right — [[#R13 — Everything below rank 0 starts cold]] means it starts cold by design and its orientation is where it learns the lot. `whoami` marks everything it printed as told, so the next command does not repeat it; a notice that arrives twice running is one a reader learns to skip, which is the failure this exists to prevent.
+
+**An item that clears and returns reports again.** Only additions are printed — *X is gone* is not actionable — but the comparison is on a set, so something that comes back is news the second time too.
+
+**Rank 0 is why this was needed.** It holds more queues than anyone — pending approvals, answered blocks that produced no task — and reads them least often, because orientation fires on startup, resume and compact and rank 0 is the one node [[#R13 — Everything below rank 0 starts cold]] never recycles. Measured on a live tree 2026-09-08: its lock had gone **37 hours** without a refresh, which is 37 hours of that queue read exactly once. `lead_owes` already gave it a per-turn heartbeat for what it owes *downward* and nothing for what it owes *outward*, so the queues only it could clear were the ones with no heartbeat at all. That is now a `Stop` row of its own, aged like the others.
+
+**It reads local JSON and nothing else.** No roster, no `claude agents --json`. This runs on every prompt in an enrolled repository, and 0.55s there is a tax on typing.
 
 ### R13 — Everything below rank 0 starts cold
 
@@ -1182,7 +1265,7 @@ worktree*, and on a node the worktree is the node.
 
 **Evidence is required, and one nudge is the whole of it.** A mark opened and not started is a lane that has not begun, and blocking that would trap a member waiting on something; so the test is that HEAD has moved since the mark was opened, or the worktree is dirty. `stop_hook_active` says a block already happened this turn, and the hook allows immediately when it is set — a member gets one nudge and may then stop, which is what keeps this a reminder rather than a trap.
 
-**A hook that runs on every turn must fail silently, not loudly.** It prints nothing on the allow path, because plain stdout on exit 0 becomes context in every turn of every session in that repository. It is silent outside a git worktree, outside an enrolled project, on a branch that is not a node, and on unparseable input. `Ctx()` raises `SystemExit` rather than an `Exception` when it refuses, which an ordinary guard does not catch and which would have written a notice into every transcript on the machine, forever.
+**A hook that runs on every turn must fail silently, not loudly.** It prints nothing on the allow path — which turns out to be right for a better reason than the one given here. This note said exit-0 stdout becomes context in every turn; checked 2026-09-08, `Stop` is not one of the four events that happens for, so its allow-path stdout goes to the **debug log** and reaches nobody. A `Stop` hook can only reach a session by **blocking** it. That makes it the correct instrument for work that is owed and the wrong one for news, and it is why orientation-by-heartbeat lives on `UserPromptSubmit` instead — see [[#R15 — Orientation is edge-triggered, and change is what travels]]. It is silent outside a git worktree, outside an enrolled project, on a branch that is not a node, and on unparseable input. `Ctx()` raises `SystemExit` rather than an `Exception` when it refuses, which an ordinary guard does not catch and which would have written a notice into every transcript on the machine, forever.
 
 **The same hook enforces the other direction, and it is the harder one.** Upward reporting is a single act by the party that just did the work. Downward, a lead owes two things it can easily never notice, because neither is visible to the child and neither can be done by it: a presentation it has not signed off, and a child standing idle with work already written for it. This applies to **rank 0 as well** — main is `dev`'s lead — which is why every row is aged past a threshold, so a conversation with the operator is not interrupted over a child idle for ninety seconds.
 

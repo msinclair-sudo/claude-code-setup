@@ -61,6 +61,18 @@ path a document would take. That hook must be POSIX `sh` with an explicit
 `exit 0`: a non-zero exit gives `fatal: ref updates aborted by hook` and the
 repository stops accepting *any* ref update. Test changes against a scratch clone.
 
+It cannot cover a **push**, and that is not a gap it can be made to close: on a
+push it sees only `refs/remotes/*`, which a fetch updates identically, so a
+refusal there would break every fetch. `pre-push` is the hook that runs on the
+sending side knowing it is a push, and it refuses any node branch — widen it by
+naming a branch in `manifest.json`'s `publish` list, never by editing the hook.
+
+**The hooks and `_guard` move together.** Each hook asks `_guard --capabilities`
+and refuses when the answer lacks the word it needs, because a guard too old to
+understand a flag treats it as noise and exits 0 — a gate that passes everything,
+silently, looks exactly like one that ran. The list only ever grows: add a new
+word for a stricter contract rather than changing what an old one means.
+
 ## Naming: no node branch may be a path prefix of another
 
 Git refs are files, so `refs/heads/dev` blocks `refs/heads/dev/ui` from existing —

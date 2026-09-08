@@ -99,6 +99,59 @@ def live_rows(rows):
     return out
 
 
+# The runtime's own word for it is `blocked`, and this codebase already spends
+# that word on something else: `harness blocked` is a record asking the OPERATOR
+# to widen a permission, raised deliberately by a session that is still running
+# and often still working on other things. A session the runtime has halted at a
+# prompt is a different fact about a different thing. One word over two
+# contracts is a fault this project has already written up and paid for, so the
+# roster's value is read at exactly one boundary and everything a human reads
+# says `stopped`.
+STOPPED_STATE = "blocked"
+
+
+def is_stopped(row):
+    """Is this session waiting on the operator?
+
+    ONE runtime state, at least two situations, and they have different
+    remedies. Measured on a live tree 2026-09-08: `biblion2-main` reported
+    `blocked` because it had ended its turn and was waiting for a REPLY —
+    prompting it cleared it instantly and attaching did nothing, because there
+    was nothing to approve. `biblion2-dev` reported the same value while
+    genuinely halted on a permission prompt for a compound `cd ... && harness
+    note ...` command.
+
+    The first draft of everything below called both "halted at a prompt" and
+    told the operator to attach. That was wrong for the commoner of the two and
+    sent them at the wrong remedy twice. Nothing outside the session can tell
+    the cases apart, so every surface now says WAITING ON YOU and offers both,
+    cheapest first. A queue that confidently prescribes the wrong action is
+    worse than one that says it does not know.
+
+    Why it is read at all — R14 opens on a measurement taken 2026-08-31: that the roster carried
+    `status` and `state` (working/done) and nothing that could tell a session
+    stopped dead on a refused permission from one that was working. The notify
+    hook, `needs`, the viewer's attention panel and the twenty-minute escalation
+    all exist to work around that.
+
+    The runtime has since grown the distinction, and nothing here looked. Cost,
+    measured on a live tree 2026-09-08: a lead sat at a prompt for forty minutes
+    holding three briefs written for it, while every surface in this CLI
+    rendered it `idle` — the same word as free. `recycle` would not even have
+    refused it, so the remedy was reachable the whole time and nothing could see
+    the condition.
+
+    That is I13 arriving in the worst available place. A measurement written into
+    prose ages silently; this one aged into a PREMISE, and nothing re-derives a
+    premise. C6 asserts the field, so the next expiry is loud.
+    """
+    return row.get("state") == STOPPED_STATE
+
+
+def stopped_rows(rows):
+    return [r for r in rows if is_stopped(r)]
+
+
 def self_row(rows):
     sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     return next((a for a in rows if a.get("sessionId") == sid), None)
@@ -142,6 +195,18 @@ def check_contract(roster_text=None):
             f.append(("C5", "`claude agents --json` does not list this session"))
         elif not {"cwd", "name", "pid", "status", "sessionId"} <= set(me):
             f.append(("C5", "`claude agents --json` is missing expected fields"))
+        elif "state" not in me:
+            # Its OWN id, not part of C5, because it is its own contract and
+            # collapsing the two would send whoever meets it after the wrong
+            # fault. C5 failing means the harness cannot identify a session at
+            # all and must stop. C6 failing means it can, but has gone blind to
+            # the one condition only a human can clear — a session halted at a
+            # prompt. That is not a smaller problem, it is a different one, and
+            # naming it separately is the same rule this file applies to exit
+            # codes: one word, two contracts is the fault.
+            f.append(("C6", "`claude agents --json` rows no longer carry `state`, so a "
+                            "session\n           stopped at a prompt is once again "
+                            "indistinguishable from an idle one"))
     except Exception as e:
         f.append(("C5", str(e)))
     return f
@@ -352,9 +417,16 @@ def cmd_whoami(a):
     """--quiet is the hook contract: in a project that is not enrolled, print
     nothing, write nothing to stderr, and exit 0 — so a SessionStart hook injects
     no context at all rather than injecting an error."""
+    # --delta is orientation without the orientation: what has changed since
+    # this session was last told, and silence otherwise. Cheap enough for a
+    # per-turn hook because it reads local JSON and nothing else.
+    if a.__dict__.get("delta"):
+        global QUIET
+        QUIET = True
+        print_delta()
+        return
     if not a.quiet:
         return _whoami(a)
-    global QUIET
     QUIET = True
     try:
         _whoami(a)
@@ -443,6 +515,44 @@ def _whoami(a):
                       f"{r.get('asked')}")
                 if r.get("still_moving"):
                     print(f"           still moving: {r['still_moving']}")
+    except Exception:
+        pass
+    # A child halted at a prompt. NOT in `lead_owes` and not a Stop-hook block,
+    # because a lead cannot clear this one either — only a human at the keyboard
+    # can, and blocking a lead's stop over work it may not do is the trap that
+    # rule already refuses. But it is the answer to "why has that child not
+    # moved", and a lead that does not have it will recycle the node, which
+    # restarts the session into the same prompt.
+    #
+    # It is deliberately not the `waiting` list above: that is a child that
+    # ASKED, which takes a turn. This one got no turn to ask in.
+    #
+    # It costs one `claude agents --json` (~0.55s) and it is paid only by a node
+    # that HAS children — a leaf pays nothing, and there is nothing it could do
+    # with the answer. That is the same 0.55s `--no-check` exists to avoid at
+    # every session start, and the trade is deliberately different: that one
+    # bought a cosmetic name warning, this one buys the only condition in the
+    # tree that halts a lane with nobody able to say so. It prints only when
+    # something is halted, so the token cost is zero on the normal path.
+    #
+    # NOT wrapped in a bare `except` around an undefined name: the first draft
+    # of this used `idx` before whoami builds it, so it raised NameError, the
+    # except swallowed it, and the arm could never fire. A check that cannot
+    # fail is the fault this file keeps finding; here it would have been a check
+    # that could never fire, which reads identically from outside.
+    try:
+        _idx = load_index(ctx)
+        _kids = set(_idx["nodes"].get(node, {}).get("children") or [])
+        if _kids:
+            for r in stopped_rows(live_rows(agents_json(read_roster(a.roster)))):
+                child = (_idx.get("byWorktree") or {}).get(r.get("cwd", ""))
+                if child not in _kids:
+                    continue
+                print(f"WAITING  {child} is waiting on the operator — it reads as idle "
+                      f"and is not.")
+                print(f"         Not yours to clear: it wants a reply or a permission "
+                      f"answered, and\n         both are at a keyboard. It is in "
+                      f"`harness needs`.")
     except Exception:
         pass
     # Segments this node split. Discharged for queueing the moment they were
@@ -700,6 +810,14 @@ def _whoami(a):
                 print(f"blocked  {nb} lane(s) waiting on the operator — harness needs")
         except Exception:
             pass
+    # Orientation has just said all of it, so record it as told. Without this
+    # the very next harness command would repeat the lot as "new" — and a
+    # notice that arrives twice in a row is one a reader learns to skip, which
+    # is the whole failure the delta exists to avoid.
+    try:
+        delta(ctx, node, os.environ.get("CLAUDE_CODE_SESSION_ID", ""), update=True)
+    except Exception:
+        pass
 
 
 def cmd_behind(a):
@@ -839,7 +957,8 @@ def cmd_status(a):
         # exactly backwards, since a stale lock is the thing this command exists
         # to surface so it can be forced.
         rows = live_rows(agents_json(read_roster(a.roster)))
-        peers = {r["sessionId"]: {"name": r.get("name") or "?"} for r in rows}
+        peers = {r["sessionId"]: {"name": r.get("name") or "?",
+                                 "stopped": is_stopped(r)} for r in rows}
         roster = True
     except Exception:
         peers, roster = {}, None
@@ -857,6 +976,12 @@ def cmd_status(a):
     for p in locks:
         h = json.loads(p.read_text())
         live = "live" if h["ref"] in peers else ("stale" if roster else "unknown")
+        # A stopped session is live, and calling it `live` is true and useless.
+        # It reports `status: idle` — the same word as a session with nothing to
+        # do — so the one state that needs a human at the keyboard rendered as
+        # the state that needs nobody.
+        if peers.get(h["ref"], {}).get("stopped"):
+            live = "WAITING"
         claimed.add(h["node"])
         open_here = tasks.get(h["node"], [])
         pres = [x for x in open_here if tasks_rec.get(x, {}).get("_presented_at")]
@@ -873,6 +998,11 @@ def cmd_status(a):
         if live == "live" and not open_here:
             unassigned.append(h["node"])
         print(f"  {h['node']:<12} {h['name']:<22} [{h['ref']}]  {live:<8}{work}")
+        if live == "WAITING":
+            print(f"  {'':<12} WAITING ON YOU — not idle. The runtime reports one state "
+                  f"for two\n  {'':<12} things and they have different remedies: send it "
+                  f"a prompt if it is\n  {'':<12} waiting on a reply, or attach and answer "
+                  f"if it is on a permission\n  {'':<12} prompt.  claude attach {h['ref'][:8]}")
 
     if not locks:
         print("no nodes claimed")
@@ -1208,7 +1338,7 @@ def cmd_doctor(a):
     arm("hooksPath is absolute", bool(hp) and hp.startswith("/"),
         "" if (hp or "").startswith("/") else "relative paths vanish on branches lacking the dir")
     arm("_guard exists and is executable", bool(guard and guard.exists() and os.access(guard, os.X_OK)))
-    for h in ("pre-commit", "pre-merge-commit", "reference-transaction"):
+    for h in ("pre-commit", "pre-merge-commit", "reference-transaction", "pre-push"):
         f = Path(hp) / h if hp else None
         arm(f"{h} present", bool(f and f.exists() and os.access(f, os.X_OK)))
     # the fileMode trap: git records the index mode, not the disk mode
@@ -1517,7 +1647,8 @@ def cmd_idle(a):
     for r in rows:
         by_cwd.setdefault(r.get("cwd"), []).append(r)
     out = []
-    for pdir in sorted(p for p in HOME_STATE.glob("*") if p.is_dir()):
+    for pdir in sorted(p for p in HOME_STATE.glob("*")
+                       if p.is_dir() and (p / "binding.json").exists()):
         try:
             repo = json.loads((pdir / "binding.json").read_text()).get("repo", "")
             idx = json.loads((pdir / "index.json").read_text())
@@ -1541,19 +1672,34 @@ def cmd_idle(a):
                 held = marks.get(node, [])
                 out.append({"project": Path(repo).name, "repo": repo, "node": node,
                             "name": r.get("name"), "age": age, "carry": carry,
-                            "held": held, "sid": (r.get("sessionId") or "")[:8]})
+                            "held": held, "sid": (r.get("sessionId") or "")[:8],
+                            "stopped": is_stopped(r)})
     if not out:
         print("no idle sessions holding a node"); return
-    out.sort(key=lambda x: -(x["age"] or 0))
+    # Stopped first and unconditionally, whatever their age. Every other row
+    # here is a judgement about cost; this one is a lane that has halted, and
+    # sorting it in among sessions that are merely quiet buries the only row
+    # that is not working as intended.
+    out.sort(key=lambda x: (not x["stopped"], -(x["age"] or 0)))
     cold = 0
     for x in out:
         is_cold = (x["age"] or 0) > CACHE_TTL
         cold += is_cold
         work = ", ".join(t for t, pres in x["held"] if not pres)
         pres = ", ".join(t for t, pres in x["held"] if pres)
-        print(f"{x['project']} · {x['node']:<10} idle {human_age(x['age']):>7}"
-              + ("   COLD" if is_cold else "")
+        print(f"{x['project']} · {x['node']:<10} "
+              # The header token and the line under it have to agree. They did
+              # not: the header said STOPPED while the body said WAITING ON YOU,
+              # which is two names for one condition in three lines of output.
+              + ("WAITING" if x["stopped"] else "idle")
+              + f" {human_age(x['age']):>7}"
+              + ("   COLD" if is_cold and not x["stopped"] else "")
               + (f"   carrying {tok(x['carry'])}" if x["carry"] else ""))
+        if x["stopped"]:
+            print(f"  {'':<12} WAITING ON YOU, not resting. Send it a prompt, or attach "
+                  f"and answer\n  {'':<12} if it is on a permission prompt: claude attach "
+                  f"{x['sid']}")
+            continue
         if work:
             print(f"  {'':<12} mid-task: {work} — do not recycle, it has not presented")
         elif pres:
@@ -1766,6 +1912,191 @@ def lead_owes(ctx, node):
     return owed
 
 
+def rank0_owes(ctx, node):
+    """What rank 0 owes as the operator's proxy, as (kind, id, label, age) rows.
+
+    Rank 0 holds more queues than anyone — pending approvals, blocks the
+    operator answered that produced no task — and reads them least often,
+    because it is the ONE node R13 never recycles and orientation fires on
+    startup, resume and compact. A rank-0 session that began this morning and
+    has not compacted has read its queue exactly once. Measured on a live tree:
+    its lock had not been refreshed in 37 hours.
+
+    That inversion is the whole reason this exists. `lead_owes` gave rank 0 a
+    per-turn heartbeat for what it owes DOWNWARD and nothing for what it owes
+    outward, so the queues that only it can clear were the ones with no
+    heartbeat at all.
+    """
+    if ctx.rank(node) != 0:
+        return []
+    owed = []
+    bd = ctx.state / "briefs"
+    for f in (sorted(bd.glob("*.json")) if bd.is_dir() else []):
+        try:
+            b = json.loads(f.read_text())
+        except Exception:
+            continue
+        ap = b.get("approval") or {}
+        if ap.get("state") != "pending" or b.get("superseded_at"):
+            continue
+        then = _epoch(ap.get("asked_at"))
+        if then and time.time() - then > STALLED_SIGNOFF:
+            owed.append(("approve", b.get("task") or f.stem,
+                         b.get("task") or f.stem, time.time() - then))
+    for key, r in decided_blocks(ctx).items():
+        # The last thing the operator said on it. `answered()` is what put it
+        # here, so there is one by construction; the max is for a block they
+        # spoke on more than once.
+        cs = [c.get("at") or "" for c in (r.get("comments") or [])
+              if c.get("by") == "operator"]
+        then = _epoch(max(cs) if cs else (r.get("granted_at") or r.get("resolved_at")))
+        if then and time.time() - then > STALLED_SIGNOFF:
+            owed.append(("task", key, r.get("need") or key, time.time() - then))
+    return owed
+
+
+# ── orientation, edge-triggered ──────────────────────────────────────────────
+#
+# The cost of telling a session something is NOT paid once. A line printed at
+# turn k of an n-turn conversation is resent on every turn after it, so it costs
+# roughly (n - k) times — periodic orientation output is quadratic in session
+# length. That single fact rules out "print the queue every N turns" and leaves
+# only one shape that works: report a CHANGE, never a state. A session already
+# told about an item does not pay for it again, so the bill is O(changes)
+# instead of O(turns), and a quiet tree costs nothing at all.
+#
+# Which is also why this is a set of ids rather than a rendered block. What is
+# compared is what the reader would have to act on, not how it was phrased.
+
+def queue_items(ctx, node):
+    """Everything this node currently owes or holds, as {id: one-line text}.
+
+    Ids are stable across calls so an unchanged item compares equal, and carry
+    the thing they name so an item that goes away and comes back reports again
+    — which is correct: it is news the second time too.
+    """
+    out = {}
+    try:
+        for kind, child, task, age in lead_owes(ctx, node):
+            out[f"{kind}:{child}:{task}"] = (
+                f"{child} presented '{task}' {human_age(age)} ago, unsigned"
+                f"  — harness mark {task} --close" if kind == "sign off" else
+                f"{child} idle {human_age(age)} with '{task}' queued"
+                f"  — harness recycle {child}")
+    except Exception:
+        pass
+    try:
+        for kind, ident, label, age in rank0_owes(ctx, node):
+            out[f"{kind}:{ident}"] = (
+                f"'{label}' waits on your approval ({human_age(age)})"
+                f"  — harness brief {label} --approve" if kind == "approve" else
+                f"block '{label}' was answered {human_age(age)} ago and produced no "
+                f"task  — harness blocked --decided")
+    except Exception:
+        pass
+    try:
+        for n, r in open_waits(ctx).items():
+            if r.get("parent") == node:
+                out[f"asked:{n}"] = (f"{n} is stopped waiting on you "
+                                     f"({wait_age(r.get('since'))}): {r.get('asked')}")
+    except Exception:
+        pass
+    try:
+        for t, cs in unread_brief_comments(ctx, node).items():
+            out[f"comment:{t}:{len(cs)}"] = (f"{len(cs)} unread comment(s) on '{t}'"
+                                             f"  — harness brief {t}")
+    except Exception:
+        pass
+    try:
+        for t in unactioned_briefs(ctx, node):
+            out[f"handed:{t}"] = (
+                f"'{t}' was handed to you and is neither started nor split"
+                f"  — harness mark {t}, or harness brief <new> --from {t}")
+    except Exception:
+        pass
+    return out
+
+
+def seen_path(ctx, sid):
+    return ctx.state_file("seen", sid or "no-session", ".json")
+
+
+def delta(ctx, node, sid, update=True):
+    """New items since this session was last told, and only new ones.
+
+    Keyed on the SESSION, not the node: a recycled session has been told
+    nothing, which is exactly right — it starts cold by design and its
+    orientation is where it learns the lot.
+    """
+    now = queue_items(ctx, node)
+    p = seen_path(ctx, sid)
+    try:
+        was = set(json.loads(p.read_text()).get("ids") or [])
+    except Exception:
+        was = set()
+    new = [k for k in now if k not in was]
+    if update:
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps({"ids": sorted(now),
+                                     "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}) + "\n")
+        except Exception:
+            pass
+    return [now[k] for k in new]
+
+
+def print_delta(ctx=None, node=None, prefix="new"):
+    """Silent unless something changed, and silent on every failure.
+
+    It runs on the interactive path — after any harness command, and from the
+    UserPromptSubmit hook on every turn — so it reads local JSON only. No
+    roster, no git beyond what Ctx already did: a `claude agents --json` here
+    would put 0.55s on every prompt in the repository.
+    """
+    try:
+        if ctx is None:
+            ctx = Ctx()
+            if not (ctx.tree_path.exists() and ctx.binding_path.exists()):
+                return
+            ctx.require_enrolled()
+        if node is None:
+            node = next((n for n, s in ctx.tree["nodes"].items()
+                         if s.get("branch") == ctx.branch), None)
+            if node is None:
+                return
+        rows = delta(ctx, node, os.environ.get("CLAUDE_CODE_SESSION_ID", ""))
+        for r in rows:
+            print(f"{prefix:<8} {r}")
+    except SystemExit:
+        return
+    except Exception:
+        return
+
+
+def cmd_hook_orient(a):
+    """UserPromptSubmit: the per-turn orientation heartbeat.
+
+    `Stop` cannot do this job. Checked against the reference rather than
+    assumed, 2026-09-08 — and the spec asserted the opposite: exit-0 stdout
+    becomes context for `UserPromptSubmit`, `UserPromptExpansion`, `SessionStart`
+    and `PostModelSwitch`, and for everything else, `Stop` included, it goes to
+    the debug log. So a Stop hook reaches the model only by BLOCKING, which is
+    the right instrument for work that is owed and the wrong one for news.
+
+    This is the other half: it speaks on the turn a session is about to act, it
+    says only what changed, and it says nothing at all when nothing has. A quiet
+    tree costs zero tokens per turn.
+    """
+    global QUIET
+    QUIET = True
+    try:
+        sys.stdin.read()
+    except Exception:
+        pass
+    print_delta()
+    sys.exit(0)
+
+
 def cmd_hook_stop(a):
     """Claude Code's Stop hook: the one moment a member that has finished and
     said nothing is still reachable.
@@ -1827,7 +2158,34 @@ def cmd_hook_stop(a):
                   "stopped."}}))
             return
         if ctx.rank(node) == 0:
-            return          # rank 0 closes its own; it presents to nobody
+            # It presents to nobody, so the upward arm below does not apply. But
+            # it is the OPERATOR's proxy, and those queues had no heartbeat at
+            # all: orientation fires on startup, resume and compact, and rank 0
+            # is the one node R13 never recycles. Measured on a live tree — its
+            # lock had gone 37 hours without a refresh, which is 37 hours of
+            # approvals and answered blocks read exactly once.
+            #
+            # Aged on the same rule as everything above, so a conversation with
+            # the operator is never interrupted over something two minutes old.
+            mine = rank0_owes(ctx, node)
+            if mine:
+                nl = chr(10)
+                lines = [
+                    (f"  '{label}' is waiting on your approval ({human_age(age)}):{nl}"
+                     f"    harness brief {label} --approve   (or --decline \"why\")"
+                     if kind == "approve" else
+                     f"  block '{label}' was answered {human_age(age)} ago and has "
+                     f"produced no task:{nl}    harness blocked --decided")
+                    for kind, ident, label, age in mine[:4]]
+                print(json.dumps({"hookSpecificOutput": {
+                    "hookEventName": "Stop", "decision": "block", "reason":
+                    f"You are about to stop holding the operator's queue.{nl}{nl}"
+                    + f"{nl}{nl}".join(lines) + f"{nl}{nl}"
+                    + "Nobody below you may do either, and you are the node that is "
+                      "never recycled — so nothing will re-orient you into noticing. "
+                      "Being told is not being tasked: an answered block is finished "
+                      "when it has produced a brief or an explicit `none`."}}))
+            return
         rows = unreported(ctx, node)
         if not rows:
             return
@@ -2179,17 +2537,32 @@ def cmd_mark(a):
     if f.exists() and not a.force:
         die(REFUSED, f"{a.task} is already marked at {json.loads(f.read_text()).get('_at')} "
                      f"— use --force to re-mark, which discards the earlier position")
+    # The estimate is the lead's and it arrives on the brief, which is where the
+    # lead made it. Entering it here was the defect: it put a lead's refusal in
+    # front of a member, who may not split the task and can dissolve the
+    # refusal by typing a smaller letter.
+    if b.get("band"):
+        tot["_band"] = b["band"]
+        tot["_band_source"] = "brief"
     if a.band:
         band = a.band.upper()
         if band == "XL":
             die(REFUSED,
-                "XL is a refusal, not a size (I10). A task estimated above 300k new "
-                "tokens is a\n           decomposition that has not happened yet: "
-                "split it, or escalate to your lead.")
+                "XL is a refusal, not a size (I10), and it is not yours to record.\n"
+                "           A task above 300k new tokens is a decomposition that has "
+                "not happened\n           yet, and the split is your lead's: say so, "
+                "and it rewrites the brief.")
         if band not in BANDS:
             die(REFUSED, f"band must be one of {', '.join(BANDS)} "
                          f"({', '.join(f'{k} < {tok(v[1])}' for k, v in BANDS.items())})")
+        # An override, and recorded as one. A member that disagrees with its
+        # lead's estimate is information — it is the earliest possible signal
+        # that a brief was mis-sized — and it is worth nothing if it silently
+        # replaces the estimate it disagrees with. Both numbers stay.
+        if tot.get("_band") and tot["_band"] != band:
+            tot["_band_brief"] = tot["_band"]
         tot["_band"] = band
+        tot["_band_source"] = "member"
     # Which model actually ran this. Without it a per-node model change produces
     # two numbers nobody can attribute, and the comparison that would settle
     # whether a cheaper member causes rework cannot be made at all.
@@ -2204,8 +2577,16 @@ def cmd_mark(a):
           f"({tot['_records']} records, {spend_line(tot)} so far)")
     if tot.get("_band"):
         lo, hi = BANDS[tot["_band"]]
-        print(f"  band {tot['_band']}: expected under {tok(hi)} new tokens "
+        src = {"brief": " (your lead's estimate)",
+               "member": " (yours, overriding the brief)"}.get(tot.get("_band_source"), "")
+        print(f"  band {tot['_band']}{src}: expected under {tok(hi)} new tokens "
               f"(up + down, resent not counted)")
+        if tot.get("_band_brief"):
+            print(f"  the brief said {tot['_band_brief']} — both are kept, and --done "
+                  f"measures against yours")
+    elif not a.band:
+        print(f"  no band on this brief — the estimate is your lead's to make (I10): "
+              f"harness brief {a.task} --band S|M|L")
     print(f"  brief revision {b.get('revision')} by {b.get('written_by')} "
           f"— read it: harness brief {a.task}")
 
@@ -2276,6 +2657,44 @@ def cmd_spend(a):
         print(line)
     else:
         print("\n  No mark: this is the whole session, not a task's share (I10).")
+
+
+def write_review(ctx, node, branch, sha, by_node, carried_from=None):
+    """The record `_guard --gate` reads before it will let a fast-forward land.
+
+    `reviewed_by_node` is the field that makes it a record of an ORACLE rather
+    than of a file. It is derived from git in the recording session (R1), like
+    every other position in this design, so it cannot be claimed — only stood
+    in. `reviewed_by` and `session` were always written and never read, which is
+    how the gate went on certifying a reader it had never identified.
+    """
+    f = ctx.state_file("reviews", f"{node}-{sha}", ".json")
+    f.parent.mkdir(parents=True, exist_ok=True)
+    me = ""
+    try:
+        row = self_row(live_rows(agents_json())) or {}
+        me = row.get("name") or ""
+    except Exception:
+        pass
+    rec = {"node": node, "branch": branch, "sha": sha,
+           "reviewed_by_node": by_node,
+           "reviewed_by": me,
+           "session": os.environ.get("CLAUDE_CODE_SESSION_ID", ""),
+           "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
+    if carried_from:
+        rec["carried_from"] = carried_from
+    f.write_text(json.dumps(rec, indent=2) + "\n")
+    return f
+
+
+def read_review(ctx, node, sha):
+    f = ctx.state_file("reviews", f"{node}-{sha}", ".json")
+    if not f.exists():
+        return None
+    try:
+        return json.loads(f.read_text())
+    except Exception:
+        return None
 
 
 def cmd_review(a):
@@ -2471,23 +2890,233 @@ def cmd_review(a):
             print("\n" + d)
 
         if a.record:
+            # Reading is for anyone; RECORDING is the lead's, and it took the
+            # guard reading the record to notice the difference. This command
+            # defaults its target to the node you are standing in and asked
+            # nobody's rank, so a member running bare `harness review --record`
+            # wrote the file that unblocked its own integration — and the gate,
+            # whose entire justification is that a member cannot check its own
+            # work, was satisfied by that member. The record has carried who
+            # wrote it since the beginning; nothing read the field.
+            #
+            # Refused here AND in the guard, deliberately. This one gives the
+            # honest error at the moment of the mistake; the guard's is the one
+            # that holds, because a check in this CLI is bypassed by writing the
+            # file.
+            if here is None:
+                die(REFUSED,
+                    f"not standing in a node, so there is nobody here whose read\n"
+                    f"           would count. Record it from {parent}'s worktree.")
+            if n == here:
+                die(REFUSED,
+                    f"recording your own review is marking your own homework.\n"
+                    f"           A member cannot check its own work — that is the whole "
+                    f"reason T4\n           gates on this record. Read it as often as you "
+                    f"like; '{parent}' records it.")
+            if parent != here:
+                die(REFUSED,
+                    f"'{n}' is {parent}'s child and you are standing in '{here}'.\n"
+                    f"           The read that unblocks an integration is recorded by the "
+                    f"node being\n           integrated INTO, because that is the party the "
+                    f"gate is about.\n           Read it freely — harness review {n} — but "
+                    f"the record is {parent}'s.")
             rc, tip, _ = git("rev-parse", cb, cwd=ctx.repo)
             tip = tip.strip()
-            f = ctx.state_file("reviews", f"{n}-{tip}", ".json")
-            f.parent.mkdir(parents=True, exist_ok=True)
-            me = ""
-            try:
-                row = self_row(live_rows(agents_json())) or {}
-                me = row.get("name") or ""
-            except Exception:
-                pass
-            f.write_text(json.dumps({"node": n, "branch": cb, "sha": tip,
-                                     "reviewed_by": me,
-                                     "session": os.environ.get("CLAUDE_CODE_SESSION_ID", ""),
-                                     "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}, indent=2) + "\n")
+            write_review(ctx, n, cb, tip, here)
             print(f"   recorded review of {n} at {tip[:8]} — integration unblocked")
             print(f"   any new commit on {cb} invalidates this, by design")
     print()
+
+
+def cmd_integrate(a):
+    """T4: catch a presented child up, then fast-forward it into this node.
+
+    THE RULE THIS EXISTS TO CLOSE. T2 says a member catches up twice and only
+    twice, the second time immediately before presenting. T4 is `--ff-only`,
+    which succeeds only while the child is an ancestor of the parent. Integrate
+    the first child and the parent MOVES: every sibling that caught up before
+    presenting — exactly as instructed — is now behind, unmergeable, and needs a
+    third catch-up that T2 forbids. With k children at most one per round can
+    satisfy both rules, and the other k-1 land in a state the tree has no verb
+    for. It was found three times in one night and worked around in `recycle` by
+    letting the stranded child go, which cleared the node and left the work
+    exactly where it was.
+
+    The way out is not a new rule, it is reading the old one for what it
+    protects. T2 forbids the NODE from merging into a worktree because merging
+    into a worktree that is IN USE aborts on dirty files and lands silently
+    otherwise. A member that has presented and released is not in use, and the
+    roster says so. So: the member catches up twice; a third catch-up into an
+    unoccupied worktree is the lead's, and is part of T4 rather than an
+    exception to T2.
+
+    Serialisation lives here rather than in a lead's head, which is the other
+    half of why the state was reachable at all — T4 was hand-typed git with
+    nothing to order it.
+
+    WHAT IT WILL NOT DO. It does not resolve a conflict. A catch-up that
+    conflicts is T7 or T8: it needs the two intents, and the party holding them
+    is not this command. It aborts the merge, leaves the child exactly as it
+    was, and says which one applies.
+
+    It does not run the child's checks either. Nothing in this CLI executes a
+    manifest command, and the one place the design has a lead run a member's
+    checks is T7, where a conflict has already made it necessary.
+    """
+    ctx = Ctx(); ctx.require_enrolled()
+    idx = load_index(ctx, refresh=True)
+    here = idx["byBranch"].get(ctx.branch)
+    if here is None:
+        die(NOT_ENROLLED, f"branch '{ctx.branch}' is not a node — nothing to integrate into")
+    if a.children:
+        targets = idx["nodes"][here]["children"]
+        if not targets:
+            print(f"'{here}' has no children"); return
+    else:
+        targets = a.node
+    if not targets:
+        die(REFUSED, "name a child, or pass --children")
+
+    try:
+        rows = live_rows(agents_json(read_roster(a.roster)))
+    except SystemExit:
+        raise
+    except Exception as e:
+        # The same rule the viewer and `trim` follow: a roster that could not be
+        # read is UNKNOWN, never empty. Every other reader can shrug and carry
+        # on with a worse answer; this one would merge into a worktree somebody
+        # is standing in, which is the one failure the claim lock exists to
+        # prevent and the one that leaves no artefact behind.
+        die(CONTRACT, f"cannot read the session roster ({e}) — refusing.\n"
+                      f"           An unreadable roster is not an empty one, and this "
+                      f"command writes\n           into another node's worktree.")
+
+    marks = open_marks(ctx)
+    pw = ctx.worktree
+    done, failed = 0, 0
+    for n in targets:
+        sp = idx["nodes"].get(n)
+        if sp is None:
+            print(f"skip {n:<12} not a node"); failed += 1; continue
+        if sp["parent"] != here:
+            print(f"skip {n:<12} is {sp['parent'] or 'rank 0'}'s child, not {here}'s — "
+                  f"integration is the parent's"); failed += 1; continue
+        cb, cw = sp["branch"], sp["worktree"]
+        if not cw:
+            print(f"skip {n:<12} has no worktree on this machine"); failed += 1; continue
+
+        rc, ahead, _ = git("rev-list", "--count", f"{ctx.branch}..{cb}", cwd=ctx.repo)
+        if (ahead.strip() or "0") == "0":
+            print(f"     {n:<12} nothing to integrate — already in {here}"); continue
+
+        holders = [r for r in rows if r.get("cwd") == cw]
+        if holders:
+            who = ", ".join(r.get("name") or r.get("sessionId", "?")[:8] for r in holders)
+            print(f"skip {n:<12} OCCUPIED by {who} — catching it up would write into a "
+                  f"live worktree.\n     {'':<12} That is what T2 forbids, and the reason "
+                  f"it forbids it. Let it present\n     {'':<12} and release, or stop it "
+                  f"first: harness stop {n}")
+            failed += 1; continue
+
+        rc, dirt, _ = git("status", "--porcelain", cwd=cw)
+        if dirt.strip():
+            print(f"skip {n:<12} worktree is dirty ({len(dirt.splitlines())} path(s)) — "
+                  f"refusing.\n     {'':<12} Nobody is standing there, so this is "
+                  f"uncommitted work with no author\n     {'':<12} left to explain it. "
+                  f"Look before you merge over it: {cw}")
+            failed += 1; continue
+
+        stem = next((k for k, r in marks.items()
+                     if r.get("_node") == n and r.get("_presented_at")), None)
+        if stem is None:
+            print(f"skip {n:<12} has commits ahead but no PRESENTED task record.\n"
+                  f"     {'':<12} Work that was never offered upward is not work you were "
+                  f"asked to take.\n     {'':<12} It presents with: harness mark <task> --done")
+            failed += 1; continue
+        mrec = marks[stem]
+
+        rc, tip, _ = git("rev-parse", cb, cwd=ctx.repo)
+        tip = tip.strip()
+        if mrec.get("_presented_sha") and mrec["_presented_sha"] != tip:
+            print(f"skip {n:<12} has committed since it presented "
+                  f"({mrec['_presented_sha'][:8]} → {tip[:8]}).\n"
+                  f"     {'':<12} Anything committed after presenting was never offered "
+                  f"upward. It\n     {'':<12} presents again, or you are integrating "
+                  f"something nobody showed you.")
+            failed += 1; continue
+
+        rc, behind, _ = git("rev-list", "--count", f"{cb}..{ctx.branch}", cwd=ctx.repo)
+        behind = behind.strip() or "0"
+        if a.dry_run:
+            print(f"     {n:<12} would {'catch up (' + behind + ' behind) then ' if behind != '0' else ''}"
+                  f"fast-forward {here} to {tip[:8]}")
+            continue
+
+        carried = None
+        if behind != "0":
+            rc, out, err = git("merge", "--no-edit", ctx.branch, cwd=cw)
+            if rc:
+                git("merge", "--abort", cwd=cw)
+                # Whose collision it is turns on authorship, not on position:
+                # T7 if this node issued both tasks, T8 if the work was authored
+                # ranks below. The trailers answer it and nobody has to guess.
+                print(f"skip {n:<12} CONFLICTS with {here} — not resolved here.\n"
+                      f"     {'':<12} The merge is aborted and {n} is untouched. A "
+                      f"conflict needs the two\n     {'':<12} intents behind it, and this "
+                      f"command holds neither.\n"
+                      f"     {'':<12}   T7 if you issued both tasks; T8 if they were "
+                      f"authored below you.\n"
+                      f"     {'':<12}   git -C {cw} log --merge --format='%(trailers:key="
+                      f"Task,valueonly)'")
+                failed += 1; continue
+            prev, tip = tip, git("rev-parse", cb, cwd=ctx.repo)[1].strip()
+            print(f"     {n:<12} caught up ({behind} behind) — {prev[:8]} → {tip[:8]}")
+            # A CLEAN catch-up carries the review. The child's side was read;
+            # the parent's side is this node's own integrated history, which it
+            # does not need to review to itself; and git wrote the merge
+            # mechanically, so there is no third party's decision in it. A
+            # CONFLICTED one does not reach here at all, which is the case where
+            # somebody chose something and it has to be read.
+            old = read_review(ctx, n, prev)
+            if old and old.get("reviewed_by_node") == here:
+                write_review(ctx, n, cb, tip, here, carried_from=prev)
+                carried = prev
+            # The presentation followed the work across the merge, so every
+            # other reader — `recycle`, `status`, the viewer — still sees a node
+            # whose presented sha is its tip. Leaving that stale is how a store
+            # starts describing a node that no longer exists in that state.
+            mrec["_presented_sha"] = tip
+            mrec["_caught_up_by"] = here
+            mrec["_caught_up_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+            (ctx.state / "marks" / (stem + ".json")).write_text(
+                json.dumps(mrec, indent=2) + "\n")
+
+        rev = read_review(ctx, n, tip)
+        if rev is None or rev.get("reviewed_by_node") != here:
+            why = ("no review is recorded at this commit" if rev is None else
+                   f"the record was written by '{rev.get('reviewed_by_node')}', not by {here}")
+            print(f"skip {n:<12} {why}.\n"
+                  f"     {'':<12} A member cannot check its own work, so the lead reads "
+                  f"it (T4):\n     {'':<12}   harness review {n} --record\n"
+                  f"     {'':<12} The gate would refuse this a moment later, with your "
+                  f"working tree\n     {'':<12} already updated. This refuses first.")
+            failed += 1; continue
+
+        rc, out, err = git("merge", "--ff-only", cb, cwd=pw)
+        if rc:
+            print(f"skip {n:<12} fast-forward refused: {err.splitlines()[0] if err else out}")
+            failed += 1; continue
+        done += 1
+        print(f"  ✓  {n:<12} {here} → {tip[:8]}"
+              + (f"  (review carried from {carried[:8]})" if carried else ""))
+        task = mrec.get("_task") or stem
+        print(f"     {'':<12} sign it off, which also starts its next task: "
+              f"harness mark {task} --close")
+
+    if not a.dry_run:
+        print(f"\nintegrated {done}" + (f", refused {failed}" if failed else ""))
+    if failed:
+        sys.exit(REFUSED)
 
 
 STOP_SETTLE = 6.0     # seconds to wait for a stopped session to leave the roster
@@ -2671,6 +3300,15 @@ def cmd_recycle(a):
                 # what T10 tells it to do. Messages to it arrive at a session
                 # that correctly finished. Measured three times in one night.
                 #
+                # `harness integrate` is the way OUT of that state and this is
+                # the way THROUGH it. They are different jobs and both are
+                # needed: integrate catches the released worktree up and
+                # fast-forwards it, which is the lead's act; this one lets the
+                # child's own node be refilled while that is still outstanding,
+                # because the child has genuinely finished. Deleting this arm
+                # once integrate existed would put the deadlock back for any
+                # lead that has not got to it yet.
+                #
                 # The tip must equal what was presented. Anything committed
                 # after presenting was never offered upward and is the first
                 # case again.
@@ -2689,7 +3327,8 @@ def cmd_recycle(a):
                       f"told. It is behind\n"
                       f"       {'':<12} because {parent} moved, which is {parent}'s to "
                       f"resolve, not this\n"
-                      f"       {'':<12} node's — and this node has already released.")
+                      f"       {'':<12} node's — and this node has already released.\n"
+                      f"       {'':<12} {parent} clears it with: harness integrate {n}")
 
         # `continue` here continues the HOLDER loop, not the node — so every
         # refusal below used to be printed and then contradicted, two lines
@@ -2714,6 +3353,22 @@ def cmd_recycle(a):
                       f"what the claim lock exists to forbid.\n"
                       f"       {'':<12} Recycling is the parent's, from the parent's "
                       f"worktree.")
+                unstopped.append(label); continue
+            if is_stopped(r) and not a.force:
+                # Recycling is the WRONG remedy here and it looks like the right
+                # one, because a stopped session reports `status: idle` and
+                # every other idle session is exactly what recycle is for. A
+                # replacement starts cold, walks the same path, and stops at the
+                # same prompt — so the sweep costs a session and changes
+                # nothing, and whatever the halted one was about to be told is
+                # gone. Only a human at the keyboard clears this.
+                print(f"  skip {n:<12} WAITING ON THE OPERATOR — it reads as idle and it "
+                      f"is not.\n       {'':<12} Recycling is not the remedy: a "
+                      f"replacement starts cold and, if it\n       {'':<12} was a "
+                      f"permission prompt, meets the same one. Send it a prompt, or\n"
+                      f"       {'':<12}   claude attach {r['sessionId'][:8]}\n"
+                      f"       {'':<12} --force recycles anyway, discarding whatever it "
+                      f"was waiting to be told.")
                 unstopped.append(label); continue
             if r.get("status") == "busy" and not a.force:
                 print(f"  skip {n:<12} {label} is busy — it may be mid-task or "
@@ -3098,15 +3753,25 @@ def grant_flags(rows, model, effort):
 
 # ── R14: the operator's queue ────────────────────────────────────────────────
 
-def scan_needs():
+def scan_needs(rows=None):
     """Every open block on this machine, across every enrolled project.
 
     Deliberately builds no Ctx. The operator is usually not standing in the
     repository that needs them — often not in any repository — and a command
     that only works from the right directory is one they will not run.
+
+    `rows` is an already-read roster, and it is a parameter for two reasons.
+    Testing: the stopped-session arm called `claude` directly at first, which
+    made the one arm here that reports a halted lane the one arm nothing could
+    exercise, and an untested arm in this file has a record of being an arm that
+    never fires. Cost: the viewer calls this on every poll and already holds a
+    cached roster, so fetching one here would have put a `claude` process on a
+    three-second timer for as long as a tab stayed open — the exact spend that
+    cache was added to stop.
     """
     out = []
-    for pdir in sorted(p for p in HOME_STATE.glob("*") if p.is_dir()):
+    for pdir in sorted(p for p in HOME_STATE.glob("*")
+                       if p.is_dir() and (p / "binding.json").exists()):
         repo = ""
         try:
             repo = json.loads((pdir / "binding.json").read_text()).get("repo", "")
@@ -3169,7 +3834,45 @@ def scan_needs():
                         "from_finding": r.get("from_finding") or "",
                         "raised_at": (r.get("approval") or {}).get("asked_at"),
                         "asked_by": (r.get("approval") or {}).get("asked_by")})
-    out.sort(key=lambda r: r.get("raised_at") or "")
+
+    # A third thing waits on the operator, and it is the only one that never
+    # asked. A block and an approval are raised — some session decided to put
+    # them here. A session halted at a prompt raised nothing and can raise
+    # nothing, because raising takes a turn and it does not get one.
+    #
+    # It passes R14's own test for this panel exactly, which is the narrow one:
+    # only the operator can clear it, no rank in the tree has the authority, and
+    # it is not somebody else's work-in-progress. A sign-off is dev's; a briefed
+    # idle child is its lead's; this is nobody's but yours.
+    #
+    # One roster read for every project on the machine, not one per project.
+    try:
+        live = live_rows(rows if rows is not None else agents_json())
+    except Exception:
+        live = []
+    for r in stopped_rows(live):
+        cwd = r.get("cwd") or ""
+        for pdir in sorted(p for p in HOME_STATE.glob("*")
+                       if p.is_dir() and (p / "binding.json").exists()):
+            try:
+                idx = json.loads((pdir / "index.json").read_text())
+            except Exception:
+                continue
+            node = (idx.get("byWorktree") or {}).get(cwd)
+            if not node:
+                continue
+            repo = idx.get("repo") or ""
+            out.append({"_repo": repo, "_project": Path(repo).name if repo else pdir.name,
+                        "_kind": "stopped", "node": node,
+                        "session": r.get("sessionId") or "",
+                        "name": r.get("name") or "?",
+                        "need": f"'{node}' is stopped at a prompt",
+                        "raised_at": None})
+            break
+    # Stopped rows carry no raised_at — nothing recorded them, which is the
+    # point — so they sort to the front rather than to a random position. They
+    # are also the only row here where something has already halted.
+    out.sort(key=lambda r: (r.get("raised_at") is not None, r.get("raised_at") or ""))
     return out
 
 
@@ -4500,6 +5203,15 @@ def cmd_brief(a):
     target = brief_node(ctx, a.task, a.for_node)
     sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     who = f"{me} ({'session ' + sid[:8] if sid else 'operator'})"
+    # The band is written with the brief because it is an estimate OF the brief,
+    # and re-estimating without rewriting is a change to the plan that leaves no
+    # revision behind. Said rather than ignored: `--band` on its own would
+    # otherwise print the brief and exit 0, which reads as having worked.
+    if a.band and not a.write:
+        die(REFUSED,
+            "--band goes in with --write. It is an estimate of the plan, so it moves "
+            "when\n           the plan does and the revision counter has to see it. "
+            f"Rewrite it:\n           harness brief {a.task} --write - --band {a.band.upper()}")
 
     if a.write is None and (a.with_task or a.why):
         die(REFUSED, "--with and --why describe a brief being written. Add --write "
@@ -4595,6 +5307,24 @@ def cmd_brief(a):
                     "compounds its own errors — so the\n           context being "
                     "reused has to be worth more than the reset it costs. Say what "
                     "it is.")
+        # I10: the estimate is the LEAD's, and until now the only place to enter
+        # it was `mark`, which the member runs. So a lead that estimated XL had
+        # its refusal delivered to the member's keyboard — the one party that
+        # may not split the task (T15) and can make the refusal go away by
+        # typing a smaller letter. The number now goes in beside the plan that
+        # produced it, where T1 always said it was: "a task record carries an
+        # estimated cost band" at issue, not at open.
+        band = (a.band or "").upper() or (b or {}).get("band")
+        if a.band:
+            if band == "XL":
+                die(REFUSED,
+                    "XL is a refusal, not a size (I10). A task estimated above 300k new "
+                    "tokens is\n           a decomposition that has not happened yet — and "
+                    "it is yours to make.\n           Split this brief into ones you can "
+                    "band at L or under, or escalate it.")
+            if band not in BANDS:
+                die(REFUSED, f"band must be one of {', '.join(BANDS)} "
+                             f"({', '.join(f'{k} < {tok(v[1])}' for k, v in BANDS.items())})")
         coupled = a.with_task or (b or {}).get("coupled_to")
         rev = (b or {}).get("revision", 0) + 1
         rec = {"task": a.task, "node": target, "text": a.write, "revision": rev,
@@ -4666,6 +5396,8 @@ def cmd_brief(a):
         if coupled:
             rec["coupled_to"] = coupled
             rec["coupled_why"] = a.why or (b or {}).get("coupled_why") or ""
+        if band:
+            rec["band"] = band
         if (b or {}).get("seq") is not None:
             rec["seq"] = b["seq"]
         blk = a.from_block or (b or {}).get("from_block")
@@ -5153,16 +5885,73 @@ def cmd_needs(a):
     operator should never have to assemble `harness grant` by hand from a
     transcript, and a queue that costs effort to read is a queue that is not read.
     """
-    rows = scan_needs()
+    _ov = read_roster(a.__dict__.get("roster"))
+    rows = scan_needs(agents_json(_ov) if _ov is not None else None)
     write_needs(rows)
+    # The cache above is machine-wide on purpose — the notify hook is handed
+    # every project. What is PRINTED is not.
+    #
+    # R14 made this command global for a good reason: the operator is usually
+    # not standing in the repository that wants them, and often not in a
+    # repository at all. That reasoning is about the operator. But `whoami`
+    # points rank-0 SESSIONS here too, and a session in one project reading
+    # another project's queue is a leak in the one direction the design is
+    # otherwise strict about — it can neither act on those rows nor should it
+    # know they exist. Reported by the operator, who found one tree's items in
+    # another tree's session.
+    #
+    # So: inside an enrolled repository this is that repository's queue; outside
+    # one it is the whole machine, which is the operator case R14 described.
+    # `--all` restores the wide view from anywhere.
+    here = None
+    if not a.__dict__.get("all"):
+        try:
+            c = Ctx()
+            if c.tree_path.exists() and c.binding_path.exists():
+                here = str(c.repo)
+        # SystemExit as well as Exception, and the distinction is the whole
+        # command: `Ctx()` REFUSES by raising SystemExit, which an ordinary
+        # `except Exception` does not catch — a trap this codebase has already
+        # written up once, in the Stop hook. Caught here it means "not in a
+        # repository", which is R14's primary case: the operator standing
+        # anywhere at all, wanting the machine-wide view. Uncaught it killed
+        # exactly that call with `not inside a git worktree`.
+        except SystemExit:
+            here = None
+        except Exception:
+            here = None
+    if here:
+        rows = [r for r in rows if r.get("_repo") == here]
     done = [r for r in rows if r.get("_answered")]
     rows = [r for r in rows if not r.get("_answered")]
     if not rows:
         print("nothing needs you"
-              + (f"  ({len(done)} answered, with rank 0)" if done else ""))
+              + (f" in {Path(here).name}" if here else " in any enrolled project")
+              + (f"  ({len(done)} answered, with rank 0)" if done else "")
+              + ("   (this project only — harness needs --all)" if here else ""))
         return
+    if here:
+        print(f"{Path(here).name} only. Other projects on this machine are not "
+              f"yours from here:\n  harness needs --all\n")
     for r in rows:
         node, need = r.get("node", "?"), r.get("need", "")
+        if r.get("_kind") == "stopped":
+            print(f"{r['_project']} · {node}{'':<4}WAITING    on you")
+            print(f"  session  {r.get('name')} [{(r.get('session') or '')[:8]}]")
+            print(f"  It reports `idle` to everything that does not read `state`, which "
+                  f"is the\n  same word as free. Nothing in the tree can clear it, and "
+                  f"the lane cannot\n  even raise a block about it — raising takes a "
+                  f"turn and it does not get one.")
+            print(f"\n  The runtime reports ONE state for two situations and they have "
+                  f"different\n  remedies. Try the first; it is the commoner one and it "
+                  f"costs a sentence.")
+            print(f"    waiting on a reply   send it a prompt (claude agents, pick it, "
+                  f"type)")
+            print(f"    on a permission ask  claude attach "
+                  f"{(r.get('session') or '')[:8]}, then answer it")
+            print(f"  Recycling is not the remedy for either: a replacement starts cold "
+                  f"and, if\n  it was a permission prompt, walks into the same one.\n")
+            continue
         if r.get("_kind") == "approval":
             print(f"{r['_project']} · {node}{'':<4}APPROVAL   asked "
                   f"{_ago(r.get('raised_at') or '')}")
@@ -5224,15 +6013,25 @@ def cmd_needs(a):
               f"{shlex.quote(need)} --reason {shlex.quote(reason)})")
         print(f"  then     (cd {shlex.quote(repo)} && harness recycle {node})")
         print()
-    nb = sum(1 for r in rows if r.get("_kind") != "approval")
+    # Counted by kind rather than by "everything that is not an approval". The
+    # old form was a subtraction, so a third kind silently became a block —
+    # which it did, and the tally read `1 block(s)` over a stopped session.
+    ns = sum(1 for r in rows if r.get("_kind") == "stopped")
+    nb = sum(1 for r in rows if r.get("_kind") == "block")
+    na = sum(1 for r in rows if r.get("_kind") == "approval")
     nr = sum(1 for r in rows if r.get("_reopened"))
-    print(f"{nb} block(s)"
+    print((f"{ns} stopped, " if ns else "")
+          + f"{nb} block(s)"
           + (f" ({nr} you already answered)" if nr else "")
-          + f", {sum(1 for r in rows if r.get('_kind') == 'approval')} "
-          f"approval(s)"
-          + (f", {len(done)} answered and with rank 0" if done else "") + ". Granting also closes a block; "
-          f"the node picks\nthe reach up when it is next spawned or recycled, never "
-          f"mid-task.")
+          + f", {na} approval(s)"
+          + (f", {len(done)} answered and with rank 0" if done else "") + "."
+          # Only when there is something to grant. It read as standing advice
+          # under a queue whose only item was a halted session, so the operator
+          # was told how granting works about a thing no grant would touch.
+          + ("  Granting also closes a block; the node\npicks the reach up when it "
+             "is next spawned or recycled, never mid-task." if nb else "")
+          + ("\nA stopped lane is not waiting on a decision — it is waiting on a "
+             "keystroke, and\nnothing else in this queue is." if ns else ""))
     if not (HOME_STATE / "notify").exists():
         print(f"\nNo notifier installed. To be told rather than to look, make "
               f"{HOME_STATE / 'notify'}\nexecutable — it is run with HARNESS_SUMMARY, "
@@ -5987,6 +6786,25 @@ def cmd_scaffold(a):
     st[:] = [e for e in st if e["hooks"]]
     st.append({"hooks": [{"type": "command", "timeout": 10,
                           "command": "~/.claude/harness/bin/harness hook-stop"}]})
+    # The per-turn orientation heartbeat, and the reason it is THIS event.
+    # Checked against the reference 2026-09-08 rather than assumed: exit-0
+    # stdout becomes context for UserPromptSubmit, UserPromptExpansion,
+    # SessionStart and PostModelSwitch, and for everything else — Stop included
+    # — it goes to the debug log. So `Stop` can only reach a session by BLOCKING
+    # it, which is right for work that is owed and wrong for news; this is the
+    # channel that can simply say something.
+    #
+    # It costs nothing when nothing has changed, because it prints nothing. A
+    # line printed at turn k of an n-turn session is resent on every turn after
+    # it, so a per-turn report of STATE would be quadratic; a report of CHANGE
+    # is paid once per change and never again. Timeout is short because this is
+    # on the interactive path and it reads local JSON only.
+    up = hooks.setdefault("UserPromptSubmit", [])
+    for e in up:
+        e["hooks"] = [h for h in e.get("hooks", []) if "harness" not in h.get("command", "")]
+    up[:] = [e for e in up if e["hooks"]]
+    up.append({"hooks": [{"type": "command", "timeout": 5,
+                          "command": "~/.claude/harness/bin/harness hook-orient"}]})
     cs.write_text(json.dumps(conf, indent=2) + "\n")
     print(f"scaffolded {dst}")
     # It was sold as "make the hooks match" and also rewrote how every session
@@ -6135,6 +6953,13 @@ def main():
                     help="review against REF instead of the parent (read work already merged)")
     rv.add_argument("--last", type=int, default=10, metavar="N",
                     help="when nothing is pending, show the last N commits (default 10)")
+    ig = add("integrate", cmd_integrate)
+    ig.add_argument("node", nargs="*", help="children to integrate, in the order given")
+    ig.add_argument("--children", action="store_true",
+                    help="every child of this node that has presented")
+    ig.add_argument("--dry-run", action="store_true")
+    ig.add_argument("--roster", metavar="FILE",
+                    help="a `claude agents --json` capture, for testing")
     rcy = add("recycle", cmd_recycle)
     rcy.add_argument("node", nargs="*", help="nodes to restart with fresh context")
     rcy.add_argument("--children", action="store_true", help="every child of this node")
@@ -6214,6 +7039,9 @@ def main():
                     help="write or rewrite it; a lead writes its children's, rank 0 "
                          "its own. Use '-' and a quoted heredoc for prose containing "
                          "backticks or $(), which a shell eats before this sees them")
+    br.add_argument("--band", metavar="S|M|L",
+                    help="the estimated size in new tokens (I10). Written with the "
+                         "brief, by the lead that made the estimate; XL is refused here")
     br.add_argument("--suggest", metavar="TEXT",
                     help="propose a change to your own brief; your lead decides")
     br.add_argument("--comment", metavar="TEXT",
@@ -6296,7 +7124,15 @@ def main():
     qu.add_argument("--order", metavar="A,B,C",
                     help="set the order of a child's queue; unnamed keep their place behind")
     add("hook-stop", cmd_hook_stop)
-    add("needs", cmd_needs)
+    add("hook-orient", cmd_hook_orient)
+    wh.add_argument("--delta", action="store_true",
+                    help="print only what has changed since this session was last "
+                         "told, and nothing when nothing has")
+    nd = add("needs", cmd_needs)
+    nd.add_argument("--all", action="store_true",
+                    help="every enrolled project on this machine, not just this one")
+    nd.add_argument("--roster", metavar="FILE",
+                    help="a `claude agents --json` capture, for testing")
     add("index", cmd_index)
     ps = add("position", cmd_position)
     ps.add_argument("--format", choices=["line", "json"], default="line")
@@ -6307,7 +7143,25 @@ def main():
     add("unenrol", cmd_unenrol)
     a = p.parse_args()
     read_dash_from_stdin(a)
-    a.fn(a)
+    # The delta footer. A working session runs `mark`, `brief`, `review`,
+    # `integrate` all day, and every one of those is a moment it is already
+    # reading output — so orientation rides along for the price of the lines it
+    # actually prints, which is none unless something changed. It is the cheap
+    # half of the answer to "orient regularly": not a heartbeat the session pays
+    # for, but a delta attached to work it was doing anyway.
+    #
+    # Only on success. After a refusal the reader is dealing with the refusal,
+    # and a queue notice underneath it is noise at the worst moment.
+    quiet_cmds = {"whoami", "position", "contract", "hook-stop", "hook-orient",
+                  "needs", "index", "gui"}
+    try:
+        a.fn(a)
+    except SystemExit as e:
+        if (e.code or 0) == 0 and a.cmd not in quiet_cmds:
+            print_delta()
+        raise
+    if a.cmd not in quiet_cmds:
+        print_delta()
 
 
 if __name__ == "__main__":

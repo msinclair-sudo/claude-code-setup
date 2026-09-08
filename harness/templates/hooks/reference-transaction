@@ -12,10 +12,15 @@ G="$(harness_guard)" || exit 1
 # passes is indistinguishable from a gate that ran. So ask what it can do, and
 # refuse when the answer does not include the gate. Asked once, with its own
 # /dev/null so it cannot eat the ref lines this hook is about to read.
+# `gate2` and not `gate`: the first gate detected an integration by asking
+# whether the parent's new sha IS a child's tip, which `git merge --no-ff`
+# walks straight past, and it accepted any review record that existed without
+# asking who wrote it. Both are open doors that look shut. A guard advertising
+# only the older word is refused for the same reason one advertising neither is.
 case "$("$G" --capabilities </dev/null 2>/dev/null)" in
-  *gate*) ;;
+  *gate2*) ;;
   *)
-    echo "harness: this repository's _guard does not implement --gate." >&2
+    echo "harness: this repository's _guard does not implement --gate (gate2)." >&2
     echo "         The integration gate would pass everything, silently, so this" >&2
     echo "         refuses instead. The hooks and the guard move together:" >&2
     echo "           harness scaffold $(git rev-parse --show-toplevel 2>/dev/null)" >&2
@@ -27,9 +32,24 @@ while read -r old new ref; do
   [ "$new" = "$Z" ] && continue
   HARNESS_BRANCH="${ref#refs/heads/}"; export HARNESS_BRANCH
   HARNESS_REV="$new"; export HARNESS_REV
-  "$G" --gate "$HARNESS_BRANCH" "$new" </dev/null || exit 1
+  "$G" --gate "$HARNESS_BRANCH" "$new" "$old" </dev/null || exit 1
   if [ "$old" != "$Z" ]; then
     git diff --name-only "$old" "$new" | "$G" || exit 1
+  else
+    # Creating a branch had NO document check at all: there is no `old` to diff
+    # from, so the arm above was skipped and the ref update passed. That is the
+    # guard's one fail-open by construction -- not-checking and checking-clean
+    # rendered identically, which is the shape this file exists to refuse.
+    #
+    # A branch outside the tree is not the guard's business, so documents can be
+    # authored on a scratch branch freely; `git worktree add` of a NEW node
+    # branch at that commit was then the whole bypass, in two ordinary commands.
+    #
+    # There is no diff to take, so classify the whole tree. Only paths matching
+    # `docs` are read at all, and only those are looked up blob by blob, so this
+    # costs the size of the document set rather than the size of the repository
+    # -- and branch creation is rare.
+    git ls-tree -r --name-only "$new" | "$G" || exit 1
   fi
 done
 exit 0

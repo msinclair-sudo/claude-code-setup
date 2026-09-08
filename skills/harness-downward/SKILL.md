@@ -62,11 +62,27 @@ keeps your context shallow: *k* interfaces, not *k* implementations.
 
 ## Verifying before you integrate
 
-Fan out one subagent per child, in parallel, each **read only**:
+**The check report is in the review now.** `harness review <node>` prints whether
+the child's set ran at the commit you are about to take, what it said, and what
+each check declared it **cannot** see. An absent report reads as `NOT RUN`, never
+as clean. Before this existed you integrated on the member's word that the suite
+was green — which is the self-verification the review gate refuses in the other
+direction.
+
+A green suite is evidence about what was tested. The blind spot beside it is the
+rest of the sentence, and it prints there because the moment it matters is the
+moment you are deciding what a pass means.
+
+So you no longer re-run a child's suite to find out whether it passed — the child
+runs `harness check` before presenting and the result is recorded against its
+commit. The one place you run a member's checks yourself is `T7`, where a
+conflict has already made it necessary.
+
+What is still worth a read-only subagent per child, in parallel, is the part no
+record answers:
 
 - is it caught up? `git merge-base --is-ancestor <your-branch> <child-branch>`
-- run every check in the manifest, including after one fails, and report each
-  one's declared blind spot verbatim
+- does the diff do what the brief said, and does it stop where the brief stopped
 
 Then integrate sequentially, yourself. Do not parallelise the merges: one node is
 one branch and one index.

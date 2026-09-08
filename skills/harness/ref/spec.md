@@ -479,6 +479,22 @@ at all. A guard that hangs is indistinguishable from a guard that is thinking.
 
 Every check in a task's set runs, including after one fails. Each check declares what it cannot see, as a required field of its definition, and the report carries pass, fail and blind spot for all of them.
 
+**This was an invariant with no implementation until 2026-09-08.** Nothing in the CLI read `manifest["checks"]` — grep found one hit, the template that writes it. So the manifest declared checks, briefs said *done means green*, and no command ran them or recorded that anyone had. A lead integrated on a member's **word** that they passed, which is the self-verification [[#T4 — Integration (fast-forward up)]]'s gate exists to refuse, arriving through the other door. It was found by driving a sandbox through a full lifecycle and noticing that running the checks by hand left no trace.
+
+**Enforcement** `harness check` runs the set in the current worktree and records the result against the exact commit, like the review record, so a new commit invalidates it by construction. `blindSpot` is refused when absent rather than defaulted — a check that does not say what it cannot see is read as proof of more than it is — and it is printed **beside each result**, because the moment it matters is the moment somebody is deciding what a pass means.
+
+**Where it surfaces is the point.** `harness mark <task> --done` says whether the set ran at this commit and what it said, so a member presenting unchecked work is told before its lead is. `harness review` prints the same for the child being integrated, and an absent report renders as **NOT RUN**, never as clean — the rule the document check on that command already follows.
+
+**Nothing runs it implicitly.** `manifest.json` is a document that travels to every node and `checks[].command` is executed by the session, which [[#I4 — `reference-transaction` is the primary guard]]'s trust model names as one of three code-execution channels rank 0 holds over the tree. A hook or an orientation path that ran it would make that channel automatic. It runs when typed. The manifest is read from the document node's checkout via `--git-common-dir`, the same resolution `_guard` uses, so every node runs the same set.
+
+### I5b — A claim is required against a live holder, not against an empty node
+
+Nothing consulted the lock before writing to the ledger. Measured on the sandbox 2026-09-08: an entire lifecycle — briefs, marks, presentation, review, integration, sign-off — ran through with `harness status` reporting `no nodes claimed` throughout. The claim is the only mutual-exclusion primitive in the design and no write path read it.
+
+The rule is deliberately narrower than *you must hold the claim*, and the difference is where the hazard actually is. An **unclaimed** node is the operator working by hand, a scripted walkthrough, or a session between claims — untidy, not dangerous, and refusing it would break every by-hand path including this project's own tests. A node claimed by **somebody else who is still running** is the real thing: two sessions writing one node's ledger, which is [[#I1 — One session per branch]]'s failure reached through the records instead of through the worktree.
+
+So `mark` refuses a live foreign holder, warns on an unclaimed or stale one, and names which it met. An unreadable roster warns rather than refuses — the opposite call from `harness integrate`, which is writing into another node's worktree and must not guess. **Absence of a claim is a gap in the record; presence of the wrong one is a collision.**
+
 ### I6 — The ledger is append-only
 
 Rows are closed, never removed. Every commit carries a `Task:` trailer so any ancestor can resolve a conflicted hunk to a ledger entry without reaching down the tree.
@@ -527,6 +543,8 @@ Every task carries an estimated cost band at [[#T1 — Task assignment]] and a m
 | **XL** | > 300k | not a task — a decomposition that has not happened yet |
 
 **The band counts NEW tokens** (up + down), not billed total. Resent context is excluded, or every band would be exceeded by the second turn and the estimate would measure conversation length instead of work.
+
+**Opening a task is not blocked by an unmeasurable cost.** `mark` called `read_spend` directly, which exits `CONTRACT` when the transcript is missing or its shape has moved — so a transcript-format change would have made it impossible to open a task **anywhere, in any tree**. Position-recording is what the ledger is for; the cost is the second thing it carries. It now records a null baseline and says so, which is the judgement [[#T10 — Release]] already makes at the other end: refusing a close over an unmeasurable cost would leave the task open forever and destroy the one signal the record exists to give, and refusing the *open* is worse, because there is no record at all to be imperfect. Presenting is decoupled for the same reason — a member that cannot present is a member whose finished work is invisible to everyone above it. `harness spend` still refuses outright, and should: there the number **is** the output.
 
 **XL is a refusal, not a size, and is now enforced.** It is the operational definition of [[#I8 — Tasks are short]]: `--band XL` is refused outright, so a lead that cannot bring a task under L splits it or escalates. This is the only number in the harness that decides whether work may be issued at all.
 

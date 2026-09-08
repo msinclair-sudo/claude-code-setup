@@ -172,6 +172,17 @@ operator can widen — a path outside your worktree, a permission. A question fo
 your lead is not one, and routing it to the operator asks them to answer
 something they did not scope.
 
+**Run the checks before you present.** `harness check` runs every check in the
+manifest — including after one fails, because a suite that stops at the first
+reveals its problems one per cycle and each cycle costs a session — and records
+the result against your exact commit. `harness mark <task> --done` tells you
+whether it ran, and your lead sees the same line at review. Presenting unchecked
+work is a choice; say so in your report rather than leaving it to be found.
+
+Read what each check says it **cannot** see. It prints beside the result for a
+reason: a green suite is evidence about what was tested, and the blind spot is
+the rest of the sentence.
+
 **`T2` catch-up 2** — immediately before presenting. This is where a conflict
 surfaces, while your own work is still warm. It is also what makes your lead's
 merge a fast-forward.

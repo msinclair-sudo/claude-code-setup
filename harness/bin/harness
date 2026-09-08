@@ -1587,7 +1587,17 @@ CACHE_TTL = 60 * 60
 
 # How long a presented task may sit unsigned before the rank above its lead is
 # told. Long enough that a lead mid-review is not reported as absent.
-STALLED_SIGNOFF = 20 * 60
+STALLED_SIGNOFF = 20 * 60      # a lead has not signed off presented work
+STALLED_IDLE = 20 * 60         # a child stands idle with work already written
+STALLED_APPROVAL = 60 * 60     # rank 0 has not decided a gated brief
+# Three contracts, three constants, and for a while one number doing all of it.
+# A presentation twenty minutes old is a lead mid-review; a child idle twenty
+# minutes is one being recycled; a gated brief twenty minutes old is nothing at
+# all -- it is unrequested work waiting on a decision nobody promised to make
+# quickly, and reporting it on the same clock as a stalled hand-off teaches the
+# reader that the clock means nothing. They are set equal for the first two on
+# purpose, and that is a JUDGEMENT rather than an accident of sharing a name:
+# when one of them wants tuning it can move without dragging the others.
 
 
 def last_turn(sid):
@@ -1715,6 +1725,40 @@ def cmd_idle(a):
     else:
         print(f"\nnone past the {CACHE_TTL // 60}m cache lifetime — their context is "
               f"still cached.")
+
+
+def read_spend_or_none(sid):
+    """`read_spend`, but a measurement failure is a null rather than a death.
+
+    `mark` called `read_spend` directly, which exits CONTRACT when the
+    transcript is missing or its shape has moved. That coupled OPENING A TASK to
+    MEASURING ITS COST: a transcript-format change would have made it impossible
+    to open a task anywhere in any tree, and position-recording is the thing the
+    ledger is actually for.
+
+    It is the same judgement T10 already makes at the other end -- a task closed
+    in a different session records `_delta: null` and says why, because refusing
+    the close over an unmeasurable cost would leave the task open forever and
+    destroy the one signal the record exists to give. Refusing the OPEN is
+    worse: there is no record at all to be imperfect.
+
+    `harness spend` still refuses outright, and should. There the number IS the
+    output, and a spend command that returns nothing rather than refusing would
+    be reporting 0 as a measurement.
+    """
+    global QUIET
+    was = QUIET
+    try:
+        # `die()` writes to stderr before it raises, so a refusal the CALLER
+        # recovers from still printed "cannot measure spend (C2)" over a command
+        # that then succeeded. A scary line above a success is how a reader
+        # learns to distrust both.
+        QUIET = True
+        return read_spend(sid), None
+    except SystemExit as e:
+        return None, f"cost cannot be measured here (exit {e.code})"
+    finally:
+        QUIET = was
 
 
 def read_spend(sid):
@@ -1907,7 +1951,7 @@ def lead_owes(ctx, node):
         stamps = [_epoch(r.get("_closed_at")) for r in marks.values()
                   if r.get("_node") == k] + [_epoch(q[0].get("written_at"))]
         last = max([x for x in stamps if x] or [0])
-        if last and time.time() - last > STALLED_SIGNOFF:
+        if last and time.time() - last > STALLED_IDLE:
             owed.append(("start", k, q[0]["task"], time.time() - last))
     return owed
 
@@ -1940,7 +1984,7 @@ def rank0_owes(ctx, node):
         if ap.get("state") != "pending" or b.get("superseded_at"):
             continue
         then = _epoch(ap.get("asked_at"))
-        if then and time.time() - then > STALLED_SIGNOFF:
+        if then and time.time() - then > STALLED_APPROVAL:
             owed.append(("approve", b.get("task") or f.stem,
                          b.get("task") or f.stem, time.time() - then))
     for key, r in decided_blocks(ctx).items():
@@ -1950,7 +1994,7 @@ def rank0_owes(ctx, node):
         cs = [c.get("at") or "" for c in (r.get("comments") or [])
               if c.get("by") == "operator"]
         then = _epoch(max(cs) if cs else (r.get("granted_at") or r.get("resolved_at")))
-        if then and time.time() - then > STALLED_SIGNOFF:
+        if then and time.time() - then > STALLED_APPROVAL:
             owed.append(("task", key, r.get("need") or key, time.time() - then))
     return owed
 
@@ -2211,6 +2255,51 @@ def cmd_hook_stop(a):
         return
 
 
+def claim_conflict(ctx, node):
+    """Is this node's claim held by a DIFFERENT live session?
+
+    Nothing required a claim before writing to the ledger. Measured on the
+    sandbox 2026-09-08: a whole lifecycle -- briefs, marks, presentation,
+    review, integration, sign-off -- ran through with `harness status` reporting
+    `no nodes claimed` the entire time. The lock is the only mutual-exclusion
+    primitive in the design and no write path consulted it.
+
+    The rule implemented here is deliberately narrower than "you must hold the
+    claim", and the difference is where the hazard actually is. An UNCLAIMED
+    node is the operator working by hand, or a scripted walkthrough, or a
+    session between claims -- awkward, not dangerous, and refusing it would
+    break every by-hand path including this project's own test harness. A node
+    claimed by SOMEBODY ELSE WHO IS STILL RUNNING is the real thing: two
+    sessions writing one node's ledger, which is I1's failure reached through
+    the records instead of through the worktree.
+
+    So: refuse a live foreign holder, warn on unclaimed, and say which it is.
+    Absence of a claim is a gap in the record; presence of the wrong one is a
+    collision.
+    """
+    lock = ctx.lock_path(node)
+    if not lock.exists():
+        return None, "unclaimed"
+    try:
+        h = json.loads(lock.read_text())
+    except Exception:
+        return None, "unreadable"
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if h.get("session_id") == sid:
+        return None, "mine"
+    try:
+        live = {r.get("sessionId") for r in live_rows(agents_json())}
+    except Exception:
+        # An unreadable roster is UNKNOWN, not empty. Refusing here would stop
+        # work over an unavailable oracle, so this warns and lets it through --
+        # the opposite call from `integrate`, which is writing into somebody
+        # else's worktree and must not guess.
+        return None, "roster-unknown"
+    if h.get("session_id") in live:
+        return h, "held"
+    return None, "stale"
+
+
 def cmd_mark(a):
     """Record the token position when a T1 is accepted, so the actual at T10 is a
     subtraction rather than an apportionment.
@@ -2241,12 +2330,23 @@ def cmd_mark(a):
             die(REFUSED, f"'{a.task}' is already closed")
         if rec.get("_node") and rec["_node"] != node:
             die(REFUSED, f"'{a.task}' belongs to '{rec['_node']}', not '{node}'")
-        now = read_spend(sid)
+        # Presenting must not be blocked by an unmeasurable cost either. A
+        # member that cannot present is a member whose finished work is
+        # invisible to everyone above it, which is a strictly worse outcome
+        # than a null in the cost column.
+        now, _nospend = read_spend_or_none(sid)
+        if now is None:
+            now = {k: 0 for k in TOKEN_KINDS}
+            now["_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
         rec["_presented_at"] = now["_at"]
         rec["_presented_by"] = f"{node} (session {sid[:8]})"
         rec["_presented_sha"] = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
         nxt, coupled = next_after(ctx, node, a.task)
-        if rec.get("_session") == sid:
+        if _nospend or rec.get("_unmeasured"):
+            rec["_delta"] = None
+            rec["_delta_unavailable"] = _nospend or rec.get("_unmeasured")
+            cost = "cost not measurable"
+        elif rec.get("_session") == sid:
             rec["_delta"] = {k: now[k] - rec.get(k, 0) for k in TOKEN_KINDS}
             cost = spend_line(rec["_delta"])
         else:
@@ -2286,6 +2386,23 @@ def cmd_mark(a):
                 print(f"  Say so in your report. A band that was wrong is the only "
                       f"thing that improves\n  the next estimate, and it is your "
                       f"lead's estimate that was wrong, not your work.")
+        # I5, at the one moment it decides something. A member presents; a lead
+        # integrates. If nobody ran the checks, the lead is about to accept work
+        # on a claim rather than on a result, which is what T4's gate exists to
+        # refuse in the other direction.
+        _sha = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
+        _rep = read_check_report(ctx, node, _sha)
+        if _rep is None:
+            print(f"  NOT CHECKED at {_sha[:8]} — nothing has run the check set against "
+                  f"this commit.\n  Your lead will see that too:  harness check")
+        elif not _rep.get("passed"):
+            print(f"  CHECKS FAILED at {_sha[:8]} — {_rep.get('failed')} of "
+                  f"{len(_rep.get('checks') or [])}. Presenting anyway is a choice;\n"
+                  f"  say so in your report rather than leaving it to be discovered.")
+        else:
+            print(f"  checks passed at {_sha[:8]} "
+                  f"({len(_rep.get('checks') or [])}/{len(_rep.get('checks') or [])})"
+                  + ("   [worktree was dirty when they ran]" if _rep.get("dirty") else ""))
         print(f"presented {a.task}  {cost}"
               + ("   node released" if released else ""))
         print(f"  It is NOT closed. {parent or 'your lead'} signs it off: "
@@ -2533,7 +2650,23 @@ def cmd_mark(a):
     if ((b.get("approval") or {}).get("state")) == "declined":
         die(REFUSED, f"'{a.task}' was declined by the operator: "
                      f"{(b['approval'].get('why'))}")
-    tot = read_spend(sid)
+    # I1, applied to the ledger rather than to the worktree.
+    _holder, _cl = claim_conflict(ctx, node)
+    if _cl == "held":
+        die(REFUSED,
+            f"'{node}' is claimed by {_holder.get('name') or '?'} "
+            f"[{str(_holder.get('session_id'))[:8]}], which is still running.\n"
+            f"           Two sessions writing one node's ledger is I1 reached through "
+            f"the\n           records instead of the worktree, and it is the failure "
+            f"that leaves no\n           artefact. Claim it, or stop the holder: "
+            f"harness stop {node}")
+    tot, _nospend = read_spend_or_none(sid)
+    if tot is None:
+        # A position with no baseline is still a position. The delta is what is
+        # lost, and it is recorded as lost rather than guessed.
+        tot = {"input": 0, "cache_write": 0, "cache_read": 0, "output": 0,
+               "_records": 0, "_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+               "_session": sid, "_unmeasured": _nospend}
     if f.exists() and not a.force:
         die(REFUSED, f"{a.task} is already marked at {json.loads(f.read_text()).get('_at')} "
                      f"— use --force to re-mark, which discards the earlier position")
@@ -2573,8 +2706,19 @@ def cmd_mark(a):
     tot["_branch"] = ctx.branch
     tot["_sha"] = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
     f.write_text(json.dumps(tot, indent=2) + "\n")
+    if _cl in ("unclaimed", "stale"):
+        print(f"note     '{node}' is {_cl} — this task record has no session holding "
+              f"the node.\n         Not refused: by-hand and scripted work is "
+              f"legitimate. But `status` will\n         show a task with no holder, and "
+              f"nothing will stop a second session\n         opening one beside it: "
+              f"harness claim {node}")
     print(f"marked {a.task} on {node} at {tot['_at']}  "
           f"({tot['_records']} records, {spend_line(tot)} so far)")
+    if tot.get("_unmeasured"):
+        print(f"note     {tot['_unmeasured']}. The task is open and its POSITION is "
+              f"recorded;\n         only the cost baseline is missing, so --done will "
+              f"report a null rather\n         than a number. Opening a task is not "
+              f"blocked by an unmeasurable cost.")
     if tot.get("_band"):
         lo, hi = BANDS[tot["_band"]]
         src = {"brief": " (your lead's estimate)",
@@ -2589,6 +2733,124 @@ def cmd_mark(a):
               f"harness brief {a.task} --band S|M|L")
     print(f"  brief revision {b.get('revision')} by {b.get('written_by')} "
           f"— read it: harness brief {a.task}")
+
+
+def load_checks(ctx):
+    """The check set, with `blindSpot` enforced as the required field I5 says it is.
+
+    Nothing read this block until now. `manifest.json` declared checks, briefs
+    said "done means green", and no command ran them or recorded that anyone
+    had — so a lead integrated on a member's word that they passed, which is
+    the self-verification T4's gate exists to refuse, arriving through the
+    other door.
+
+    A missing `blindSpot` is refused rather than defaulted. A check that does
+    not say what it cannot see gets read as proof of more than it is, and the
+    whole point of carrying the field into the report is that the reader meets
+    it at the moment they are deciding.
+    """
+    man = ctx.repo / ".harness" / "manifest.json"
+    if not man.exists():
+        die(NOT_ENROLLED, f"no manifest at {man}")
+    try:
+        checks = json.loads(man.read_text()).get("checks") or []
+    except Exception as e:
+        die(CONTRACT, f"manifest is unreadable ({e})")
+    if not checks:
+        die(REFUSED,
+            "the check set is empty, and an empty suite passes for the wrong reason.\n"
+            "           Declare at least one in .harness/manifest.json, with what it "
+            "cannot see.")
+    for i, c in enumerate(checks):
+        for k in ("name", "command", "blindSpot"):
+            if not str(c.get(k) or "").strip():
+                die(REFUSED,
+                    f"check #{i + 1} has no '{k}'. All three are required (I5).\n"
+                    f"           `blindSpot` especially: a check that does not say what "
+                    f"it cannot\n           see is read as proof of more than it is.")
+    return checks
+
+
+def check_report_path(ctx, node, sha):
+    return ctx.state_file("checks", f"{node}-{sha}", ".json")
+
+
+def read_check_report(ctx, node, sha):
+    f = check_report_path(ctx, node, sha)
+    if not f.exists():
+        return None
+    try:
+        return json.loads(f.read_text())
+    except Exception:
+        return None
+
+
+def cmd_check(a):
+    """I5: run every check in the set, including after one fails, and record it.
+
+    EVERY check runs. Stopping at the first failure reports one fault and hides
+    the rest, so the next run finds the second one -- and a suite that reveals
+    its problems one per cycle costs a cycle each. The exit code still says
+    whether anything failed.
+
+    It is recorded against the exact commit, like the review record, so a lead
+    can see whether the thing it is about to integrate was ever checked and at
+    which sha. A new commit invalidates it by construction.
+
+    NOTHING RUNS THIS IMPLICITLY. `manifest.json` is a document that travels to
+    every node and `checks[].command` is executed here, which the trust model
+    names as one of three code-execution channels rank 0 holds over the tree.
+    A hook or an orientation path that ran it would turn that channel into an
+    automatic one. It runs when typed.
+    """
+    ctx = Ctx(); ctx.require_enrolled()
+    node, _ = ctx.node()
+    checks = load_checks(ctx)
+    sha = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
+    rc, dirt, _ = git("status", "--porcelain", cwd=ctx.worktree)
+    rows, failed = [], 0
+    print(f"{len(checks)} check(s) on {node} at {sha[:8]}"
+          + (f"   ({len(dirt.splitlines())} uncommitted path(s) — this measures the "
+             f"WORKTREE, not the commit)" if dirt.strip() else ""))
+    for c in checks:
+        t0 = time.time()
+        try:
+            r = subprocess.run(["sh", "-c", c["command"]], cwd=str(ctx.worktree),
+                               capture_output=True, text=True, timeout=a.timeout)
+            code, out, err = r.returncode, r.stdout, r.stderr
+        except subprocess.TimeoutExpired:
+            code, out, err = 124, "", f"timed out after {a.timeout}s"
+        except Exception as e:
+            code, out, err = 125, "", str(e)
+        dur = time.time() - t0
+        ok = code == 0
+        failed += (not ok)
+        rows.append({"name": c["name"], "command": c["command"],
+                     "blindSpot": c["blindSpot"], "exit": code,
+                     "seconds": round(dur, 2),
+                     "stdout": out[-2000:], "stderr": err[-2000:]})
+        print(f"  {'PASS' if ok else 'FAIL'}  {c['name']:<18} {dur:5.1f}s"
+              + ("" if ok else f"   exit {code}"))
+        if not ok:
+            for line in (err or out).strip().splitlines()[-6:]:
+                print(f"        {line[:100]}")
+        # The blind spot is printed beside the RESULT, not filed away in the
+        # manifest, because the moment it matters is the moment somebody is
+        # deciding what a pass means.
+        print(f"        cannot see: {c['blindSpot']}")
+    rep = {"node": node, "sha": sha, "branch": ctx.branch,
+           "dirty": bool(dirt.strip()),
+           "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+           "session": os.environ.get("CLAUDE_CODE_SESSION_ID", ""),
+           "passed": failed == 0, "failed": failed, "checks": rows}
+    f = check_report_path(ctx, node, sha)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(rep, indent=2) + "\n")
+    print(f"\n{len(checks) - failed}/{len(checks)} passed — recorded against {sha[:8]}")
+    if failed:
+        print("  Every check ran. A suite that stops at the first failure reveals its\n"
+              "  problems one per cycle, and each cycle costs a session.")
+        sys.exit(REFUSED)
 
 
 def cmd_spend(a):
@@ -2889,6 +3151,29 @@ def cmd_review(a):
             rc, d, _ = git("diff", f"{base}...{cb}", cwd=ctx.repo)
             print("\n" + d)
 
+        # What the checks said, at the commit you are about to take. This is the
+        # thing a lead had no way to see: `review` showed the diff, `T11`
+        # reviewed the approach, and whether the suite ever ran was a claim in a
+        # message. An absent report renders as ABSENT, never as clean — the same
+        # rule the document check follows two lines up, and the fault that made
+        # the first draft of this command read an empty result as "no
+        # violations".
+        _crep = read_check_report(ctx, n, git("rev-parse", cb, cwd=ctx.repo)[1].strip())
+        if _crep is None:
+            print("   checks       NOT RUN at this commit — nothing recorded")
+        elif _crep.get("passed"):
+            print(f"   checks       passed ({len(_crep.get('checks') or [])}/"
+                  f"{len(_crep.get('checks') or [])}) at {_when(_crep.get('at'))}"
+                  + ("   [dirty worktree]" if _crep.get("dirty") else ""))
+        else:
+            print(f"   checks       FAILED {_crep.get('failed')} of "
+                  f"{len(_crep.get('checks') or [])}:")
+            for c in _crep.get("checks") or []:
+                if c.get("exit"):
+                    print(f"                  {c['name']}  exit {c['exit']}")
+        for c in (_crep or {}).get("checks") or []:
+            print(f"                  {c['name']} cannot see: {c['blindSpot'][:70]}")
+
         if a.record:
             # Reading is for anyone; RECORDING is the lead's, and it took the
             # guard reading the record to notice the difference. This command
@@ -3104,7 +3389,14 @@ def cmd_integrate(a):
 
         rc, out, err = git("merge", "--ff-only", cb, cwd=pw)
         if rc:
-            print(f"skip {n:<12} fast-forward refused: {err.splitlines()[0] if err else out}")
+            # The whole message, not its first line. git puts the HEADER first
+            # and the actionable part -- which files -- underneath, so
+            # `splitlines()[0]` printed "the following untracked working tree
+            # files would be overwritten by merge:" and swallowed the list.
+            # A refusal you cannot act on.
+            print(f"skip {n:<12} fast-forward refused:")
+            for line in (err or out).strip().splitlines()[:12]:
+                print(f"     {'':<12} {line[:100]}")
             failed += 1; continue
         done += 1
         print(f"  ✓  {n:<12} {here} → {tip[:8]}"
@@ -7123,6 +7415,9 @@ def main():
                     help="required when rank 0 reorders past a lead")
     qu.add_argument("--order", metavar="A,B,C",
                     help="set the order of a child's queue; unnamed keep their place behind")
+    ck = add("check", cmd_check)
+    ck.add_argument("--timeout", type=int, default=900, metavar="SEC",
+                    help="per-check timeout (default 900)")
     add("hook-stop", cmd_hook_stop)
     add("hook-orient", cmd_hook_orient)
     wh.add_argument("--delta", action="store_true",

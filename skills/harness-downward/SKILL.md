@@ -134,6 +134,29 @@ this path. `reference-transaction` is the primary guard here, not a backstop.
 any node branch. A remote runs none of these guards, so a pushed branch is work
 no rank has integrated, somewhere nothing here can reach it.
 
+## Put what you owe on your todo list, immediately
+
+The moment orientation or a harness command tells you a child has presented, or
+that one is idle with work queued, **record it with `TaskCreate` before you reply
+to anything else.**
+
+This is not tidiness. A lead learns it owes a sign-off, then holds a long
+exchange with its own lead about something else, and the debt is gone from its
+head long before it is gone from the ledger. That happened, repeatedly, on a live
+tree. Your todo list is the only structure in the session that survives that
+conversation — the harness cannot hold a thought for you, and a message you read
+forty turns ago is not a reminder.
+
+```
+sign off 2 presented task(s) waiting on you: greetings, validate_dot
+         TaskCreate: "sign off greetings"  →  harness mark greetings --close
+```
+
+You will be told again — an owed sign-off re-nags every ten minutes while it is
+outstanding, unlike everything else here, which fires once. But being told again
+is a backstop, not the mechanism. **Signing off also starts the child's next
+task**, so a debt you are carrying is a lane standing still.
+
 ## `T7` / `T8` — mediating a conflict
 
 The child hits the conflict during its catch-up 2 and sends you the stages and

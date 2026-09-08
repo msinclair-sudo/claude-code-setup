@@ -673,6 +673,14 @@ def _whoami(a):
         if waiting:
             print(f"sign off {len(waiting)} presented task(s) waiting on you: "
                   f"{', '.join(waiting)}")
+            # Named as a first act, not as advice. A lead learns this at
+            # orientation and then holds a long exchange with its own lead, and
+            # the debt is gone from its head long before it is gone from the
+            # ledger -- observed on a live tree. Its todo list is the only thing
+            # in the session that survives that conversation.
+            for w in waiting:
+                print(f"         TaskCreate: \"sign off {w}\"  →  harness mark "
+                      f"{w} --close")
     except Exception:
         pass
     try:
@@ -2071,6 +2079,23 @@ def queue_items(ctx, node):
     return out
 
 
+# A DEBT is not news. R15 said report a change and never a state, which is right
+# for something that happened and wrong for something you OWE: an unsigned
+# presentation does not stop being true because you have been told once. Reported
+# once and suppressed forever is exactly how a lead mid-conversation with its own
+# lead forgets to sign off a child -- observed, and caused by this file.
+#
+# So obligations re-report on a cooldown while they persist. Everything else
+# still fires once. The cooldown is what keeps that from being a per-turn tax:
+# a debt costs one line every DEBT_RENAG, not one line every turn.
+DEBT_RENAG = 10 * 60
+DEBT_KINDS = ("sign off:", "start:", "approve:", "task:", "asked:", "handed:")
+
+
+def is_debt(item_id):
+    return item_id.startswith(DEBT_KINDS)
+
+
 def seen_path(ctx, sid):
     return ctx.state_file("seen", sid or "no-session", ".json")
 
@@ -2084,19 +2109,35 @@ def delta(ctx, node, sid, update=True):
     """
     now = queue_items(ctx, node)
     p = seen_path(ctx, sid)
+    told = {}
     try:
-        was = set(json.loads(p.read_text()).get("ids") or [])
+        raw = json.loads(p.read_text())
+        # Both formats. The old one was a bare list of ids with no timestamps,
+        # which is why nothing could re-nag: there was nothing to compare.
+        told = raw.get("told") or {k: raw.get("at") or "" for k in (raw.get("ids") or [])}
     except Exception:
-        was = set()
-    new = [k for k in now if k not in was]
+        told = {}
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    nowsec = time.time()
+    new, keep = [], {}
+    for k in now:
+        last = told.get(k)
+        if last is None:
+            new.append(k); keep[k] = stamp
+        elif is_debt(k) and (nowsec - (_epoch(last) or 0)) > DEBT_RENAG:
+            new.append(k); keep[k] = stamp          # still owed, say so again
+        else:
+            keep[k] = last                          # told, and not yet due again
     if update:
         try:
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(json.dumps({"ids": sorted(now),
-                                     "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}) + "\n")
+            p.write_text(json.dumps({"told": keep, "at": stamp}) + "\n")
         except Exception:
             pass
-    return [now[k] for k in new]
+    # The ids as well as the lines, so a caller can tell whether what it just
+    # printed was a debt without recomputing the queue and getting a different
+    # answer than the one it showed.
+    return [now[k] for k in new], new
 
 
 def print_delta(ctx=None, node=None, prefix="new"):
@@ -2118,9 +2159,22 @@ def print_delta(ctx=None, node=None, prefix="new"):
                          if s.get("branch") == ctx.branch), None)
             if node is None:
                 return
-        rows = delta(ctx, node, os.environ.get("CLAUDE_CODE_SESSION_ID", ""))
+        rows, ids = delta(ctx, node, os.environ.get("CLAUDE_CODE_SESSION_ID", ""))
         for r in rows:
             print(f"{prefix:<8} {r}")
+        # The harness cannot hold a thought for a session; the session's own todo
+        # list can, and it is the only structure that survives a long exchange
+        # with somebody else. So the reminder names the tool rather than hoping.
+        # It prints only when something is actually owed, so a quiet lane pays
+        # nothing.
+        # Gated on what was just PRINTED, not on what exists. Keyed on the
+        # latter it fired on every quiet turn with nothing above it -- three
+        # lines of standing advice in every transcript forever, which is the
+        # per-turn tax the whole edge-triggered design exists to avoid.
+        if any(is_debt(k) for k in ids):
+            print("         ^ put these on your todo list (TaskCreate) before you "
+                  "reply to anything\n           else — they are owed to somebody "
+                  "below you and nothing else will\n           remember them for you.")
     except SystemExit:
         return
     except Exception:
@@ -2205,6 +2259,10 @@ def cmd_hook_stop(a):
                 "hookEventName": "Stop", "decision": "block", "reason":
                 f"You are about to stop with work owed to the rank below you.{nl}{nl}"
                 + f"{nl}{nl}".join(lines) + f"{nl}{nl}"
+                + "Put each of these on your todo list with TaskCreate before you "
+                  "reply to anything else. You will be told again, but a debt you "
+                  "are holding in your head does not survive a conversation with "
+                  "your own lead.\n\n"
                 + "Neither is visible to the child and neither can be done by it. "
                   "Signing off starts the next task by itself; recycling replaces a "
                   "session that has been standing still. If the right answer is "

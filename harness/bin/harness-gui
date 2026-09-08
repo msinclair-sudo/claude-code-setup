@@ -651,8 +651,15 @@ def read_state():
                                    b.get("written_at") or "", b["task"])),
                 "split": [dict(s, task=t) for t, s in sorted(split_of.items())
                           if s["node"] == name and t not in ever_marked],
+                # `== "block"`, never `!= "approval"`. The subtraction meant a
+                # stopped-session row -- added to this list on 2026-09-08 -- landed
+                # on the node card, painted it with the `blocked` warning class and
+                # lit the "N needs you" bell, which is the exact "it looks like a
+                # warning" the operator reported. The attention column was fixed
+                # that afternoon and this, the third reader of the same list, was
+                # not.
                 "blocks": [x for x in blocks if x.get("node") == name
-                           and x.get("_kind") != "approval"
+                           and x.get("_kind") == "block"
                            and not x.get("_answered")],
                 # Both ends of it on the same card: what this node is stopped
                 # on, and who is stopped on this node. A lead looking at its

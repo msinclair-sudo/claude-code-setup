@@ -2031,11 +2031,21 @@ def queue_items(ctx, node):
         pass
     try:
         for kind, ident, label, age in rank0_owes(ctx, node):
-            out[f"{kind}:{ident}"] = (
-                f"'{label}' waits on your approval ({human_age(age)})"
-                f"  — harness brief {label} --approve" if kind == "approve" else
-                f"block '{label}' was answered {human_age(age)} ago and produced no "
-                f"task  — harness blocked --decided")
+            # Selected by kind, with an explicit fallback. This was an
+            # if/else whose else-branch hardcoded the word "block", so the day a
+            # third kind arrived it would have described itself as a block and
+            # named a command that could not find it. Same subtraction as the
+            # `needs` footer and the viewer's attention filter, both fixed
+            # earlier today; this is the third instance and it was still live.
+            _line = {
+                "approve": f"'{label}' waits on your approval ({human_age(age)})"
+                           f"  — harness brief {label} --approve",
+                "task": f"block '{label}' was answered {human_age(age)} ago and "
+                        f"produced no task  — harness blocked --decided",
+            }.get(kind)
+            out[f"{kind}:{ident}"] = _line or (
+                f"'{label}' ({kind}) has been waiting {human_age(age)}"
+                f"  — harness needs")
     except Exception:
         pass
     try:
@@ -2214,13 +2224,22 @@ def cmd_hook_stop(a):
             mine = rank0_owes(ctx, node)
             if mine:
                 nl = chr(10)
-                lines = [
-                    (f"  '{label}' is waiting on your approval ({human_age(age)}):{nl}"
-                     f"    harness brief {label} --approve   (or --decline \"why\")"
-                     if kind == "approve" else
-                     f"  block '{label}' was answered {human_age(age)} ago and has "
-                     f"produced no task:{nl}    harness blocked --decided")
-                    for kind, ident, label, age in mine[:4]]
+                def _owed(kind, label, age):
+                    if kind == "approve":
+                        return (f"  '{label}' is waiting on your approval "
+                                f"({human_age(age)}):{nl}    harness brief {label} "
+                                f"--approve   (or --decline \"why\")")
+                    if kind == "task":
+                        return (f"  block '{label}' was answered {human_age(age)} ago "
+                                f"and has produced no task:{nl}    harness blocked "
+                                f"--decided")
+                    # Never the second branch by default. An unknown kind that
+                    # described itself as a block would send the reader to a
+                    # command that cannot find it.
+                    return (f"  '{label}' ({kind}) has been waiting "
+                            f"{human_age(age)}:{nl}    harness needs")
+                lines = [_owed(kind, label, age)
+                         for kind, ident, label, age in mine[:4]]
                 print(json.dumps({"hookSpecificOutput": {
                     "hookEventName": "Stop", "decision": "block", "reason":
                     f"You are about to stop holding the operator's queue.{nl}{nl}"

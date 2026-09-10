@@ -102,4 +102,4 @@ When you ask about a topic not in Core Principles below, I read the relevant cha
 
 ## Scope & Limits
 
-Covers the 1990 article only. For larger-scale story structure, openings, the knowledge gap, and proposal/paper architecture, use the complementary `schimel-science-writing` skill. For applying these principles to your own draft, combine with the `write-pass` / `deslop` / `humanizer` skills.
+Covers the 1990 article only. For larger-scale story structure, openings, the knowledge gap, and proposal/paper architecture, use the complementary `schimel-science-writing` skill. For applying these principles to your own draft, combine with the `write-pass` / `humanizer` skills.

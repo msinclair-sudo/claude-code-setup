@@ -1,12 +1,12 @@
 ---
 name: write-pass
-description: "Three-pass prose elevation workflow for scientific manuscripts. Runs deslop → humanizer → de-densify in sequence on any section of text. Use when the user invokes /write-pass or asks to elevate, polish, or run a writing pass on scientific prose."
+description: "Two-pass prose elevation workflow for scientific manuscripts. Runs humanizer → de-densify in sequence on any section of text. Use when the user invokes /write-pass or asks to elevate, polish, deslop, de-AI, or run a writing pass on scientific prose, manuscripts, abstracts, cover letters, grant narratives, or discussion sections."
 allowed-tools: [Read, Write, Edit]
 ---
 
 # Write-Pass: Scientific Prose Elevation
 
-A sequential three-pass workflow that elevates already-drafted scientific prose to publication grade. It does not draft, it does not add new content or claims. It operates on text you give it.
+A sequential two-pass workflow that elevates already-drafted scientific prose to publication grade. It does not draft, it does not add new content or claims. It operates on text you give it.
 
 **Pass order is fixed. Do not skip or reorder.**
 
@@ -18,34 +18,31 @@ Invoke with `/write-pass` followed by the text to elevate, or paste the text and
 
 ---
 
-## The three passes
+## The two passes
 
-### Pass 1 — Deslop (AI-tell removal)
+### Pass 1 — Humanize (AI-tell removal + voice)
 
-Strip AI vocabulary, formulaic structures, and machine-pattern tells. This pass cuts; it does not add.
+Load the `humanizer` skill and follow it. This pass cuts; it does not add. Tell it this is **embedded mode**: it should return only the final text, since Pass 2 consumes the output rather than the user.
 
-**Core rules:**
-1. Cut filler phrases — throat-clearing openers, emphasis crutches, business jargon, meta-commentary
-2. Break formulaic structures — binary contrasts ("Not X. Y."), dramatic fragmentation, self-posed rhetorical questions, anaphora/tricolon abuse
-3. Eliminate AI tropes — "quietly," "delve," "serves as," false ranges, superficial participle analyses ("highlighting its importance"), grandiose stakes inflation, invented concept labels
-4. Use active voice with named actors — "we" for your own work, specific authors instead of "researchers have shown"
-5. Be specific — no vague declaratives, no lazy extremes, no vague attributions. Domain terminology is fine; business buzzwords and AI vocabulary are not
-6. Vary rhythm — mix sentence lengths, end paragraphs differently, no em dashes, no stacked short fragments for manufactured emphasis
-7. Trust readers — no hand-holding, no "Let's break this down," no fractal summaries
-8. Cut formatting tells — no bold-first bullets, no unicode arrows, no em dashes, no "In conclusion...", no "Despite these challenges..." formulas
-9. Do not dilute — one point per section, do not restate the same argument repeatedly
+The patterns are ordered strongest first. Sections 1 to 5 justify an edit on a single sighting; anything marked *weak alone* needs corroborating tells in the same passage before you act on it. That gating matters here, because scientific prose legitimately contains hedges, passives, and hyphenated compounds that are not AI tells.
 
-**Quick checks before moving to Pass 2:**
-- Heavy adverbs or -ly words? Cut.
-- Passive voice? Find the actor, make them subject.
-- "Not X, it's Y" contrasts? State Y directly.
-- Em dash anywhere? Remove — comma, period, or parenthetical instead.
-- Vague declarative? Name the specific implication.
-- Tricolon? Use two items or one.
-- "Despite these challenges..." formula? Rewrite.
-- Bold-first bullet pattern? Remove bold leads.
+**Act on one sighting (§1–§5):** not-X-but-Y contrasts, one-line closers and dramatic fragments, sayings that sound deep ("at its core," "what really matters"), staged run-ups ("Let's dive in"), and arguing with no one.
 
-**Score on each dimension (1–10):**
+**Structural and inflation tells (§6–§18):** forced triads, repeated sentence openings, dashes as the universal connector, stacked qualifiers, hyphenated pairs, hidden actors, synonym cycling (§11a), false ranges (§11b), AI vocabulary, inflated significance, vague connection, shallow -ing riders, sales language, borrowed authority, and copula avoidance ("serves as," "stands as").
+
+**Formatting and leftovers (§19–§25):** decorative bold, decorative headings, curly quotes, chatbot residue, knowledge-limit disclaimers, headings restated in the first sentence, and writing about the previous version.
+
+**Hard constraints for this pass:**
+- No em or en dashes in the output.
+- Add no fact, name, number, date, quote, or citation that is not in the source. If a sentence needs a detail you do not have, ask rather than invent. This is non-negotiable in a manuscript.
+- Check that the rewrite did not drop a claim, a ranking, or a simultaneity claim. Shape edits under §6, §9, and §19 lose those most often.
+
+**Cold re-read (mandatory — do not skip):**
+Tells survive rewrites. Reading your own fresh output, you are anchored on the choices you just made and will read past them. This step is the independent second look that catches what the first reading missed, so treat it as real work rather than a checklist tick.
+
+Set the draft aside and re-read it cold, as if you had not written it. Ask: "What still sounds AI-generated?" Answer in 2–3 bullet points, revise to address them, then search specifically for the five tells that most often survive a rewrite: a not-X-but-Y contrast, a one-line closer, a dash, a triad, a bold label.
+
+**Score before handing off (1–10 each):**
 
 | Dimension | Question |
 |-----------|----------|
@@ -55,34 +52,7 @@ Strip AI vocabulary, formulaic structures, and machine-pattern tells. This pass 
 | Authenticity | Sounds like a specific human wrote it? |
 | Density | Anything cuttable? |
 
-Below 35/50: revise Pass 1 before proceeding.
-
-**Reference files for Pass 1** (in `~/.claude/skills/deslop/references/`):
-- `phrases.md` — phrases to remove or replace
-- `structures.md` — structural patterns to avoid
-- `tropes.md` — full AI trope catalog
-- `examples.md` — before/after transformations
-
----
-
-### Pass 2 — Humanize (pattern removal + voice)
-
-Run after Pass 1. Catch any remaining AI signals deslop missed, then apply the self-audit.
-
-**30 patterns to check** (grouped):
-
-*Content:* significance inflation, notability name-dropping, superficial -ing analyses, promotional language, vague attributions, formulaic "challenges" sections
-
-*Language:* AI vocabulary words (additionally, crucial, delve, tapestry, vibrant, underscore, showcase, pivotal, landscape, testament, interplay), copula avoidance ("serves as," "stands as"), negative parallelisms, rule of three, synonym cycling, false ranges, passive voice with hidden actor
-
-*Style:* em dashes (hard cut — none in the final text), boldface overuse, inline-header lists, title case headings, emojis, curly quotes, hyphenated word pairs in predicate position, persuasive authority tropes ("at its core," "what really matters"), signposting announcements ("Let's dive in"), fragmented headers, diff-anchored writing
-
-*Communication:* chatbot artifacts ("I hope this helps"), knowledge-cutoff disclaimers, sycophantic tone
-
-*Filler:* filler phrases ("In order to" → "To"), excessive hedging, generic positive conclusions
-
-**Self-audit (do this before delivering Pass 2 output):**
-Ask: "What makes this still obviously AI-generated?" Answer in 2–3 bullet points, then revise to address them. The final output must contain no em or en dashes.
+Below 35/50: revise this pass before proceeding. **Carry the Density score forward** — Pass 2 gates on it and must not expand prose that already passes.
 
 **Voice calibration (optional):** If the user provides a sample of their own writing, analyse sentence length patterns, word choice level, paragraph openings, and punctuation habits before rewriting. Match their voice, not a generic "clean" voice.
 
@@ -90,9 +60,11 @@ Ask: "What makes this still obviously AI-generated?" Answer in 2–3 bullet poin
 
 ---
 
-### Pass 3 — De-densify (structural density)
+### Pass 2 — De-densify (structural density)
 
-Run after Pass 2. Only apply operations that are actually triggered — do not expand prose that deslop already scored as passing on density. This pass splits and restructures; it does not add padding or restatements.
+Run after Pass 1. This pass splits and restructures; it does not add padding or restatements.
+
+**Gate:** The Density score asks whether anything is *cuttable*; this pass fixes prose that is *hard to parse*. Those are different faults, and a passing Density score does not by itself mean this pass is unnecessary. Run it only when a listed trigger is actually present, and apply only the operations those triggers fire. If nothing triggers, skip the pass and say so.
 
 **Section-level scan first:** Before sentence-level work, check whether the section has 3+ consecutive study paragraphs (evidence parade) or 3+ major sections following the same arc. If yes, apply Operations 6 and 7 first.
 
@@ -124,7 +96,7 @@ If a paragraph has 3+ inline section references, keep the one the reader needs a
 
 **Paragraph constraint:** No inserted content may be left as a 1–2 sentence orphan paragraph. Fold it into an adjacent paragraph or expand to 3+ sentences.
 
-**Stop condition:** Stop when a reader in the same broad field can read each paragraph once and extract the main point. Deslop's density rule takes precedence — do not expand prose that doesn't need it.
+**Stop condition:** Stop when a reader in the same broad field can read each paragraph once and extract the main point. Do not expand prose that doesn't need it; an untriggered operation is not an improvement.
 
 ---
 
@@ -133,15 +105,14 @@ If a paragraph has 3+ inline section references, keep the one the reader needs a
 ```
 Input: draft section of scientific prose
 
-Pass 1 — Deslop
+Pass 1 — Humanize
+  → Apply humanizer in embedded mode (strongest-first, weak-alone gating)
+  → Cold re-read: "what's still AI here?" Revise.
   → Score (1–10) on Directness, Rhythm, Trust, Authenticity, Density
-  → Must reach ≥35/50 before proceeding
+  → Must reach ≥35/50 before proceeding; carry Density forward
 
-Pass 2 — Humanize
-  → Self-audit: "what's still AI here?"
-  → Revise until no em dashes remain and audit bullets are resolved
-
-Pass 3 — De-densify
+Pass 2 — De-densify
+  → Skip unless a listed trigger is present
   → Section scan first (evidence parades, arc repetition)
   → Apply only triggered operations
   → Stop when one-read comprehension is achieved

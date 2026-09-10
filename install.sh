@@ -90,6 +90,23 @@ Options:
                         If checks fail (e.g. biblion absent on this machine) the
                         MCP is skipped without aborting the install.
 
+  --prune               Remove installed skills this repo no longer defines, so
+                        the repo becomes the authoritative source across
+                        machines. Retire a skill by deleting its folder here,
+                        then run with --prune on each machine.
+                          - Prunes ONLY skills a previous install deployed, as
+                            recorded in ~/.claude/.install-manifest.json. Skills
+                            installed by other means (MCP, plugins, hand-made)
+                            are never touched, even if absent from this repo.
+                          - Vault skills are only pruned when --vault_root is
+                            also passed; without it they are considered
+                            out-of-scope for this run, not retired.
+                          - Prints what it would remove and asks before deleting
+                            unless --yes is also given.
+
+  --yes                 Skip the confirmation prompt for --prune. For scripted
+                        or non-interactive installs.
+
   -h, --help            Show this help message and exit.
 
 Examples:
@@ -105,6 +122,12 @@ Examples:
   bash michaels_setup/install.sh --biblion
       Install skills, then register the biblion MCP server (user scope).
 
+  bash michaels_setup/install.sh --prune
+      Install, then remove installer-deployed skills the repo no longer has.
+
+  bash michaels_setup/install.sh --vault_root --prune --yes
+      Full install, prune retired skills (vault ones included), no prompt.
+
 Requirements:
   - claude CLI (always)
   - uv         (only when installing the vault MCP server)
@@ -116,6 +139,9 @@ EOF
 INSTALL_VAULT=false
 VAULT_ROOT_ARG=""
 INSTALL_BIBLION=false
+PRUNE=false
+ASSUME_YES=false
+MANIFEST_FILE="$HOME/.claude/.install-manifest.json"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -125,6 +151,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --biblion)
             INSTALL_BIBLION=true
+            shift
+            ;;
+        --prune)
+            PRUNE=true
+            shift
+            ;;
+        --yes|-y)
+            ASSUME_YES=true
             shift
             ;;
         --vault_root)
@@ -381,13 +415,24 @@ fi
 # Registered further down, in the settings.json merge. Copied here so the file
 # exists before anything points at it: a registered hook whose script is missing
 # fails on every Bash call in every session on the machine.
+#
+# The repo currently ships no hooks. The loop is kept because it is generic and
+# costs nothing when hooks/ is empty; it is guarded so an empty dir does not
+# expand to a literal `*.py` and abort under `set -e`.
 
-if [[ -d "$SCRIPT_DIR/hooks" ]]; then
+if [[ -d "$SCRIPT_DIR/hooks" ]] && compgen -G "$SCRIPT_DIR/hooks/*.py" >/dev/null; then
     echo "Installing hooks..."
     mkdir -p "$HOME/.claude/hooks"
     cp "$SCRIPT_DIR/hooks/"*.py "$HOME/.claude/hooks/"
     chmod +x "$HOME/.claude/hooks/"*.py
     echo "  Installed hooks to $HOME/.claude/hooks/"
+fi
+
+# Remove the retired strip_cd hook script from machines that still carry it.
+# Its settings.json entry is removed further down.
+if [[ -f "$HOME/.claude/hooks/strip_cd.py" ]]; then
+    rm -f "$HOME/.claude/hooks/strip_cd.py"
+    echo "  Removed retired hook: strip_cd.py"
 fi
 
 # ── Install statusline ────────────────────────────────────────────────────────
@@ -442,38 +487,39 @@ if repo_dir not in dirs:
     dirs.append(repo_dir)
 settings["additionalDirectories"] = dirs
 
-# Hooks — register the strip_cd PreToolUse guard, replacing any earlier copy.
+# Hooks — remove the strip_cd PreToolUse guard.
 #
-# It was removed on 2026-06-18 as collateral in the vault-MCP retirement rather
-# than on its own merits, and the gap it left was measured on 2026-09-08: a
-# background lane ran `cd "/abs/path" && harness note ...`, which matches no
-# allow rule despite BOTH halves being allowed, so it asked for permission in a
-# session with no terminal on it and stopped there for the best part of an hour.
+# Retired 2026-09-10 at the user's request. It denied `cd /abs/path && ...` to
+# stop a compound command matching no allow rule and stranding a background
+# session on an unanswerable prompt. In practice it also fired on legitimate
+# compound commands and silently changed where subsequent commands ran, which
+# cost more than the prompt it prevented.
 #
-# Rewritten to REFUSE rather than strip, because a PreToolUse hook cannot alter
-# tool input — only allow, deny or ask. That turns out to be the better tool:
-# an `ask` waits for a human, a `deny` goes back to the model, which reissues
-# the command without the prefix and keeps moving with nobody at a keyboard.
+# This block DEREGISTERS it rather than merely not adding it: machines that ran
+# an earlier installer still carry the entry in settings.json, and the hook keeps
+# firing from ~/.claude/hooks/ until the entry is gone. The installed .py is
+# deleted separately, above.
 hooks = settings.get("hooks", {})
 pre_tool = hooks.get("PreToolUse", [])
 cleaned_pre_tool = []
+removed_hook = False
 for entry in pre_tool:
-    entry["hooks"] = [
-        h for h in entry.get("hooks", [])
-        if "strip_cd.py" not in h.get("command", "")
-    ]
+    kept = [h for h in entry.get("hooks", []) if "strip_cd.py" not in h.get("command", "")]
+    if len(kept) != len(entry.get("hooks", [])):
+        removed_hook = True
+    entry["hooks"] = kept
     if entry["hooks"]:
         cleaned_pre_tool.append(entry)
-cleaned_pre_tool.append({
-    "matcher": "Bash",
-    "hooks": [{"type": "command", "timeout": 5,
-               "command": f"python3 {os.path.expanduser('~/.claude/hooks/strip_cd.py')}"}],
-})
-hooks["PreToolUse"] = cleaned_pre_tool
+if cleaned_pre_tool:
+    hooks["PreToolUse"] = cleaned_pre_tool
+elif "PreToolUse" in hooks:
+    del hooks["PreToolUse"]
 if hooks:
     settings["hooks"] = hooks
 elif "hooks" in settings:
     del settings["hooks"]
+if removed_hook:
+    print("  Removed retired strip_cd PreToolUse hook from settings")
 
 hooks_count = sum(len(entries) for entries in settings.get("hooks", {}).values())
 
@@ -486,6 +532,92 @@ print(f"  Updated {settings_file}")
 print(f"    Permissions: {len(merged_allow)} rules ({len(new_rules)} new)")
 print(f"    Additional dirs: {len(dirs)}")
 print(f"    Hooks: {hooks_count} registered")
+PYEOF
+
+# ── Manifest + prune ─────────────────────────────────────────────────────────
+# The manifest records which skills THIS installer deployed, so --prune can tell
+# "retired from the repo" apart from "installed by something else". Without it,
+# pruning would mean deleting everything in ~/.claude/skills/ not in this repo,
+# which would take out MCP-installed, plugin, and hand-made skills.
+#
+# Vault skills are only in scope when --vault_root was passed. On a machine
+# installed without it, they are absent from this run but not retired, so they
+# must not be pruned.
+
+INSTALLED_NOW=("${GENERAL_SKILLS[@]}")
+if [[ "$INSTALL_VAULT" == true ]]; then
+    INSTALLED_NOW+=("${VAULT_SKILLS[@]}")
+fi
+
+PRUNE="$PRUNE" ASSUME_YES="$ASSUME_YES" INSTALL_VAULT="$INSTALL_VAULT" \
+MANIFEST_FILE="$MANIFEST_FILE" SKILLS_DIR="$HOME/.claude/skills" \
+INSTALLED_NOW="$(printf '%s\n' "${INSTALLED_NOW[@]}")" \
+VAULT_SKILLS_LIST="$(printf '%s\n' "${VAULT_SKILLS[@]}")" \
+python3 <<'PYEOF'
+import json, os, shutil, sys
+
+manifest_file = os.environ["MANIFEST_FILE"]
+skills_dir    = os.environ["SKILLS_DIR"]
+prune         = os.environ["PRUNE"] == "true"
+assume_yes    = os.environ["ASSUME_YES"] == "true"
+vault_in_play = os.environ["INSTALL_VAULT"] == "true"
+now      = [s for s in os.environ["INSTALLED_NOW"].split("\n") if s]
+vaults   = {s for s in os.environ["VAULT_SKILLS_LIST"].split("\n") if s}
+
+try:
+    with open(manifest_file) as f:
+        manifest = json.load(f)
+except Exception:
+    manifest = {}
+previous = set(manifest.get("skills", []))
+
+# Candidates: deployed by an earlier run, absent from this one, still on disk.
+candidates = sorted(
+    name for name in previous - set(now)
+    if os.path.isdir(os.path.join(skills_dir, name))
+    # A vault skill missing from a non-vault run is out of scope, not retired.
+    and not (name in vaults and not vault_in_play)
+)
+
+if candidates and not prune:
+    print("")
+    print(f"  {len(candidates)} installed skill(s) no longer in this repo:")
+    for name in candidates:
+        print(f"    - {name}")
+    print("  Re-run with --prune to remove them.")
+elif candidates and prune:
+    print("")
+    print("  Pruning skills no longer defined in this repo:")
+    for name in candidates:
+        print(f"    - {name}")
+    go = assume_yes
+    if not go:
+        if sys.stdin.isatty():
+            try:
+                go = input("  Remove these? [y/N] ").strip().lower() in ("y", "yes")
+            except EOFError:
+                go = False
+        else:
+            print("  Non-interactive shell; pass --yes to confirm. Nothing removed.")
+    if go:
+        for name in candidates:
+            shutil.rmtree(os.path.join(skills_dir, name), ignore_errors=True)
+            print(f"    removed {name}")
+    else:
+        print("    skipped.")
+        # Keep them in the manifest so a later --prune can still find them.
+        now = list(now) + candidates
+
+# Record what is deployed now, so the next run can diff against it.
+# Carry forward out-of-scope vault skills so a non-vault run does not forget
+# that an earlier vault run deployed them.
+carry = sorted(s for s in previous if s in vaults and not vault_in_play)
+manifest["skills"] = sorted(set(now) | set(carry))
+manifest["updated"] = __import__("datetime").date.today().isoformat()
+os.makedirs(os.path.dirname(manifest_file), exist_ok=True)
+with open(manifest_file, "w") as f:
+    json.dump(manifest, f, indent=2)
+    f.write("\n")
 PYEOF
 
 echo ""

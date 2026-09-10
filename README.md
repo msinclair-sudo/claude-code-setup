@@ -1,7 +1,7 @@
 # Claude Code Setup
 
 A one-command installer for a Claude Code working environment: skills, a custom
-statusline, hooks, global permissions, and a shared `CLAUDE.md`. An optional
+statusline, global permissions, and a shared `CLAUDE.md`. An optional
 Obsidian-vault MCP server can be installed on top with a single flag.
 
 Everything is deployed into `~/.claude/`. Re-running the installer is the only
@@ -13,7 +13,10 @@ supported way to update a deployed environment — edit the source here, then ru
 ## Quick start
 
 ```bash
-# General install: skills + statusline + hooks + permissions + CLAUDE.md
+# Remove skills retired from this repo (repo becomes source of truth)
+bash michaels_setup/install.sh --prune
+
+# General install: skills + statusline + permissions + CLAUDE.md
 bash install.sh
 
 # Full install: the above PLUS the Obsidian-vault MCP server and its skills
@@ -39,8 +42,10 @@ Running `bash install.sh` (no flags) installs, on every machine:
   Drop a new skill folder into `skills/` and it is picked up automatically.
 - **Statusline** — `shell/statusline.sh` copied to `~/.claude/statusline.sh` and
   registered in `~/.claude/settings.json`.
-- **Hooks** — `hooks/strip_cd.py` copied to `~/.claude/hooks/` and registered as a
-  `PreToolUse` hook for Bash.
+- **Hooks** — none currently shipped. Any `.py` in `hooks/` is copied to
+  `~/.claude/hooks/`. The `strip_cd.py` PreToolUse guard was retired on
+  2026-09-10; the installer deletes it and removes its `settings.json` entry
+  from machines that still carry it.
 - **Permissions** — if `permissions.json` exists (gitignored, machine-specific;
   copy from `permissions.example.json`), its `allow` rules are merged into the
   `allow` list in `~/.claude/settings.json`. If the file is absent, this step is
@@ -127,7 +132,7 @@ other `~/.claude/` paths directly — `install.sh` is the only deployment mechan
 install.sh               Installer
 permissions.example.json Template for permission rules (copy to permissions.json)
 config.example.yaml      Template for machine-specific vault paths (copy to config.yaml)
-hooks/                strip_cd.py PreToolUse hook
+hooks/                (empty; hooks are copied from here if present)
 shell/                statusline.sh
 skills/               General + vault skills (auto-discovered by install.sh)
 server/               Obsidian-vault MCP server (installed only with --vault_root)

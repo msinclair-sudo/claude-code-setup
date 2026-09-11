@@ -40,6 +40,10 @@ rules into `~/.claude/settings.json`. The file is gitignored and
 machine-specific; copy `permissions.example.json` to create it. Without it, the
 installer skips the step and leaves your existing permissions alone.
 
+**Global CLAUDE.md.** `global_claude.md` becomes `~/.claude/CLAUDE.md`, the
+standing instructions every session on the machine loads. It carries the path
+conventions and the voice I want writing in.
+
 ---
 
 ## Skills
@@ -107,6 +111,7 @@ and removes nothing. Retirements propagate from the run after that.
 
 ```
 install.sh               Installer
+global_claude.md         Becomes ~/.claude/CLAUDE.md
 permissions.example.json Template for permission rules (copy to permissions.json)
 config.example.yaml      Template for machine-specific paths (copy to config.yaml)
 hooks/                   Hooks, copied to ~/.claude/hooks/ if present

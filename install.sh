@@ -435,6 +435,21 @@ if [[ -f "$HOME/.claude/hooks/strip_cd.py" ]]; then
     echo "  Removed retired hook: strip_cd.py"
 fi
 
+# ── Install global CLAUDE.md ─────────────────────────────────────────────────
+# The standing instructions loaded into every session on this machine. The help
+# text and the header comment have claimed this step since the repo started, but
+# the source file and the code to copy it were never here; a machine's
+# ~/.claude/CLAUDE.md was whatever that machine happened to have. It is now
+# versioned like everything else.
+
+GLOBAL_CLAUDE_SRC="$SCRIPT_DIR/global_claude.md"
+if [[ -f "$GLOBAL_CLAUDE_SRC" ]]; then
+    echo "Installing global CLAUDE.md..."
+    mkdir -p "$HOME/.claude"
+    cp "$GLOBAL_CLAUDE_SRC" "$HOME/.claude/CLAUDE.md"
+    echo "  Copied to $HOME/.claude/CLAUDE.md"
+fi
+
 # ── Install statusline ────────────────────────────────────────────────────────
 
 STATUSLINE_SCRIPT="$HOME/.claude/statusline.sh"

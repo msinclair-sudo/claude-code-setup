@@ -1,128 +1,105 @@
 # Claude Code Setup
 
-A one-command installer for a Claude Code working environment: skills, a custom
-statusline, global permissions, and a shared `CLAUDE.md`. An optional
-Obsidian-vault MCP server can be installed on top with a single flag.
+One Claude Code environment, kept the same across every machine I work on:
+skills, a custom statusline, global permissions, and a shared `CLAUDE.md`.
 
-Everything is deployed into `~/.claude/`. Re-running the installer is the only
-supported way to update a deployed environment — edit the source here, then run
-`install.sh` again.
+This repo is the source of truth. Everything lands in `~/.claude/`, so edit the
+files here and run `install.sh` again to update a machine. Editing anything under
+`~/.claude/` directly gets overwritten on the next run.
 
 ---
 
 ## Quick start
 
 ```bash
-# Remove skills retired from this repo (repo becomes source of truth)
-bash michaels_setup/install.sh --prune
-
-# General install: skills + statusline + permissions + CLAUDE.md
+# Install: skills + statusline + permissions + CLAUDE.md
 bash install.sh
-
-# Full install: the above PLUS the Obsidian-vault MCP server and its skills
-bash install.sh --vault_root "/path/to/your/Obsidian Vault"
 
 # Show all options
 bash install.sh --help
 ```
 
-Restart Claude Code after installing.
-
-**Requirements:** the `claude` CLI is always required. `uv` is required only when
-installing the vault MCP server (i.e. when `--vault_root` is passed).
+Restart Claude Code afterwards. The `claude` CLI is the only requirement.
 
 ---
 
-## What the general install does
+## What the installer does
 
-Running `bash install.sh` (no flags) installs, on every machine:
+**Skills.** The installer finds every directory under `skills/` and copies it
+to `~/.claude/skills/`. Drop a new skill folder in and the next run picks it
+up; you never edit the installer to add one.
 
-- **Skills** — every directory under `skills/` is auto-discovered and installed to
-  `~/.claude/skills/`, except the five vault skills (those need `--vault_root`).
-  Drop a new skill folder into `skills/` and it is picked up automatically.
-- **Statusline** — `shell/statusline.sh` copied to `~/.claude/statusline.sh` and
-  registered in `~/.claude/settings.json`.
-- **Hooks** — none currently shipped. Any `.py` in `hooks/` is copied to
-  `~/.claude/hooks/`. The `strip_cd.py` PreToolUse guard was retired on
-  2026-09-10; the installer deletes it and removes its `settings.json` entry
-  from machines that still carry it.
-- **Permissions** — if `permissions.json` exists (gitignored, machine-specific;
-  copy from `permissions.example.json`), its `allow` rules are merged into the
-  `allow` list in `~/.claude/settings.json`. If the file is absent, this step is
-  skipped and existing permissions are left untouched.
+**Statusline.** `shell/statusline.sh` goes to `~/.claude/statusline.sh`, then
+gets registered in `~/.claude/settings.json`.
 
-No Obsidian MCP server, no vault skills, and no `uv` are involved in this mode.
+**Hooks.** Any `.py` in `hooks/` goes to `~/.claude/hooks/` and is registered the
+same way. The repo ships none at present.
+
+**Permissions.** If `permissions.json` exists, the installer merges its `allow`
+rules into `~/.claude/settings.json`. The file is gitignored and
+machine-specific; copy `permissions.example.json` to create it. Without it, the
+installer skips the step and leaves your existing permissions alone.
 
 ---
 
-## The optional Obsidian-vault MCP server
+## Skills
 
-Passing `--vault_root` additionally installs an MCP server that gives Claude Code
-guarded read/write access to an Obsidian vault. Writes are restricted to
-`claude_doc_dump/` staging directories — a separate Claude session integrates
-those dumps into the real vault locations later.
+### Writing
 
-With `--vault_root`, the installer also:
+| Skill | What it does |
+|---|---|
+| `humanizer` | Rewrites AI-sounding prose so it reads like the writer, without changing what it says. Patterns are ordered strongest-first; weaker ones need corroboration before they justify an edit. |
+| `write-pass` | Two-pass elevation workflow for manuscripts: `humanizer`, then `de-densify`. |
+| `de-densify` | Splits overloaded sentences, unpacks buried definitions, and breaks up evidence parades. The one skill here that expands rather than cuts. |
+| `schimel-science-writing` | Knowledge base from Schimel's *Writing Science* — story structure, the knowledge gap, condensing. |
+| `sentence-prose` | Knowledge base from Gopen & Swan's *The Science of Scientific Writing* — topic and stress position, reader expectation. |
+| `google-devdocs-style` | Google's developer documentation style guide, for technical writing and term rulings. |
+| `research-brief` | Writes briefs for research agents that collect generalisable facts rather than confirming a design back to itself. |
 
-- Copies the server (`server/`) to `~/.claude/mcp/obsidian_vault/`.
-- Registers it: `claude mcp add obsidian-vault -s user -e VAULT_ROOT=... -- uv run server.py`.
-- Installs the five vault skills: `make-note`, `process-notes`, `explore-vault`,
-  `tracker`, `request-task`.
+### Obsidian
 
-Dependencies (`fastmcp`, `pydantic`) are declared as inline script metadata in
-`server.py` and installed by `uv` automatically. The server starts fresh each
-Claude session — there is no daemon to restart.
+| Skill | What it does |
+|---|---|
+| `obsidian-cli` | Read, create, and search vault notes through Obsidian's first-party CLI. Also covers plugin and theme development. Requires Obsidian running. |
+| `obsidian-markdown` | Obsidian-flavoured Markdown: wikilinks, embeds, callouts, properties. |
+| `obsidian-bases` | `.base` files — database-like views, filters, formulas. |
+| `json-canvas` | `.canvas` files — nodes, edges, groups. |
+| `md-docx` | Markdown ⇄ Word via Pandoc, preserving callouts and matching APA citations to BibTeX keys. |
 
-### Vault path
+### Research and tooling
 
-`--vault_root` accepts an explicit path. Without one, the installer reads
-`config.yaml` (gitignored, machine-specific) and picks the first `vault_root*`
-path that exists:
+| Skill | What it does |
+|---|---|
+| `biblion` | Query a biblion corpus (citation graph, embeddings, concept spine) or ingest new literature. |
+| `book-to-skill` | Converts books and documents into structured agent skills. |
+| `defuddle` | Extracts clean markdown from web pages, dropping navigation and clutter. |
+
+### Agent Workstream Harness
+
+`harness`, `harness-root`, `harness-upward`, `harness-downward` handle role-tree
+coordination for multi-agent work. `harness` resolves a session's position and
+loads whichever of the other three applies.
+
+---
+
+## Retiring a skill
+
+Installing copies files but never deletes them, so a skill you retire here
+survives on every machine that already had it. To retire one properly, delete its
+folder from `skills/`, then run `--prune` on each machine:
 
 ```bash
-cp config.example.yaml config.yaml   # then edit with your local vault paths
-bash install.sh --vault_root         # resolves the path from config.yaml
+bash install.sh --prune        # reports, then asks before removing
+bash install.sh --prune --yes  # no prompt
 ```
 
-The vault path is injected as the `VAULT_ROOT` environment variable — no path is
-hardcoded in the server. On a multi-machine setup, run the installer on each
-machine with its own local path.
+`--prune` only removes skills a previous install deployed, which it tracks in
+`~/.claude/.install-manifest.json`. Skills that arrived another way, from an MCP
+server or a plugin, stay put even though this repo does not define them. Without
+the flag, the installer names what is retired and leaves it alone.
 
-### Vault tools
-
-**Read (unrestricted):** `vault_search`, `vault_read`, `vault_list`, `vault_tags`,
-`vault_recent`, `vault_list_projects`, `vault_read_tracker`.
-
-**Write (guarded):** `vault_create_note`, `vault_append`, `vault_edit_dump`,
-`vault_rename`, `vault_import_file`, `vault_import_directory`,
-`vault_resolve_links`, `vault_flag_pending`, `vault_clear_pending`,
-`vault_add_tracker_item`, `vault_update_tracker_item`.
-
-### Write rules
-
-**Placement** — writes only go to `claude_doc_dump/` directories. The allowed
-roots are defined in `server/config.py` (`ALLOWED_PLACEMENT_DIRS`); edit that list
-for your own vault. Subdirectories of a dump root are allowed.
-
-**Naming** — file stems must be `snake_case`, a numeric section (`01-Introduction`),
-or a README (`my_script_README`). No camelCase or spaces.
-
-**Tags** — at least one primary tag is required; secondary tags are unrestricted.
-Primary tags (in `config.py`): `Writing` `Code` `Tracker` `Methods` `Todo`
-`Scripts` `Theory` `Issues` `PhD` `Life`.
-
-**Destinations** — every created note requires at least one wikilink pointing to
-where the content should eventually be integrated. These appear in the frontmatter
-and as a destinations line in the body.
-
----
-
-## Updating a deployed environment
-
-Edit the source files in this repository, then re-run `install.sh` (with
-`--vault_root` if you use the vault server). The installer overwrites the deployed
-copies under `~/.claude/`. Never edit `~/.claude/mcp/`, `~/.claude/skills/`, or
-other `~/.claude/` paths directly — `install.sh` is the only deployment mechanism.
+On a machine that predates the manifest, the first run records what is installed
+and removes nothing. Retirements propagate from the run after that.
 
 ---
 
@@ -131,9 +108,8 @@ other `~/.claude/` paths directly — `install.sh` is the only deployment mechan
 ```
 install.sh               Installer
 permissions.example.json Template for permission rules (copy to permissions.json)
-config.example.yaml      Template for machine-specific vault paths (copy to config.yaml)
-hooks/                (empty; hooks are copied from here if present)
-shell/                statusline.sh
-skills/               General + vault skills (auto-discovered by install.sh)
-server/               Obsidian-vault MCP server (installed only with --vault_root)
+config.example.yaml      Template for machine-specific paths (copy to config.yaml)
+hooks/                   Hooks, copied to ~/.claude/hooks/ if present
+shell/                   statusline.sh
+skills/                  Skills, auto-discovered by install.sh
 ```

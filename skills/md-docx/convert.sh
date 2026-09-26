@@ -6,6 +6,11 @@
 # Per-document overrides (reference-doc, bibliography, toc...) go in the
 # markdown file's YAML frontmatter.
 #
+# Headings: headings.lua strips a manual section number ("1 ", "2.1 ") so the
+# template's automatic Heading numbering is not doubled, keeps headings that had
+# no manual number unnumbered, and maps the title/abstract to the Title,
+# Abstract Title and Abstract styles.
+#
 # Callouts: Obsidian callouts (`> [!type] Title` + body lines) are normalised
 # before pandoc so they survive a docx round-trip (see docx2md.sh, which
 # reconstructs them). A blank `>` line is inserted between the title and the
@@ -93,7 +98,15 @@ export MDDOCX_PGMAR="$(geom pgMar)"
 pandoc -d "$DEFAULTS" \
     --reference-doc "$SCRIPT_DIR/reference.docx" \
     --csl "$CSL" \
+    --lua-filter "$SCRIPT_DIR/headings.lua" \
     --lua-filter "$SCRIPT_DIR/sectionbreak.lua" \
     --resource-path "$SCRIPT_DIR:.:$(dirname "$INPUT")" \
     "$PREPPED" -o "$OUTPUT"
+
+# Match the reference doc on the things pandoc cannot set itself: the table
+# style/cell text style (pandoc hardcodes its own "Table" + "Compact" and
+# ignores custom-style on a Table), and unreferenced media inherited from the
+# template. See postprocess.py.
+python3 "$SCRIPT_DIR/postprocess.py" "$OUTPUT" "$SCRIPT_DIR/reference.docx"
+
 echo "Wrote: $OUTPUT"

@@ -48,6 +48,61 @@ document's frontmatter `csl:` is overridden by this default; pass
 
 Per-document overrides (`bibliography`, `csl`, `toc`, …) go in the Markdown file's YAML frontmatter, not in these scripts.
 
+### Heading numbering, title and abstract
+
+`reference.docx` binds `Heading 1`–`Heading 9` to a multilevel list, so **Word
+supplies the section numbers itself** (`1`, `1.1`, `1.1.1`). A number typed into
+the Markdown would therefore print twice — "1 1 Background". `headings.lua`
+reconciles the two:
+
+- A heading that **carries a manual number** (`# 1 Background`, `## 2.1 Aim 1`)
+  has it stripped, and Word numbers the heading instead. The rendered numbers
+  come out identical, so cross-references in the prose still point at the right
+  section.
+- A heading that **carries no manual number** (`### Falsification`,
+  `# Appendix A: …`, `# References`) is emitted with list numbering switched off
+  (`numId 0`), so it stays unnumbered. A document's deliberate mix of numbered
+  sections and unnumbered subheadings therefore survives, and self-labelled
+  appendices don't get swept into the section sequence.
+- The **first level-1 heading** is taken as the document title and mapped to the
+  template's `Title` style, outside the numbered outline.
+- An **`Abstract`** heading maps to `Abstract Title`, and the body that follows
+  it (up to the next heading) maps to `Abstract`.
+
+`custom-style` values are Word style *names*, not styleIds — pandoc resolves them
+against the reference doc by name, and an unknown name would silently create a
+new style rather than reuse the template's.
+
+### Tables
+
+Pandoc always writes its own `Table` style and styles cell paragraphs `Compact`,
+and it **ignores a `custom-style` attribute on a Table element**, so no Lua
+filter can redirect it. `postprocess.py` instead reads the intended look off the
+reference doc's *own example table* and copies it onto every table in the output:
+
+- the **table style** (`Style1` in the current template),
+- the **`tblLook`**, which decides whether that style's firstRow/firstCol
+  conditional formatting actually renders — copying the style without it leaves
+  the header row unformatted,
+- the **cell paragraph style** (`Normal`; the template's cells carry no explicit
+  style, which means the default).
+
+Change the table in `reference.docx` and the output follows: nothing here
+hardcodes a style name. If the reference doc has no table, tables are left as
+pandoc wrote them.
+
+Column widths are **not** touched — pandoc computes them from the Markdown
+column widths, which suits an arbitrary table better than the template's single
+worked example.
+
+### Unreferenced template media
+
+Pandoc copies `word/media/*` out of the reference doc wholesale but rebuilds
+`document.xml.rels` from the document it just wrote, so an image used only by the
+template arrives as a bare part with no relationship pointing at it: invisible in
+Word, but still counted in the file size. `postprocess.py` drops any media part
+no `.rels` entry references, and says how many it removed.
+
 ### Section breaks
 
 `convert.sh` runs `sectionbreak.lua`, which turns every standalone Markdown

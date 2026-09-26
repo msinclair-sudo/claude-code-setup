@@ -23,6 +23,8 @@ Obsidian callouts through the round trip, and rewrites APA citations to Pandoc
 | `defaults.yaml` | Pandoc defaults for `convert.sh` (input extensions, `citeproc`, `lang`). `reference-doc` and `csl` are passed on the command line from the skill dir, so the file is location-independent. |
 | `reference.docx` | Word style template — heading/body/blockquote styles for the `.docx` output. |
 | `apa.csl` | Bundled APA 7th-edition citation style. `convert.sh` uses it by default; override with `--csl /path/to/style.csl`. |
+| `headings.lua` | Pandoc filter used by `convert.sh`. Strips manual section numbers so the template's automatic heading numbering isn't doubled, keeps unnumbered headings unnumbered, and maps the title/abstract onto the `Title`, `Abstract Title` and `Abstract` styles. |
+| `postprocess.py` | Run by `convert.sh` after pandoc. Copies the reference doc's table style, `tblLook` and cell text style onto every table (pandoc ignores `custom-style` on tables), and drops media parts the output never references. |
 | `sectionbreak.lua` | Pandoc filter used by `convert.sh`. Turns a Markdown thematic break (`---`) into a Word "next page" section break, carrying the template's page geometry. |
 
 ## Usage
@@ -68,6 +70,14 @@ silently dropped.
 
 ## Notes and limitations
 
+- **Heading numbers** are stripped on md→docx because `reference.docx` numbers
+  headings automatically; headings with no manual number stay unnumbered, and the
+  first H1 and an `Abstract` heading take the template's `Title`/`Abstract`
+  styles. See `README.md`.
+- **Tables** take the reference doc's own table style, `tblLook` and cell text
+  style; column widths are left as pandoc computed them. See `README.md`.
+- **Unreferenced media** inherited from the reference doc is dropped from the
+  output.
 - **Callouts** survive the round trip via a cooperating convention between the
   two scripts (a protective blank `>` line and literal `[!type]` markers). See
   `README.md` for the full contract.

@@ -108,6 +108,8 @@ Do it for anything you had to work out how to measure. Look one up first (`harne
 
 `harness check` runs every manifest check, including after one fails, and records the result against your commit. Report pass, fail and each check's declared blind spot. `NOT RUN (timed out)` means the check's `"timeout"` expired: it is not a fail, but say it did not run. `… N earlier line(s) omitted` means output was cut. Presenting unchecked work is a choice; say so in your report.
 
+An arm that ends with `failed: a.py(1) b.py(2)` (or `failed: none`) is compared file by file with the project's baseline. When one is set, the result reads `vs baseline: new … · gone … · N same`, and check fails only on a new file or an arm that did not run. Report new ones as yours to explain; known reds are not.
+
 ## Commits
 
 Every commit carries a `Task:` trailer.

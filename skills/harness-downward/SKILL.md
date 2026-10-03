@@ -23,6 +23,7 @@ harness brief <task> --history                     # last five revisions
 - `harness mark` refuses a task with no brief, with no override. `spawn` skips a node with nothing briefed and names the remedies: write the brief, or pass `--empty`. A lead with open tasks below it counts as briefed.
 - `spawn` starts only your own children. Naming another lead's child is refused.
 - You cannot write a grandchild's brief. Tell its lead what you want.
+- `--after <task>` (repeatable; `--after none` clears) holds a brief until that task is signed off: `mark` refuses it, sign-off and `recycle` skip it, and the closing task names what it releases. Use it instead of "DEPENDS ON" prose.
 - Rewriting a brief replaces it. The append-only channel is `harness note`.
 - Pick a distinct name for each brief. Hyphens and underscores are the same character, so `a_b` and `a-b` are one record. Writing onto an existing brief prints `REPLACED`; moving one to another node needs `--force`. If you suspect an overwrite, check `--history` at once.
 

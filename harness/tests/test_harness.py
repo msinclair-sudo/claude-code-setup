@@ -115,7 +115,8 @@ class Orientation(unittest.TestCase):
              mock.patch.object(hz, "unread_brief_comments", return_value=unread or {}), \
              mock.patch.object(hz, "unactioned_briefs", return_value=list(unactioned)), \
              mock.patch.object(hz, "open_marks", return_value=marks or {}), \
-             mock.patch.object(hz, "queue", return_value=[]):
+             mock.patch.object(hz, "queue",
+                               return_value=[{"task": t} for t in unactioned]):
             return hz.queue_items(self.ctx, "main")
 
     def test_comments_collapse_to_one_line(self):
@@ -129,6 +130,11 @@ class Orientation(unittest.TestCase):
         self.assertEqual(self.items(unactioned=["x"], marks={"t": {"_node": "dev"}}), {})
         self.assertIn("handed:x", self.items(unactioned=["x", "y"]))
         self.assertNotIn("handed:y", self.items(unactioned=["x", "y"]))
+
+    def test_handed_skips_a_brief_that_waits(self):
+        with mock.patch.object(hz, "waits_on",
+                               side_effect=lambda c, b: ["after z"] if b["task"] == "x" else []):
+            self.assertIn("handed:y", self.items(unactioned=["x", "y"]))
 
 
 class Focus(unittest.TestCase):
@@ -397,6 +403,76 @@ class Pairs(unittest.TestCase):
         self.run_cmd("submit", self.pairs(("Five serve", "Six serve")), task="t")
         with self.assertRaises(SystemExit):
             self.run_cmd("apply", "t", me="dev")
+
+
+class After(unittest.TestCase):
+    """obs 15, 59: a brief can wait on another task, and every path obeys it."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev", "dev_2": "dev"})
+        for d in ("briefs", "marks", "blocks"):
+            (self.ctx.dir / d).mkdir()
+
+    def brief(self, task, node="dev_1", **kw):
+        (self.ctx.dir / "briefs" / f"{hz.tkey(task)}.json").write_text(
+            json.dumps({"task": task, "node": node, **kw}))
+
+    def mark(self, task, node="dev_2", **kw):
+        (self.ctx.dir / "marks" / f"{hz.tkey(task)}.json").write_text(
+            json.dumps({"_node": node, **kw}))
+
+    def test_waits_until_signed_off(self):
+        self.brief("ledger", node="dev_2")
+        self.brief("edges", after=["ledger"])
+        self.mark("ledger")
+        self.assertEqual(hz.waits_on(self.ctx, {"after": ["ledger"]}),
+                         ["after ledger (open on dev_2)"])
+        self.mark("ledger", _closed_at="x")
+        self.assertEqual(hz.waits_on(self.ctx, {"after": ["ledger"]}), [])
+
+    def test_abandoned_still_waits_and_superseded_follows_replacement(self):
+        self.mark("ledger", _closed_at="x", _abandoned_at="x")
+        self.assertTrue(hz.waits_on(self.ctx, {"after": ["ledger"]}))
+        self.brief("old", superseded_at="x", superseded_for="new")
+        self.brief("new")
+        self.mark("new")
+        self.assertIn("after new", hz.waits_on(self.ctx, {"after": ["old"]})[0])
+
+    def test_open_decision_waits(self):
+        (self.ctx.dir / "blocks" / "main_embed_model.json").write_text(json.dumps({"need": "q"}))
+        self.assertEqual(hz.waits_on(self.ctx, {"gated_by": "embed-model"}),
+                         ["decision embed-model is open"])
+
+    def test_startable_and_next_after_skip_waiting(self):
+        self.brief("ledger", node="dev_2")
+        self.mark("ledger")
+        self.brief("edges", after=["ledger"], seq=0)
+        self.brief("polish", seq=1)
+        self.assertEqual([b["task"] for b in hz.startable(self.ctx, "dev_1")], ["polish"])
+        self.assertEqual(hz.next_after(self.ctx, "dev_1", "x")[0]["task"], "polish")
+        self.mark("polish", node="dev_1")
+        self.assertIsNone(hz.next_after(self.ctx, "dev_1", "x")[0])
+
+    def test_cycle_refused(self):
+        self.brief("a", after=["b"])
+        self.brief("b", after=["c"])
+        self.assertTrue(hz.after_cycle(self.ctx, "c", ["a"]))
+        self.assertFalse(hz.after_cycle(self.ctx, "d", ["a"]))
+
+    def test_mark_refuses_a_waiting_brief(self):
+        import os
+        self.brief("ledger", node="dev_2")
+        self.mark("ledger")
+        self.brief("edges", after=["ledger"])
+        self.ctx.me = "dev_1"
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.object(hz, "unreported", return_value=[]), \
+             mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "s" * 36}), \
+             mock.patch("sys.argv", ["harness", "mark", "edges"]), \
+             mock.patch("sys.stderr"), self.assertRaises(SystemExit) as e:
+            hz.main()
+        self.assertEqual(e.exception.code, hz.REFUSED)
+        self.assertFalse((self.ctx.dir / "marks" / "edges.json").exists())
 
 
 class Records(unittest.TestCase):

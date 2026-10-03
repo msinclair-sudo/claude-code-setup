@@ -848,6 +848,11 @@ def _whoami(a):
             return ("  (outside the owner's focus; your lead ordered it)"
                     if fam is not None and not in_focus(fam, b["task"]) else "")
         openm = [t for t, r in open_marks(ctx).items() if r.get("_node") == node]
+        # Briefs that wait on another task or a decision are not "next" (obs 59).
+        wait = [b for b in head if waits_on(ctx, b)]
+        head = [b for b in head if b not in wait]
+        for b in wait[:3]:
+            print(f"waiting  {b['task']} — {'; '.join(waits_on(ctx, b))}")
         # A LEAD used to get a bare list here and no order — "handed 3 briefs" —
         # which names no first thing and does not say to begin. So it asked, and
         # having nobody in the tree obviously to ask, it asked the operator. The
@@ -886,6 +891,9 @@ def _whoami(a):
         elif head:
             print(f"queue    {len(head)} after your open task: "
                   f"{', '.join(b['task'] for b in head)}")
+        elif wait and not openm:
+            print(f"         nothing you can start until then — stop, and say so to "
+                  f"{parent or 'your lead'}.")
         elif not openm and ctx.rank(node) != 0:
             # Genuinely nothing. The one case where asking is right — and the
             # answer is that it is not the operator's to give. A node with an
@@ -1393,7 +1401,7 @@ def cmd_spawn(a):
         # Standing up an empty node stays legitimate, and it keeps a command.
         # What it no longer is, is the default outcome of a bare `spawn` that
         # meant "start my lanes on their work".
-        nq = [b for b in queue(ctx, n) if not b.get("coupled_to")]
+        nq = startable(ctx, n)
         # Rank 0 is exempt, and the gate was wrong about it twice over. The
         # refusal exists to stop a node starting with nothing to open and then
         # asking its lead what to do; rank 0 has no lead, and writing the queue
@@ -1409,6 +1417,11 @@ def cmd_spawn(a):
             _rank0 = False                 # unresolvable rank: keep the gate
         _below = set(subtree(ctx, n))
         _lead_work = sum(1 for r in open_marks(ctx).values() if r.get("_node") in _below)
+        _waiting = [b for b in queue(ctx, n) if not b.get("coupled_to") and waits_on(ctx, b)]
+        if not nq and _waiting and not _lead_work:
+            print(f"  skip {n:<12} every queued task waits: "
+                  + "; ".join(f"{b['task']} {waits_on(ctx, b)[0]}" for b in _waiting[:2]))
+            skipped += 1; continue
         if not nq and _lead_work:
             print(f"       {n:<12} starts on {_lead_work} open task(s) below it")
         elif not nq and not a.empty and not _rank0:
@@ -2142,9 +2155,9 @@ def lead_owes(ctx, node):
         below = set(subtree(ctx, k))
         if any(r.get("_node") in below for r in marks.values()):
             continue
-        q = [b for b in queue(ctx, k) if not b.get("coupled_to")]
+        q = startable(ctx, k)
         if not q:
-            continue                       # nothing written for it: not this rule
+            continue                       # nothing it can start: not this rule
         try:
             held = json.loads(ctx.lock_path(k).read_text())
         except Exception:
@@ -2373,8 +2386,9 @@ def queue_items(ctx, node):
         here = {node, *subtree(ctx, node)}
         busy = any(r.get("_node") in here for r in open_marks(ctx).values())
         left = [t for t in unactioned_briefs(ctx, node) if in_focus(fam, t)]
-        nxt = next((b["task"] for b in queue(ctx, node) if b["task"] in left),
-                   left[0] if left else None)
+        able = {b["task"] for b in startable(ctx, node)}
+        nxt = next((b["task"] for b in queue(ctx, node) if b["task"] in left and b["task"] in able),
+                   None)
         if nxt and not busy:
             out[f"handed:{nxt}"] = (
                 f"'{nxt}' is yours and not started or split"
@@ -3018,6 +3032,13 @@ def cmd_mark(a):
                 print(f"  {owner} has {len(still)} more segment(s) out with its "
                       f"children — harness queue {owner}")
             return
+        # What this close releases elsewhere (obs 59). Named, not acted on: that
+        # node's own lead recycles it, and the idle nag catches a missed one.
+        for rb in all_briefs(ctx).values():
+            if (any(tkey(y) == tkey(a.task) for y in rb.get("after") or [])
+                    and not waits_on(ctx, rb) and rb.get("node") != owner):
+                print(f"  releases {rb['task']} ({rb.get('node')}) — "
+                      f"harness recycle {rb.get('node')}")
         nxt, coupled = next_after(ctx, owner, a.task)
         if nxt and coupled:
             print(f"  '{nxt['task']}' is COUPLED to this one — the same session "
@@ -3047,8 +3068,13 @@ def cmd_mark(a):
                     print(f"    recycle refused — {owner} keeps its session. "
                           f"Clear it and run: harness recycle {owner}")
         else:
-            print(f"  {owner} has nothing queued. Brief it again, or recycle it "
-                  f"idle:  harness recycle {owner}")
+            _w = [b for b in queue(ctx, owner) if not b.get("coupled_to") and waits_on(ctx, b)]
+            if _w:
+                print(f"  next for {owner}: {_w[0]['task']} waits — {waits_on(ctx, _w[0])[0]}. "
+                      f"Not recycling; that close releases it.")
+            else:
+                print(f"  {owner} has nothing queued. Brief it again, or recycle it "
+                      f"idle:  harness recycle {owner}")
         return
 
     # T1 is a gate, not a convention. A task opened without a brief is a task
@@ -3110,16 +3136,8 @@ def cmd_mark(a):
     # sits idle overnight waiting for a human who is not there.
     _gb = b.get("gated_by")
     if _gb:
-        # Sanitised before matching, because the stem IS sanitised: a decision
-        # named `corpus-preprints` is stored as `main_corpus_preprints`, and the
-        # raw name is not a substring of it. Matching what was TYPED against what
-        # was STORED is the same defect T14 fixed for task ids, and it made this
-        # gate silently never fire.
-        _gk = re.sub(r"[^A-Za-z0-9]", "_", _gb)
-        _gf = next((f for f in (ctx.state / "blocks").glob("*.json")
-                    if f.stem.endswith(_gk)), None)
-        _gr = json.loads(_gf.read_text()) if _gf else None
-        if _gr and not _gr.get("consequence"):
+        _gr = open_decision(ctx, _gb)
+        if _gr:
             die(REFUSED,
                 f"'{a.task}' waits on an open decision: {_gr.get('need')}\n"
                 f"           Raised by '{_gr.get('node')}' and it is the operator's to "
@@ -3127,6 +3145,11 @@ def cmd_mark(a):
                 f"needs`.\n           If the work should go ahead regardless, that is "
                 f"rank 0 closing it:\n             harness blocked "
                 f"{shlex.quote(_gb)} --no-task \"why it needs no answer\"")
+    _after = [r for r in waits_on(ctx, b) if r.startswith("after ")]
+    if _after:
+        die(REFUSED, f"'{a.task}' waits: {'; '.join(_after)}.\n           Stop and say "
+                     f"so; it opens when that is signed off. A lead that wants it\n"
+                     f"           now re-briefs it with --after none.")
     if ((b.get("approval") or {}).get("state")) == "declined":
         die(REFUSED, f"'{a.task}' was declined by the operator: "
                      f"{(b['approval'].get('why'))}")
@@ -4304,7 +4327,12 @@ def cmd_recycle(a):
             done += 1
             continue
 
-        nq = [b for b in queue(ctx, n) if not b.get("coupled_to")]
+        nq = startable(ctx, n)
+        waiting = [b for b in queue(ctx, n) if not b.get("coupled_to") and waits_on(ctx, b)]
+        if not nq and waiting:
+            print(f"  skip {n:<12} every queued task waits: "
+                  + "; ".join(f"{b['task']} {waits_on(ctx, b)[0]}" for b in waiting[:2]))
+            continue
         if not nq:
             print(f"  note {n:<12} nothing queued — the fresh session will have "
                   f"no task to open")
@@ -5931,6 +5959,65 @@ def couple_chain(ctx, task):
         out.append(nxt)
 
 
+def open_decision(ctx, name):
+    """The block record of an open decision named `name`, or None. Matched on
+    the sanitised stem, because that is how it is stored."""
+    gk = re.sub(r"[^A-Za-z0-9]", "_", name or "")
+    d = ctx.state / "blocks"
+    gf = next((f for f in d.glob("*.json") if f.stem.endswith(gk)), None) if d.is_dir() else None
+    gr = json.loads(gf.read_text()) if gf else None
+    return gr if gr and not gr.get("consequence") else None
+
+
+def task_node(ctx, task):
+    """Which node a task belongs to, from its mark or its brief."""
+    mf = ctx.state_file("marks", task, ".json")
+    try:
+        return json.loads(mf.read_text()).get("_node")
+    except Exception:
+        return (load_brief(ctx, task)[1] or {}).get("node")
+
+
+def waits_on(ctx, b):
+    """Why a brief cannot start yet, as reasons; [] when it can (obs 15, 59).
+    One rule for every path that picks or opens a task."""
+    out = []
+    for y in b.get("after") or []:
+        seen = set()
+        while tkey(y) not in seen:
+            seen.add(tkey(y))
+            st = task_state(ctx, y)
+            nxt = (load_brief(ctx, y)[1] or {}).get("superseded_for") if st == "superseded" else None
+            if not nxt:
+                break
+            y = nxt
+        if st not in ("closed", "superseded"):
+            out.append(f"after {y} ({st} on {task_node(ctx, y) or '?'})")
+    if b.get("gated_by") and open_decision(ctx, b["gated_by"]):
+        out.append(f"decision {b['gated_by']} is open")
+    return out
+
+
+def startable(ctx, node):
+    """The queue a session can actually open, in order: no coupled tasks, nothing
+    that waits on another task or an open decision."""
+    return [b for b in queue(ctx, node) if not b.get("coupled_to") and not waits_on(ctx, b)]
+
+
+def after_cycle(ctx, task, afters):
+    """True when `task --after afters` would make a task wait on itself."""
+    todo, seen = list(afters), set()
+    while todo:
+        y = tkey(todo.pop())
+        if y == tkey(task):
+            return True
+        if y in seen:
+            continue
+        seen.add(y)
+        todo.extend((load_brief(ctx, y)[1] or {}).get("after") or [])
+    return False
+
+
 def next_after(ctx, node, task):
     """What happens when `task` closes: (next_brief, coupled).
 
@@ -5941,9 +6028,9 @@ def next_after(ctx, node, task):
     chain = couple_chain(ctx, task)
     if chain:
         return chain[0], True
-    q = [b for b in queue(ctx, node) if tkey(b["task"]) != tkey(task)]
-    # A coupled task is reached through its predecessor, never picked up cold.
-    q = [b for b in q if not b.get("coupled_to")]
+    # A coupled task is reached through its predecessor, never picked up cold,
+    # and a task that waits is not picked up at all (obs 59).
+    q = [b for b in startable(ctx, node) if tkey(b["task"]) != tkey(task)]
     return (q[0] if q else None), False
 
 
@@ -6100,9 +6187,12 @@ def cmd_queue(a):
             who_o, why_o = stamps.pop()
             print(f"    ordered by {who_o}: {why_o}")
             stamps = set()
+        first = next((b for b in head if not waits_on(ctx, b)), None)
         for i, b in enumerate(head):
-            mark = "next" if i == 0 and not openm else f"  {i + 1}."
+            mark = "next" if b is first and not openm else f"  {i + 1}."
             print(f"    {mark:<4} {b['task']:<24} {brief_preview(b, head)[:44]}")
+            for w in waits_on(ctx, b):
+                print(f"    {'':<4} {'':<24} waits: {w}")
 
             if b.get("ordered_by") and stamps:
                 print(f"    {'':<4} {'':<24} ordered by {b['ordered_by']}: "
@@ -6390,6 +6480,18 @@ def cmd_brief(a):
             rec["seq"] = b["seq"]
         elif b is None:
             rec.update(next_seq(ctx, target))
+        if a.after:
+            afters = [] if [x.lower() for x in a.after] == ["none"] else list(a.after)
+            for y in afters:
+                if load_brief(ctx, y)[1] is None and \
+                        not ctx.state_file("marks", y, ".json").exists():
+                    die(REFUSED, f"--after {y}: no brief or task by that name")
+            if after_cycle(ctx, a.task, afters):
+                die(REFUSED, f"--after {', '.join(afters)} would make '{a.task}' wait on itself")
+            if afters:
+                rec["after"] = afters
+        elif (b or {}).get("after"):
+            rec["after"] = b["after"]
         blk = a.from_block or (b or {}).get("from_block")
         if blk:
             rec["from_block"] = blk
@@ -8363,6 +8465,9 @@ def main():
                     help="run in the SAME session as TASK, instead of being queued")
     br.add_argument("--why", metavar="TEXT",
                     help="why coupling is worth keeping a session alive (required with --with)")
+    br.add_argument("--after", action="append", metavar="TASK",
+                    help="this task starts only once TASK is signed off; repeatable; "
+                         "'--after none' clears")
     br.add_argument("--move", action="store_true",
                     help="with --from, re-parent a brief that already has a parent")
     br.add_argument("--from", dest="from_task", metavar="TASK",

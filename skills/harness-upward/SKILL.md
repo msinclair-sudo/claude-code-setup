@@ -9,7 +9,7 @@ Spec, on demand only: `~/.claude/skills/harness/ref/spec.md`.
 
 ## You do not ask whether to start
 
-A session works its queue until blocked. Orientation (`whoami` at start, `hook-orient` on each prompt) names the next task and the two commands that begin it: `harness brief <task>`, then `harness mark <task>`. Run them. The brief is your instruction; never end a turn with "shall I do this?". A spawned or recycled session that claims its node and then stops is a defect. When `harness focus` is set, "next" names only in-focus work.
+A session works its queue until blocked. Orientation (`whoami` at start, `hook-orient` on each prompt) names the next task and the two commands that begin it: `harness brief <task>`, then `harness mark <task>`. Run them. The brief is your instruction; never end a turn with "shall I do this?". A spawned or recycled session that claims its node and then stops is a defect. A task labelled outside the owner's focus is still yours to do. `waiting X — after Y` means X opens when Y is signed off: if nothing else is startable, stop and say so.
 
 The order is your lead's; do not pick which task comes first. If orientation says your queue is empty, tell your lead plainly rather than invent work.
 

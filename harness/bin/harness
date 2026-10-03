@@ -9,7 +9,7 @@ up holding one node, which is the failure the lock exists to prevent.
 This tool does no reasoning. The agent gathers liveness with ListAgents and
 passes it in; this only asserts, derives and writes atomically.
 """
-import argparse, datetime, difflib, fnmatch, json, os, re, shlex, shutil, socket, subprocess, sys, time
+import argparse, datetime, difflib, fnmatch, gzip, json, os, re, shlex, shutil, socket, subprocess, sys, time
 from pathlib import Path
 
 OK, CONTRACT, NOT_ENROLLED, REFUSED, MISMATCH = 0, 2, 3, 4, 5
@@ -26,6 +26,7 @@ HOME_STATE = Path.home() / ".claude" / "harness"
 TEMPLATES = Path.home() / ".claude" / "harness" / "templates"
 PROJECTS = Path.home() / ".claude" / "projects"
 SESSIONS = Path.home() / ".claude" / "sessions"
+JOBS = Path.home() / ".claude" / "jobs"
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 SLUG_RE = re.compile(r"^[A-Za-z0-9-]+$")
 
@@ -2376,6 +2377,14 @@ def rank0_owes(ctx, node):
         then = _epoch(max(cs) if cs else (r.get("granted_at") or r.get("resolved_at")))
         if then and time.time() - then > STALLED_APPROVAL:
             owed.append(("task", key, r.get("need") or key, time.time() - then))
+    # A complete unit waits on rank 0's cleanup decision.
+    # One line however many: a backlog of units must not become a page of nags.
+    try:
+        n = len(completed_units(ctx))
+        if n:
+            owed.append(("sweep", "units", f"{n} complete unit(s)", 0))
+    except Exception:
+        pass
     return owed
 
 
@@ -2492,6 +2501,8 @@ def queue_items(ctx, node):
                            f"  — harness brief {label} --approve",
                 "task": f"block '{label}' was answered {human_age(age)} ago and "
                         f"produced no task  — harness blocked --decided",
+                "sweep": f"{label} await a cleanup decision"
+                         f"  — harness sweep  (then --dry-run, --why)",
             }.get(kind)
             out[f"{kind}:{ident}"] = _line or (
                 f"'{label}' ({kind}) has been waiting {human_age(age)}"
@@ -2542,7 +2553,7 @@ def queue_items(ctx, node):
         parts = k.split(":")
         return parts[2] if parts[0] in ("sign off", "start", "down") else parts[1]
     kept = {k: v for k, v in out.items()
-            if k.startswith(("asked:", "comment:", "handed:", "heavy:")) or in_focus(fam, task_of(k))}
+            if k.startswith(("asked:", "comment:", "handed:", "heavy:", "sweep:")) or in_focus(fam, task_of(k))}
     if len(kept) < len(out):
         kept[f"fold:{len(out) - len(kept)}"] = (f"+{len(out) - len(kept)} item(s) "
                                                 f"outside the focus  — harness needs")
@@ -2559,7 +2570,8 @@ def queue_items(ctx, node):
 # still fires once. The cooldown is what keeps that from being a per-turn tax:
 # a debt costs one line every DEBT_RENAG, not one line every turn.
 DEBT_RENAG = 10 * 60
-DEBT_KINDS = ("sign off:", "start:", "down:", "heavy:", "approve:", "task:", "asked:", "handed:")
+DEBT_KINDS = ("sign off:", "start:", "down:", "heavy:", "approve:", "task:", "asked:", "handed:",
+              "sweep:")
 
 
 def is_debt(item_id):
@@ -2739,7 +2751,7 @@ def cmd_hook_stop(a):
             #
             # Aged on the same rule as everything above, so a conversation with
             # the operator is never interrupted over something two minutes old.
-            mine = rank0_owes(ctx, node)
+            mine = [o for o in rank0_owes(ctx, node) if o[0] != "sweep"]
             if mine:
                 nl = chr(10)
                 def _owed(kind, label, age):
@@ -7471,7 +7483,7 @@ def task_state(ctx, task):
         return "presented" if r.get("_presented_at") else "open"
     _, b = load_brief(ctx, task)
     if b is None:
-        return "no brief"
+        return "closed" if archived_unit(ctx, task) else "no brief"
     if superseded(b):
         return "superseded"
     ap = (b.get("approval") or {}).get("state")
@@ -8394,6 +8406,362 @@ def pairs_apply(ctx, node, spec, task, rec, f):
     print(f"applied {len(rows)} pair(s) from {task} in {sha[:8]}")
 
 
+# ── cleanup: sweep a completed unit, on rank 0's recorded decision ───────────
+#
+# Nothing a session leaves behind was ever removed: transcripts, job tmp/ dirs
+# holding scratch databases, and the harness's own per-task files. Deleting on
+# "session closed" would destroy evidence mid-flight, so a sweep happens only
+# when a UNIT is complete (a closed split segment, or the owner's focus with
+# every task done), only for lane sessions whose every mark is in that unit, and
+# only when rank 0 says so, in a ledger. Anything a remaining record cites stays.
+
+def archive_dir(ctx):
+    return ctx.state / "archive"
+
+
+def archive_index(ctx):
+    try:
+        return json.loads((archive_dir(ctx) / "index.json").read_text())
+    except Exception:
+        return {}
+
+
+def archived_unit(ctx, task):
+    return archive_index(ctx).get(tkey(task or ""))
+
+
+def ledger(ctx):
+    out = []
+    try:
+        for line in (archive_dir(ctx) / "ledger.jsonl").read_text().splitlines():
+            out.append(json.loads(line))
+    except Exception:
+        pass
+    return out
+
+
+def segment_tasks(ctx, task):
+    """A segment and every part split from it, at any depth."""
+    briefs = all_briefs(ctx)
+    out, todo = {tkey(task)}, [tkey(task)]
+    while todo:
+        k = todo.pop()
+        for c, b in briefs.items():
+            if c not in out and tkey(b.get("from") or "") == k:
+                out.add(c); todo.append(c)
+    return out
+
+
+def completed_units(ctx):
+    """Complete, unswept units: [{name, kind, tasks}], outermost only."""
+    done = {r.get("unit") for r in ledger(ctx)}
+    units = []
+    for n in ctx.tree["nodes"]:
+        for x in delegated(ctx, n):
+            if x["ready"] and x["closed_at"]:
+                units.append({"name": x["task"], "kind": "segment",
+                              "tasks": segment_tasks(ctx, x["task"])})
+    fam = focus_family(ctx)
+    if fam:
+        states = [task_state(ctx, t) for t in fam]
+        live = [s for s in states if s not in ("closed", "superseded", "no brief")]
+        if states and not live:
+            units.append({"name": "focus " + ",".join(focus_tasks(ctx)), "kind": "focus",
+                          "tasks": set(fam)})
+    idx = archive_index(ctx)
+    units = [u for u in units if u["name"] not in done
+             and not all(t in idx for t in u["tasks"])]
+    # Nested segments are swept with their outermost unit.
+    return [u for u in units
+            if not any(u is not v and u["tasks"] < v["tasks"] for v in units)]
+
+
+def _size(path):
+    p = Path(path)
+    if p.is_file():
+        return p.stat().st_size
+    return sum(f.stat().st_size for f in p.rglob("*") if f.is_file()) if p.is_dir() else 0
+
+
+def _live_sids():
+    return {d.get("sessionId") for d in live_sessions()}
+
+
+def sweep_plan(ctx, unit):
+    """Everything a sweep of `unit` would touch, and what it keeps and why."""
+    tasks = {tkey(t) for t in unit["tasks"]}
+    marks = {}
+    md = ctx.state / "marks"
+    for f in (md.glob("*.json") if md.is_dir() else []):
+        try:
+            marks[f.stem] = json.loads(f.read_text())
+        except Exception:
+            pass
+    live = _live_sids()
+    sids = {}
+    for k, r in marks.items():
+        sid = r.get("_session")
+        if sid:
+            sids.setdefault(sid, []).append((k, r.get("_node")))
+    plan = {"unit": unit["name"], "transcripts": [], "tmp": [], "records": [],
+            "blocks": [], "caches": [], "kept": [], "skipped": []}
+    # What remaining records say, to keep anything they cite.
+    corpus = []
+    for kind in ("facts", "findings", "briefs", "marks", "pairs"):
+        d = ctx.state / kind
+        for f in (d.glob("*.json") if d.is_dir() else []):
+            if kind in ("briefs", "marks", "pairs") and f.stem in tasks:
+                continue
+            corpus.append((f"{kind}/{f.stem}", f.read_text(errors="replace")))
+    bp = baseline_path(ctx)
+    if bp.exists():
+        corpus.append(("checks/baseline", bp.read_text()))
+
+    def cited(*needles):
+        return next((who for who, text in corpus if any(n and n in text for n in needles)), None)
+
+    jobs = {}
+    for st in (JOBS.glob("*/state.json") if JOBS.is_dir() else []):
+        try:
+            d = json.loads(st.read_text())
+        except Exception:
+            continue
+        for sid in {d.get("sessionId"), d.get("resumeSessionId")} - {None, ""}:
+            if st.parent not in jobs.setdefault(sid, []):
+                jobs[sid].append(st.parent)
+    for sid, owned in sorted(sids.items()):
+        if not any(k in tasks for k, _ in owned):
+            continue
+        why = ("live" if sid in live else
+               "also worked outside the unit" if any(k not in tasks for k, _ in owned) else
+               "a lead or rank 0" if any(n and role_of(ctx, n) != "member"
+                                         for _, n in owned if n in ctx.tree["nodes"]) else None)
+        if why:
+            plan["skipped"].append((sid[:8], why)); continue
+        t = transcript_for(sid)
+        if t:
+            c = cited(sid)
+            (plan["kept"] if c else plan["transcripts"]).append(
+                (str(t), _size(t)) if not c else (str(t), f"cited by {c}"))
+        for jd in jobs.get(sid, []):
+            tmp = jd / "tmp"
+            if tmp.is_dir():
+                c = cited(str(tmp), jd.name)
+                if c:
+                    plan["kept"].append((str(tmp), f"cited by {c}"))
+                else:
+                    plan["tmp"].append((str(tmp), _size(tmp)))
+    for kind in ("briefs", "marks", "pairs"):
+        for t in sorted(tasks):
+            f = ctx.state_file(kind, t, ".json")
+            if f.exists():
+                plan["records"].append((str(f), f.stat().st_size))
+    bd = ctx.state / "blocks"
+    for f in (bd.glob("*.json") if bd.is_dir() else []):
+        try:
+            ts = (json.loads(f.read_text()).get("consequence") or {}).get("tasks") or []
+        except Exception:
+            continue
+        if ts and all(tkey(x) in tasks for x in ts):
+            plan["blocks"].append((str(f), f.stat().st_size))
+    plan["caches"] = stale_caches(ctx, live)
+    # Belt and braces: a path on the keep list is never also deleted, whatever
+    # route (a resumed session sharing a job dir) put it on both.
+    kept = {k for k, _ in plan["kept"]}
+    for k in ("transcripts", "tmp"):
+        plan[k] = list({p: s for p, s in plan[k] if p not in kept}.items())
+    return plan
+
+
+def stale_caches(ctx, live):
+    """Pure caches nobody will read again: seen files of dead sessions, and
+    check reports and reviews at shas that matter to nothing still open."""
+    out = []
+    sd = ctx.state / "seen"
+    for f in (sd.glob("*") if sd.is_dir() else []):
+        if f.stem not in live:
+            out.append((str(f), f.stat().st_size))
+    keep = set()
+    b = load_baseline(ctx)
+    if b and b.get("sha"):
+        keep.add(b["sha"])
+    for r in open_marks(ctx).values():
+        if r.get("_presented_sha"):
+            keep.add(r["_presented_sha"])
+    for kind in ("checks", "reviews"):
+        d = ctx.state / kind
+        files = [f for f in (d.glob("*.json") if d.is_dir() else []) if f.name != "baseline.json"]
+        latest = {}
+        for f in files:
+            node = f.stem.rsplit("_", 1)[0] if "_" in f.stem else f.stem
+            if node not in latest or f.stat().st_mtime > latest[node].stat().st_mtime:
+                latest[node] = f
+        for f in files:
+            if f in latest.values() or any(k and k in f.stem for k in keep):
+                continue
+            out.append((str(f), f.stat().st_size))
+    return out
+
+
+def print_sweep_plan(plan):
+    mb = lambda rows: sum(r[1] for r in rows if isinstance(r[1], int)) / 1e6
+    print(f"sweep {plan['unit']}")
+    print(f"  transcripts  {len(plan['transcripts']):>4}  {mb(plan['transcripts']):8.1f} MB  → gzip into the archive")
+    print(f"  job tmp/     {len(plan['tmp']):>4}  {mb(plan['tmp']):8.1f} MB  → delete")
+    print(f"  records      {len(plan['records']) + len(plan['blocks']):>4}  "
+          f"{mb(plan['records'] + plan['blocks']):8.1f} MB  → fold into archive records.json")
+    print(f"  caches       {len(plan['caches']):>4}  {mb(plan['caches']):8.1f} MB  → delete")
+    for path, why in plan["kept"]:
+        print(f"  keep   {path}  — {why}")
+    for sid, why in plan["skipped"]:
+        print(f"  skip   session {sid}  — {why}")
+    return mb(plan["transcripts"]) + mb(plan["tmp"]) + mb(plan["records"]) + mb(plan["caches"])
+
+
+def run_sweep(ctx, unit, plan, why, by):
+    """Carry out a plan: archive, delete, fold, and write the ledger line."""
+    ud = archive_dir(ctx) / tkey(unit["name"])
+    (ud / "transcripts").mkdir(parents=True, exist_ok=True)
+    freed = 0
+    for path, size in plan["transcripts"]:
+        src = Path(path)
+        dst = ud / "transcripts" / (src.name + ".gz")
+        data = src.read_bytes()
+        with gzip.open(dst, "wb") as fh:
+            fh.write(data)
+        if gzip.decompress(dst.read_bytes()) == data:
+            src.unlink(); freed += size - dst.stat().st_size
+    for path, size in plan["tmp"]:
+        shutil.rmtree(path, ignore_errors=True); freed += size
+    rf = ud / "records.json"
+    recs = json.loads(rf.read_text()) if rf.exists() else {"tasks": {}, "blocks": {}}
+    for path, size in plan["records"]:
+        f = Path(path)
+        kind = f.parent.name
+        try:
+            body = json.loads(f.read_text())
+        except Exception:
+            continue
+        if kind == "briefs":
+            body.pop("history", None)
+        recs["tasks"].setdefault(f.stem, {})[kind[:-1]] = body
+    for path, size in plan["blocks"]:
+        f = Path(path)
+        recs["blocks"][f.stem] = json.loads(f.read_text())
+    rf.write_text(json.dumps(recs, indent=1) + "\n")
+    idx = archive_index(ctx)
+    for t in unit["tasks"]:
+        idx[tkey(t)] = unit["name"]
+    (archive_dir(ctx) / "index.json").write_text(json.dumps(idx, indent=1) + "\n")
+    for path, size in plan["records"] + plan["blocks"] + plan["caches"]:
+        Path(path).unlink(missing_ok=True); freed += size
+    entry = {"unit": unit["name"], "kind": unit["kind"], "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+             "by": by, "why": why, "freed": freed,
+             "counts": {k: len(plan[k]) for k in ("transcripts", "tmp", "records", "blocks", "caches", "kept")}}
+    with open(archive_dir(ctx) / "ledger.jsonl", "a") as fh:
+        fh.write(json.dumps(entry) + "\n")
+    return entry
+
+
+def cmd_sweep(a):
+    """`sweep` lists complete units; `sweep <unit> --dry-run` shows one; with
+    `--why` rank 0 runs it, or `--keep --why` declines it. Both are ledgered."""
+    ctx = Ctx(); ctx.require_enrolled()
+    units = completed_units(ctx)
+    if not a.unit and not a.all:
+        if not units:
+            print("nothing complete to sweep"); return
+        for u in units:
+            print(f"  {u['kind']:<8} {u['name']:<32} {len(u['tasks'])} task(s)"
+                  f"  — harness sweep '{u['name']}' --dry-run")
+        return
+    if a.unit == "--all" or a.all:
+        chosen = units
+    else:
+        chosen = [x for x in units if x["name"] == a.unit or tkey(x["name"]) == tkey(a.unit)]
+    if not chosen:
+        die(REFUSED, f"'{a.unit}' is not a complete, unswept unit — `harness sweep` lists them")
+    if len(chosen) > 1:
+        return sweep_many(ctx, chosen, a)
+    u = chosen[0]
+    plan = sweep_plan(ctx, u)
+    if a.dry_run or not (a.why or a.keep):
+        print_sweep_plan(plan)
+        if not a.dry_run:
+            print(f"\n  Nothing done. Decide: harness sweep '{u['name']}' --why \"...\"  "
+                  f"or  --keep --why \"...\"")
+        return
+    by = sweep_decider(ctx)
+    if not (a.why or "").strip():
+        die(REFUSED, 'say why: harness sweep <unit> --why "..."')
+    if a.keep:
+        archive_dir(ctx).mkdir(parents=True, exist_ok=True)
+        with open(archive_dir(ctx) / "ledger.jsonl", "a") as fh:
+            fh.write(json.dumps({"unit": u["name"], "kind": u["kind"], "kept": True,
+                                 "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                                 "by": by, "why": a.why}) + "\n")
+        print(f"kept {u['name']} — recorded; it will not be offered again"); return
+    print_sweep_plan(plan)
+    e = run_sweep(ctx, u, plan, a.why, by)
+    print(f"swept {u['name']}: freed {e['freed'] / 1e6:.1f} MB — recorded in "
+          f"{archive_dir(ctx) / 'ledger.jsonl'}")
+
+
+def sweep_decider(ctx):
+    """rank 0's node name, 'operator' from a shell, or a refusal."""
+    node = next((n for n, sp in ctx.tree["nodes"].items() if sp.get("branch") == ctx.branch), None)
+    if os.environ.get("CLAUDE_CODE_SESSION_ID", ""):
+        if node is None or ctx.rank(node) != 0:
+            die(REFUSED, "sweeping is rank 0's decision, or the operator's from a shell")
+        return node
+    return "operator"
+
+
+def sweep_many(ctx, units, a):
+    """`sweep --all`: one decision for a backlog, one ledger line per unit."""
+    plans = [(u, sweep_plan(ctx, u)) for u in units]
+    total = 0.0
+    for u, p in plans:
+        n = sum(len(p[k]) for k in ("transcripts", "tmp", "records", "blocks"))
+        mb = sum(s for k in ("transcripts", "tmp", "records") for _, s in p[k]) / 1e6
+        total += mb
+        print(f"  {u['name']:<40} {n:>4} item(s) {mb:9.1f} MB  {len(p['kept'])} kept")
+    print(f"  {len(plans)} unit(s), about {total:.0f} MB")
+    if a.dry_run or not a.why:
+        if not a.dry_run:
+            print('\n  Nothing done. Decide: harness sweep --all --why "..."')
+        return
+    by = sweep_decider(ctx)
+    for u, p in plans:
+        run_sweep(ctx, u, p, a.why, by)
+    print(f"swept {len(plans)} unit(s) — recorded in {archive_dir(ctx) / 'ledger.jsonl'}")
+
+
+def cmd_archive(a):
+    """Read what a sweep folded away."""
+    ctx = Ctx(); ctx.require_enrolled()
+    if not a.unit:
+        for e in ledger(ctx):
+            print(f"  {e['at'][:16]}  {e['unit']:<32} "
+                  + ("KEPT" if e.get("kept") else f"freed {e.get('freed', 0) / 1e6:.0f} MB")
+                  + f"  by {e['by']}: {e['why']}")
+        return
+    rf = archive_dir(ctx) / tkey(a.unit) / "records.json"
+    if not rf.exists():
+        u = archived_unit(ctx, a.unit)
+        rf = archive_dir(ctx) / tkey(u or "") / "records.json"
+        a.task, a.unit = a.unit, u
+    if not rf.exists():
+        die(REFUSED, f"nothing archived as '{a.unit}'")
+    recs = json.loads(rf.read_text())
+    if a.task:
+        print(json.dumps(recs["tasks"].get(tkey(a.task)), indent=1)); return
+    for k, v in sorted(recs["tasks"].items()):
+        m = v.get("mark") or {}
+        print(f"  {k:<32} {('closed ' + m['_closed_at'][:10]) if m.get('_closed_at') else ''}"
+              f"  {((v.get('brief') or {}).get('text') or '').strip().splitlines()[0][:60] if (v.get('brief') or {}).get('text') else ''}")
+
+
 def read_dash_from_stdin(a):
     """`--write -` takes the body from stdin instead of from argv.
 
@@ -8724,6 +9092,15 @@ def main():
     ps.add_argument("--quiet", action="store_true",
                     help="print nothing and exit 0 when not enrolled")
     add("unenrol", cmd_unenrol)
+    sw = add("sweep", cmd_sweep)
+    sw.add_argument("unit", nargs="?", help="a complete unit (see bare `harness sweep`)")
+    sw.add_argument("--dry-run", action="store_true")
+    sw.add_argument("--keep", action="store_true", help="decline: keep it, recorded")
+    sw.add_argument("--all", action="store_true", help="every complete unit, one decision")
+    sw.add_argument("--why", help="the decision, one line")
+    ar = add("archive", cmd_archive)
+    ar.add_argument("unit", nargs="?", help="a swept unit, or a task in one")
+    ar.add_argument("task", nargs="?")
     pa = add("pairs", cmd_pairs)
     pa.add_argument("verb", metavar="submit|apply|TASK",
                     help="submit <json> --task T, apply <T>, or a task to show")

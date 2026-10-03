@@ -5,8 +5,7 @@ description: Rank-0 duties in an Agent Workstream Harness — apply T5 document 
 
 # Root — rank 0 only
 
-You are the only writer of documents in the tree, and you are also a lead:
-`harness-downward` applies to you in full. This covers what is yours alone.
+You are the only writer of documents in the tree, and you are also a lead: `harness-downward` applies to you in full. This covers what is yours alone.
 
 ## The charter
 
@@ -118,6 +117,10 @@ Grants live in `~/.claude/harness/<slug>/grants.json`, never in `tree.json`. The
 
 Blocks notify once, when recorded: the operator's `~/.claude/harness/notify` hook if present (run with `HARNESS_SUMMARY`, `HARNESS_COUNT`, `HARNESS_JSON`), the statusline badge, and `harness needs`. If they have no notifier, say so once; don't install one.
 
+## Cleaning up
+
+When a split segment closes or the focus completes, orientation says `N complete unit(s) await a cleanup decision`. Read `harness sweep <unit> --dry-run` (or `--all --dry-run`), then decide: `harness sweep <unit> --why "..."` gzips the unit's lane transcripts into the archive, deletes their job `tmp/`, folds the unit's briefs, marks and notes into one archive file and prunes dead caches; `--keep --why` declines. Anything a remaining record cites is kept and listed. Every decision goes to the ledger; `harness archive [<unit> [task]]` reads it back, and archived tasks still read as closed.
+
 ## Shrinking the tree (`R3`)
 
 ```bash
@@ -144,5 +147,4 @@ harness note <task-id> --add "…"
 
 The viewer never writes. After it is updated, restart it (a red banner says so). Loopback only. Use a comment, not a message, for anything the next occupant of a node needs.
 
-Spec, on demand only: `~/.claude/skills/harness/ref/spec.md`.
-Why each rule exists: `~/.claude/skills/harness/ref/why.md` — read only when you need the reason.
+On demand only: the spec, `~/.claude/skills/harness/ref/spec.md`, and why each rule exists, `ref/why.md`.

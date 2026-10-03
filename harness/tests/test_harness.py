@@ -531,6 +531,81 @@ class LeadContext(unittest.TestCase):
         self.assertFalse(p.exists())
 
 
+class Sweep(unittest.TestCase):
+    """The harness cleans up a completed unit, on rank 0's recorded decision."""
+
+    A, B, L = "a" * 36, "b" * 36, "c" * 36
+
+    def setUp(self):
+        import gzip as gz
+        self.gz = gz
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev"})
+        d = self.ctx.dir
+        for k in ("briefs", "marks", "facts", "seen"):
+            (d / k).mkdir()
+        w = lambda p, o: (d / p).write_text(json.dumps(o))
+        w("briefs/s1.json", {"task": "s1", "node": "dev"})
+        w("briefs/s1a.json", {"task": "s1a", "node": "dev_1", "from": "s1", "history": [1]})
+        w("briefs/s1b.json", {"task": "s1b", "node": "dev_1", "from": "s1"})
+        w("marks/s1a.json", {"_node": "dev_1", "_session": self.A, "_closed_at": "x"})
+        w("marks/s1b.json", {"_node": "dev_1", "_session": self.B, "_closed_at": "x"})
+        w("marks/s1.json", {"_node": "dev", "_session": self.L, "_closed_at": "x"})
+        self.proj = Path(tempfile.mkdtemp())
+        (self.proj / "p").mkdir()
+        for sid in (self.A, self.B, self.L):
+            (self.proj / "p" / f"{sid}.jsonl").write_text('{"x": 1}\n' * 50)
+        self.jobs = Path(tempfile.mkdtemp())
+        for sid in (self.A, self.B):
+            jd = self.jobs / sid[:8]
+            (jd / "tmp").mkdir(parents=True)
+            (jd / "tmp" / "scratch.db").write_bytes(b"0" * 1000)
+            (jd / "state.json").write_text(json.dumps({"sessionId": sid}))
+        w("facts/r9.json", {"value": f"measured in {self.jobs / self.B[:8] / 'tmp'}"})
+        (d / "seen" / "dead-session.json").write_text("{}")
+        self.p = [mock.patch.object(hz, "PROJECTS", self.proj),
+                  mock.patch.object(hz, "JOBS", self.jobs),
+                  mock.patch.object(hz, "live_sessions", return_value=[])]
+        for x in self.p:
+            x.start(); self.addCleanup(x.stop)
+
+    def unit(self):
+        units = hz.completed_units(self.ctx)
+        self.assertEqual([u["name"] for u in units], ["s1"])
+        return units[0]
+
+    def test_only_a_closed_segment_is_a_unit(self):
+        (self.ctx.dir / "marks" / "s1.json").write_text(json.dumps({"_node": "dev"}))
+        self.assertEqual(hz.completed_units(self.ctx), [])
+
+    def test_dry_run_selects_lanes_keeps_cited_and_changes_nothing(self):
+        plan = hz.sweep_plan(self.ctx, self.unit())
+        self.assertEqual(len(plan["transcripts"]), 2)                 # lanes, not the lead
+        self.assertIn((self.L[:8], "a lead or rank 0"), plan["skipped"])
+        self.assertEqual([Path(p).parent.name for p, _ in plan["tmp"]], [self.A[:8]])
+        self.assertIn("cited by facts/r9", plan["kept"][0][1])         # B's tmp is cited
+        self.assertTrue((self.proj / "p" / f"{self.A}.jsonl").exists())
+
+    def test_sweep_archives_deletes_folds_and_ledgers(self):
+        u = self.unit()
+        plan = hz.sweep_plan(self.ctx, u)
+        e = hz.run_sweep(self.ctx, u, plan, "s1 shipped", "main")
+        src = self.proj / "p" / f"{self.A}.jsonl"
+        self.assertFalse(src.exists())
+        gzf = self.ctx.dir / "archive" / "s1" / "transcripts" / f"{self.A}.jsonl.gz"
+        self.assertEqual(self.gz.decompress(gzf.read_bytes()), b'{"x": 1}\n' * 50)
+        self.assertFalse((self.jobs / self.A[:8] / "tmp").exists())
+        self.assertTrue((self.jobs / self.B[:8] / "tmp").exists())     # cited, kept
+        self.assertFalse((self.ctx.dir / "briefs" / "s1a.json").exists())
+        recs = json.loads((self.ctx.dir / "archive" / "s1" / "records.json").read_text())
+        self.assertNotIn("history", recs["tasks"]["s1a"]["brief"])
+        self.assertEqual(hz.task_state(self.ctx, "s1a"), "closed")     # still resolves
+        self.assertEqual(hz.waits_on(self.ctx, {"after": ["s1a"]}), [])
+        self.assertFalse((self.ctx.dir / "seen" / "dead-session.json").exists())
+        self.assertEqual(hz.ledger(self.ctx)[0]["why"], "s1 shipped")
+        self.assertEqual(e["counts"]["kept"], 1)
+        self.assertEqual(hz.completed_units(self.ctx), [])              # not offered again
+
+
 class Records(unittest.TestCase):
     def test_author_is_not_told_of_own_comment(self):
         ctx = FakeCtx({"main": None, "dev": "main"})

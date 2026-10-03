@@ -198,7 +198,7 @@ Recycle a child once its work has landed and after sign-off (`--close` does it f
 
 `--escalate` is available, not the default; prefer raising the node's starting effort in `tree.json`. A second failure is a finding. Never `claude rm`: the worktree is the node. Removing a node is `harness trim`, rank 0 only; ask for it as a `T5` request naming the node and the commit proving you hold its work.
 
-You are on the same rule. If being recycled would lose something, write it into a brief, fact or finding now.
+You are on the same rule. If being recycled would lose something, write it into a brief, fact or finding now. When rank 0 sweeps a finished unit, its briefs, marks and notes leave the board for the archive (`harness archive`); cite a `tmp/` path in a fact or finding if it must survive.
 
 ## Findings
 

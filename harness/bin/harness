@@ -2517,6 +2517,16 @@ def queue_items(ctx, node):
     except Exception:
         pass
     try:
+        # Every part settled, yet a clause of the segment has no part (obs 58).
+        for x in delegated(ctx, node):
+            if x.get("uncovered") and x["done"] == len(x["children"]) and not x["closed_at"]:
+                out[f"uncovered:{x['key']}"] = (
+                    f"{x['task']}: parts settled, clause(s) "
+                    f"{','.join(map(str, x['uncovered']))} have no part"
+                    f"  — brief them, or close with --force")
+    except Exception:
+        pass
+    try:
         fam = focus_family(ctx)
     except Exception:
         fam = None
@@ -2553,7 +2563,7 @@ def queue_items(ctx, node):
         parts = k.split(":")
         return parts[2] if parts[0] in ("sign off", "start", "down") else parts[1]
     kept = {k: v for k, v in out.items()
-            if k.startswith(("asked:", "comment:", "handed:", "heavy:", "sweep:")) or in_focus(fam, task_of(k))}
+            if k.startswith(("asked:", "comment:", "handed:", "heavy:", "sweep:", "uncovered:")) or in_focus(fam, task_of(k))}
     if len(kept) < len(out):
         kept[f"fold:{len(out) - len(kept)}"] = (f"+{len(out) - len(kept)} item(s) "
                                                 f"outside the focus  — harness needs")
@@ -3099,6 +3109,13 @@ def cmd_mark(a):
                           if tkey(x["key"]) == tkey(a.task)), None)
             if deleg is None:
                 die(REFUSED, f"no mark for '{a.task}' — nothing to close")
+            if not deleg["ready"] and not a.force and deleg.get("uncovered") and \
+                    all(r["state"] in ("closed", "superseded") for r in deleg["children"]):
+                die(REFUSED,
+                    f"'{a.task}': every part is settled, but no part covers clause(s) "
+                    f"{', '.join(map(str, deleg['uncovered']))} of its checks.\n"
+                    f"           Brief them (--from {a.task} --covers N), or --force if "
+                    f"the work is done some other way.")
             if not deleg["ready"] and not a.force:
                 open_kids = [r for r in deleg["children"]
                              if r["state"] not in ("closed", "superseded")]
@@ -5655,6 +5672,37 @@ def all_findings(ctx):
     return out
 
 
+def finding_route(ctx, node, who, a, r, f):
+    """`--to <child>` hands a finding down; `--ruled <ref>` closes it as
+    answered by a document change (obs 57). Only its addressee may do either."""
+    if r is None:
+        die(REFUSED, f"no finding '{a.name}'")
+    if r.get("to") != node:
+        die(REFUSED, f"'{a.name}' is addressed to '{r.get('to')}', not '{node}'")
+    closed = r.get("became") or r.get("dropped_at") or r.get("ruled_at")
+    if closed:
+        die(REFUSED, f"'{a.name}' is already closed"
+                     + (f" — it became '{r['became']}'" if r.get("became") else ""))
+    now = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    if a.ruled is not None:
+        if not a.ruled.strip():
+            die(REFUSED, 'name what answered it: --ruled "<commit or document ref>"')
+        r.update(ruled_at=now, ruled_by=who, ruled_ref=a.ruled)
+        f.write_text(json.dumps(r, indent=2) + "\n")
+        print(f"ruled '{a.name}' — answered in {a.ruled}; closed, not declined")
+        return
+    if a.to not in ctx.children(node):
+        die(REFUSED, f"'{a.to}' is not your child. A finding moves one rank at a time.")
+    r.setdefault("handed", []).append({"from": node, "by": who, "at": now})
+    r["to"] = a.to
+    if ctx.rank(node) == 0:
+        r["approved_by"] = node            # rank 0 decided it is worth a session
+    f.write_text(json.dumps(r, indent=2) + "\n")
+    print(f"handed '{a.name}' to {a.to} — it may brief from it: "
+          f"harness brief <task> --for <child> --from-finding {a.name} --write -"
+          + ("\n  approved by rank 0 on the way down: the brief will not be gated" if r.get("approved_by") else ""))
+
+
 def open_findings(ctx, lead=None):
     """Findings nobody has turned into a task or declined.
 
@@ -5665,7 +5713,7 @@ def open_findings(ctx, lead=None):
     """
     out = {}
     for k, r in all_findings(ctx).items():
-        if r.get("became") or r.get("dropped_at"):
+        if r.get("became") or r.get("dropped_at") or r.get("ruled_at"):
             continue
         if lead is not None and r.get("to") != lead:
             continue
@@ -5718,6 +5766,8 @@ def cmd_finding(a):
 
     _, r = (f, json.loads(f.read_text())) if f.exists() else (f, None)
 
+    if a.to or a.ruled is not None:
+        return finding_route(ctx, node, who, a, r, f)
     if a.drop is not None:
         if r is None:
             die(REFUSED, f"no finding '{a.name}'")
@@ -5753,6 +5803,11 @@ def cmd_finding(a):
             print(f"  fact:     {r['fact']}")
         if r.get("became"):
             print(f"\n  became the task '{r['became']}'")
+        if r.get("ruled_at"):
+            print(f"\n  ruled {str(r['ruled_at'])[:19]} by {r.get('ruled_by')}: "
+                  f"answered in {r.get('ruled_ref')}")
+        for h in r.get("handed") or []:
+            print(f"  handed down by {h.get('from')} {str(h.get('at'))[:16]}")
         if r.get("dropped_at"):
             print(f"\n  declined {str(r['dropped_at'])[:19]} by {r.get('dropped_by')}: "
                   f"{r.get('dropped_why')}")
@@ -5914,6 +5969,34 @@ def stopped_without_asking(ctx, node, live, has_session):
     return not queue(ctx, node)
 
 
+_CLAUSE_PARA = re.compile(r"^\s*(CHECKS|DONE)\b[.:]?(.*?)(?=^\s*[A-Z][A-Z ]{2,}[.:]|\Z)",
+                          re.M | re.S)
+
+
+def brief_clauses(text):
+    """The numbered clauses a segment must deliver: `(n)` markers in its CHECKS.
+    (and DONE.) paragraphs (obs 58). Empty when the brief numbers none."""
+    out = set()
+    for _, body in _CLAUSE_PARA.findall(text or ""):
+        out |= {int(n) for n in re.findall(r"\((\d{1,2})\)", body)}
+    return out
+
+
+def segment_coverage(ctx, seg, kids=None):
+    """(clauses, uncovered, declared): uncovered is None when no part declares
+    --covers, so segments written before this keep their old behaviour."""
+    _, pb = load_brief(ctx, seg)
+    clauses = brief_clauses((pb or {}).get("text"))
+    if kids is None:
+        kids = [b for b in all_briefs(ctx).values() if tkey(b.get("from") or "") == tkey(seg)]
+    live = [b for b in kids if not superseded(b)]
+    declared = any(b.get("covers") for b in live)
+    if not clauses or not declared:
+        return clauses, None, declared
+    covered = set().union(*(set(b.get("covers") or []) for b in live))
+    return clauses, sorted(clauses - covered), declared
+
+
 def delegated(ctx, node):
     """A brief this node discharged by splitting it, and what became of the parts.
 
@@ -5959,10 +6042,12 @@ def delegated(ctx, node):
         # and a lead bulldozing a genuinely unfinished part are then the same
         # command, and a reviewer reading the log cannot tell them apart.
         settled = [r for r in rows if r["state"] in ("closed", "superseded")]
+        unc = segment_coverage(ctx, k, kids)[1]
         out.append({"task": b.get("task") or k, "key": k, "children": rows,
                     "done": len(settled),
                     "gone": sum(1 for r in rows if r["state"] == "superseded"),
-                    "ready": len(settled) == len(rows),
+                    "uncovered": unc or [],
+                    "ready": len(settled) == len(rows) and not unc,
                     "closed_at": closed_at})
     return out
 
@@ -6372,7 +6457,9 @@ def cmd_queue(a):
                       f"{why[:40]}{'…' if len(why) > 40 else ''}")
         for x in deleg:
             done = (f"{x['done']}/{len(x['children'])} parts settled"
-                    + (f" ({x['gone']} superseded)" if x.get("gone") else ""))
+                    + (f" ({x['gone']} superseded)" if x.get("gone") else "")
+                    + (f"; no part covers {','.join(map(str, x['uncovered']))}"
+                       if x.get("uncovered") else ""))
             print(f"    split {x['task']:<24} "
                   + (f"ALL PARTS SETTLED — harness mark {x['task']} --close"
                      if x["ready"] else done))
@@ -6627,7 +6714,20 @@ def cmd_brief(a):
         # doing something else and nobody has decided it is worth a session. So
         # the brief is written in full, sits where everyone can read it, and is
         # not staffable until the operator says so.
-        if a.from_finding or a.needs_approval:
+        _fa = None
+        if a.from_finding:
+            try:
+                _fa = json.loads(ctx.state_file("findings", a.from_finding, ".json")
+                                 .read_text()).get("approved_by")
+            except Exception:
+                _fa = None
+        if a.from_finding and _fa and not a.needs_approval:
+            # Handed down by rank 0, which already decided it is worth a session.
+            rec["approval"] = {"state": "approved", "decided_by": _fa,
+                               "decided_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                               "why": "handed down with the finding",
+                               "from_finding": a.from_finding}
+        elif a.from_finding or a.needs_approval:
             prev_ap = (b or {}).get("approval") or {}
             if prev_ap.get("state") != "approved":
                 rec["approval"] = {"state": "pending",
@@ -6649,6 +6749,20 @@ def cmd_brief(a):
             rec["seq"] = b["seq"]
         elif b is None:
             rec.update(next_seq(ctx, target))
+        if a.covers:
+            want = sorted({int(n) for c in a.covers for n in re.findall(r"\d+", c)})
+            if not parent_task:
+                die(REFUSED, "--covers names the parent's clauses a part delivers; it "
+                             "needs --from <segment>")
+            have = brief_clauses((load_brief(ctx, parent_task)[1] or {}).get("text"))
+            bad = [n for n in want if n not in have]
+            if bad:
+                die(REFUSED, f"'{parent_task}' has no clause {', '.join(map(str, bad))}"
+                             + (f" (it numbers {', '.join(map(str, sorted(have)))})" if have
+                                else " — it numbers none in its CHECKS. paragraph"))
+            rec["covers"] = want
+        elif (b or {}).get("covers"):
+            rec["covers"] = b["covers"]
         if a.after:
             afters = [] if [x.lower() for x in a.after] == ["none"] else list(a.after)
             for y in afters:
@@ -6684,6 +6798,13 @@ def cmd_brief(a):
             print(f"  kept, and readable:  harness brief {a.task} --history")
         if a.from_task:
             print(f"  splits '{parent_task}', the brief '{me}' was handed")
+            _cl, _unc, _decl = segment_coverage(ctx, parent_task)
+            if _cl:
+                print(f"  covers {','.join(map(str, rec.get('covers') or [])) or 'nothing declared'}"
+                      f" of {parent_task}'s {len(_cl)} clauses"
+                      + (f"; no part covers {','.join(map(str, _unc))}" if _unc else
+                         "; every clause has a part" if _unc == [] else
+                         " — give each part --covers so an unissued clause shows"))
         if a.from_finding:
             fnd["became"] = a.task
             fnd["became_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
@@ -8994,6 +9115,8 @@ def main():
                     help="run in the SAME session as TASK, instead of being queued")
     br.add_argument("--why", metavar="TEXT",
                     help="why coupling is worth keeping a session alive (required with --with)")
+    br.add_argument("--covers", action="append", metavar="N[,N]",
+                    help="with --from: the parent's numbered CHECKS this part delivers")
     br.add_argument("--after", action="append", metavar="TASK",
                     help="this task starts only once TASK is signed off; repeatable; "
                          "'--after none' clears")
@@ -9033,6 +9156,9 @@ def main():
     fd.add_argument("--how", metavar="TEXT", help="how you came to it — required")
     fd.add_argument("--fact", metavar="NAME", help="a recorded measurement behind it")
     fd.add_argument("--drop", metavar="WHY", help="the lead declines it, on the record")
+    fd.add_argument("--to", metavar="NODE", help="hand it down to one of your children")
+    fd.add_argument("--ruled", metavar="REF",
+                    help="close it as answered by a document change (commit or ref)")
     fd.add_argument("--list", action="store_true", help="open findings addressed to you")
     fd.add_argument("--all", action="store_true", help="every open finding in the tree")
     ft = add("fact", cmd_fact)

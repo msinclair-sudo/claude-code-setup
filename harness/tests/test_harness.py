@@ -606,6 +606,110 @@ class Sweep(unittest.TestCase):
         self.assertEqual(hz.completed_units(self.ctx), [])              # not offered again
 
 
+class Findings(unittest.TestCase):
+    """obs 57: a finding can be handed down, and closed as ruled."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev"})
+        (self.ctx.dir / "findings").mkdir()
+        self.f = self.ctx.dir / "findings" / "daily_cap.json"
+        self.f.write_text(json.dumps({"name": "daily-cap", "to": "main", "from": "dev"}))
+
+    def route(self, node, **kw):
+        a = mock.Mock(name="daily-cap", to=kw.get("to"), ruled=kw.get("ruled"))
+        a.name = "daily-cap"
+        r = json.loads(self.f.read_text())
+        with mock.patch("sys.stdout"):
+            return hz.finding_route(self.ctx, node, node, a, r, self.f)
+
+    def rec(self):
+        return json.loads(self.f.read_text())
+
+    def test_hand_down_only_to_own_child_by_the_addressee(self):
+        with self.assertRaises(SystemExit):
+            self.route("dev", to="dev_1")            # not the addressee
+        with self.assertRaises(SystemExit):
+            self.route("main", to="dev_1")           # not main's child
+        self.route("main", to="dev")
+        r = self.rec()
+        self.assertEqual((r["to"], r["approved_by"]), ("dev", "main"))
+        self.assertIn("daily_cap", hz.open_findings(self.ctx, "dev"))
+
+    def test_ruled_closes_as_answered_not_declined(self):
+        self.route("main", ruled="ENRICH-DESIGN 3fabdcb")
+        r = self.rec()
+        self.assertEqual(r["ruled_ref"], "ENRICH-DESIGN 3fabdcb")
+        self.assertNotIn("dropped_at", r)
+        self.assertEqual(hz.open_findings(self.ctx, "main"), {})
+        with self.assertRaises(SystemExit):
+            self.route("main", ruled="again")         # already closed
+
+
+class Covers(unittest.TestCase):
+    """obs 58: parts say which of the segment's numbered checks they cover."""
+
+    TEXT = ("INTENT. Fetch references (2026 plan).\n"
+            "CHECKS. (1) stubs have edges (2) idempotent (3) yardstick\n"
+            "SEAMS. none (4) is not a clause here\n"
+            "DONE. Presented with the three checks.")
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev"})
+        for d in ("briefs", "marks"):
+            (self.ctx.dir / d).mkdir()
+        self.w = lambda t, o: (self.ctx.dir / "briefs" / f"{t}.json").write_text(json.dumps(o))
+        self.w("s6", {"task": "s6", "node": "dev", "text": self.TEXT})
+
+    def test_clauses_come_from_the_checks_paragraph(self):
+        self.assertEqual(hz.brief_clauses(self.TEXT), {1, 2, 3})
+        self.assertEqual(hz.brief_clauses("no numbers here"), set())
+
+    def test_settled_parts_with_an_uncovered_clause_are_not_ready(self):
+        self.w("s6a", {"task": "s6a", "node": "dev_1", "from": "s6", "covers": [2]})
+        self.w("s6b", {"task": "s6b", "node": "dev_1", "from": "s6", "covers": [3]})
+        for t in ("s6a", "s6b"):
+            (self.ctx.dir / "marks" / f"{t}.json").write_text(json.dumps({"_closed_at": "x"}))
+        x = hz.delegated(self.ctx, "dev")[0]
+        self.assertEqual((x["done"], x["uncovered"], x["ready"]), (2, [1], False))
+        self.w("s6c", {"task": "s6c", "node": "dev_1", "from": "s6", "covers": [1]})
+        (self.ctx.dir / "marks" / "s6c.json").write_text(json.dumps({"_closed_at": "x"}))
+        self.assertTrue(hz.delegated(self.ctx, "dev")[0]["ready"])
+
+    def run_brief(self, *argv):
+        import os
+        (self.ctx.dir / "findings").mkdir(exist_ok=True)
+        self.ctx.me, self.ctx.branch = "dev", "dev"
+        self.ctx.worktree = self.ctx.repo = self.ctx.dir
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "s" * 36}), \
+             mock.patch("sys.argv", ["harness", "brief", *argv]), \
+             mock.patch("sys.stdout"), mock.patch("sys.stderr"):
+            try:
+                hz.main(); return 0
+            except SystemExit as e:
+                return e.code
+
+    def test_brief_checks_covers_and_inherits_a_handed_down_approval(self):
+        self.assertEqual(self.run_brief("s6a", "--for", "dev_1", "--from", "s6",
+                                        "--covers", "9", "--write", "x"), hz.REFUSED)
+        self.assertEqual(self.run_brief("s6a", "--for", "dev_1", "--from", "s6",
+                                        "--covers", "1,3", "--write", "x"), 0)
+        self.assertEqual(json.loads((self.ctx.dir / "briefs" / "s6a.json").read_text())["covers"],
+                         [1, 3])
+        (self.ctx.dir / "findings" / "cap.json").write_text(
+            json.dumps({"name": "cap", "to": "dev", "from": "dev_1", "approved_by": "main"}))
+        self.assertEqual(self.run_brief("capwork", "--for", "dev_1", "--from-finding", "cap",
+                                        "--write", "x"), 0)
+        ap = json.loads((self.ctx.dir / "briefs" / "capwork.json").read_text())["approval"]
+        self.assertEqual((ap["state"], ap["decided_by"]), ("approved", "main"))
+
+    def test_parts_without_covers_behave_as_before(self):
+        self.w("s6a", {"task": "s6a", "node": "dev_1", "from": "s6"})
+        (self.ctx.dir / "marks" / "s6a.json").write_text(json.dumps({"_closed_at": "x"}))
+        x = hz.delegated(self.ctx, "dev")[0]
+        self.assertEqual((x["uncovered"], x["ready"]), ([], True))
+
+
 class Records(unittest.TestCase):
     def test_author_is_not_told_of_own_comment(self):
         ctx = FakeCtx({"main": None, "dev": "main"})

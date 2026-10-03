@@ -35,7 +35,7 @@ harness brief <task> --write "..."              # your own
 harness brief <task> --for dev --write "..."    # your child's
 ```
 
-A brief is rewritten in place; `harness note` is the append-only half. Write a segment for the rank below, not a task list, and write everything you know in one go.
+A brief is rewritten in place; `harness note` is the append-only half. Write a segment for the rank below, not a task list, and write everything you know in one go. A finding you have ruled on in a document closes with `harness finding <name> --ruled "<commit>"`; one that should become work goes down with `--to <lead>`, and the lead's brief from it is born approved.
 
 ## Approving briefs
 

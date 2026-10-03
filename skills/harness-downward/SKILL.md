@@ -58,7 +58,7 @@ A brief written for you is a segment to split or start. `whoami` says `handed N 
 harness brief <sub-task> --for <child> --from <the-brief-you-were-handed> --write "..."
 ```
 
-`--from` records the split; without it your children never learn the work exists. You can only split a brief written for you. Moving an existing part to another segment needs `--move`, and prints both segments' settled counts. Each child gets a whole specification, rewritten, not your brief forwarded or sent in pieces. Read `harness charter` before splitting; a part that traces to no feature is worth querying upward. If brief and charter disagree, ask your lead.
+`--from` records the split; without it your children never learn the work exists. Give each part `--covers N,N` for the parent's numbered CHECKS it delivers: the split then names any clause no part covers, and the segment cannot read settled or close (without `--force`) while one is uncovered. You can only split a brief written for you. Moving an existing part to another segment needs `--move`, and prints both segments' settled counts. Each child gets a whole specification, rewritten, not your brief forwarded or sent in pieces. Read `harness charter` before splitting; a part that traces to no feature is worth querying upward. If brief and charter disagree, ask your lead.
 
 A split segment leaves your queue but is not done. Orientation says when every part is signed off (`close   N segment(s) you split are finished`); then run `harness mark <segment> --close`. It refuses while any part is open, and an abandoned part blocks it too, so a segment with an abandoned part closes only with `--force`. Closing a segment recycles nothing.
 
@@ -207,9 +207,11 @@ You are on the same rule. If being recycled would lose something, write it into 
 ```bash
 harness brief <task> --for <child> --from-finding <name> --write "..."
 harness finding <name> --drop "why it is not worth a session"
+harness finding <name> --to <child>                  # hand it down a rank
+harness finding <name> --ruled "<commit or doc ref>"  # answered by a document: closed, not declined
 ```
 
-A brief from a finding is gated on approval: `mark` refuses it and `recycle` skips it until approved. You cannot approve it; it shows in `harness needs` for the operator or rank 0. Decline what you would not spend a session on. `--needs-approval` puts the same gate on any brief.
+A brief from a finding is gated on approval, unless rank 0 handed the finding down (that was the approval): `mark` refuses it and `recycle` skips it until approved. You cannot approve it; it shows in `harness needs` for the operator or rank 0. Decline what you would not spend a session on. `--needs-approval` puts the same gate on any brief.
 
 ## You are also somebody's child
 

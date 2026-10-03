@@ -130,7 +130,7 @@ It collects every refusal before deleting anything: occupied node, dirty worktre
 
 ## Recycling the lead
 
-You are never recycled; everything under you starts cold. Recycle `dev` when it is waiting with nothing in flight (`harness recycle --idle`; `--cold` for sessions past the cache lifetime). If recycling would lose something, the lead was holding state that belongs in a record: write it there.
+You are never recycled; everything under you starts cold. You compact at `--autocompact 500k`; add `~/.claude/harness/templates/compact-instructions.md` to the project `CLAUDE.md` once, so a compaction keeps what lives only in context. Recycle `dev` when it is waiting with nothing in flight (`harness recycle --idle`; `--cold` for sessions past the cache lifetime). If recycling would lose something, the lead was holding state that belongs in a record: write it there.
 
 ## Seeing it all
 

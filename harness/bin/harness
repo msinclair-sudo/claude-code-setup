@@ -430,6 +430,105 @@ def role_of(ctx, name):
     return "lead" if ctx.children(name) else "member"
 
 
+# Context per role (obs 60): when the parent is told, and where Claude Code's own
+# auto-compaction is set at launch. Members are recycled every task, so neither.
+ROLE_CONTEXT = {"root": 400_000, "lead": 300_000, "member": None}
+ROLE_AUTOCOMPACT = {"root": "500k", "lead": "350k", "member": None}
+
+
+def reset_path(ctx, node):
+    return ctx.state_file("resets", node, ".json")
+
+
+def request_reset(ctx, nodes):
+    """`recycle <node> --at-quiet` (obs 60): recorded here, carried out by the
+    node's own Stop hook, which flushes first and resets at a quiet turn end."""
+    if not nodes:
+        die(REFUSED, "which node? harness recycle <node> --at-quiet")
+    me = next((n for n, sp in ctx.tree["nodes"].items()
+               if sp.get("branch") == ctx.branch), None)
+    for n in nodes:
+        if n not in ctx.tree["nodes"]:
+            die(REFUSED, f"'{n}' is not a node")
+        if ctx.rank(n) == 0:
+            die(REFUSED, "rank 0 is never reset; it compacts at its --autocompact threshold")
+        p = reset_path(ctx, n)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({"by": me or "operator", "flushed": False,
+                                 "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}) + "\n")
+        print(f"reset pending for {n}. At its next turn end it is asked to write what it "
+              f"holds only in\n  context into the records; at the next quiet one after "
+              f"that it is replaced.\n  `harness status` shows it; delete it with "
+              f"rm {p}")
+
+
+def reset_step(ctx, node, launch_only=False):
+    """The Stop hook's part in a pending reset. True when it acted."""
+    p = reset_path(ctx, node)
+    if not p.exists():
+        return False
+    r = json.loads(p.read_text())
+    if not r.get("flushed") and not launch_only:
+        r["flushed"] = True
+        p.write_text(json.dumps(r) + "\n")
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "Stop", "decision": "block", "reason":
+            f"A reset of this node is pending (requested by {r.get('by')}). A fresh "
+            f"session replaces you from the records at your next quiet turn end. Write "
+            f"anything you hold only in context into them now: a promise to a child, a "
+            f"seam you are watching, a held recycle (`harness note <task> --add -`, "
+            f"`harness brief`, `--after`). Then end your turn."}}))
+        return True
+    if r.get("flushed") and reset_quiet(ctx, node):
+        launch_reset(ctx, node)
+        p.unlink()
+        return True
+    return False
+
+
+def reset_quiet(ctx, node):
+    """No sign-off owed, no child waiting on an answer, nothing of its own unpresented."""
+    if any(o[0] == "sign off" for o in lead_owes(ctx, node)):
+        return False
+    if any(r.get("parent") == node for r in open_waits(ctx).values()):
+        return False
+    return not any(r.get("_node") == node and not r.get("_presented_at")
+                   for r in open_marks(ctx).values())
+
+
+def launch_reset(ctx, node):
+    """Detached, so it outlives the turn that launched it, and without a session
+    id, so it acts as the operator would from the repository root."""
+    log = ctx.state_file("resets", node, ".log")
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
+    with open(log, "a") as fh:
+        subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "recycle", node,
+                          "--when-idle"], cwd=str(ctx.repo), env=env, stdout=fh,
+                         stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                         start_new_session=True)
+
+
+def wait_until_idle(idx, nodes, limit=120, step=3):
+    """Poll until no session in these nodes' worktrees reads busy, or give up."""
+    wts = {(idx["nodes"].get(n) or {}).get("worktree") for n in nodes}
+    end = time.time() + limit
+    while time.time() < end:
+        try:
+            rows = live_rows(agents_json())
+        except Exception:
+            return
+        if not any(r.get("cwd") in wts and r.get("status") == "busy" for r in rows):
+            return
+        time.sleep(step)
+
+
+def context_limits(ctx, name):
+    """(warn tokens, autocompact flag value) for a node; tree.json wins."""
+    spec, role = ctx.tree["nodes"][name], role_of(ctx, name)
+    return (spec.get("context_warn", ROLE_CONTEXT.get(role)),
+            spec.get("autocompact", ROLE_AUTOCOMPACT.get(role)))
+
+
 def assignment_for(ctx, name):
     """(model, effort) for a node. tree.json wins; role default otherwise."""
     spec = ctx.tree["nodes"][name]
@@ -510,6 +609,12 @@ def _whoami(a):
     model, effort = assignment_for(ctx, node)
     print(f"skills   {', '.join(skills_for(ctx, node))}")
     print(f"run as   {model}, effort {effort}   ({role_of(ctx, node)})")
+    _warn, _ac = context_limits(ctx, node)
+    _size = context_size(os.environ.get("CLAUDE_CODE_SESSION_ID", ""))
+    if _size:
+        print(f"context  {ktok(_size)}"
+              + (f" — over this rank's {ktok(_warn)}; write state into records"
+                 if _warn and _size > _warn else ""))
     # The CLI and the skills are installed together and loaded apart: a session
     # holds the skill text it read at startup and calls a binary that may have
     # been replaced under it since. One node closed five segments tonight using
@@ -1107,6 +1212,10 @@ def cmd_status(a):
         if pres:
             bits.append(f"{', '.join(sorted(pres))} (awaiting sign-off)")
         work = "   ".join(bits) if bits else "no task record"
+        if live in ("live", "WAITING"):
+            work += f"   ctx {ktok(context_size(h['ref']))}"
+        if reset_path(ctx, h["node"]).exists():
+            work += "   reset pending"
         if live == "gone" and last_write(h["ref"]):
             work += time.strftime("   (process gone, last write %H:%M)",
                                   time.localtime(last_write(h["ref"])))
@@ -1439,12 +1548,7 @@ def cmd_spawn(a):
                   + (f", then {len(nq) - 1} more" if len(nq) > 1 else ""))
         gr = grants_for(ctx, n)
         reach = f"  +{len(gr)} grant(s)" if gr else ""
-        cmd = ["claude", "--bg", "-n", name] + grant_flags(gr, model, effort)
-        if model:
-            cmd += ["--model", model]
-        if effort:
-            cmd += ["--effort", effort]
-        cmd.append(a.prompt)
+        cmd = launch_cmd(ctx, n, name, gr, model, effort, a.prompt)
         if a.dry_run:
             print(f"  would spawn {name:<18} {model}/{effort:<7} in {sp['worktree']}{reach}")
         else:
@@ -1821,20 +1925,40 @@ def last_turn(sid):
         age = time.time() - t.stat().st_mtime
     except OSError:
         return None, None
-    carry = None
+    return age, context_size(sid, t)
+
+
+def context_size(sid, t=None, tail=256 * 1024):
+    """Context occupancy on the session's last turn: input + cache read + cache
+    creation from the last usage block (obs 60). Read from the TAIL, because a
+    lead's transcript runs to megabytes and this runs on every prompt."""
+    t = t or (transcript_for(sid) if sid else None)
+    if t is None:
+        return None
     try:
-        for line in t.open(errors="replace"):
-            try:
-                u = (json.loads(line).get("message") or {}).get("usage")
-            except Exception:
-                continue
-            if u:
-                carry = (u.get("cache_read_input_tokens", 0)
-                         + u.get("cache_creation_input_tokens", 0)
-                         + u.get("input_tokens", 0))
+        with open(t, "rb") as fh:
+            fh.seek(0, 2)
+            size = fh.tell()
+            fh.seek(max(0, size - tail))
+            chunk = fh.read().decode("utf-8", "replace")
     except OSError:
-        pass
-    return age, carry
+        return None
+    for line in reversed(chunk.splitlines()):
+        if '"usage"' not in line:
+            continue
+        try:
+            u = (json.loads(line).get("message") or {}).get("usage")
+        except Exception:
+            continue                       # the first line of the chunk may be cut
+        if u:
+            return (u.get("cache_read_input_tokens", 0)
+                    + u.get("cache_creation_input_tokens", 0)
+                    + u.get("input_tokens", 0))
+    return None
+
+
+def ktok(n):
+    return "?" if n is None else f"{round(n / 1000)}k"
 
 
 def human_age(sec):
@@ -2173,6 +2297,18 @@ def lead_owes(ctx, node):
         if last and time.time() - last > STALLED_IDLE:
             owed.append(("start" if alive is not False else "down", k,
                          q[0]["task"], time.time() - last))
+    # A child carrying more context than its rank should (obs 60).
+    for k in kids:
+        warn = context_limits(ctx, k)[0]
+        try:
+            held = json.loads(ctx.lock_path(k).read_text())
+        except Exception:
+            continue
+        if not warn or not holder_alive(held):
+            continue
+        size = context_size(held.get("ref"))
+        if size and size > warn:
+            owed.append(("heavy", k, f"{ktok(size)} (warn {ktok(warn)})", 0))
     return owed
 
 
@@ -2195,6 +2331,8 @@ def owed_line(kind, child, task, age):
                  f"  — message it to start (SendMessage)",
         "down": f"{child} has no running session, '{task}' queued"
                 f"  — harness spawn {child}",
+        "heavy": f"{child} at {task} context"
+                 f"  — harness recycle {child} --at-quiet",
     }[kind]
 
 
@@ -2336,7 +2474,9 @@ def queue_items(ctx, node):
     out = {}
     try:
         for kind, child, task, age in lead_owes(ctx, node):
-            out[f"{kind}:{child}:{task}"] = owed_line(kind, child, task, age)
+            # heavy's text changes every turn; its id must not, or it re-reports
+            key = f"heavy:{child}" if kind == "heavy" else f"{kind}:{child}:{task}"
+            out[key] = owed_line(kind, child, task, age)
     except Exception:
         pass
     try:
@@ -2402,7 +2542,7 @@ def queue_items(ctx, node):
         parts = k.split(":")
         return parts[2] if parts[0] in ("sign off", "start", "down") else parts[1]
     kept = {k: v for k, v in out.items()
-            if k.startswith(("asked:", "comment:", "handed:")) or in_focus(fam, task_of(k))}
+            if k.startswith(("asked:", "comment:", "handed:", "heavy:")) or in_focus(fam, task_of(k))}
     if len(kept) < len(out):
         kept[f"fold:{len(out) - len(kept)}"] = (f"+{len(out) - len(kept)} item(s) "
                                                 f"outside the focus  — harness needs")
@@ -2419,7 +2559,7 @@ def queue_items(ctx, node):
 # still fires once. The cooldown is what keeps that from being a per-turn tax:
 # a debt costs one line every DEBT_RENAG, not one line every turn.
 DEBT_RENAG = 10 * 60
-DEBT_KINDS = ("sign off:", "start:", "down:", "approve:", "task:", "asked:", "handed:")
+DEBT_KINDS = ("sign off:", "start:", "down:", "heavy:", "approve:", "task:", "asked:", "handed:")
 
 
 def is_debt(item_id):
@@ -2552,8 +2692,7 @@ def cmd_hook_stop(a):
         payload = json.loads(sys.stdin.read() or "{}")
     except Exception:
         return
-    if payload.get("stop_hook_active"):
-        return
+    again = bool(payload.get("stop_hook_active"))
     # Not inside a git worktree is the common case for this hook: it is
     # installed per repository, but a session can sit anywhere. Ctx() calls
     # die() there, which raises SystemExit and exits 3 — a non-blocking error
@@ -2568,12 +2707,17 @@ def cmd_hook_stop(a):
             return
         ctx.tree = json.loads(ctx.tree_path.read_text())
         node, _ = ctx.node()
+        # The Stop right after a block carries stop_hook_active. It may launch a
+        # pending reset (that is the quiet point the flush leads to) but it must
+        # never block again.
+        if reset_step(ctx, node, launch_only=again) or again:
+            return
         # Downward first: what this node owes the rank below. It applies to rank
         # 0 as much as anyone — main is dev's lead — which is why every row is
         # aged past a threshold, so a design conversation is not interrupted over
         # a child that has been idle for ninety seconds.
         fam = focus_family(ctx)
-        owed = [o for o in lead_owes(ctx, node) if in_focus(fam, o[2])]
+        owed = [o for o in lead_owes(ctx, node) if o[0] != "heavy" and in_focus(fam, o[2])]
         if owed:
             nl = chr(10)
             lines = []
@@ -4082,7 +4226,11 @@ def cmd_recycle(a):
     the node.
     """
     ctx = Ctx(); ctx.require_enrolled()
+    if a.at_quiet:
+        return request_reset(ctx, a.node)
     idx = load_index(ctx, refresh=True)
+    if a.when_idle:
+        wait_until_idle(idx, a.node)
     rows = live_rows(agents_json(read_roster(a.__dict__.get("roster"))))
     by_wt = idx["byWorktree"]
     mine = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
@@ -4341,12 +4489,7 @@ def cmd_recycle(a):
                   + (f", then {len(nq) - 1} more" if len(nq) > 1 else ""))
         name = f"{idx['project']}-{n}"
         gr = grants_for(ctx, n)
-        cmd = ["claude", "--bg", "-n", name] + grant_flags(gr, model, effort)
-        if model:
-            cmd += ["--model", model]
-        if effort:
-            cmd += ["--effort", effort]
-        cmd.append(a.prompt)
+        cmd = launch_cmd(ctx, n, name, gr, model, effort, a.prompt)
         subprocess.Popen(cmd, cwd=sp["worktree"],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         print(f"  recycled {n:<12} {model}/{effort:<7} fresh context"
@@ -4636,6 +4779,20 @@ def grants_for(ctx, node):
     """
     return [r for r in load_grants(ctx).get("nodes", {}).get(node, [])
             if not r.get("revoked_at")]
+
+
+def launch_cmd(ctx, node, name, grants, model, effort, prompt):
+    """The `claude --bg` line for a node, with its rank's auto-compaction
+    threshold (obs 60) so a lead compacts at a size the tree chose."""
+    cmd = ["claude", "--bg", "-n", name] + grant_flags(grants, model, effort)
+    if model:
+        cmd += ["--model", model]
+    if effort:
+        cmd += ["--effort", effort]
+    ac = context_limits(ctx, node)[1]
+    if ac:
+        cmd += ["--autocompact", str(ac)]
+    return cmd + [prompt]
 
 
 def grant_flags(rows, model, effort):
@@ -8369,6 +8526,10 @@ def main():
     rcy.add_argument("--idle", action="store_true",
                      help="every child with no OPEN task record — the sweep at subtree close")
     rcy.add_argument("--dry-run", action="store_true")
+    rcy.add_argument("--at-quiet", action="store_true",
+                     help="reset a lead at its next quiet turn end, after it flushes its "
+                          "state into the records")
+    rcy.add_argument("--when-idle", action="store_true", help=argparse.SUPPRESS)
     rcy.add_argument("--force", action="store_true",
                      help="recycle despite dirty worktree, unintegrated commits or busy session")
     rcy.add_argument("--model", help="override the model")

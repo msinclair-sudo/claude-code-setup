@@ -189,7 +189,10 @@ harness recycle --children
 harness recycle --idle          # children with no open task record
 harness recycle --cold          # children past the cache lifetime
 harness recycle <node> --escalate [--dry-run]   # one effort level up
+harness recycle <node> --at-quiet               # a lead too big to keep: reset at its next quiet turn end
 ```
+
+`status` shows each node's context (`ctx 442k`); a lead over its rank's threshold (300k unless `tree.json` sets `context_warn`) is named in your orientation. A busy lead is never idle, so `--at-quiet` is the reset for it: its own Stop hook first makes it write context-only state into the records, then replaces it at the next turn end with nothing owed. Leads launch with `--autocompact 350k` (`autocompact` in `tree.json`).
 
 Recycle a child once its work has landed and after sign-off (`--close` does it for you), and replace a cold session rather than speaking to it. Leads too. Close the task record first or `--idle` reads the node as working. It refuses on a dirty worktree, unintegrated commits, a busy session, an unpresented mark and rank 0; take each refusal at face value. If a child asked only by message, answer before recycling.
 

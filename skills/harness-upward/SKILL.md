@@ -142,6 +142,6 @@ You never commit a document. Submit the change as data, a JSON list of `{file, o
 
 An instruction that arrives after the state it assumed has changed (undo a recycle, revive a context): say what the state is and stop. Do not reconstruct.
 
-Your session ends after your work lands. Nothing survives except commits, your report, and the ledger. Do not plan across tasks; anything that matters beyond this commit goes to your lead or into the commit message before you present.
+Your session ends after your work lands. Nothing survives except commits, your report, and the ledger. Do not plan across tasks; anything that matters beyond this commit goes to your lead or into the commit message before you present. If the Stop hook says a reset of your node is pending, write whatever you hold only in context into the records (`harness note`, `brief`, `--after`), then end your turn; you are replaced at the next quiet one.
 
 Why each rule exists: `~/.claude/skills/harness/ref/why.md` — read only when you need the reason.

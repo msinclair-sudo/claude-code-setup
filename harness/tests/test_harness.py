@@ -475,6 +475,62 @@ class After(unittest.TestCase):
         self.assertFalse((self.ctx.dir / "marks" / "edges.json").exists())
 
 
+class LeadContext(unittest.TestCase):
+    """obs 60: the harness meters a lead's context, sets compaction, and resets
+    it at a quiet point."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev"})
+        self.ctx.branch = "main"
+
+    def test_context_size_reads_the_tail(self):
+        t = self.ctx.dir / "t.jsonl"
+        usage = lambda n: json.dumps({"message": {"usage": {
+            "input_tokens": 1, "cache_read_input_tokens": n, "cache_creation_input_tokens": 9}}})
+        t.write_text("\n".join([usage(5)] + ["x" * 200] * 50 + [usage(424000), "{}"]) + "\n")
+        self.assertEqual(hz.context_size("s", t, tail=600), 424010)
+        self.assertIsNone(hz.context_size("s", self.ctx.dir / "missing.jsonl"))
+
+    def test_heavy_child_is_named_over_the_threshold_only(self):
+        self.ctx.lock("dev", 1)
+        def owes(size):
+            with mock.patch.object(hz, "open_marks", return_value={}), \
+                 mock.patch.object(hz, "queue", return_value=[]), \
+                 mock.patch.object(hz, "holder_alive", return_value=True), \
+                 mock.patch.object(hz, "context_size", return_value=size):
+                return [o for o in hz.lead_owes(self.ctx, "main") if o[0] == "heavy"]
+        self.assertEqual(owes(424000)[0][1:3], ("dev", "424k (warn 300k)"))
+        self.assertEqual(owes(120000), [])
+
+    def test_launch_sets_autocompact_by_rank_and_tree(self):
+        cmd = hz.launch_cmd(self.ctx, "dev", "p-dev", [], "opus", "medium", "go")
+        self.assertEqual(cmd[cmd.index("--autocompact") + 1], "350k")
+        self.assertEqual(cmd[-1], "go")
+        self.assertNotIn("--autocompact", hz.launch_cmd(self.ctx, "dev_1", "p", [], None, None, "go"))
+        self.ctx.tree["nodes"]["dev"]["autocompact"] = "600k"
+        cmd = hz.launch_cmd(self.ctx, "dev", "p-dev", [], None, None, "go")
+        self.assertEqual(cmd[cmd.index("--autocompact") + 1], "600k")
+
+    def test_reset_flushes_then_launches_at_a_quiet_turn_end(self):
+        with mock.patch("sys.stdout"):
+            hz.request_reset(self.ctx, ["dev"])
+            with self.assertRaises(SystemExit):
+                hz.request_reset(self.ctx, ["main"])          # rank 0 is never reset
+        p = hz.reset_path(self.ctx, "dev")
+        with mock.patch.object(hz, "launch_reset") as go, mock.patch("sys.stdout") as out:
+            self.assertFalse(hz.reset_step(self.ctx, "dev", launch_only=True))  # no block yet
+            self.assertTrue(hz.reset_step(self.ctx, "dev"))   # 1st turn end: flush
+            self.assertIn("pending", "".join(c.args[0] for c in out.write.call_args_list))
+            go.assert_not_called()
+            with mock.patch.object(hz, "reset_quiet", return_value=False):
+                self.assertFalse(hz.reset_step(self.ctx, "dev", launch_only=True))
+            go.assert_not_called()
+            with mock.patch.object(hz, "reset_quiet", return_value=True):
+                self.assertTrue(hz.reset_step(self.ctx, "dev", launch_only=True))
+            go.assert_called_once()
+        self.assertFalse(p.exists())
+
+
 class Records(unittest.TestCase):
     def test_author_is_not_told_of_own_comment(self):
         ctx = FakeCtx({"main": None, "dev": "main"})

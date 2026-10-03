@@ -32,6 +32,14 @@ class FakeCtx:
     def rank(self, node):
         return 0 if not self.tree["nodes"][node].get("parent") else 1
 
+    me = "main"
+
+    def require_enrolled(self):
+        pass
+
+    def node(self):
+        return self.me, self.tree["nodes"][self.me]
+
     def lock_path(self, node):
         return self.dir / "locks" / f"{node}.lock"
 
@@ -217,6 +225,19 @@ class QueueShape(unittest.TestCase):
             self.assertEqual(hz.next_seq(ctx, "dev"), {"seq": 4})
         with mock.patch.object(hz, "queue", return_value=[{}, {}]):
             self.assertEqual(hz.next_seq(ctx, "dev"), {})
+
+
+class Reorder(unittest.TestCase):
+    def test_every_reorder_needs_a_reason(self):
+        # obs 21: a lead reordering its own child gave no reason, and the
+        # record could not take one afterwards.
+        ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev"})
+        ctx.me = "dev"
+        a = mock.Mock(order="b,a", node="dev_1", why=None)
+        with mock.patch.object(hz, "Ctx", return_value=ctx), \
+             self.assertRaises(SystemExit) as e:
+            hz.cmd_queue(a)
+        self.assertEqual(e.exception.code, hz.REFUSED)
 
 
 class Records(unittest.TestCase):

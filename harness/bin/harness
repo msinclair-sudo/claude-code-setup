@@ -5776,12 +5776,11 @@ def cmd_queue(a):
             die(REFUSED, f"'{me}' does not order '{target}'s queue. A lead orders "
                          f"its CHILDREN's;\n           rank 0 orders anywhere in "
                          f"the tree.")
-        if not own and not (a.why or "").strip():
-            die(REFUSED,
-                f"reaching past '{parent}' to reorder its child needs --why.\n"
-                f"           '{parent}' wrote these and sequenced them for a reason; "
-                f"if you change that\n           without saying why, it reads as "
-                f"noise and gets changed back.")
+        # Every reorder says why (obs 21). Once a task opens it leaves the queue
+        # and its order record becomes unwritable, so an optional reason is one
+        # nobody can add later.
+        if not (a.why or "").strip():
+            die(REFUSED, f"say why: harness queue {target} --order ... --why \"...\"")
         # Symmetric, and it is what keeps the permission from being hollow. A
         # lead orders its own children freely — until a higher rank has ordered
         # them, at which point undoing that silently is the same act as reaching
@@ -5793,13 +5792,6 @@ def cmd_queue(a):
             key=lambda n: ctx.rank(n) if n in ctx.tree["nodes"] else 99)
         above = [n for n in prior if n in ctx.tree["nodes"]
                  and ctx.rank(n) < ctx.rank(me)]
-        if own and above and not (a.why or "").strip():
-            die(REFUSED,
-                f"'{above[0]}' ordered this queue and gave a reason. Changing it "
-                f"back needs one too:\n           harness queue {target} --order ... "
-                f"--why \"...\"\n           It is not refused — you may know a "
-                f"dependency it does not — but it is\n           recorded, and "
-                f"'{above[0]}' reads this queue.")
         want = [t.strip() for t in a.order.split(",") if t.strip()]
         # Only the head of each coupled chain is orderable. A coupled task is
         # reached through its predecessor by construction, so giving it a
@@ -5819,11 +5811,9 @@ def cmd_queue(a):
                          f"{', '.join(b['task'] for b in have.values())}")
         # The stamp always names who ordered it LAST. Leaving a superseded one in
         # place would have the queue claiming an authority that no longer holds.
-        stamp = ({"ordered_by": me,
-                  "ordered_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-                  "ordered_why": a.why or ""}
-                 if (not own or a.why) else
-                 {"ordered_by": None, "ordered_at": None, "ordered_why": None})
+        stamp = {"ordered_by": me,
+                 "ordered_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                 "ordered_why": a.why}
         for i, t in enumerate(want):
             b = have[tkey(t)]
             b.update(stamp)

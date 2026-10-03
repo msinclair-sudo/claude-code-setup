@@ -105,6 +105,52 @@ def live_rows(rows):
     return out
 
 
+def pid_alive(pid):
+    """A pid on this host that is running and is Claude (a reused pid is not)."""
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        pass                              # exists, not ours to signal
+    try:
+        return b"claude" in Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return True                       # no /proc: trust the signal
+
+
+def holder_alive(held, rows=None):
+    """Is a lock's holder running? True, False, or None when this host cannot know.
+
+    The one liveness reading (obs 1-4, 16, 40). Never the roster's row alone: it
+    outlives its process. On this host: the lock's pid, else a live session file
+    for the same id (a resumed session keeps its id and changes pid), else a
+    live roster row if `rows` is given.
+    """
+    if held.get("host") and held["host"] != socket.gethostname():
+        return None
+    if pid_alive(held.get("pid")):
+        return True
+    ref = held.get("ref")
+    if any(d.get("sessionId") == ref and pid_alive(d.get("pid"))
+           for d in live_sessions()):
+        return True
+    if rows:
+        return ref in {r.get("sessionId") for r in live_rows(rows)}
+    return False
+
+
+def last_write(sid):
+    """Epoch of a session's last transcript write, or None."""
+    t = transcript_for(sid) if sid else None
+    try:
+        return t.stat().st_mtime if t else None
+    except OSError:
+        return None
+
+
 # The runtime's own word for it is `blocked`, and this codebase already spends
 # that word on something else: `harness blocked` is a record asking the OPERATOR
 # to widen a permission, raised deliberately by a session that is still running
@@ -885,7 +931,6 @@ def cmd_claim(a):
     me = self_row(rows)
     self_name = me.get("name") or ""
     self_ref = me["sessionId"]
-    peers = {r["sessionId"]: {"name": r.get("name") or "?"} for r in rows}
     ctx = Ctx(); ctx.require_enrolled()
     node, _ = ctx.node()
     check_name(ctx, node, self_name, strict=a.strict_name)
@@ -940,7 +985,7 @@ def cmd_claim(a):
         held = json.loads(lock.read_text())
         if held["ref"] == self_ref:
             print(f"already held by this session ({node})"); return
-        if held["ref"] in peers:
+        if holder_alive(held, rows):
             die(REFUSED, f"'{node}' is held by {held['name']} [{held['ref']}], "
                          f"which is live elsewhere. Not taking it.")
         # The recorded holder is not live and no other session is in this
@@ -1004,9 +1049,8 @@ def cmd_status(a):
         rows = live_rows(agents_json(read_roster(a.roster)))
         peers = {r["sessionId"]: {"name": r.get("name") or "?",
                                  "stopped": is_stopped(r)} for r in rows}
-        roster = True
     except Exception:
-        peers, roster = {}, None
+        peers, rows = {}, []
     # A claim is not an assignment. A node can be claimed, live, and holding
     # nothing to do — and an idle session with a live counterparty spends that
     # capacity on elective correspondence, which no transaction terminates.
@@ -1020,7 +1064,7 @@ def cmd_status(a):
     claimed, unassigned = set(), []
     for p in locks:
         h = json.loads(p.read_text())
-        live = "live" if h["ref"] in peers else ("stale" if roster else "unknown")
+        live = {True: "live", False: "gone", None: "unknown"}[holder_alive(h, rows)]
         # A stopped session is live, and calling it `live` is true and useless.
         # It reports `status: idle` — the same word as a session with nothing to
         # do — so the one state that needs a human at the keyboard rendered as
@@ -1037,6 +1081,9 @@ def cmd_status(a):
         if pres:
             bits.append(f"{', '.join(sorted(pres))} (awaiting sign-off)")
         work = "   ".join(bits) if bits else "no task record"
+        if live == "gone" and last_write(h["ref"]):
+            work += time.strftime("   (process gone, last write %H:%M)",
+                                  time.localtime(last_write(h["ref"])))
         nc = sum(len(tasks_rec.get(x, {}).get("_comments") or []) for x in open_here)
         if nc:
             work += f"   ({nc} comment(s) — harness note <task>)"
@@ -1069,7 +1116,8 @@ def cmd_status(a):
     if blocked:
         print(f"\n  {len(blocked)} blocked:")
         for r in blocked.values():
-            print(f"    {r.get('node', '?'):<12} {r.get('need')}   {r.get('why') or ''}")
+            need = (r.get("need") or "").strip().splitlines()[0][:90] if r.get("need") else ""
+            print(f"    {r.get('node', '?'):<12} {need}")
         print("  Nobody is unblocked by a session with looser settings:")
         print("  `harness grant <node> <path>` from rank 0 or a shell, then recycle it.")
 
@@ -1333,13 +1381,17 @@ def cmd_spawn(a):
             _rank0 = ctx.rank(n) == 0
         except Exception:
             _rank0 = False                 # unresolvable rank: keep the gate
-        if not nq and not a.empty and not _rank0:
+        _below = set(subtree(ctx, n))
+        _lead_work = sum(1 for r in open_marks(ctx).values() if r.get("_node") in _below)
+        if not nq and _lead_work:
+            print(f"       {n:<12} starts on {_lead_work} open task(s) below it")
+        elif not nq and not a.empty and not _rank0:
             print(f"  skip {n:<12} nothing briefed — it would have no task to open.")
             print(f"  {'':<17} harness brief <task> --for {n} --write \"...\"   "
                   f"then spawn it")
             print(f"  {'':<17} or start it empty on purpose:  harness spawn {n} --empty")
             skipped += 1; continue
-        if not nq and _rank0:
+        elif not nq and _rank0:
             print(f"       {n:<12} nothing queued — it writes its own briefs")
         elif not nq:
             print(f"  note {n:<12} nothing briefed — starting it empty, as asked.")
@@ -2040,17 +2092,52 @@ def lead_owes(ctx, node):
         if any(r.get("_node") == k and not r.get("_presented_at")
                for r in marks.values()):
             continue                       # mid-task, nothing owed
+        # A lead whose subtree holds an open mark is waiting on it, not idle
+        # (obs 19, 22, 27).
+        below = set(subtree(ctx, k))
+        if any(r.get("_node") in below for r in marks.values()):
+            continue
         q = [b for b in queue(ctx, k) if not b.get("coupled_to")]
         if not q:
             continue                       # nothing written for it: not this rule
-        # How long it has been standing still: since its last task closed, or
-        # since the work was written for it, whichever is later.
+        try:
+            held = json.loads(ctx.lock_path(k).read_text())
+        except Exception:
+            held = None
+        alive = holder_alive(held) if held else False
+        # Standing still since its last task closed, the work was written, or
+        # its session last wrote, whichever is latest.
         stamps = [_epoch(r.get("_closed_at")) for r in marks.values()
                   if r.get("_node") == k] + [_epoch(q[0].get("written_at"))]
+        if held:
+            stamps.append(last_write(held.get("ref")))
         last = max([x for x in stamps if x] or [0])
         if last and time.time() - last > STALLED_IDLE:
-            owed.append(("start", k, q[0]["task"], time.time() - last))
+            owed.append(("start" if alive is not False else "down", k,
+                         q[0]["task"], time.time() - last))
     return owed
+
+
+def subtree(ctx, node):
+    """Every node below `node`."""
+    out, todo = [], list(ctx.children(node))
+    while todo:
+        n = todo.pop()
+        out.append(n)
+        todo.extend(ctx.children(n))
+    return out
+
+
+def owed_line(kind, child, task, age):
+    """One line for a lead_owes row, shared by the prompt and Stop hooks."""
+    return {
+        "sign off": f"{child} presented '{task}' {human_age(age)} ago, unsigned"
+                    f"  — harness mark {task} --close",
+        "start": f"{child} quiet {human_age(age)}, '{task}' queued"
+                 f"  — message it to start (SendMessage)",
+        "down": f"{child} has no running session, '{task}' queued"
+                f"  — harness spawn {child}",
+    }[kind]
 
 
 def rank0_owes(ctx, node):
@@ -2109,6 +2196,47 @@ def rank0_owes(ctx, node):
 # Which is also why this is a set of ids rather than a rendered block. What is
 # compared is what the reader would have to act on, not how it was phrased.
 
+def focus_family(ctx):
+    """The owner's focus as a set of task keys (it and every part split from it),
+    or None when no focus is set (obs 5, 6, 13)."""
+    try:
+        fo = json.loads((ctx.state / "focus.json").read_text()).get("task")
+    except Exception:
+        return None
+    if not fo:
+        return None
+    briefs = all_briefs(ctx)
+    fam, todo = {tkey(fo)}, [tkey(fo)]
+    while todo:
+        k = todo.pop()
+        for c, b in briefs.items():
+            if c not in fam and tkey(b.get("from") or "") == k:
+                fam.add(c); todo.append(c)
+    return fam
+
+
+def in_focus(fam, task):
+    return fam is None or tkey(task or "") in fam
+
+
+def cmd_focus(a):
+    """The owner's priority. While set, nags about work outside it fold into one line."""
+    ctx = Ctx(); ctx.require_enrolled()
+    f = ctx.state / "focus.json"
+    if a.clear:
+        f.unlink(missing_ok=True); print("focus cleared"); return
+    if not a.task:
+        try:
+            r = json.loads(f.read_text())
+            print(f"focus: {r['task']}  ({r.get('why') or 'no reason given'}, set {r.get('at')})")
+        except Exception:
+            print("no focus set")
+        return
+    f.write_text(json.dumps({"task": a.task, "why": a.why or "",
+                             "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}) + "\n")
+    print(f"focus: {a.task} — nags outside it now fold into one line")
+
+
 def queue_items(ctx, node):
     """Everything this node currently owes or holds, as {id: one-line text}.
 
@@ -2119,11 +2247,7 @@ def queue_items(ctx, node):
     out = {}
     try:
         for kind, child, task, age in lead_owes(ctx, node):
-            out[f"{kind}:{child}:{task}"] = (
-                f"{child} presented '{task}' {human_age(age)} ago, unsigned"
-                f"  — harness mark {task} --close" if kind == "sign off" else
-                f"{child} idle {human_age(age)} with '{task}' queued"
-                f"  — harness recycle {child}")
+            out[f"{kind}:{child}:{task}"] = owed_line(kind, child, task, age)
     except Exception:
         pass
     try:
@@ -2153,19 +2277,46 @@ def queue_items(ctx, node):
     except Exception:
         pass
     try:
-        for t, cs in unread_brief_comments(ctx, node).items():
-            out[f"comment:{t}:{len(cs)}"] = (f"{len(cs)} unread comment(s) on '{t}'"
-                                             f"  — harness brief {t}")
+        fam = focus_family(ctx)
+    except Exception:
+        fam = None
+    try:
+        # One line for all of them; the detail is one command away.
+        un = {t: cs for t, cs in unread_brief_comments(ctx, node).items()
+              if in_focus(fam, t)}
+        if un:
+            n = sum(len(cs) for cs in un.values())
+            names = ", ".join(sorted(un)[:3]) + (", …" if len(un) > 3 else "")
+            out[f"comment:{n}"] = (f"{n} unread comment(s) on {names}"
+                                   f"  — harness brief <task>")
     except Exception:
         pass
     try:
-        for t in unactioned_briefs(ctx, node):
-            out[f"handed:{t}"] = (
-                f"'{t}' was handed to you and is neither started nor split"
-                f"  — harness mark {t}, or harness brief <new> --from {t}")
+        # Only a node with nothing in flight here or below is sitting on handed
+        # work, and only the next brief is owed: a queue is worked in order.
+        here = {node, *subtree(ctx, node)}
+        busy = any(r.get("_node") in here for r in open_marks(ctx).values())
+        left = [t for t in unactioned_briefs(ctx, node) if in_focus(fam, t)]
+        nxt = next((b["task"] for b in queue(ctx, node) if b["task"] in left),
+                   left[0] if left else None)
+        if nxt and not busy:
+            out[f"handed:{nxt}"] = (
+                f"'{nxt}' is yours and not started or split"
+                f"  — harness mark {nxt}, or brief <part> --from {nxt}")
     except Exception:
         pass
-    return out
+    if fam is None:
+        return out
+    # The item's task is the third field of a node row, else the second.
+    def task_of(k):
+        parts = k.split(":")
+        return parts[2] if parts[0] in ("sign off", "start", "down") else parts[1]
+    kept = {k: v for k, v in out.items()
+            if k.startswith(("asked:", "comment:", "handed:")) or in_focus(fam, task_of(k))}
+    if len(kept) < len(out):
+        kept[f"fold:{len(out) - len(kept)}"] = (f"+{len(out) - len(kept)} item(s) "
+                                                f"outside the focus  — harness needs")
+    return kept
 
 
 # A DEBT is not news. R15 said report a change and never a state, which is right
@@ -2178,7 +2329,7 @@ def queue_items(ctx, node):
 # still fires once. The cooldown is what keeps that from being a per-turn tax:
 # a debt costs one line every DEBT_RENAG, not one line every turn.
 DEBT_RENAG = 10 * 60
-DEBT_KINDS = ("sign off:", "start:", "approve:", "task:", "asked:", "handed:")
+DEBT_KINDS = ("sign off:", "start:", "down:", "approve:", "task:", "asked:", "handed:")
 
 
 def is_debt(item_id):
@@ -2261,9 +2412,7 @@ def print_delta(ctx=None, node=None, prefix="new"):
         # lines of standing advice in every transcript forever, which is the
         # per-turn tax the whole edge-triggered design exists to avoid.
         if any(is_debt(k) for k in ids):
-            print("         ^ put these on your todo list (TaskCreate) before you "
-                  "reply to anything\n           else — they are owed to somebody "
-                  "below you and nothing else will\n           remember them for you.")
+            print("         ^ owed below you — put them on your todo list (TaskCreate)")
     except SystemExit:
         return
     except Exception:
@@ -2333,30 +2482,18 @@ def cmd_hook_stop(a):
         # 0 as much as anyone — main is dev's lead — which is why every row is
         # aged past a threshold, so a design conversation is not interrupted over
         # a child that has been idle for ninety seconds.
-        owed = lead_owes(ctx, node)
+        fam = focus_family(ctx)
+        owed = [o for o in lead_owes(ctx, node) if in_focus(fam, o[2])]
         if owed:
             nl = chr(10)
             lines = []
             for kind, child, task, age in owed[:4]:
-                lines.append(
-                    f"  {child} presented '{task}' {human_age(age)} ago and you have "
-                    f"not signed it off:{nl}    harness mark {task} --close"
-                    if kind == "sign off" else
-                    f"  {child} has been idle {human_age(age)} with '{task}' queued "
-                    f"for it:{nl}    harness recycle {child}")
+                lines.append("  " + owed_line(kind, child, task, age))
             print(json.dumps({"hookSpecificOutput": {
                 "hookEventName": "Stop", "decision": "block", "reason":
-                f"You are about to stop with work owed to the rank below you.{nl}{nl}"
-                + f"{nl}{nl}".join(lines) + f"{nl}{nl}"
-                + "Put each of these on your todo list with TaskCreate before you "
-                  "reply to anything else. You will be told again, but a debt you "
-                  "are holding in your head does not survive a conversation with "
-                  "your own lead.\n\n"
-                + "Neither is visible to the child and neither can be done by it. "
-                  "Signing off starts the next task by itself; recycling replaces a "
-                  "session that has been standing still. If the right answer is "
-                  "neither, say so on the record rather than leaving the lane "
-                  "stopped."}}))
+                f"Owed to the rank below you:{nl}"
+                + nl.join(lines) + f"{nl}"
+                + "Act on each, or say on the record why not."}}))
             return
         if ctx.rank(node) == 0:
             # It presents to nobody, so the upward arm below does not apply. But
@@ -2500,15 +2637,15 @@ def claim_conflict(ctx, node):
     sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     if h.get("session_id") == sid:
         return None, "mine"
-    try:
-        live = {r.get("sessionId") for r in live_rows(agents_json())}
-    except Exception:
-        # An unreadable roster is UNKNOWN, not empty. Refusing here would stop
-        # work over an unavailable oracle, so this warns and lets it through --
-        # the opposite call from `integrate`, which is writing into somebody
-        # else's worktree and must not guess.
-        return None, "roster-unknown"
-    if h.get("session_id") in live:
+    alive = holder_alive(h)
+    if not h.get("pid"):
+        try:
+            alive = holder_alive(h, agents_json())
+        except Exception:
+            # Unknown, not empty: warn and let it through. `integrate`, which
+            # writes into somebody else's worktree, makes the opposite call.
+            return None, "roster-unknown"
+    if alive:
         return h, "held"
     return None, "stale"
 
@@ -3068,12 +3205,14 @@ def cmd_check(a):
              f"WORKTREE, not the commit)" if dirt.strip() else ""))
     for c in checks:
         t0 = time.time()
+        limit = c.get("timeout") or a.timeout      # per-check ceiling (obs 24)
+        timed_out = False
         try:
             r = subprocess.run(["sh", "-c", c["command"]], cwd=str(ctx.worktree),
-                               capture_output=True, text=True, timeout=a.timeout)
+                               capture_output=True, text=True, timeout=limit)
             code, out, err = r.returncode, r.stdout, r.stderr
         except subprocess.TimeoutExpired:
-            code, out, err = 124, "", f"timed out after {a.timeout}s"
+            code, out, err, timed_out = 124, "", f"timed out after {limit}s", True
         except Exception as e:
             code, out, err = 125, "", str(e)
         dur = time.time() - t0
@@ -3081,12 +3220,16 @@ def cmd_check(a):
         failed += (not ok)
         rows.append({"name": c["name"], "command": c["command"],
                      "blindSpot": c["blindSpot"], "exit": code,
-                     "seconds": round(dur, 2),
+                     "seconds": round(dur, 2), "timedOut": timed_out,
                      "stdout": out[-2000:], "stderr": err[-2000:]})
-        print(f"  {'PASS' if ok else 'FAIL'}  {c['name']:<18} {dur:5.1f}s"
-              + ("" if ok else f"   exit {code}"))
-        if not ok:
-            for line in (err or out).strip().splitlines()[-6:]:
+        verdict = "NOT RUN (timed out)" if timed_out else "PASS" if ok else "FAIL"
+        print(f"  {verdict}  {c['name']:<18} {dur:5.1f}s"
+              + ("" if ok or timed_out else f"   exit {code}"))
+        if not ok and not timed_out:
+            lines = (err or out).strip().splitlines()
+            if len(lines) > 6:
+                print(f"        … {len(lines) - 6} earlier line(s) omitted")   # obs 34
+            for line in lines[-6:]:
                 print(f"        {line[:100]}")
         # The blind spot is printed beside the RESULT, not filed away in the
         # manifest, because the moment it matters is the moment somebody is
@@ -3102,8 +3245,6 @@ def cmd_check(a):
     f.write_text(json.dumps(rep, indent=2) + "\n")
     print(f"\n{len(checks) - failed}/{len(checks)} passed — recorded against {sha[:8]}")
     if failed:
-        print("  Every check ran. A suite that stops at the first failure reveals its\n"
-              "  problems one per cycle, and each cycle costs a session.")
         sys.exit(REFUSED)
 
 
@@ -5733,7 +5874,9 @@ def unread_brief_comments(ctx, who):
         if (lead or owner) != who:
             continue
         seen = (b.get("read") or {}).get(who, "")
-        new = [c for c in (b.get("comments") or []) if (c.get("at") or "") > seen]
+        mine = {who, f"session {os.environ.get('CLAUDE_CODE_SESSION_ID', '')[:8]}"}
+        new = [c for c in (b.get("comments") or [])
+               if (c.get("at") or "") > seen and c.get("by") not in mine]  # obs 17
         if new:
             out[p.stem] = new
     return out
@@ -6776,6 +6919,8 @@ def task_state(ctx, task):
             r = json.loads(mf.read_text())
         except Exception:
             return "unreadable"
+        if r.get("_abandoned_at"):
+            return "abandoned"            # not settled: the work is undone (obs 39)
         if r.get("_closed_at"):
             return "closed"
         return "presented" if r.get("_presented_at") else "open"
@@ -7874,27 +8019,15 @@ def main():
     ps.add_argument("--quiet", action="store_true",
                     help="print nothing and exit 0 when not enrolled")
     add("unenrol", cmd_unenrol)
+    fo = add("focus", cmd_focus)
+    fo.add_argument("task", nargs="?", help="task or segment the owner put first")
+    fo.add_argument("--why", help="one line")
+    fo.add_argument("--clear", action="store_true")
     a = p.parse_args()
     read_dash_from_stdin(a)
-    # The delta footer. A working session runs `mark`, `brief`, `review`,
-    # `integrate` all day, and every one of those is a moment it is already
-    # reading output — so orientation rides along for the price of the lines it
-    # actually prints, which is none unless something changed. It is the cheap
-    # half of the answer to "orient regularly": not a heartbeat the session pays
-    # for, but a delta attached to work it was doing anyway.
-    #
-    # Only on success. After a refusal the reader is dealing with the refusal,
-    # and a queue notice underneath it is noise at the worst moment.
-    quiet_cmds = {"whoami", "position", "contract", "hook-stop", "hook-orient",
-                  "needs", "index", "gui"}
-    try:
-        a.fn(a)
-    except SystemExit as e:
-        if (e.code or 0) == 0 and a.cmd not in quiet_cmds:
-            print_delta()
-        raise
-    if a.cmd not in quiet_cmds:
-        print_delta()
+    # No delta footer: nags belong to orientation (whoami, hook-orient), and a
+    # command asked a question answers only that question (obs 13).
+    a.fn(a)
 
 
 if __name__ == "__main__":

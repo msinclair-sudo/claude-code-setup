@@ -153,6 +153,43 @@ class Focus(unittest.TestCase):
         self.assertIsNone(hz.focus_family(self.ctx))
 
 
+class FactStaleness(unittest.TestCase):
+    """obs 54: a reader on another branch is not evidence the tree moved."""
+
+    def setUp(self):
+        import subprocess
+        self.repo = Path(tempfile.mkdtemp())
+        g = lambda *a: subprocess.run(["git", *a], cwd=self.repo, check=True,
+                                      capture_output=True, text=True).stdout.strip()
+        g("init", "-q", "-b", "main")
+        g("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "a")
+        self.a = g("rev-parse", "HEAD")
+        g("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "b")
+        self.b = g("rev-parse", "HEAD")
+        self.ctx = FakeCtx({"main": None})
+        self.ctx.worktree = self.repo
+
+    def test_relation_words(self):
+        rel = lambda sha, head: hz.sha_relation(self.ctx, sha, head)
+        self.assertEqual(rel(self.b, self.a), "is behind the measured commit")
+        self.assertEqual(rel(self.a, self.b), "contains the measured commit")
+        self.assertEqual(rel(self.a, self.a), "is the measured commit")
+
+    def test_other_worktree_unmoved_is_fresh(self):
+        o = {"sha": self.b, "worktree": str(self.repo)}
+        reader = FakeCtx({"main": None})
+        reader.worktree = Path(tempfile.mkdtemp())     # somewhere else, not a repo
+        with mock.patch.object(hz, "sha_relation", return_value="x"):
+            fresh, same_wt, _, _ = hz.fact_state(reader, o)
+        self.assertTrue(fresh)
+        self.assertFalse(same_wt)
+
+    def test_measuring_tree_moved_is_stale(self):
+        o = {"sha": self.a, "worktree": str(self.repo)}
+        fresh, same_wt, _, _ = hz.fact_state(self.ctx, o)
+        self.assertEqual((fresh, same_wt), (False, True))
+
+
 class Records(unittest.TestCase):
     def test_author_is_not_told_of_own_comment(self):
         ctx = FakeCtx({"main": None, "dev": "main"})

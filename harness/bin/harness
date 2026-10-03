@@ -5056,11 +5056,35 @@ def fact_state(ctx, o):
     npm ci leaves node_modules/ and surface/build/ behind and both are invisible
     to git status. A worktree that has ever run an install is not the tree the
     next reader holds.
+
+    Stale means the MEASURING worktree has moved past the sha, not that the
+    reader stands somewhere else (obs 54). Returns (fresh, same_wt, head, rel):
+    fresh is None when the measuring worktree is gone; rel is how the reader's
+    HEAD relates to the measured sha when they are in another worktree.
     """
     head = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
-    same_sha = bool(o.get("sha")) and o["sha"] == head
+    sha = o.get("sha") or ""
     same_wt = str(o.get("worktree") or "") == str(ctx.worktree)
-    return same_sha, same_wt, head
+    if same_wt:
+        return bool(sha) and sha == head, True, head, None
+    wt = Path(str(o.get("worktree") or ""))
+    rc, wt_head, _ = git("rev-parse", "HEAD", cwd=wt) if wt.is_dir() else (1, "", "")
+    fresh = (bool(sha) and sha == wt_head.strip()) if rc == 0 else None
+    return fresh, False, head, sha_relation(ctx, sha, head)
+
+
+def sha_relation(ctx, sha, head):
+    """How `head` relates to a measured `sha`, in words."""
+    if not sha:
+        return "unknown"
+    if sha == head:
+        return "is the measured commit"
+    anc = lambda a, b: git("merge-base", "--is-ancestor", a, b, cwd=ctx.worktree)[0] == 0
+    if anc(sha, head):
+        return "contains the measured commit"
+    if anc(head, sha):
+        return "is behind the measured commit"
+    return "has diverged from the measured commit"
 
 
 def run_recorded(cmd, cwd, timeout):
@@ -5118,10 +5142,10 @@ def cmd_fact(a):
             o = latest(r)
             if not o:
                 continue
-            same_sha, same_wt, _ = fact_state(ctx, o)
-            flag = ("current" if same_sha and same_wt
-                    else "OTHER WORKTREE" if not same_wt
-                    else f"tree moved since")
+            fresh, same_wt, _, _ = fact_state(ctx, o)
+            flag = ("tree moved since" if fresh is False
+                    else "current" if same_wt
+                    else "OTHER WORKTREE")
             print(f"  {r.get('name', k):<24} {str(o.get('value'))[:34]:<36} {flag}")
             print(f"  {'':<24} {_ago(o.get('at'))} by {o.get('by')}"
                   + (f"   ({len(r['observations'])} observations)"
@@ -5176,7 +5200,7 @@ def cmd_fact(a):
 
     if a.recheck:
         cwd = ctx.worktree
-        same_sha, same_wt, head = fact_state(ctx, o)
+        _, same_wt, head, _ = fact_state(ctx, o)
         print(f"re-running: {o['command']}")
         if not same_wt:
             print(f"  NOTE it was measured in {o.get('worktree')} and you are in "
@@ -5208,7 +5232,7 @@ def cmd_fact(a):
                   f"anything having changed.")
         return
 
-    same_sha, same_wt, head = fact_state(ctx, o)
+    fresh, same_wt, head, rel = fact_state(ctx, o)
     print(f"{r.get('name')} = {o.get('value')}")
     if r.get("what"):
         print(f"  {r['what']}")
@@ -5219,11 +5243,17 @@ def cmd_fact(a):
         print(f"           not the one you are standing in — a check can count "
               f"differently in a\n           tree that has run an install, and git "
               f"cannot see the difference.")
-    if not same_sha:
-        print(f"  STALE    the tree has moved since ({head[:8]} now). Re-run it:")
+    if same_wt:
+        print(f"  STALE    this tree has moved since ({head[:8]} now). Re-run it:"
+              if not fresh else
+              f"  current  measured at the commit you are standing on. Re-run it:")
+        print(f"           harness fact {r.get('name')} --recheck")
     else:
-        print(f"  current  measured at the commit you are standing on. Re-run it:")
-    print(f"           harness fact {r.get('name')} --recheck")
+        print(f"  yours    your HEAD ({head[:8]}) {rel}")
+        if fresh is False:
+            print(f"  STALE    that worktree has moved since; recheck it there")
+        elif fresh is None:
+            print(f"  gone     that worktree no longer exists")
     obs = r.get("observations") or []
     if len(obs) > 1:
         print(f"\n  {len(obs)} observations:")
@@ -6451,10 +6481,10 @@ def cmd_brief(a):
         if not o:
             print(f"  fact      {nm} — recorded, then removed")
             continue
-        same_sha, same_wt, _ = fact_state(ctx, o)
-        tag = ("" if same_sha and same_wt
-               else "  [MEASURED IN ANOTHER WORKTREE]" if not same_wt
-               else "  [the tree has moved since]")
+        fresh, same_wt, _, _ = fact_state(ctx, o)
+        tag = ("  [the tree has moved since]" if fresh is False
+               else "" if same_wt
+               else "  [MEASURED IN ANOTHER WORKTREE]")
         print(f"  fact      {nm} = {o.get('value')}{tag}")
         print(f"            {_ago(o.get('at'))} · {o.get('command')}")
     if b.get("ordered_by"):

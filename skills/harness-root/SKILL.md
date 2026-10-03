@@ -44,7 +44,7 @@ A brief is rewritten in place; `harness note` is the append-only half. Write a s
 
 ## Priority
 
-`harness queue dev_1 --order doi-index,ingest-2024 --why "…"`. You may order any node's queue. `--why` is required when you reach past a lead. A lead may override you with a reason; read the queue after reordering.
+`harness queue dev_1 --order doi-index,ingest-2024 --why "…"`. You may order any node's queue. Every reorder needs `--why`. A lead may override you with a reason; read the queue after reordering.
 
 ## Asking the operator for a ruling (`T17`)
 
@@ -98,7 +98,7 @@ The three hooks are POSIX `sh` with an explicit `exit 0`:
 
 A non-zero exit from `reference-transaction` gives `fatal: ref updates aborted by hook` and the repository stops accepting ref updates. `core.hooksPath` is absolute into your worktree, so there is one copy and every edit takes effect everywhere on save: test every hook or manifest change against a scratch clone first. Never set `core.hooksPath` to a relative path, and never add a check comparing it to an expected value.
 
-Run `harness doctor` in each worktree after any hook or manifest change. It proves the document guard refuses and allows; for other hooks it only proves they match the installed template. The integration gate has no watched refusal.
+Run `harness doctor` after any hook or manifest change; on your node it also runs doctor in each child's worktree. It proves the document guard refuses and allows; for other hooks it only proves they match the installed template. The integration gate has no watched refusal.
 
 Drift repair is yours alone; `harness scaffold` refuses below rank 0. Read the diff first, check what it did to `.claude/settings.json`, then commit the hooks.
 

@@ -57,7 +57,7 @@ A brief written for you is a segment to split or start. `whoami` says `handed N 
 harness brief <sub-task> --for <child> --from <the-brief-you-were-handed> --write "..."
 ```
 
-`--from` records the split; without it your children never learn the work exists. You can only split a brief written for you. Each child gets a whole specification, rewritten, not your brief forwarded or sent in pieces. Read `harness charter` before splitting; a part that traces to no feature is worth querying upward. If brief and charter disagree, ask your lead.
+`--from` records the split; without it your children never learn the work exists. You can only split a brief written for you. Moving an existing part to another segment needs `--move`, and prints both segments' settled counts. Each child gets a whole specification, rewritten, not your brief forwarded or sent in pieces. Read `harness charter` before splitting; a part that traces to no feature is worth querying upward. If brief and charter disagree, ask your lead.
 
 A split segment leaves your queue but is not done. Orientation says when every part is signed off (`close   N segment(s) you split are finished`); then run `harness mark <segment> --close`. It refuses while any part is open, and an abandoned part blocks it too, so a segment with an abandoned part closes only with `--force`. Closing a segment recycles nothing.
 
@@ -66,6 +66,7 @@ A split segment leaves your queue but is not done. Orientation says when every p
 ```bash
 harness brief <task> --supersede "what overtook it" --by <replacing-task>
 harness mark <task> --abandon "why it stopped, and what was left"
+harness mark <task> --abandon "why" --requeue-after <task>   # defer it: back in the queue after <task>
 ```
 
 Withdraw structurally, never by writing SUPERSEDED in the text: queue, recycle and spawn read state, not prose. A superseded brief stays readable, is never offered again, and `mark` refuses it. Supersede refuses while a mark is open.
@@ -81,7 +82,7 @@ Comments are context; only the brief instructs. If a comment changes the work, f
 ```bash
 harness queue                       # every node: occupancy, then queue in order
 harness queue dev_1                 # one node
-harness queue dev_1 --order a,b,c --why "..."   # unnamed keep their place behind
+harness queue dev_1 --order a,b,c --why "..."   # --why always required; unnamed keep their place behind
 ```
 
 Order briefs deliberately; an unordered backlog makes the member choose its own work. Rank 0 may reorder any queue, with a reason shown in `harness queue`. You may change it back, but must say why.

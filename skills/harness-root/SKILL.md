@@ -78,7 +78,7 @@ Convert the discussion into a grant, a `T9` ruling or a brief; never relay the t
 
 ## Applying a document request (`T5`)
 
-Requests arrive as exact old→new pairs with a rationale and pinned base. Apply literally. If `old` no longer matches, refuse and return it.
+`harness pairs <task>` shows a submitted batch; `harness pairs apply <task>` re-checks every pair, applies all or none, prints the context around each change (read it for a now-stale neighbouring sentence), and makes one commit with a `Task:` trailer. A refusal names the decayed pair: return it with `harness note`.
 
 ## Rulings (`T9`) and the scope registry (`I3`)
 

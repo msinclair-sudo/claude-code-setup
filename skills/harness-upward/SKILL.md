@@ -136,7 +136,7 @@ The `Stop` hook blocks your turn once if an open mark has work in it and was nev
 
 ## Documents (`T5`)
 
-You never commit a document. Send up an exact old→new pair with a rationale and a pinned base. Rank 0 applies it; if `old` no longer matches, it is refused and returned.
+You never commit a document. Submit the change as data, a JSON list of `{file, old, new, why}` on stdin: `harness pairs submit - --task <task> <<'EOF' … EOF`. Each `old` must occur exactly once on the document branch, byte-exact, so send whole paragraphs; a refusal shows the nearest line. Rank 0 applies the batch whole or not at all.
 
 ## Late instructions, and being recycled (`R13`)
 

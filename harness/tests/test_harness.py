@@ -337,6 +337,68 @@ class Baseline(unittest.TestCase):
         self.assertEqual(e.exception.code, hz.REFUSED)
 
 
+class Pairs(unittest.TestCase):
+    """obs 25, 47: document pairs travel as data and apply all-or-nothing."""
+
+    DOC = "# Schema\n\nFive serve the record object.\nindex position_cluster_by_level ddl=92a\nend\n"
+
+    def setUp(self):
+        import os
+        import subprocess
+        self.env = mock.patch.dict(os.environ, {
+            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        self.repo = Path(tempfile.mkdtemp())
+        self.g = lambda *a: subprocess.run(["git", *a], cwd=self.repo, check=True,
+                                           capture_output=True, text=True).stdout.strip()
+        self.g("init", "-q", "-b", "main")
+        (self.repo / "SCHEMA.md").write_text(self.DOC)
+        self.g("add", ".")
+        self.g("commit", "-q", "-m", "doc")
+        self.ctx = FakeCtx({"main": None, "dev": "main"})
+        self.ctx.tree["nodes"]["main"].update(kind="doc", branch="main")
+        self.ctx.repo = self.ctx.worktree = self.repo
+
+    def run_cmd(self, verb, target=None, task=None, me="dev"):
+        self.ctx.me = me
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), mock.patch("sys.stdout"):
+            return hz.cmd_pairs(mock.Mock(verb=verb, target=target, task=task))
+
+    def pairs(self, *p):
+        return json.dumps([{"file": "SCHEMA.md", "old": o, "new": n, "why": "w"} for o, n in p])
+
+    def test_submit_refuses_zero_and_two(self):
+        rows, _ = hz.pair_report(json.loads(self.pairs(
+            ("index position_cluster_by_level\n", "x\n"))), lambda f: self.DOC)
+        self.assertEqual(rows[0][2], 0)          # obs 25: the decayed anchor
+        self.assertIn("ddl=92a", rows[0][3])     # nearest line names the real one
+        with self.assertRaises(SystemExit):
+            self.run_cmd("submit", self.pairs(("e", "E")), task="t")   # 'e' occurs many times
+
+    def test_apply_is_all_or_nothing_and_one_commit(self):
+        self.run_cmd("submit", self.pairs(("Five serve", "Six serve"), ("end\n", "fin\n")), task="t")
+        before = self.g("rev-list", "--count", "HEAD")
+        self.run_cmd("apply", "t", me="main")
+        self.assertEqual(int(self.g("rev-list", "--count", "HEAD")), int(before) + 1)
+        self.assertIn("Task: t", self.g("log", "-1", "--format=%B"))
+        self.assertIn("Six serve", (self.repo / "SCHEMA.md").read_text())
+
+    def test_decayed_batch_applies_nothing(self):
+        self.run_cmd("submit", self.pairs(("Five serve", "Six serve"), ("end\n", "fin\n")), task="t")
+        (self.repo / "SCHEMA.md").write_text(self.DOC.replace("end\n", "END\n"))
+        self.g("commit", "-qam", "moved")
+        with self.assertRaises(SystemExit):
+            self.run_cmd("apply", "t", me="main")
+        self.assertIn("Five serve", (self.repo / "SCHEMA.md").read_text())
+
+    def test_only_the_document_node_applies(self):
+        self.run_cmd("submit", self.pairs(("Five serve", "Six serve")), task="t")
+        with self.assertRaises(SystemExit):
+            self.run_cmd("apply", "t", me="dev")
+
+
 class Records(unittest.TestCase):
     def test_author_is_not_told_of_own_comment(self):
         ctx = FakeCtx({"main": None, "dev": "main"})

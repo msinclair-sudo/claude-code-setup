@@ -178,7 +178,7 @@ Two sibling leads conflict under `T8`. Then: state the cause before the resoluti
 
 ## `T5` — relaying documents
 
-You write no documents. Review a request from below, deduplicate across children, and pass it up as one.
+You write no documents. Read a child's batch with `harness pairs <task>` (it re-checks every count), and when two children touch one paragraph, submit one merged batch yourself.
 
 ## Recycling
 

@@ -9,7 +9,7 @@ up holding one node, which is the failure the lock exists to prevent.
 This tool does no reasoning. The agent gathers liveness with ListAgents and
 passes it in; this only asserts, derives and writes atomically.
 """
-import argparse, datetime, fnmatch, json, os, re, shlex, shutil, socket, subprocess, sys, time
+import argparse, datetime, difflib, fnmatch, json, os, re, shlex, shutil, socket, subprocess, sys, time
 from pathlib import Path
 
 OK, CONTRACT, NOT_ENROLLED, REFUSED, MISMATCH = 0, 2, 3, 4, 5
@@ -7989,6 +7989,152 @@ def cmd_unenrol(a):
         print("this machine was not enrolled")
 
 
+# ── T5 document pairs, as data (obs 25, 47) ─────────────────────────────────
+
+def parse_pairs(src):
+    """A JSON list of {file, old, new, why}, from a path or the JSON itself."""
+    try:
+        text = Path(src).read_text() if Path(src).is_file() else src
+        pairs = json.loads(text)
+    except Exception as e:
+        die(REFUSED, f"pairs are a JSON list of {{file, old, new, why}}: {e}")
+    if not isinstance(pairs, list) or not pairs:
+        die(REFUSED, "pairs are a non-empty JSON list of {file, old, new, why}")
+    for i, x in enumerate(pairs, 1):
+        if not (isinstance(x, dict) and all(isinstance(x.get(k), str) for k in ("file", "old", "new"))
+                and x["old"]):
+            die(REFUSED, f"pair {i} needs string 'file', 'old' (non-empty) and 'new'")
+    return pairs
+
+
+def pair_report(pairs, read):
+    """Each pair's count in its file, in order, applying earlier pairs first so a
+    batch that edits one file twice is judged as it will be applied. Returns
+    (rows, texts): rows are (i, pair, count, nearest); texts the results."""
+    texts, rows = {}, []
+    for i, x in enumerate(pairs, 1):
+        if x["file"] not in texts:
+            texts[x["file"]] = read(x["file"])
+        t = texts[x["file"]]
+        n = t.count(x["old"]) if t is not None else 0
+        near = None
+        if n == 0 and t is not None:
+            first = next((l for l in x["old"].splitlines() if l.strip()), "")
+            near = (difflib.get_close_matches(first, t.splitlines(), n=1, cutoff=0.5)
+                    or [None])[0]
+        if n == 1:
+            texts[x["file"]] = t.replace(x["old"], x["new"], 1)
+        rows.append((i, x, n, near))
+    return rows, texts
+
+
+def print_pair_report(rows):
+    for i, x, n, near in rows:
+        print(f"  {'ok ' if n == 1 else 'BAD'} {i:>2}  {x['file']}  count {n}"
+              + (f"  — {x['why']}" if x.get("why") else ""))
+        if n == 0 and near is not None:
+            first = next((l for l in x["old"].splitlines() if l.strip()), "")
+            print(f"         old:     {first[:100]}\n         nearest: {near[:100]}")
+    return all(n == 1 for _, _, n, _ in rows)
+
+
+def doc_node(ctx):
+    return next(((n, v) for n, v in ctx.tree["nodes"].items() if v.get("kind") == "doc"),
+                (None, {}))
+
+
+def pairs_path(ctx, task):
+    return ctx.state_file("pairs", task, ".json")
+
+
+def cmd_pairs(a):
+    """`pairs submit <json> --task T`, `pairs <T>`, `pairs apply <T>`."""
+    ctx = Ctx(); ctx.require_enrolled()
+    node, spec = ctx.node()
+    dn, ds = doc_node(ctx)
+    branch = ds.get("branch")
+
+    def on_branch(path):
+        rc, out, _ = git("show", f"{branch}:{path}", cwd=ctx.repo)
+        return out + "\n" if rc == 0 else None   # git() strips; the file ends in one
+
+    if a.verb == "submit":
+        if not a.task:
+            die(REFUSED, "which task do these pairs serve? --task <task>")
+        pairs = parse_pairs(a.target or "")
+        rows, _ = pair_report(pairs, on_branch)
+        ok = print_pair_report(rows)
+        if not ok:
+            die(REFUSED, f"every old must occur exactly once in {branch}'s copy. Fix the "
+                         f"BAD pair(s) and submit again — send whole paragraphs, byte-exact.")
+        rec = {"task": a.task, "by": node, "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+               "base": git("rev-parse", branch, cwd=ctx.repo)[1].strip(),
+               "pairs": pairs, "applied": None}
+        f = pairs_path(ctx, a.task)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(rec, indent=2) + "\n")
+        print(f"submitted {len(pairs)} pair(s) for {a.task} — {dn} applies them: "
+              f"harness pairs apply {a.task}")
+        return
+    task = a.target if a.verb == "apply" else a.verb
+    f = pairs_path(ctx, task or "")
+    if not task or not f.exists():
+        die(REFUSED, f"no pairs submitted for '{task}'")
+    rec = json.loads(f.read_text())
+    if a.verb != "apply":
+        print(f"{task}: {len(rec['pairs'])} pair(s) from {rec['by']} at {rec['at']}"
+              + (f", applied in {rec['applied'][:8]}" if rec.get("applied") else ""))
+        rows, _ = pair_report(rec["pairs"], on_branch)
+        print_pair_report(rows)
+        return
+    pairs_apply(ctx, node, spec, task, rec, f)
+
+
+def pairs_apply(ctx, node, spec, task, rec, f):
+    """Rank 0 applies a stored batch: all pairs or none, one commit."""
+    if spec.get("kind") != "doc":
+        die(REFUSED, "only the document node applies pairs (T5)")
+    if rec.get("applied"):
+        die(REFUSED, f"already applied in {rec['applied'][:8]}")
+    files = sorted({x["file"] for x in rec["pairs"]})
+    rc, dirt, _ = git("status", "--porcelain", "--", *files, cwd=ctx.worktree)
+    if dirt.strip():
+        die(REFUSED, f"uncommitted changes in {', '.join(files)} — commit or stash first")
+    def read(path):
+        p = ctx.worktree / path
+        return p.read_text() if p.is_file() else None
+    rows, texts = pair_report(rec["pairs"], read)
+    if not print_pair_report(rows):
+        die(REFUSED, f"not applied: a pair no longer matches exactly once. Return the "
+                     f"batch to {rec['by']} — harness note {task} --add \"...\"")
+    for path, t in texts.items():
+        (ctx.worktree / path).write_text(t)
+    for _, x, _, _ in rows:          # context around each change (obs 47)
+        t = texts[x["file"]]
+        at = t.find(x["new"]) if x["new"] else -1
+        if at >= 0:
+            before = t[:at].splitlines()[-2:]
+            after = t[at + len(x["new"]):].splitlines()[1:3]
+            print(f"  ── {x['file']}")
+            for l in before + ["» " + l for l in x["new"].splitlines()] + after:
+                print(f"     {l[:110]}")
+    git("add", "--", *files, cwd=ctx.worktree)
+    msg = (f"Apply {len(rows)} document pair(s) from {task} ({rec['by']})\n\n"
+           + "".join(f"- {x['file']}: {x.get('why') or '(no reason given)'}\n"
+                     for _, x, _, _ in rows)
+           + f"\nTask: {task}\n")
+    rc, out, err = git("commit", "-q", "-m", msg, cwd=ctx.worktree)
+    if rc:
+        git("reset", "-q", "--", *files, cwd=ctx.worktree)
+        git("checkout", "--", *files, cwd=ctx.worktree)
+        die(REFUSED, f"the commit was refused and the files restored; nothing applied:\n"
+                     f"{err or out}")
+    sha = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
+    rec.update(applied=sha, applied_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
+    f.write_text(json.dumps(rec, indent=2) + "\n")
+    print(f"applied {len(rows)} pair(s) from {task} in {sha[:8]}")
+
+
 def read_dash_from_stdin(a):
     """`--write -` takes the body from stdin instead of from argv.
 
@@ -8312,6 +8458,11 @@ def main():
     ps.add_argument("--quiet", action="store_true",
                     help="print nothing and exit 0 when not enrolled")
     add("unenrol", cmd_unenrol)
+    pa = add("pairs", cmd_pairs)
+    pa.add_argument("verb", metavar="submit|apply|TASK",
+                    help="submit <json> --task T, apply <T>, or a task to show")
+    pa.add_argument("target", nargs="?", help="the JSON (path, or - for stdin) or task")
+    pa.add_argument("--task", help="with submit: the task the pairs serve")
     fo = add("focus", cmd_focus)
     fo.add_argument("task", nargs="*",
                     help="tasks, segments or globs (quote them: 'enrich*') the owner put "

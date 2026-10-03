@@ -100,10 +100,11 @@ harness brief <task> --for <child> --with <previous-task> --why "..." --write ".
 ```bash
 harness focus <task|'glob*'>... [--why "..."]   # set
 harness focus                        # show
+harness focus --add <task> | --remove <task>
 harness focus --clear
 ```
 
-While set, nags about work outside it fold into one line and `whoami`'s "next" names only in-focus work.
+While set, nags about work outside it fold into one line. Queues are never filtered: a lead sees in-focus work first, and a lane's out-of-focus task is labelled, not hidden. A `--supersede --by` replacement inherits its predecessor's place.
 
 ## Orientation and your todo list
 

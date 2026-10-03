@@ -839,8 +839,14 @@ def _whoami(a):
         fam = focus_family(ctx)
         if fam is not None:
             print(f"focus    {', '.join(focus_tasks(ctx))}"
-                  f" — the owner's priority; other work waits")
-            head = [b for b in head if in_focus(fam, b["task"])]
+                  f" — the owner's priority")
+            # Focus orders and labels; it never empties a queue (obs 55). A lead
+            # sees in-focus work first; a member keeps its lead's order.
+            if ctx.children(node):
+                head = sorted(head, key=lambda b: not in_focus(fam, b["task"]))
+        def outside(b):
+            return ("  (outside the owner's focus; your lead ordered it)"
+                    if fam is not None and not in_focus(fam, b["task"]) else "")
         openm = [t for t, r in open_marks(ctx).items() if r.get("_node") == node]
         # A LEAD used to get a bare list here and no order — "handed 3 briefs" —
         # which names no first thing and does not say to begin. So it asked, and
@@ -848,8 +854,8 @@ def _whoami(a):
         # line is the same at every rank now; only the verb changes.
         if head and ctx.children(node) and not openm:
             b0 = head[0]
-            print(f"next     {b0['task']} — your brief is the instruction, not a "
-                  f"proposal. Read it,")
+            print(f"next     {b0['task']}{outside(b0)} — your brief is the instruction, "
+                  f"not a proposal. Read it,")
             print(f"         then split it for {', '.join(ctx.children(node))} or "
                   f"open it yourself:")
             print(f"           harness brief {b0['task']}")
@@ -867,8 +873,8 @@ def _whoami(a):
             # which ends the session on a question and idles the node. One task,
             # named, with the two commands that begin it.
             b0 = head[0]
-            print(f"next     {b0['task']} — the brief is your instruction, not a "
-                  f"proposal.")
+            print(f"next     {b0['task']}{outside(b0)} — the brief is your instruction, "
+                  f"not a proposal.")
             print(f"         Nothing further is coming and nobody is waiting to be "
                   f"asked. Begin:")
             print(f"           harness brief {b0['task']}    then    "
@@ -2257,6 +2263,10 @@ def focus_family(ctx):
     todo = list(fam)
     while todo:
         k = todo.pop()
+        # A replacement (`--supersede --by`) inherits its predecessor's place (obs 56).
+        nxt = tkey((briefs.get(k) or {}).get("superseded_for") or "")
+        if nxt and nxt not in fam:
+            fam.add(nxt); todo.append(nxt)
         for c, b in briefs.items():
             if c not in fam and tkey(b.get("from") or "") == k:
                 fam.add(c); todo.append(c)
@@ -2268,13 +2278,14 @@ def in_focus(fam, task):
 
 
 def cmd_focus(a):
-    """The owner's priority. While set, nags about work outside it fold into one line."""
+    """The owner's priority. Nags outside it fold into one line; queues are never
+    filtered by it, only labelled."""
     ctx = Ctx(); ctx.require_enrolled()
     f = ctx.state / "focus.json"
     if a.clear:
         f.unlink(missing_ok=True); print("focus cleared"); return
-    if not a.task:
-        cur = focus_tasks(ctx)
+    cur = focus_tasks(ctx)
+    if not (a.task or a.add or a.remove):
         if not cur:
             print("no focus set"); return
         r = json.loads(f.read_text())
@@ -2282,13 +2293,24 @@ def cmd_focus(a):
         print(f"focus: {', '.join(cur)}  ({r.get('why') or 'no reason given'}, "
               f"set {r.get('at')}; {len(fam)} task(s) in it)")
         return
-    f.write_text(json.dumps({"tasks": a.task, "why": a.why or "",
+    gone = {tkey(t) for t in (a.remove or [])}
+    tasks = [t for t in (a.task or cur) + (a.add or []) if tkey(t) not in gone]
+    tasks = list(dict.fromkeys(tasks))
+    if not tasks:
+        f.unlink(missing_ok=True); print("focus cleared — nothing left in it"); return
+    why = a.why or (json.loads(f.read_text()).get("why") if f.exists() and not a.task else "")
+    f.write_text(json.dumps({"tasks": tasks, "why": why or "",
                              "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}) + "\n")
     fam = focus_family(ctx) or set()
-    print(f"focus: {', '.join(a.task)} — {len(fam)} task(s) in it; "
+    print(f"focus: {', '.join(tasks)} — {len(fam)} task(s) in it; "
           f"nags outside fold into one line")
     if not fam:
         print("  nothing matches yet — check the names (`harness queue`)")
+    # What it leaves out, so a gap is seen now rather than by a lane (obs 55).
+    for n in sorted(ctx.tree["nodes"]):
+        left = [b["task"] for b in queue(ctx, n) if not in_focus(fam, b["task"])]
+        if left:
+            print(f"  outside  {n:<10} {', '.join(left)}")
 
 
 def queue_items(ctx, node):
@@ -8292,7 +8314,10 @@ def main():
     add("unenrol", cmd_unenrol)
     fo = add("focus", cmd_focus)
     fo.add_argument("task", nargs="*",
-                    help="tasks, segments or globs (quote them: 'enrich*') the owner put first")
+                    help="tasks, segments or globs (quote them: 'enrich*') the owner put "
+                         "first; replaces the list. Queues are labelled, never filtered.")
+    fo.add_argument("--add", nargs="+", metavar="TASK", help="add to the current list")
+    fo.add_argument("--remove", nargs="+", metavar="TASK", help="remove from the current list")
     fo.add_argument("--why", help="one line")
     fo.add_argument("--clear", action="store_true")
     a = p.parse_args()

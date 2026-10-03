@@ -160,6 +160,27 @@ class Focus(unittest.TestCase):
     def test_unset_is_none(self):
         self.assertIsNone(hz.focus_family(self.ctx))
 
+    def test_replacement_inherits_focus(self):
+        # obs 56: --supersede --by dropped the replacement out of focus.
+        d = self.ctx.dir / "briefs"
+        (d / "chrome_over_canvas.json").write_text(json.dumps(
+            {"superseded_for": "chrome-over-canvas-resumed"}))
+        (d / "chrome_over_canvas_resumed.json").write_text(json.dumps({}))
+        fam = self.focus({"tasks": ["chrome-over-canvas"]})
+        self.assertIn("chrome_over_canvas_resumed", fam)
+
+    def test_add_and_remove_edit_the_list(self):
+        self.focus({"tasks": ["enrich*"], "why": "owner"})
+        self.ctx.tree = {"nodes": {"main": {}}}
+        args = dict(task=[], add=None, remove=None, clear=False, why=None)
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.object(hz, "queue", return_value=[]), mock.patch("sys.stdout"):
+            hz.cmd_focus(mock.Mock(**{**args, "add": ["surface-polish"]}))
+            self.assertEqual(hz.focus_tasks(self.ctx), ["enrich*", "surface-polish"])
+            hz.cmd_focus(mock.Mock(**{**args, "remove": ["enrich*"]}))
+            self.assertEqual(hz.focus_tasks(self.ctx), ["surface-polish"])
+        self.assertEqual(json.loads((self.ctx.dir / "focus.json").read_text())["why"], "owner")
+
 
 class FactStaleness(unittest.TestCase):
     """obs 54: a reader on another branch is not evidence the tree moved."""

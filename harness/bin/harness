@@ -5705,6 +5705,30 @@ def queue(ctx, node):
     return rows
 
 
+def reparent_check(ctx, task, b, from_task, move):
+    """Re-parenting changes what BOTH segments read as settled (obs 45), so it
+    is refused without --move, and printed with it."""
+    old = (b or {}).get("from")
+    if not (old and from_task and tkey(from_task) != tkey(old)):
+        return
+    if not move:
+        die(REFUSED, f"'{task}' is already a part of '{old}'. Moving it to "
+                     f"'{from_task}'\n           changes what both segments count as "
+                     f"settled. Add --move if that is meant.")
+    mine = task_state(ctx, task) in ("closed", "superseded")
+    for seg, delta in ((old, -1), (from_task, +1)):
+        d, t = segment_count(ctx, seg)
+        print(f"  {seg}: {d}/{t} settled → {d + delta * mine}/{t + delta}")
+
+
+def segment_count(ctx, seg):
+    """(settled, total) parts of a split segment, per `delegated`."""
+    _, sb = load_brief(ctx, seg)
+    x = next((x for x in delegated(ctx, (sb or {}).get("node"))
+              if tkey(x["key"]) == tkey(seg)), None)
+    return (x["done"], len(x["children"])) if x else (0, 0)
+
+
 def next_seq(ctx, node):
     """A new brief joins the BACK of an ordered queue (obs 14). Unordered, it
     keeps write order."""
@@ -6063,6 +6087,7 @@ def cmd_brief(a):
                 f"           If you really did mean to reassign this one, --force.")
 
         parent_task = a.from_task or (b or {}).get("from")
+        reparent_check(ctx, a.task, b, a.from_task, a.move)
         if parent_task:
             # Splitting is passing your OWN brief down one rank, so the parent
             # brief must be one written for you. Anything else is a lead
@@ -8020,6 +8045,8 @@ def main():
                     help="run in the SAME session as TASK, instead of being queued")
     br.add_argument("--why", metavar="TEXT",
                     help="why coupling is worth keeping a session alive (required with --with)")
+    br.add_argument("--move", action="store_true",
+                    help="with --from, re-parent a brief that already has a parent")
     br.add_argument("--from", dest="from_task", metavar="TASK",
                     help="the brief handed to you that this one splits")
     br.add_argument("--from-block", dest="from_block", metavar="NEED",

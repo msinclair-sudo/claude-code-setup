@@ -240,6 +240,21 @@ class Reorder(unittest.TestCase):
         self.assertEqual(e.exception.code, hz.REFUSED)
 
 
+class Reparent(unittest.TestCase):
+    def test_moving_a_part_needs_move(self):
+        # obs 45: --from on a revision silently moved the brief's lineage.
+        ctx = FakeCtx({"main": None})
+        b = {"from": "enrich-import-bib"}
+        with self.assertRaises(SystemExit) as e:
+            hz.reparent_check(ctx, "s5-live", b, "enrich-keyed-via-cli", False)
+        self.assertEqual(e.exception.code, hz.REFUSED)
+        # same parent, spelled differently: not a move
+        hz.reparent_check(ctx, "s5-live", b, "enrich_import_bib", False)
+        with mock.patch.object(hz, "segment_count", return_value=(3, 4)), \
+             mock.patch.object(hz, "task_state", return_value="open"):
+            hz.reparent_check(ctx, "s5-live", b, "enrich-keyed-via-cli", True)
+
+
 class Records(unittest.TestCase):
     def test_author_is_not_told_of_own_comment(self):
         ctx = FakeCtx({"main": None, "dev": "main"})

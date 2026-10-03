@@ -2867,6 +2867,10 @@ def cmd_mark(a):
         if rec.get("_closed_at"):
             die(REFUSED, f"'{a.task}' is already closed")
         owner = rec.get("_node") or node
+        if a.requeue_after and tkey(a.requeue_after) not in {
+                tkey(b["task"]) for b in queue(ctx, owner)}:
+            die(REFUSED, f"'{a.requeue_after}' is not queued for '{owner}' — "
+                         f"name a task in `harness queue {owner}`")
         rec["_abandoned_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
         rec["_abandoned_by"] = f"{node} (session {sid[:8]})" if sid else "operator"
         rec["_abandoned_why"] = a.abandon
@@ -2874,6 +2878,9 @@ def cmd_mark(a):
         rec["_closed_by"] = rec["_abandoned_by"]
         f.write_text(json.dumps(rec, indent=2) + "\n")
         print(f"abandoned {a.task} on {owner}: {a.abandon}")
+        if a.requeue_after:
+            requeue_after(ctx, f, owner, a.task, a.requeue_after, f"{node}", a.abandon)
+            return
         print(f"  It is off the board and recorded as UNFINISHED, not signed off.")
         print(f"  It does NOT return to the queue — parking it was deliberate. The "
               f"brief is\n  untouched and still readable; if the work is still "
@@ -5721,6 +5728,26 @@ def reparent_check(ctx, task, b, from_task, move):
         print(f"  {seg}: {d}/{t} settled → {d + delta * mine}/{t + delta}")
 
 
+def requeue_after(ctx, mark_file, owner, task, after, me, why):
+    """Park an abandoned mark and put its brief back in the queue after
+    `after` (obs 52). The record is kept under marks/parked/, which nothing
+    that reads open marks looks in."""
+    parked = mark_file.parent / "parked"
+    parked.mkdir(parents=True, exist_ok=True)
+    mark_file.rename(parked / f"{mark_file.stem}-{time.strftime('%Y%m%dT%H%M%S')}.json")
+    order = [b for b in queue(ctx, owner) if not b.get("coupled_to")]
+    mine = next(b for b in order if tkey(b["task"]) == tkey(task))
+    order.remove(mine)
+    at = next(i for i, b in enumerate(order) if tkey(b["task"]) == tkey(after)) + 1
+    order.insert(at, mine)
+    stamp = {"ordered_by": me, "ordered_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+             "ordered_why": f"requeued after {after}: {why}"}
+    for i, b in enumerate(order):
+        b.update(stamp, seq=i)
+        ctx.state_file("briefs", b["task"], ".json").write_text(json.dumps(b, indent=2) + "\n")
+    print(f"  requeued: {' → '.join(b['task'] for b in order)}")
+
+
 def segment_count(ctx, seg):
     """(settled, total) parts of a split segment, per `delegated`."""
     _, sb = load_brief(ctx, seg)
@@ -7915,6 +7942,8 @@ def main():
     mk.add_argument("--force", action="store_true", help="re-mark, discarding the earlier position")
     mk.add_argument("--done", action="store_true",
                     help="present it as finished and record what it cost; your lead closes it")
+    mk.add_argument("--requeue-after", metavar="TASK",
+                    help="with --abandon: put the task back in the queue after TASK")
     mk.add_argument("--abandon", metavar="WHY",
                     help="park it: work stops and nothing was finished. Not --done, "
                          "which is a lie, and not --close, which reads as finished")

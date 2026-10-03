@@ -255,6 +255,24 @@ class Reparent(unittest.TestCase):
             hz.reparent_check(ctx, "s5-live", b, "enrich-keyed-via-cli", True)
 
 
+class Requeue(unittest.TestCase):
+    def test_abandoned_task_returns_after_the_named_one(self):
+        # obs 52: abandoning to put another task first dropped it from the queue.
+        ctx = FakeCtx({"main": None, "dev": "main"})
+        (ctx.dir / "briefs").mkdir()
+        for i, t in enumerate(["a", "b", "c"]):
+            (ctx.dir / "briefs" / f"{t}.json").write_text(json.dumps(
+                {"task": t, "node": "dev", "seq": i}))
+        (ctx.dir / "marks").mkdir()
+        mf = ctx.dir / "marks" / "b.json"
+        mf.write_text(json.dumps({"_node": "dev", "_abandoned_at": "x", "_closed_at": "x"}))
+        self.assertEqual([b["task"] for b in hz.queue(ctx, "dev")], ["a", "c"])
+        hz.requeue_after(ctx, mf, "dev", "b", "c", "dev", "pmc first")
+        self.assertEqual([b["task"] for b in hz.queue(ctx, "dev")], ["a", "c", "b"])
+        self.assertFalse(mf.exists())
+        self.assertEqual(len(list((ctx.dir / "marks" / "parked").glob("b-*.json"))), 1)
+
+
 class Records(unittest.TestCase):
     def test_author_is_not_told_of_own_comment(self):
         ctx = FakeCtx({"main": None, "dev": "main"})

@@ -273,6 +273,49 @@ class Requeue(unittest.TestCase):
         self.assertEqual(len(list((ctx.dir / "marks" / "parked").glob("b-*.json"))), 1)
 
 
+class Baseline(unittest.TestCase):
+    """obs 42: a check red at every commit says nothing; compare with a baseline."""
+
+    def test_failed_files(self):
+        self.assertEqual(hz.failed_files("x\nfailed: b.py(1) a.py(2)\nran 3"), ["a.py", "b.py"])
+        self.assertEqual(hz.failed_files("failed: none\n"), [])
+        self.assertIsNone(hz.failed_files("FAIL somewhere\n"))
+        self.assertEqual(hz.failed_files("failed: a.py\n...\nfailed: c.py(1)"), ["c.py"])
+
+    def test_diff_new_gone_same_whole_arm_and_not_run(self):
+        base = {"arms": {"a": {"failed": True, "files": ["x.py", "y.py"]},
+                         "b": {"failed": True, "files": None},
+                         "c": {"failed": False, "files": []}}}
+        rows = [{"name": "a", "exit": 1, "failedFiles": ["y.py", "z.py"]},
+                {"name": "b", "exit": 1, "failedFiles": None},
+                {"name": "c", "exit": 124, "timedOut": True},
+                {"name": "d", "exit": 1, "failedFiles": ["q.py"]}]
+        d = hz.baseline_diff(rows, base)
+        self.assertEqual((d["a"]["new"], d["a"]["gone"], d["a"]["same"]), (["z.py"], ["x.py"], 1))
+        self.assertEqual((d["b"]["new"], d["b"]["same"]), ([], 1))
+        self.assertTrue(d["c"]["notrun"])
+        self.assertEqual(d["d"]["new"], ["q.py"])
+
+    def run_check(self, command):
+        ctx = FakeCtx({"main": None, "dev": "main"})
+        ctx.me, ctx.branch, ctx.worktree = "dev", "dev", ctx.dir
+        (ctx.dir / "checks").mkdir()
+        hz.baseline_path(ctx).write_text(json.dumps(
+            {"sha": "b" * 40, "arms": {"arm": {"failed": True, "files": ["a.py"]}}}))
+        a = mock.Mock(set_baseline=False, timeout=30)
+        chk = [{"name": "arm", "command": command, "blindSpot": "-"}]
+        with mock.patch.object(hz, "Ctx", return_value=ctx), \
+             mock.patch.object(hz, "load_checks", return_value=chk), \
+             mock.patch("sys.stdout"):
+            return hz.cmd_check(a)
+
+    def test_known_reds_pass_and_a_new_red_refuses(self):
+        self.assertIsNone(self.run_check("echo 'failed: a.py(1)'; exit 1"))
+        with self.assertRaises(SystemExit) as e:
+            self.run_check("echo 'failed: a.py(1) b.py(1)'; exit 1")
+        self.assertEqual(e.exception.code, hz.REFUSED)
+
+
 class Records(unittest.TestCase):
     def test_author_is_not_told_of_own_comment(self):
         ctx = FakeCtx({"main": None, "dev": "main"})

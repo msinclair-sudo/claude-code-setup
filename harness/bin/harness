@@ -2799,6 +2799,12 @@ def cmd_mark(a):
         if _rep is None:
             print(f"  NOT CHECKED at {_sha[:8]} — nothing has run the check set against "
                   f"this commit.\n  Your lead will see that too:  harness check")
+        elif _rep.get("baseline") and not _rep.get("new"):
+            print(f"  checks at {_sha[:8]}: no new failures against baseline "
+                  f"{_rep['baseline'][:8]}")
+        elif _rep.get("baseline"):
+            print(f"  CHECKS at {_sha[:8]}: {_rep['new']} NEW failure(s) against the "
+                  f"baseline. Say so in your report.")
         elif not _rep.get("passed"):
             print(f"  CHECKS FAILED at {_sha[:8]} — {_rep.get('failed')} of "
                   f"{len(_rep.get('checks') or [])}. Presenting anyway is a choice;\n"
@@ -3237,6 +3243,101 @@ def read_check_report(ctx, node, sha):
         return None
 
 
+_FAILED_LINE = re.compile(r"^failed:\s*(.*)$", re.M)
+
+
+def failed_files(out):
+    """The files an arm says failed, from its last `failed: a.py(1) b.py(2)` line
+    ('failed: none' is an empty list), or None when the arm prints no such line."""
+    hits = _FAILED_LINE.findall(out or "")
+    if not hits:
+        return None
+    toks = hits[-1].split()
+    if toks in ([], ["none"]):
+        return []
+    return sorted({re.sub(r"\(\d+\)$", "", t) for t in toks})
+
+
+def baseline_path(ctx):
+    return ctx.state / "checks" / "baseline.json"
+
+
+def load_baseline(ctx):
+    try:
+        return json.loads(baseline_path(ctx).read_text())
+    except Exception:
+        return None
+
+
+def baseline_diff(rows, base):
+    """Each arm against the baseline (obs 42): {arm: {new, gone, same, notrun}}.
+    An arm without a file list compares as a whole; an arm missing from the
+    baseline counts its failures as new."""
+    out = {}
+    for r in rows:
+        b = (base.get("arms") or {}).get(r["name"]) or {"failed": False, "files": []}
+        if r.get("timedOut") or r.get("exit") == 125:
+            out[r["name"]] = {"new": [], "gone": [], "same": 0, "notrun": True}
+            continue
+        now, was = r.get("failedFiles"), b.get("files")
+        failing = r.get("exit") != 0
+        if now is None or was is None:
+            new = ["(arm)"] if failing and not b.get("failed") else []
+            gone = ["(arm)"] if b.get("failed") and not failing else []
+            same = int(failing and bool(b.get("failed")))
+        else:
+            new, gone = sorted(set(now) - set(was)), sorted(set(was) - set(now))
+            same = len(set(now) & set(was))
+        out[r["name"]] = {"new": new, "gone": gone, "same": same, "notrun": False}
+    return out
+
+
+def baseline_line(d):
+    """One line for an arm's diff, empty when there is nothing to say."""
+    if d["notrun"]:
+        return "vs baseline: NOT RUN"
+    bits = ([f"new {', '.join(d['new'])}"] if d["new"] else []) + \
+           ([f"gone {', '.join(d['gone'])}"] if d["gone"] else []) + \
+           ([f"{d['same']} same"] if d["same"] else [])
+    return "vs baseline: " + " · ".join(bits) if bits else ""
+
+
+def baseline_summary(rep, base):
+    """The verdict line for a report compared with the baseline."""
+    diff = baseline_diff(rep.get("checks") or [], base)
+    known = sum(d["same"] for d in diff.values())
+    new = sum(len(d["new"]) + d["notrun"] for d in diff.values())
+    if new:
+        return f"{new} NEW failure(s) against baseline {str(base.get('sha'))[:8]}"
+    return (f"no new failures against baseline {str(base.get('sha'))[:8]}"
+            f" ({known} known)")
+
+
+def set_baseline(ctx, node, why):
+    """Record the baseline from the report already stored at HEAD."""
+    if not ctx.children(node):
+        die(REFUSED, "a leaf does not set the baseline — its lead or rank 0 does")
+    if not (why or "").strip():
+        die(REFUSED, 'say why: harness check --set-baseline --why "..."')
+    sha = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
+    rep = read_check_report(ctx, node, sha)
+    if rep is None:
+        die(REFUSED, f"no check report at {sha[:8]} — run `harness check` first")
+    old = load_baseline(ctx)
+    base = {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "by": node, "node": node,
+            "sha": sha, "why": why,
+            "arms": {r["name"]: {"failed": r.get("exit") != 0,
+                                 "files": r.get("failedFiles")}
+                     for r in rep.get("checks") or []},
+            "history": ((old or {}).pop("history", []) + [old]) if old else []}
+    p = baseline_path(ctx)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(base, indent=2) + "\n")
+    n = sum(len(v["files"] or []) or int(v["failed"]) for v in base["arms"].values())
+    print(f"baseline set at {sha[:8]}: {n} known failure(s) across "
+          f"{sum(v['failed'] for v in base['arms'].values())} arm(s)")
+
+
 def cmd_check(a):
     """I5: run every check in the set, including after one fails, and record it.
 
@@ -3257,7 +3358,10 @@ def cmd_check(a):
     """
     ctx = Ctx(); ctx.require_enrolled()
     node, _ = ctx.node()
+    if a.set_baseline:
+        return set_baseline(ctx, node, a.why)
     checks = load_checks(ctx)
+    base = load_baseline(ctx)
     sha = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
     rc, dirt, _ = git("status", "--porcelain", cwd=ctx.worktree)
     rows, failed = [], 0
@@ -3282,6 +3386,7 @@ def cmd_check(a):
         rows.append({"name": c["name"], "command": c["command"],
                      "blindSpot": c["blindSpot"], "exit": code,
                      "seconds": round(dur, 2), "timedOut": timed_out,
+                     "failedFiles": failed_files(out),
                      "stdout": out[-2000:], "stderr": err[-2000:]})
         verdict = "NOT RUN (timed out)" if timed_out else "PASS" if ok else "FAIL"
         print(f"  {verdict}  {c['name']:<18} {dur:5.1f}s"
@@ -3292,6 +3397,10 @@ def cmd_check(a):
                 print(f"        … {len(lines) - 6} earlier line(s) omitted")   # obs 34
             for line in lines[-6:]:
                 print(f"        {line[:100]}")
+        if base and not ok:
+            bl = baseline_line(baseline_diff(rows[-1:], base)[c["name"]])
+            if bl:
+                print(f"        {bl}")
         # The blind spot is printed beside the RESULT, not filed away in the
         # manifest, because the moment it matters is the moment somebody is
         # deciding what a pass means.
@@ -3301,10 +3410,19 @@ def cmd_check(a):
            "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
            "session": os.environ.get("CLAUDE_CODE_SESSION_ID", ""),
            "passed": failed == 0, "failed": failed, "checks": rows}
+    diff = baseline_diff(rows, base) if base else None
+    if diff is not None:
+        rep["baseline"] = base.get("sha")
+        rep["new"] = sum(len(d["new"]) + d["notrun"] for d in diff.values())
     f = check_report_path(ctx, node, sha)
     f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text(json.dumps(rep, indent=2) + "\n")
     print(f"\n{len(checks) - failed}/{len(checks)} passed — recorded against {sha[:8]}")
+    if diff is not None:
+        print("  " + baseline_summary(rep, base))
+        if rep["new"]:
+            sys.exit(REFUSED)
+        return
     if failed:
         sys.exit(REFUSED)
 
@@ -3622,11 +3740,14 @@ def cmd_review(a):
                   f"{len(_crep.get('checks') or [])}) at {_when(_crep.get('at'))}"
                   + ("   [dirty worktree]" if _crep.get("dirty") else ""))
         else:
-            print(f"   checks       FAILED {_crep.get('failed')} of "
-                  f"{len(_crep.get('checks') or [])}:")
+            _base = load_baseline(ctx) if _crep.get("baseline") else None
+            _diff = baseline_diff(_crep.get("checks") or [], _base) if _base else {}
+            print(f"   checks       " + (baseline_summary(_crep, _base) if _base else
+                  f"FAILED {_crep.get('failed')} of {len(_crep.get('checks') or [])}:"))
             for c in _crep.get("checks") or []:
                 if c.get("exit"):
-                    print(f"                  {c['name']}  exit {c['exit']}")
+                    print(f"                  {c['name']}  exit {c['exit']}"
+                          + (f"  {baseline_line(_diff[c['name']])}" if c["name"] in _diff else ""))
         for c in (_crep or {}).get("checks") or []:
             print(f"                  {c['name']} cannot see: {c['blindSpot'][:70]}")
 
@@ -8137,6 +8258,9 @@ def main():
     ck = add("check", cmd_check)
     ck.add_argument("--timeout", type=int, default=900, metavar="SEC",
                     help="per-check timeout (default 900)")
+    ck.add_argument("--set-baseline", action="store_true",
+                    help="record the failures in the report at HEAD as the known set")
+    ck.add_argument("--why", help="with --set-baseline: one line")
     dc = add("decision", cmd_decision)
     dc.add_argument("name", help="short name for the question")
     dc.add_argument("--ask", help="the question, one line")

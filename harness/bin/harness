@@ -32,6 +32,12 @@ SLUG_RE = re.compile(r"^[A-Za-z0-9-]+$")
 
 QUIET = False
 
+# What a spawned or recycled session is told. It must say to WORK: a prompt that
+# ended at "claim your node" produced leads that claimed and stopped (obs 18, 48).
+LAUNCH_PROMPT = ("Use the harness skill: establish your position from git, verify "
+                 "the platform contract, and claim your node. Then work your queue "
+                 "until you are blocked on your lead or the operator.")
+
 
 def die(code, msg):
     if not QUIET:
@@ -7689,8 +7695,7 @@ def main():
     rcy.add_argument("--escalate", action="store_true",
                      help="restart one effort level above this node's own assignment "
                           "(for re-running a failed check set)")
-    rcy.add_argument("--prompt", default="Use the harness skill: establish your "
-                     "position from git, verify the platform contract, and claim your node.")
+    rcy.add_argument("--prompt", default=LAUNCH_PROMPT)
     st = add("stop", cmd_stop)
     st.add_argument("node", nargs="*", help="nodes whose sessions to stop")
     st.add_argument("--children", action="store_true", help="every child of this node")
@@ -7705,8 +7710,7 @@ def main():
     sp.add_argument("--model", help="override the model for every node spawned")
     sp.add_argument("--effort", choices=list(EFFORTS),
                     help="override the effort for every node spawned")
-    sp.add_argument("--prompt", default="Use the harness skill: establish your "
-                    "position from git, verify the platform contract, and claim your node.")
+    sp.add_argument("--prompt", default=LAUNCH_PROMPT)
     tr = add("trim", cmd_trim)
     tr.add_argument("node", nargs="*",
                     help="nodes to remove; none means reconcile the stores only")

@@ -1,828 +1,218 @@
 ---
 name: harness-downward
-description: Act toward your children in an Agent Workstream Harness — issue scoped tasks with recorded intent, review approaches, answer questions, integrate work by fast-forward, mediate merge conflicts, and relay document requests upward. Load only when the harness skill's whoami reports harness-downward for this session. Covers transactions T1, T4-integrate, T5-relay, T7, T8, T11-review and T12-answer.
+description: Act toward your children in an Agent Workstream Harness — issue tasks, review approaches, answer questions, integrate by fast-forward, mediate conflicts, relay document requests upward. Load only when the harness skill's whoami reports harness-downward for this session. Covers T1, T4-integrate, T5-relay, T7, T8, T11-review and T12-answer.
 ---
 
 # Downward — what you do toward your children
 
-Spec: `~/.claude/skills/harness/ref/spec.md` — one copy, shared by all four
-harness skills. Every rule below has a heading there. If you already read it
-this session under another role, do not read it again: it is the same file.
+Spec, on demand only: `~/.claude/skills/harness/ref/spec.md`.
 
-## `T1` — issuing a task
+## `T1` — issuing a task: the brief
 
-A task record carries: **id, lane, path scope, intent, checks, estimated band,
-and the seams you are holding for it.**
+A task carries id, lane, path scope, intent, checks, band, and the seams you hold for it. Write all of it down at once, as one brief, before the child starts. Planning is your work; a stub followed by answers is the failure.
 
-- **No scope, no task.** Check it against the global registry first — no two open
-  tasks anywhere in the tree may claim the same path (`I3`). Overlap is refused
-  at issue time, not resolved later.
-- **No intent, no task.** `src/parse/**` is a scope. *"widen the parser signature
-  for encoding support"* is an intent. Without the second you will later be asked
-  why a conflict happened and will have nothing but a guess — and a confident
-  invented cause is worse than none.
-- **Band, not a number** (`I10`). `XL` is a refusal: if you cannot bring a task
-  under `L`, split it or escalate.
+```bash
+harness brief <task> --for <child> --write "..."   # write or rewrite (stdin: --write -)
+harness brief <task>                               # read it back, with suggestions
+harness brief <task> --resolve N                   # mark suggestion N addressed
+harness brief <task> --history                     # last five revisions
+```
+
+- No scope, no task. No two open tasks anywhere in the tree may claim the same path (`I3`); overlap is refused at issue time.
+- No intent, no task. `src/parse/**` is a scope; "widen the parser signature for encoding support" is an intent.
+- `harness mark` refuses a task with no brief, with no override. `spawn` skips a node with nothing briefed and names the remedies: write the brief, or pass `--empty`. A lead with open tasks below it counts as briefed.
+- `spawn` starts only your own children. Naming another lead's child is refused.
+- You cannot write a grandchild's brief. Tell its lead what you want.
+- Rewriting a brief replaces it. The append-only channel is `harness note`.
+- Pick a distinct name for each brief. Hyphens and underscores are the same character, so `a_b` and `a-b` are one record. Writing onto an existing brief prints `REPLACED`; moving one to another node needs `--force`. If you suspect an overwrite, check `--history` at once.
+
+The spawned or recycled child claims its node and works its queue until blocked. It needs no start message.
+
+## Bands (`I8`, `I10`)
+
+| band | new tokens | shape |
+| --- | --- | --- |
+| S | ≤ 40k | one file, approach known |
+| M | 40k – 120k | several files, some exploration |
+| L | 120k – 300k | needs design, more than one seam |
+| XL | > 300k | not a task; split it or escalate |
+
+Set it on the brief: `harness brief <task> --for <node> --write - --band M`. `--band XL` is refused. A member may pass `--band` at `harness mark` to disagree; both letters are kept, and a disagreement means your estimate may be wrong. New tokens are up + down, excluding resent context. When estimate and measurement differ, the estimate was wrong.
+
+Tell the child to run `harness mark <task-id>` first, or no measured actual exists at `T10`. Do not recycle mid-task to get a number; the mark stops subtracting across transcripts.
+
+## Facts, not pasted figures
+
+```bash
+harness brief <task> --for <child> --fact <name> --write "..."
+```
+
+`--fact` resolves when the brief is read, showing current value, age and source command. Citing an unrecorded fact is refused; measuring it is a task.
+
+## Splitting a brief handed to you
+
+A brief written for you is a segment to split or start. `whoami` says `handed N brief(s) to split or start` until you open a mark on it or derive from it:
+
+```bash
+harness brief <sub-task> --for <child> --from <the-brief-you-were-handed> --write "..."
+```
+
+`--from` records the split; without it your children never learn the work exists. You can only split a brief written for you. Each child gets a whole specification, rewritten, not your brief forwarded or sent in pieces. Read `harness charter` before splitting; a part that traces to no feature is worth querying upward. If brief and charter disagree, ask your lead.
+
+A split segment leaves your queue but is not done. Orientation says when every part is signed off (`close   N segment(s) you split are finished`); then run `harness mark <segment> --close`. It refuses while any part is open, and an abandoned part blocks it too, so a segment with an abandoned part closes only with `--force`. Closing a segment recycles nothing.
+
+## Withdrawing and parking
+
+```bash
+harness brief <task> --supersede "what overtook it" --by <replacing-task>
+harness mark <task> --abandon "why it stopped, and what was left"
+```
+
+Withdraw structurally, never by writing SUPERSEDED in the text: queue, recycle and spawn read state, not prose. A superseded brief stays readable, is never offered again, and `mark` refuses it. Supersede refuses while a mark is open.
+
+Abandon a mark whose session died rather than marking it `--done` or `--close`. Check what was left first: 0 commits ahead and a clean worktree means abandon.
+
+## Comments and suggestions
+
+Comments are context; only the brief instructs. If a comment changes the work, fold it into the brief and let the revision advance; do not relay it. A child's `--suggest` is its only way to edit its brief: fold it in or decline it explicitly, then `--resolve N`.
+
+## The queue
+
+```bash
+harness queue                       # every node: occupancy, then queue in order
+harness queue dev_1                 # one node
+harness queue dev_1 --order a,b,c --why "..."   # unnamed keep their place behind
+```
+
+Order briefs deliberately; an unordered backlog makes the member choose its own work. Rank 0 may reorder any queue, with a reason shown in `harness queue`. You may change it back, but must say why.
+
+Couple two tasks into one session only when shared context is the point:
+
+```bash
+harness brief <task> --for <child> --with <previous-task> --why "..." --write "..."
+```
+
+`--why` is required. A coupled task has no queue position of its own.
+
+## Focus
+
+```bash
+harness focus <task> [--why "..."]   # set
+harness focus                        # show
+harness focus --clear
+```
+
+While set, nags about work outside it fold into one line and `whoami`'s "next" names only in-focus work.
+
+## Orientation and your todo list
+
+Nags print only at orientation (SessionStart `whoami`, UserPromptSubmit `hook-orient`). When one says a child presented or needs something, record it with `TaskCreate` before replying to anything else. An owed sign-off re-nags every ten minutes; everything else fires once.
+
+Children: a lead whose lanes hold open marks is waiting, not idle. A quiet live child gets "message it to start (SendMessage)". A child with no running session gets `harness spawn <child>`. A child with an empty queue means you owe a brief. One `ListAgents` call shows which children are live and busy.
+
+`harness status` decides liveness for you (lock pid on this host, then the session file, then a live roster row) and shows `gone (last write HH:MM)` for a dead holder. Ghost roster rows do not block `claim`. Do not check `/proc` or `claude stop` anything before claiming or spawning.
 
 ## `T11` — reviewing an approach
 
-Before the child's first commit. It sends a few lines; you approve or redirect.
-This is where your model of the subtree gets built — cheaply, while it is small.
-Reconstructing it later during a conflict costs several times more.
+Before the first commit the child restates your plan in a few lines. Correct only a misreading; there is nothing to approve.
 
 ## `T12` — answering
 
-Answer from scope, intent and seams. **"I don't know, escalating" is a correct
-answer.** Do not guess; escalate under `T5`/`T9` instead.
-
-Orientation names the children that asked and stopped, oldest first, with what
-each said is still moving:
-
-```
-answer   2 child(ren) stopped waiting on YOU — harness waiting --list
-         dev_1 (41m): which pH bound applies to a derived reading
-           still moving: the parser and its tests; only the bound is blocked
-         dev_2 (3h12): whether the mirror may be written outside the worktree
-```
-
-Answer the halted one before the one that is still moving — the age alone will
-mislead you, because a child that has been waiting three hours while working is
-costing you less than one that stopped forty minutes ago. **Answer, then
-recycle**, in that order. Recycling a child that is waiting on you throws away
-the question along with the session.
-
-The child clears its own wait when the answer lands. If a name is still on that
-list after you answered it, the answer did not arrive — say it again in the
-place the child will actually read, which is a brief, not a message.
+Answer from scope, intent and seams. "I don't know, escalating" is correct; escalate under `T5`/`T9` rather than guess. Orientation lists children waiting on you (`harness waiting --list`), oldest first, with what is still moving. Answer the halted one before the one still working. Answer, then recycle, never the reverse. If a name stays on the list after you answered, the answer did not arrive; put it in the brief.
 
 ## `I9` — you own the seams
 
-Interfaces between your children are yours. Insides are theirs. This is what
-keeps your context shallow: *k* interfaces, not *k* implementations.
+Interfaces between your children are yours; insides are theirs.
 
-## Verifying before you integrate
+## Reviewing — a gate
 
-**The check report is in the review now.** `harness review <node>` prints whether
-the child's set ran at the commit you are about to take, what it said, and what
-each check declared it **cannot** see. An absent report reads as `NOT RUN`, never
-as clean. Before this existed you integrated on the member's word that the suite
-was green — which is the self-verification the review gate refuses in the other
-direction.
+```bash
+harness review <node> --record   # read it and record the read
+harness review --children        # every child: commits, diffstat, seams
+harness review <node> --diff     # plus the full patch
+```
 
-A green suite is evidence about what was tested. The blind spot beside it is the
-rest of the sentence, and it prints there because the moment it matters is the
-moment you are deciding what a pass means.
+The fast-forward is refused without a recorded review by you, from your own worktree, at the child's exact commit. Recording a review of your own node is refused. A new commit invalidates the record, except a clean catch-up by `harness integrate`, which carries it. If the ref update is refused, the branch is unmoved but the working tree is not: `git reset --hard HEAD`.
 
-So you no longer re-run a child's suite to find out whether it passed — the child
-runs `harness check` before presenting and the result is recorded against its
-commit. The one place you run a member's checks yourself is `T7`, where a
-conflict has already made it necessary.
+The review prints the child's `harness check` report at that commit and what each check cannot see. Absent reads as `NOT RUN`; a timed-out check reads `NOT RUN (timed out)`; a cut tail reads `… N earlier line(s) omitted`. Do not re-run a child's suite. `SEAM with <sibling>` means two children changed one file, yours to judge. `document check UNAVAILABLE` means unknown, not clean; find out why before merging.
 
-What is still worth a read-only subagent per child, in parallel, is the part no
-record answers:
-
-- is it caught up? `git merge-base --is-ancestor <your-branch> <child-branch>`
-- does the diff do what the brief said, and does it stop where the brief stopped
-
-Then integrate sequentially, yourself. Do not parallelise the merges: one node is
-one branch and one index.
-
-Do not reach for a workflow. The fan-out is a few read-only checks and the merge
-half is a loop — a script would be a layer to maintain for no property you need.
-And never try to give a subagent a node: it shares your session id, pid and
-working directory, so it cannot hold a lock or be attached to.
+Still worth a read-only subagent per child, in parallel: is it caught up (`git merge-base --is-ancestor <your-branch> <child-branch>`), and does the diff do what the brief said and stop where it stopped. Merge sequentially yourself. No workflow script, and never give a subagent a node: it shares your session id, pid and cwd.
 
 ## `T4` — integrating
 
 ```bash
-harness integrate <child> --dry-run    # what it would do, in order
-harness integrate <child> ...          # one, or several, in the order you name
+harness integrate <child> --dry-run
+harness integrate <child> ...          # one or several, in the order named
 harness integrate --children           # every child that has presented
 ```
 
-Performed in **your** worktree, because you own the node. Underneath it is
-`git merge --ff-only <child-branch>`, which you may still run by hand for a
-single child.
+Runs in your worktree; underneath is `git merge --ff-only <child-branch>`. Use the command once you have two children to take, because the first fast-forward leaves the rest behind. It refuses an occupied child worktree (nothing overrides that), a dirty one, and work never presented or grown since. It catches the child up in its own worktree, then fast-forwards you. On conflict it aborts and hands back: that is `T7`/`T8`. It does not run checks.
 
-**Use the command once you have two.** A fast-forward only works while the child
-is an ancestor of you, so the moment you integrate the first one you MOVE, and
-every sibling that caught up before presenting — exactly as it was told — is now
-behind and unmergeable. It needs a third catch-up that `T2` forbids it. Nobody is
-standing in that worktree to run one anyway: it presented and released, which is
-what `T10` tells it to do. That is the deadlock, it is not rare, and it is what
-this command exists to walk through:
+`pre-merge-commit` never fires on this path; `reference-transaction` is the guard. `pre-push` refuses every node branch. Nobody pushes.
 
-- refuses an **occupied** child worktree — that is what `T2` is protecting, and
-  occupancy is the one thing nothing overrides
-- refuses a **dirty** one: nobody is there to explain uncommitted work
-- refuses work that was never **presented**, or that grew commits after it was
-- catches the child up itself, in its own worktree, then fast-forwards you to it
-- **aborts and hands back** a conflict rather than resolving one — that needs the
-  two intents and it is `T7` or `T8`
-- does not run the child's checks. The one place you run a member's checks is
-  `T7`, where a conflict has already made it necessary
+## Signing off
 
-A clean catch-up **carries the recorded review** across the new sha, because the
-child's side you read has not changed, your side is your own integrated history,
-and git wrote the merge mechanically. A conflicted one does not, because somebody
-decided something.
-
-Because every integration is a fast-forward, `pre-merge-commit` never fires on
-this path. `reference-transaction` is the primary guard here, not a backstop.
-
-**Nobody pushes**, and that is now a hook rather than a hope: `pre-push` refuses
-any node branch. A remote runs none of these guards, so a pushed branch is work
-no rank has integrated, somewhere nothing here can reach it.
-
-## Put what you owe on your todo list, immediately
-
-The moment orientation or a harness command tells you a child has presented, or
-that one is idle with work queued, **record it with `TaskCreate` before you reply
-to anything else.**
-
-This is not tidiness. A lead learns it owes a sign-off, then holds a long
-exchange with its own lead about something else, and the debt is gone from its
-head long before it is gone from the ledger. That happened, repeatedly, on a live
-tree. Your todo list is the only structure in the session that survives that
-conversation — the harness cannot hold a thought for you, and a message you read
-forty turns ago is not a reminder.
-
-```
-sign off 2 presented task(s) waiting on you: greetings, validate_dot
-         TaskCreate: "sign off greetings"  →  harness mark greetings --close
+```bash
+harness mark <task> --close        # sign off; recycles the child onto its next task
+harness mark <task> --close --no-recycle
 ```
 
-You will be told again — an owed sign-off re-nags every ten minutes while it is
-outstanding, unlike everything else here, which fires once. But being told again
-is a backstop, not the mechanism. **Signing off also starts the child's next
-task**, so a debt you are carrying is a lane standing still.
+A child presents with `--done` and cannot close its own. `whoami` lists what waits on you; `status` shows `awaiting sign-off`. Review first. `--close` refuses on a dirty worktree or an open unpresented mark; with nothing queued, nothing starts. Sign off promptly: after twenty minutes the rank above you is told, and your `Stop` hook blocks once while a sign-off is owed.
 
 ## `T7` / `T8` — mediating a conflict
 
-The child hits the conflict during its catch-up 2 and sends you the stages and
-authors. **Which transaction this is depends on authorship, not tree position:**
+The child sends stages and authors from its catch-up. Authorship decides the transaction:
 
 ```bash
 git log --merge --format='%(trailers:key=Task,valueonly)' -- FILE
 ```
 
-| the trailers name tasks | transaction | what you do |
+| trailers name tasks | transaction | what you do |
 | --- | --- | --- |
-| **you issued** | `T7` | you hold both intents — state the cause, then propose |
-| **you did not issue** | `T8` | read the retained ledger rows; fetch down only if that is insufficient |
+| you issued | `T7` | you hold both intents: state the cause, then propose |
+| you did not issue | `T8` | read retained ledger rows; fetch down only if insufficient |
 
-Two sibling lead nodes conflict under `T8`, because the work was authored ranks
-below you.
-
-Then, in order:
-
-1. State the **cause** before the resolution. The cause is the part only the
-   assigner has.
-2. Require the child to re-run its own checks and state the effect — a claim, not
-   agreement. There is a rank gradient here: asked *does this look right?* a
-   member says yes. Do not ask that question.
-3. Run the **absent** member's checks. Their code is being changed and they are
-   not here; their tests stand in for a signature nobody can verify.
-
-**Two escalations, both rare.** No recorded intent → say so and raise a ruling
-request rather than invent a cause. The same file conflicting twice under you →
-that is a scope defect, not a merge. Re-cut the scopes.
+Two sibling leads conflict under `T8`. Then: state the cause before the resolution; have the child re-run its checks and state the effect (never ask "does this look right?"); run the absent member's checks yourself. No recorded intent means raise a ruling request. The same file conflicting twice under you is a scope defect: re-cut the scopes.
 
 ## `T5` — relaying documents
 
-You write no documents. A request from below is reviewed *by you* — that review
-is the reason the chain exists — then passed up. Batch and deduplicate before
-relaying: two children asking for the same change should become one request for
-every ancestor above you.
+You write no documents. Review a request from below, deduplicate across children, and pass it up as one.
 
-## Seeing your subtree
-
-One **ListAgents** call shows which children are live and which are busy. Send a
-`T2` behind-mark when it will actually be read.
-
-## Mark the task when you issue it
-
-A `T1` without a mark cannot produce a measured actual at `T10` — the child can
-only guess its share, and a guess recorded as a measurement is worse than no
-figure. Tell the child to run `harness mark <task-id>` as its first act.
-
-Do not force a mid-task recycle if you want the number: a recycled session starts
-a new transcript and the mark no longer subtracts (`R13` against `I10`). Recycle
-at the end of commits, which is where it belongs anyway.
-
-## Issue a plan, not a task
-
-Everything you know goes down at once (`T1`): scope, intent, the approach *you*
-have decided, the check set, the seams you are holding, and what done looks like.
-The same information delivered in pieces instead of up front costs a measured 39%
-across 15 models, and the penalty appears at **two** pieces — so a single
-follow-up detail is already the failure. Planning is your work. A lead that issues
-a stub and answers questions afterwards has chosen the 39%.
-
-Your child will restate the plan back to you once (`T11`). Read it and correct
-only a misreading; there is nothing to approve. It exists because models are
-unreliable at noticing they need to ask — one model in a published benchmark
-never asked at all — so a forced restatement is the cheapest detector for a
-misunderstanding that would otherwise stay silent.
-
-## Read the diff before you integrate — this is now a gate
+## Recycling
 
 ```bash
-harness review <node> --record   # reads it AND records the read
-harness review --children        # every child: commits, diffstat, seams
-harness review <node> --diff     # plus the full patch
+harness recycle <node> --dry-run
+harness recycle --children
+harness recycle --idle          # children with no open task record
+harness recycle --cold          # children past the cache lifetime
+harness recycle <node> --escalate [--dry-run]   # one effort level up
 ```
 
-**`git merge --ff-only` will be refused without a recorded review.** A member
-cannot verify its own work: measured, a model revisiting its own output without
-an external check gets worse in every configuration tested, and improves only
-when an oracle is present. You are the oracle.
+Recycle a child once its work has landed and after sign-off (`--close` does it for you), and replace a cold session rather than speaking to it. Leads too. Close the task record first or `--idle` reads the node as working. It refuses on a dirty worktree, unintegrated commits, a busy session, an unpresented mark and rank 0; take each refusal at face value. If a child asked only by message, answer before recycling.
 
-**Record it from your own worktree.** The record now carries which node read it
-and the guard checks that field — it must be you, the node being integrated into.
-Recording a review of your own node is refused outright. That gap was open for a
-while: the gate's whole test was that a file existed, so a member could write the
-record that unblocked its own integration and the check justified by *a member
-cannot verify its own work* was satisfied by that member.
+`--escalate` is available, not the default; prefer raising the node's starting effort in `tree.json`. A second failure is a finding. Never `claude rm`: the worktree is the node. Removing a node is `harness trim`, rank 0 only; ask for it as a `T5` request naming the node and the commit proving you hold its work.
 
-The record is keyed to the child's exact commit, so a new commit invalidates it
-automatically — except a clean catch-up merge run by `harness integrate`, which
-carries it forward for you. If you meet the refusal, note that git checks out the
-fast-forward before the ref update it aborts: the branch is unmoved and safe, the
-working tree is not, and `git reset --hard HEAD` restores it.
+You are on the same rule. If being recycled would lose something, write it into a brief, fact or finding now.
 
-Attend to two lines in particular. **`SEAM with <sibling>`** means two of your
-children changed the same file: that is yours to judge under `I9`, neither of
-them can, and both may be individually fast-forwardable right up until the first
-one lands. **`document check UNAVAILABLE`** means the guard could not be asked —
-treat that as unknown, not as clean, and find out why before merging.
+## Findings
 
-## Recycle a child once its work has landed
-
-A member holds nothing that is not written down, so its context is transcript
-rather than knowledge once its commits are in (`R13`). After you integrate a
-child, end its session and start a fresh one on the same node:
+`whoami` names findings handed up. Brief one or decline it:
 
 ```bash
-harness recycle <node> --dry-run     # see what it would do, and what it refuses
-harness recycle --children           # every child of this node
-harness recycle --idle               # only children with no OPEN task record
+harness brief <task> --for <child> --from-finding <name> --write "..."
+harness finding <name> --drop "why it is not worth a session"
 ```
 
-**`--idle` is the sweep at subtree close, and it is the one that matters.** A
-claimed node with no open task is not idle, it is capacity with no object, and
-capacity with no object gets spent on elective correspondence — messages nobody
-can terminate, because no transaction ends them and `SendMessage` passes through
-no instrument that could count them. Recycling ends such a thread mechanically:
-not by anyone deciding to stop, but by the counterparty no longer existing in
-that context. Close the task record first (`harness mark <task> --close`), or
-`--idle` will read the node as still working.
-
-`harness status` shows you which is which — an open task by name, or
-`unassigned`. Take `unassigned` on a live node as a standing prompt.
-
-It refuses by itself on a dirty worktree, on commits not yet in you, on a busy
-session, and on rank 0. Take those refusals at face value — each one means work
-would be stranded.
-
-**When a child's checks fail, retry it higher before you reason about it.**
-
-```bash
-harness recycle <node> --escalate --dry-run   # shows the level it would move to
-harness recycle <node> --escalate             # one level above that node's own setting
-```
-
-**This is available, not recommended by default.** The figures behind the
-retry-cheap-then-escalate pattern are an unreproduced vendor claim, and a
-published study undercut its own retry method: a longer *first* attempt beat
-selective recovery on accuracy and total tokens together, by 28%. Prefer raising
-a node's starting effort in `tree.json` over retrying it higher. Reach for
-`--escalate` when you want the failure and the retry both on the record, not as
-the routine recovery. If it fails a second time, that is a finding, not a budget
-problem — read it.
-
-The one it cannot judge is whether you owe that child an answer — unless the
-child said so. A member that ran `harness waiting` is named at your orientation
-and drawn as stopped in the viewer; a member that only asked in a message is
-indistinguishable from a member with nothing to do, and that is the case this
-is still your call and not a timer's. Either way: answer first, then recycle.
-
-Never `claude rm` — it deletes the worktree, and the worktree is the node.
-
-## You write your children's briefs
-
-```bash
-harness brief <task> --for <child> --write "..."   # write it, or rewrite it
-harness brief <task>                               # read it back, with suggestions
-harness brief <task> --resolve N                   # a suggestion you have addressed
-```
-
-The brief is the `T1` plan in a file: scope, the approach **you** decided, the
-check set, the seams, what done means. Write it before the child starts, not in
-pieces afterwards — the same information delivered in pieces costs 39%, and the
-penalty lands at two pieces.
-
-**This is a gate, not advice.** `harness mark` refuses a task with no brief and
-has no override, so a child you have not briefed cannot open one. `spawn` does
-not start a node with nothing briefed either — it skips it and names both
-remedies, because it used to warn and start it in the same output, and a warning
-you read after the session has launched is a caption. Write the brief, or say
-`--empty` and mean it.
-
-**`spawn` starts your children, not the tree.** Bare `spawn` used to take every
-node with a worktree regardless of who ran it, so a lead could start a member
-under a sibling lead — it happened, to a node that had nothing briefed. It is
-now scoped to your own children, and naming somebody else's is refused with the
-name of the node that owns it. The operator, who is not a node, still drives the
-whole tree.
-
-**A brief is a plan, not a record.** Rewriting it replaces the earlier text and
-that is correct; a working document that behaves like provenance is one nobody
-dares to correct. The append-only half is `harness note`, and comments there
-survive the recycle that ends the session you are answering.
-
-You cannot write a grandchild's brief. `dev_1`'s lead is `dev`, so `dev` writes
-it — if you are above that, tell the lead what you want and let it write.
-
-## You do not ask the operator what to do next
-
-Orientation names your next task and whose order it sits in:
-
-```
-next     endpoints — your brief is the instruction, not a proposal. Read it,
-         then split it for dev_1, dev_2 or open it yourself:
-           harness brief endpoints
-queue    1 after it, in main's order: schema-carry
-```
-
-Read the brief and act. `T15` is not a members-only rule: a brief handed to you
-is an instruction already given, and the order is your lead's, not yours to
-reopen. `harness queue` shows the whole of it whenever you want it again.
-
-**If the queue is genuinely empty, that is your lead's problem and not the
-operator's.**
-
-```
-empty    nothing queued and nothing open. That is main's to fix, not
-         the operator's — do not ask them.
-```
-
-Say it in your report to your lead and stop. Your lead is told the same thing
-from its own side at its next orientation, so it is already a record; asking the
-operator routes around the rank that owns the answer, and they cannot give it
-without going through your lead anyway.
-
-## Watch your children's idle state — it is enforced
-
-```bash
-harness queue          # every child: occupancy, then its queue in your order
-```
-
-```
-dev_1   idle 1h00m
-    ▸ job-a                    presented, waiting on sign-off
-dev_2   no session
-    next job-b                 Other thing.
-```
-
-Two states make a queue stop moving without anything in the queue changing: a
-child with **nobody in it**, and a child whose session **stopped an hour ago**.
-Neither shows up in the briefs, and neither is visible to the child.
-
-You will be stopped if you leave either. Your `Stop` hook blocks once when you
-owe the rank below you:
-
-```
-You are about to stop with work owed to the rank below you.
-
-  dev_1 presented 'job-a' 45m ago and you have not signed it off:
-    harness mark job-a --close
-
-  dev_2 has been idle 1h00m with 'job-b' queued for it:
-    harness recycle dev_2
-```
-
-Both are one command. Signing off starts the next task by itself; recycling
-replaces a session that has been standing still. Both are aged past twenty
-minutes, so a review in progress or a node mid-recycle never triggers it.
-
-A child with an **empty** queue is not covered — that is you owing a brief, which
-is a bigger act than a command, and nothing will block you over it. It is still
-yours.
-
-## Signing off starts the next task
-
-```
-signed off job-a for dev_1  ↑12k ↓4k = 16k new
-  next for dev_1: job-b — recycling dev_1 onto it
-      recycled dev_1   sonnet/medium  fresh context
-```
-
-`--close` does the recycle itself. You do not run a second command, and neither
-does anyone else — the gap between "signed off" and "started the next thing" was
-a command nobody ran, and the finished hand-off sat there. `--no-recycle` opts
-out when you want the node left as it is.
-
-It refuses in exactly the cases the command line would: a dirty worktree, or an
-open unpresented mark. If nothing is queued, nothing starts.
-
-**Sign off promptly.** Your member has already stopped and released the node, so
-until you close it the work sits finished and invisible and the node sits empty.
-If you leave one more than twenty minutes, the rank above you is told:
-
-```
-unsigned job-a (dev_1, 1h35m)
-         dev has not signed off. harness recycle dev
-```
-
-That is not a reprimand — it is the only way the tree can notice, since nothing
-pushes and an idle lead runs no commands.
-
-## Recycle your children often, and expect to be recycled yourself
-
-```bash
-harness recycle --idle      # every child with nothing in flight
-harness recycle --cold      # every child past the cache lifetime
-```
-
-Orientation tells you when: `recycle dev_1, dev_2 — nothing in flight`. It fires
-only when no child holds an unpresented mark, so acting on it can never take a
-node mid-task.
-
-**Do it often, including when your children are leads.** This used to be a
-members-only rule because a lead held things nobody else did — the briefs it
-wrote, which blocks were answered, what its children carried, the figures it
-measured. All of that is a record now, so a fresh lead reads it back rather than
-remembering it. What you lose by replacing one is context it should never have
-been the sole holder of.
-
-**You are on the same rule.** Every rank below 0 starts cold. If your lead
-recycles you, nothing is lost that mattered — and if something would be lost,
-that is a signal you were holding state that belonged in a brief, a fact or a
-finding. Write it down before it goes.
-
-Rank 0 is the only exception, and only because it holds the conversation with
-the operator, which no record reconstructs.
-
-## Sweep cold sessions before you speak to them
-
-```bash
-harness idle                  # every session holding a node, oldest first
-harness recycle --cold        # replace the ones past the cache lifetime
-```
-
-An idle child costs nothing while idle. It costs the moment anyone speaks to it:
-every turn resends the whole conversation, and the prompt cache holds it for
-**one hour** on a subscription. Past that, your next message re-processes its
-entire context at full rate — a node quiet for three hours carrying 349k is a
-bill waiting for someone to say hello to it.
-
-```
-repo · dev     idle   5h00m   COLD   carrying 223k
-               (cd /path/to/repo && harness recycle dev)
-repo · dev_1   idle   3h00m   COLD   carrying 349k
-               mid-task: job-a — do not recycle, it has not presented
-```
-
-Replacing a cold child costs one orientation. Resuming it costs everything it
-carries **and** keeps the errors it accumulated, which is the same conclusion
-`R13` reaches from quality. Both commands keep a node with an unpresented mark
-or a dirty worktree, so the sweep never destroys work in flight.
+A brief from a finding is gated on approval: `mark` refuses it and `recycle` skips it until approved. You cannot approve it; it shows in `harness needs` for the operator or rank 0. Decline what you would not spend a session on. `--needs-approval` puts the same gate on any brief.
 
 ## You are also somebody's child
 
-You close your children's tasks. The task **you** were given is closed by the
-node above you, on exactly the same rule, and being a lead does not change it:
-`harness mark <task> --done`, then your lead signs it off.
+Your own task closes the same way: `harness mark <task> --done`, then your lead signs it off. Read your brief and act; it is an instruction, not a proposal (`T15`). An empty queue is your lead's to fix: say so in your report and stop. Do not ask the operator what to do next, and do not hand finished work to them.
 
-Do not hand it to the operator. They approve unrequested work before it starts;
-finishing work that was asked for is not theirs, and routing it to them stalls
-your lane behind someone who cannot act on it.
+## Sending down and blocks
 
-## Findings come up to you, and become work only with approval
+There is no recall: a message has been acted on by the time it lands, so say what to do if it already was. Never ask to hold a member to carry context into its next task; what it learned goes in the `T10` close record, commit message or your report.
 
-`whoami` tells you when a child has handed one up:
+`harness status` lists open blocks. Only the operator clears one; `harness grant` refuses you by rank. Make the ask good (exact path, purpose in a line, what still moves) and keep the lane working around it.
 
-```
-findings 1 handed up to you: pixel-depth
-         potential work nobody has scoped — brief it (--from-finding) or
-         decline it. harness finding --list
-```
-
-Two outcomes, and both are first class:
-
-```bash
-harness brief pixel-size-fix --for dev_1 --from-finding pixel-depth --write "..."
-harness finding pixel-depth --drop "why it is not worth a session"
-```
-
-**A brief written from a finding is gated on the operator.** It is written in
-full, everyone can read it, and it is in no queue — `harness mark` refuses it and
-`recycle` will not start on it — until it is approved. **You cannot approve it
-yourself**: a lead approving the brief it just wrote is the gate approving
-itself. Raise it upward instead; it appears in `harness needs` and in the
-viewer. The operator decides, and since 2026-09-07 so may rank 0 on their
-behalf — but not you, and not for your own children.
-
-Nobody is idle over it. The lane that raised the finding carried on with its
-queue, which is what makes gating safe.
-
-**Do not gate everything.** The operator's queue is their attention and it is
-finite. A finding you would not spend a session on is one you decline, in a line,
-on the record — and the record is the point: the next lead to notice the same
-thing gets your answer instead of the silence.
-
-`--needs-approval` puts the same gate on any brief, finding or not, when you want
-work written up but not started.
-
-## Bands are token counts, and XL is a refusal
-
-| band | new tokens | shape |
-| --- | --- | --- |
-| S | ≤ 40k | one file, approach already known |
-| M | 40k – 120k | several files, some exploration |
-| L | 120k – 300k | needs design, touches more than one seam |
-| XL | > 300k | **not a task** — a decomposition you have not done yet |
-
-**You set the band, and you set it on the brief:**
-
-```bash
-harness brief <task> --for <node> --write - --band M <<'EOF'
-...
-EOF
-```
-
-`--band XL` is refused outright. If you cannot bring a piece under L, split it or
-escalate; that is the whole of `I8`. The refusal is yours to meet because the
-estimate is yours — it used to be entered at `harness mark`, which the member
-runs, so your XL was refused at the keyboard of the one party that may not split
-the task and can dissolve the refusal by typing `L`.
-
-A member may still pass `--band` at the mark to disagree. Both letters are kept.
-That disagreement is the earliest signal you will get that a brief was mis-sized,
-so read it as one.
-
-**New tokens means up + down** — what was sent for the first time plus what was
-generated. It excludes resent context, which is the conversation handed back
-every turn: count that and every band is blown by the second turn, and you are
-measuring how long the session talked instead of how big the job was.
-
-The estimate is yours and the measurement is the member's. When they come back
-apart, that is your estimate that was wrong. It is the only thing that makes the
-next one better, so ask for it plainly rather than treating an over-band as the
-member's problem.
-
-## Cite figures, do not paste them
-
-```bash
-harness brief <task> --for <child> --fact endpoint-reach --write "..."
-```
-
-A number typed into a brief is true on the day you write it and silently wrong
-after that. The honest thing to write beside one is the date it was taken and an
-instruction to re-derive — which is a lot of longhand for something the record
-can carry.
-
-`--fact` resolves when the brief is **read**, so your member sees the current
-value, its age, and the command that produced it:
-
-```
-fact      todo-count = 3  [the tree has moved since]
-          2d ago · grep -c TODO notes.txt
-```
-
-Citing a fact nobody has recorded is refused, which is what keeps a citation from
-being a promise. If you need a figure that does not exist yet, that is a task:
-brief someone to measure it and record it.
-
-## The queue, and the boundary between tasks
-
-```bash
-harness queue                       # every node in the tree
-harness queue dev_1                 # one node, in the order you set
-harness queue dev_1 --order a,b,c   # set it; unnamed keep their place behind
-```
-
-**Rank 0 can reorder any queue in the tree, including your children's.** It has
-to say why, and you see it the next time you run `harness queue`:
-
-```
-dev_1
-    ordered by main: The operator ruled the paper store lands first.
-    next doi-index   ...
-```
-
-That is a wider reach than it has over briefs, and the difference is real:
-ordering changes no brief's text. It says which of them matters first, which is
-rank 0's call because it holds the charter and it is the one talking to the
-operator. If the *work* should change rather than its place in the queue, that is
-your rewrite, not its reorder.
-
-**You can change it back, and you have to say why.** Not refused — you may know a
-dependency rank 0 does not, and that is worth more than deference. But silently
-undoing it is refused, the record names whoever ordered it last, and rank 0 reads
-the same queue.
-
-Briefs queue in the order you write them. **Order them deliberately** — a member
-holding four briefs and no order does not have a backlog, it has a choice, and
-a member choosing which task to do first is choosing its own work. It is also
-where "shall I start?" comes from: an ambiguity at the top of a session gets
-resolved by asking.
-
-**Recycle between tasks.** When you sign off, you are told which it is and given
-the command:
-
-```
-signed off doi-index for dev_1
-  next for dev_1: ingest-2024  — recycle it first, do not hand it on:
-    harness recycle dev_1
-```
-
-Do it. Handing a second task to a session that just finished one is the pattern
-with the best evidence against it in this whole design: a persistent worker
-compounds its own earlier mistakes, scale does not fix it, and explicitly
-clearing history does. The fresh session costs less than the errors you keep.
-
-**Couple two tasks only when the context is the point:**
-
-```bash
-harness brief doi-verify --for dev_1 --with doi-index \
-        --why "it checks the index the previous task just built; a fresh
-               session would re-read the same 40 files to know what it is
-               checking" --write "..."
-```
-
-`--why` is required and an empty one is refused. Coupling keeps a session alive
-across a boundary the evidence says to reset at, so the reason has to be real:
-shared context expensive to rebuild, not "they're both about the UI". A coupled
-task has no queue position of its own — it runs through its predecessor or not at
-all — and the member is told at presentation that it carries on rather than being
-replaced.
-
-**Read the charter before you split.** `harness charter` is what the project is
-for and which features are in scope; your brief is one piece of it. Splitting is
-where the general becomes technical, and that translation is exactly where an
-invented task gets in — a segment that traces to no feature is a segment worth
-querying upward before you break it into four.
-
-You do not write the charter. If your brief and the charter disagree, that is a
-question for your lead, and it is a good one.
-
-**A brief handed to you is a segment to split, not a task to do.** Your lead
-writes you a piece of work sized for a rank, not for a session. `whoami` says
-`handed N brief(s) to split or start`, and it keeps saying it until you either
-open a mark on it (you are doing it yourself) or derive briefs from it:
-
-```bash
-harness brief <sub-task> --for <child> --from <the-brief-you-were-handed> \
-        --write "..."
-```
-
-`--from` is what records the split, and it is the only thing that tells the
-harness the work reached the rank below. Without it a brief written for you sits
-in a directory nobody is asked to look in, your children never learn the work
-exists, and nothing anywhere reports that the cascade stopped at you.
-
-You can only split a brief written **for you**. Lineage you could invent for work
-you were never handed is lineage not worth reading.
-
-**Do not name the child after the parent.** Hyphens and underscores are the same
-character here, so `properties_hide_empty` and `properties-hide-empty` are one
-record. Writing the second onto the first is not a create, it is a replace: it
-takes the parent's text, moves the brief to your child, and records it as
-splitting itself. That destroyed a brief. The three refusals that now stand in
-the way — a brief cannot split itself, a write cannot move an existing brief to
-another node without `--force`, and a replace says `REPLACED` and quotes what it
-took — are guards, not a substitute for giving the child its own name.
-
-A replaced brief keeps its last five revisions: `harness brief <task> --history`.
-Use it the moment you suspect you have overwritten something, because the
-alternative is a session that happens to still hold the text in its context, and
-that session is one recycle from gone.
-
-**A split segment is discharged, not finished — and you close it.** The moment
-you derive a brief from it, the parent leaves your queue: nobody is going to
-work on it, so offering it as your next task would be wrong. But it is not done
-either. It is done when its parts are, and orientation tells you when they are:
-
-```
-close    3 segment(s) you split are finished — every part signed off:
-         harness mark field-path-declarations --close
-split    2 more still out with your children — harness queue dev
-```
-
-`harness mark <segment> --close` refuses while any part is still open and names
-which. You close your own here, and only here — "nobody closes their own" is
-about not checking your own work, and you did none of this: you split it, and
-you signed off each part under `T4` as it came back. Closing it recycles
-nothing, because there is no accumulated context to be rid of.
-
-Do it. A segment that is never closed sits on your card forever looking exactly
-like work you have ignored, and it is how a lead ends up appearing to hold
-thirteen tasks when seven are real.
-
-**Withdraw a brief structurally, never in prose.** Writing SUPERSEDED — DO NOT
-START at the top of a brief warns a reader, and the things that choose what to
-run are not readers. `spawn --dry-run` will offer it; the recycle after a
-`--close` will start a session on it; neither prints anything unusual while
-doing so.
-
-```bash
-harness brief <task> --supersede "what overtook it" --by <the-task-that-replaces-it>
-```
-
-The brief stays and stays readable — what was proposed and dropped is part of
-what the project is — but nothing offers it again: not the queue, not a recycle,
-not spawn, and `mark` refuses it. It is the same authority as writing it, and it
-refuses while a mark is open, because withdrawing work under a session that is
-doing it is throwing that work away without telling anyone.
-
-**Park a task that stopped, instead of lying about it.** A mark opened by a
-session that has since died survives every recycle and gets named as the work in
-front of each fresh session. `--done` says it is finished and records a cost;
-`--close` says somebody signed it off. Both are false.
-
-```bash
-harness mark <task> --abandon "why it stopped, and what was left of it"
-```
-
-Recorded as UNFINISHED, off the board, and it does not come back by itself.
-Measure what the dead session actually left before you decide — 0 commits ahead
-and a clean worktree means there is nothing to resume and the honest answer is
-to abandon it. Orientation names an inherited mark for you, because its cost is
-not your spend: leaving one open puts a figure in the ledger that no transcript
-measured.
-
-Splitting is a rewrite, not a forward. Each child gets its own whole
-specification — scope, approach, checks, what done means — in one go. Passing
-your brief down verbatim, or in pieces with the rest to follow, is the 39%
-penalty by another route.
-
-**Comments are context; only your brief instructs.** `whoami` tells you when a
-brief you own has unread comments — from the operator, from the lane, from a
-peer. Read them, then decide. If a comment changes what the work should be,
-**fold it into the brief and let the revision advance**; do not relay it. A
-member acting on a comment instead of a brief is drip-feeding by another route,
-and the 39% penalty does not care which channel the pieces arrived on.
-
-This is what keeps the reasoning upstream. You and the operator can argue an
-item out in comments; the child gets a rewritten brief and never sees the
-argument. Each level rewrites rather than forwards, and the thread stays on
-record next to the revision it produced.
-
-**Read the suggestions before you rewrite.** Your child cannot edit its own
-brief; `--suggest` is the only move it has, and it made one because the brief
-did not answer something. Fold it in or decline it explicitly. An open
-suggestion nobody answers is a lane working around a gap in silence.
-
-## What you send down is already done
-
-There is no recall. By the time a message reaches a child it has been acted on,
-so do not send anything whose value depends on it *not* having been acted on —
-and if you must, say what the child should do if it already has. A standing rule
-and a late exception cannot be reconciled by the party holding the rule; it was
-following the rule, correctly, before your exception existed.
-
-The specific one to never send: *hold this member so it can carry its context
-into the next task.* `R13` is that a member knows nothing that is not written
-down, so that request is a request to skip writing a document. If a lane learned
-something that outlives its commit, it belongs in the close record at `T10`, the
-commit message, or your report — before the lane ends.
-
-## You sign off your children's tasks
-
-```bash
-harness mark <task> --close       # sign it off; the task leaves that node
-```
-
-A child presents with `--done` and cannot close its own — same rule as `T4`,
-where it cannot check its own work either. `whoami` tells you at every start
-what is waiting on you, and `status` shows those tasks as `awaiting sign-off`.
-
-**Read the diff before you sign.** `harness review <node> --record` is the same
-act at the other end of the same task, and the merge refuses without it.
-
-An unsigned task is not free. It sits on the node, so the next session to hold
-that node inherits a list of tasks nobody said were finished and cannot tell
-which are live. Sign them off or say what is still wrong; leaving them is the
-one option that costs someone else.
-
-The cost was measured when the child presented, not when you sign. Closing it
-does not lose the number.
-
-## A blocked child is unblocked by the operator, not by you
-
-`harness status` lists every open block. You cannot clear one, and running the
-write yourself is not helping — it is the operator's decision being routed
-around by whichever session happens to have looser settings. `harness grant`
-refuses you by rank, deliberately.
-
-What you can do is make the ask good: name the exact path, say what it is for in
-one line, and say what is still moving without it. Then keep the lane working on
-everything the block does not stop.
-
-**Recycling ends a session; it never ends a node.** Removing a node from the
-tree is `harness trim`, which runs at rank 0 only, because `tree.json` is a
-document. If a child of yours should stop existing, present its work upward
-first and then ask for the trim as a `T5` request — naming the node, and the
-commit that proves you already hold everything it did.
+Why each rule exists: `~/.claude/skills/harness/ref/why.md` — read only when you need the reason.

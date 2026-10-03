@@ -1,423 +1,37 @@
 ---
 name: harness-upward
-description: Act toward your parent node in an Agent Workstream Harness — catch up from the node above, verify guards, propose an approach, ask questions, escalate a merge conflict, present work for integration, and release. Load only when the harness skill's whoami reports harness-upward for this session. Covers transactions T2, T3, T4-present, T5, T7, T10, T11-propose and T12.
+description: Act toward your parent node in an Agent Workstream Harness — catch up, verify guards, propose, ask, escalate conflicts, present and release. Load only when the harness skill's whoami reports harness-upward for this session. Covers T2, T3, T4-present, T5, T7, T10, T11-propose and T12.
 ---
 
 # Upward — what you do toward your parent
 
-Spec: `~/.claude/skills/harness/ref/spec.md` — one copy, shared by all four
-harness skills. Every rule below has a heading there. If you already read it
-this session under another role, do not read it again: it is the same file.
+Spec, on demand only: `~/.claude/skills/harness/ref/spec.md`.
 
-## The rhythm: catch up twice, never in between
+## You do not ask whether to start
+
+A session works its queue until blocked. Orientation (`whoami` at start, `hook-orient` on each prompt) names the next task and the two commands that begin it: `harness brief <task>`, then `harness mark <task>`. Run them. The brief is your instruction; never end a turn with "shall I do this?". A spawned or recycled session that claims its node and then stops is a defect. When `harness focus` is set, "next" names only in-focus work.
+
+The order is your lead's; do not pick which task comes first. If orientation says your queue is empty, tell your lead plainly rather than invent work.
+
+## The rhythm: catch up twice
 
 ```
 claimed ──T2──► current ──T11──► working ──T2──► presenting ──T4──► integrated
 ```
 
-Twice is **your** count, not the worktree's. If your lead integrates a sibling
-after you present, you are left behind and your lead catches you up itself with
-`harness integrate` — it can, because you have released and nobody is standing
-there. That is not a third catch-up you owe. Present, release, and do not go back
-to fix your position: if you are still holding the worktree, your lead cannot.
+Twice is your count. If your lead integrates a sibling after you present, it catches you up itself with `harness integrate`; do not come back to do it.
 
-**`T2` catch-up 1** — after claiming, before the first commit:
-`git merge <parent-branch>`. This is a real merge commit; you hold your own work,
-so it cannot be a fast-forward. The direction is fixed: *you* merge down, the
-node above fast-forwards up. Never the reverse.
+**`T2` catch-up 1**: after claiming, before the first commit, `git merge <parent-branch>`. You merge down; the node above fast-forwards up. Never the reverse.
 
-**`T3` guard check** — run `harness doctor`. It demands a refusal rather than
-reading config: it stages content the document node has never held in a throwaway
-index and requires the guard to reject it, then requires a document that *arrived*
-from the document node to pass. Exit 6 means this worktree is not guarded — stop,
-and say which arm failed. Never work around the guard.
+**`T3` guard check**: `harness doctor`. Exit 6 means this worktree is not guarded: stop and say which arm failed. Never work around the guard and never repair it yourself (`harness scaffold` refuses below rank 0). Report the failed arm to your lead and carry on with your task. A green run proves the document guard refuses and the other hooks match what was installed, not that every guard fires.
 
-**Repairing it is not yours.** `core.hooksPath` is absolute into the document
-node's checkout, so `harness scaffold` from your worktree rewrites the hooks
-*every* node in the tree executes, the instant the files land — no commit, no
-review, and sessions mid-task never learn it happened. The CLI refuses it below
-rank 0. Report which arm failed to your lead, say what the diff showed if you
-read it, and carry on with your task; the decision and the timing are rank 0's.
+**`T11` comprehension check**: before the first commit, restate the plan in your own words in one turn — what you will change, which seams you touch, what you will not touch. If it needs a page, the task is too big.
 
-What it does **not** prove is that the integration gate fires. It demands a real
-refusal from the document guard and only checks that the other hooks are present
-and match what was installed, so a green run means the files are right, not that
-every guard in them works.
+**Work** inside your assigned scope. Seams between children belong to your lead (`I9`).
 
-**`T11` comprehension check** — before the first commit, restate the plan you were
-given in your own words: what you will change, which seams you touch, what you
-will deliberately not touch. One turn. You are not proposing an approach — your
-lead decided that at `T1` — you are proving you read it, so a misreading surfaces
-now rather than in the diff. If the restatement needs a page, the task is too big.
+**`T2` catch-up 2**: immediately before presenting. Conflicts surface here, and it makes your lead's merge a fast-forward.
 
-**Work.** Stay inside your assigned scope. Seams between children belong to your
-lead (`I9`) — a changed signature another child depends on is not yours.
-
-## What you noticed but must not act on
-
-You will find things your task did not ask about — a claim about how something
-really behaves, a fault no check can see, a reason the approach in front of you
-is wrong somewhere else. **Do not act on it.** Acting on what you noticed is
-choosing your own task. **And do not let it die in your report**, which is read
-once by one session and then ends. It is often the most expensive thing your
-session produced.
-
-```bash
-harness finding pixel-depth \
-  --what "A size in pixels is not a size on screen. The layer adds the point
-          offset before the perspective divide, so nothing at two depths is
-          painted the same size." \
-  --how  "looked at a screenshot after the arm went green; the checks assert on
-          layer props, not on what was drawn" \
-  --fact reachable-docs
-```
-
-It goes to **your lead**, one rank up, and nowhere else. Your lead decides
-whether it becomes a task; you carry on with your queue.
-
-**`--how` is required.** *Found by looking at a screenshot after the arm went
-green* is the difference between a claim your lead can weigh and one it can only
-believe. The strongest findings come from **use rather than review** — a 2px
-floor once cut reachable documents from 20 to 6 while every check written for it
-stayed green — and that is precisely the kind nothing else in the tree can see.
-
-If a number sits behind it, record the number as a fact first and cite it. A
-finding with a figure and no command behind the figure is half a finding.
-
-## Write down what you measure, with the command
-
-You are the one running the commands, so you are the one holding the numbers.
-
-```bash
-harness fact endpoint-reach --is "57 of 74" \
-  --from "python tools/probe.py --declared --count" \
-  --what "declared endpoint states a probe actually reached"
-```
-
-Do it for anything you had to work out how to measure — a count, an exit code, a
-population, a timing. The expensive part is almost never running the command; it
-is figuring out which command answers the question. That is what you are saving
-the next session, and the next session is often you after a recycle.
-
-Look one up before you derive it (`harness fact --list`). If it is stale, one
-`--recheck` settles it, and that is cheaper than deciding from scratch how to
-ask.
-
-Put it in your presentation too: a figure in a report with no command behind it
-is one your lead cannot check and will have to take on trust or redo.
-
-## You do not ask whether to start
-
-Orientation names one task and prints the two commands that begin it:
-
-```
-next     doi-index — the brief is your instruction, not a proposal.
-         Nothing further is coming and nobody is waiting to be asked. Begin:
-           harness brief doi-index    then    harness mark doi-index
-queue    2 after it, in order: ingest-2024, ui-pointer  — not yours to start
-```
-
-Read the brief and open the mark. **Do not end your turn with "shall I do
-this?"** — you already hold the authorisation, the answer to that question is
-always yes, and asking it costs a whole session. Worse, it leaves your node
-standing there occupied and idle while your lead is waiting on work, which is
-the exact condition the tree is built to avoid.
-
-If your queue is empty, orientation says so, and *that* is worth raising — a node
-with nothing briefed is its lead's problem and you should say so plainly rather
-than invent something to do.
-
-**You do not pick your next task either.** The order is your lead's. A member
-choosing which of its tasks to do first is choosing its own work, which is the
-same act as setting its own task, one notch smaller.
-
-**After you present, you are usually done.** `--done` tells you which it is:
-
-- *coupled* — the next task runs in this session, deliberately, because the
-  context you already hold is the reason. Read it and open it.
-- *queued* — your lead recycles this node and a fresh session takes it. Do not
-  open it, and do not ask whether to. Presenting is the whole of your last act.
-
-**`T12` question** — ask only about a **gap the plan could not have covered**,
-something your lead did not know when it wrote the plan. Do not ask for
-confirmation of what the plan already says: that is information arriving in
-pieces, which is the exact cost the plan exists to avoid. But do ask when the
-plan genuinely does not reach — roughly half of specifications contain an
-ambiguity their own author did not see, and work done on a guess is wrong far
-more often than it is right.
-
-**Say so if the question stops you.** Asking is a message; it arrives once, in
-a transcript, and if your lead is mid-task it is read late or not at all. If
-you can carry on, carry on and say nothing more. If you cannot:
-
-```bash
-harness waiting "which pH bound applies to a derived reading" \
-  --still-moving "the parser and its tests; only the bound is blocked"
-harness waiting --clear          # the moment the answer lands
-```
-
-That is a record, not a message: your lead sees it at its next orientation and
-the viewer draws your node as stopped rather than idle, which are opposite
-readings of the same silence. **`--still-moving` is the part that matters** — a
-lane blocked on one answer and working on four other things is not the same
-event as a halt, and a lead deciding what to answer first cannot tell them
-apart otherwise. Clearing it is yours; nobody clears it for you, and `harness
-release` clears it only because a released node is not waiting for anything.
-
-`harness waiting` with no argument prints both directions: what you are stopped
-on, and who is stopped on you.
-
-What you do **not** do is raise a block. A block is for something only the
-operator can widen — a path outside your worktree, a permission. A question for
-your lead is not one, and routing it to the operator asks them to answer
-something they did not scope.
-
-**Run the checks before you present.** `harness check` runs every check in the
-manifest — including after one fails, because a suite that stops at the first
-reveals its problems one per cycle and each cycle costs a session — and records
-the result against your exact commit. `harness mark <task> --done` tells you
-whether it ran, and your lead sees the same line at review. Presenting unchecked
-work is a choice; say so in your report rather than leaving it to be found.
-
-Read what each check says it **cannot** see. It prints beside the result for a
-reason: a green suite is evidence about what was tested, and the blind spot is
-the rest of the sentence.
-
-**`T2` catch-up 2** — immediately before presenting. This is where a conflict
-surfaces, while your own work is still warm. It is also what makes your lead's
-merge a fast-forward.
-
-**`T4` present** — your lead reads your diff and records the read, then runs
-`git merge --ff-only`. The merge is **refused** without that record: you cannot
-check your own work, so your lead does — a record you wrote yourself is refused
-by the guard, which reads which node made it. If you skipped catch-up 2 it also
-fails, with `fatal: Not possible to fast-forward, aborting.` Never push: a
-checked-out branch rejects a local push outright, and `pre-push` refuses a node
-branch to a remote.
-
-**`T10` release** — `harness mark <task-id> --done`, then `harness release`,
-then `harness spend <task-id>` for the measured actual against the band
-(`I10`). That number is a subtraction only if you ran `harness mark <task-id>`
-when you accepted the task; without a mark, `spend` refuses to apportion and you
-should report the **session total with its coverage stated**, never a share you
-inferred.
-
-**The unit is tokens, and it is three numbers rather than one.**
-
-```
-  up          85,000   sent, new
-  down       140,000   generated
-  NEW        225,000   up + down — this is what a band means
-  resent  19,000,000   cache reads: the conversation handed back each turn
-```
-
-Never quote the raw total. *Resent* is the whole conversation counted again on
-every turn, so it grows with how long you talked rather than with what you did —
-a task banded at 40k once measured 261.7M that way. **New** is the figure that
-answers "how big was this", and it is the one a band is set in.
-
-The band comes from your brief — your lead sets it there, and the mark reads it.
-`--done` tells you whether you landed in it. **Say so in your report when you did
-not.** If you think the estimate is wrong when you open the task, `harness mark
-<task> --band S|M|L` records your figure *beside* your lead's rather than over
-it; that disagreement is useful to them and it costs one flag.
-A band that was wrong is the only thing that improves the next estimate, and it
-was your lead's estimate — not your work — that missed.
-
-**This applies to you even when you are a lead.** A lead is both a closer and a
-closee, and the second half is easy to miss: you sign off your children's work,
-*and* the task you were given is signed off by the node above you. Rank is
-irrelevant to it — the only thing that matters is who issued the task.
-
-It is not the operator's to close. They approve **unrequested** work before it
-starts ([[T16]]); they have nothing to do with finishing work that was asked for.
-A task issued by `main` is closed by `main`, and if you tell the operator to
-close it you have stalled your own lane behind someone who cannot act.
-
-Orientation says so while you hold one:
-
-```
-open     specter2-embed — finishing it means presenting UP to main, not to
-           the operator:
-           harness mark specter2-embed --done      then main closes it
-```
-
-**Presenting is your last act — and telling your lead is part of it.**
-
-This one is enforced, because it is the failure that keeps happening: a member
-finishes, ends its turn, and the work is invisible to everyone above it. Two
-things will stop you.
-
-The `Stop` hook blocks your turn once if you try to end it with an open mark that
-has work in it and was never presented — HEAD moved, or the worktree is dirty. It
-names the command. Answer it by presenting, not by stopping again.
-
-And `harness mark` refuses to open a second task while the first is unpresented:
-
-```
-harness: 'job-a' is open on this node, has work in it, and was never presented.
-         Finish that first: harness mark job-a --done
-```
-
-If you genuinely cannot finish, that is not a reason to go quiet — it is
-`harness blocked` for something you need, or `harness brief <task> --suggest` if
-the plan is wrong. Both are records your lead can act on. Silence is not.
-
-
-`--done` records the work, releases the node, and tells you plainly:
-
-```
-You are done. Stop here — do not wait for the sign-off, do not poll for it,
-and do not start anything else. dev signs off and replaces you.
-```
-
-Do that. Do not sit waiting for the sign-off — it is not yours, it may take
-hours, and while you wait you hold a worktree and a context that costs its whole
-history the moment anyone speaks to you. Your lead signs off and recycles the
-node onto whatever is next; a fresh session picks that up, not you.
-
-The one exception is a **coupled** next task, and `--done` says so explicitly
-when it applies.
-
-**You present; your lead closes.** `--done` records what the task cost and that
-you believe it finished. It does **not** close it — `--close` refuses you by
-rank, and that is the same rule as `T4`: you cannot check your own work, so you
-do not sign it off either.
-
-**Then tell it. Presenting is not finished until your lead knows.** The line
-that used to sit here said your lead is told at its next orientation, and that
-was wrong in the one case that matters. Orientation fires when your lead takes
-a turn; presenting gives it no reason to take one. Measured on a live tree
-2026-09-08: a lead stopped at 11:21, its two members presented at 11:25 and
-11:44, and neither the Stop hook nor orientation could fire for either — the
-condition became true after the last moment anything could test it. Both sat
-unsigned until the operator intervened by hand, twenty-eight minutes later.
-
-So the record is inert, and you are the only one who can fix that, because you
-are mid-turn and your lead is not. `--done` prints the message to send and the
-name to send it to. Send it before you stop. If your lead is not running it says
-so instead, and then there is nothing to send.
-
-Say what you are presenting: `--done --note "..."` appends to the task record,
-so the sentence that explains the work outlives the session that did it.
-
-**Present the record even when you cannot measure it.** A task presented from a
-different session than the one that opened it records no delta and says so. That
-is the correct outcome: an unmeasurable cost is a missing number, but an
-unpresented task makes your node read as still working forever, and your lead
-reads that as a node it must not recycle. `release` frees the claim; it does **not** end your session,
-so until your lead stops you, you are a live session in a worktree you no longer
-hold. Do not fill that gap with correspondence.
-
-Report the components it prints, not one figure. Billed tokens and context
-occupancy are different quantities that both get called "tokens", and cache reads
-dominate the sum while billing at a tenth — the dollar column is the honest one.
-
-## You write inside your worktree, and nowhere else
-
-Everything you produce goes in your worktree so the tree can see, check and undo
-it. A file outside the repository has no owner, no scope and no instrument that
-reds; nothing reviews it at `T4`, and no ref records that it changed (`I3`).
-
-When you need a path outside it, **raise a record — do not ask around**:
-
-```bash
-harness blocked ~/data/subset.db \
-  --why "dim=3 reduction output for 5,222 docs" \
-  --still-moving "everything but the render; the contract work is unaffected"
-```
-
-That reaches the operator immediately if they installed a notifier, shows in the
-statusline of every session they have open, and sits in `harness needs` until it
-is cleared. It survives the recycle that ends you, which a message would not.
-
-**`--still-moving` is the field that gets you unblocked sooner.** It is how the
-operator tells a stopped lane from a stopped step without reading your
-transcript. Leave it out and yours looks like every other one.
-Then carry on with everything the block does not stop, and report what it does.
-
-**The answer does not come back to you as a conversation.** Comments on your
-block go to rank 0, deliberately: what the operator writes is usually reasoning,
-and reasoning delivered into a scoped task is the noise the scope existed to
-keep out. What reaches you is the outcome — a grant at your next spawn or
-recycle, a ruling, or a revised brief.
-
-So: raise the block, say what is still moving without it, and carry on. If the
-block was a permission you will simply have the reach next time you start. If it
-was a decision, your brief will change and its revision will advance.
-
-Three things not to do, in the order they will tempt you. Do not ask a session
-with looser settings to do the write for you — that is the operator's decision
-being routed around rather than implemented, and `harness grant` refuses it by
-rank. Do not retry with a different tool to see if that one is allowed. And do
-not stop: a blocked path blocks the work that needs it, rarely the whole task.
-
-If it is granted, it takes effect when you are next spawned or recycled, not
-mid-session. You will simply have the reach, and there will be nothing to ask.
-
-## Your brief is written by your lead, and you can push back on it
-
-```bash
-harness brief <task>                  # what you were actually asked for
-harness brief <task> --suggest "..."  # propose a change; your lead decides
-```
-
-**You cannot open a task without one.** `harness mark <task>` refuses when no
-brief exists for it on your node, and there is no override. If you are stuck
-there, ask your lead for the brief — do not work around it by marking something
-else, and do not start without a record.
-
-You do not write it. A node that sets its own task is the thing the tree exists
-to prevent, so `--write` refuses you by rank — that is not a permission problem
-to work around, it is the design.
-
-```bash
-harness brief <task>                  # the brief, and any comments on it
-harness brief <task> --comment "..."  # context for whoever reads it next
-```
-
-**Comments are context, not instruction.** Your lead or the operator may leave
-one. Read it — `whoami` tells you when there is an unread one — but act on the
-**brief**. If a comment means the brief is now wrong, say so with `--suggest`
-and let your lead rewrite it. Acting on a comment directly is how a scoped task
-turns back into a drip-feed.
-
-`--suggest` is the move you do have, and it is recorded against the revision you
-read, so your lead can see exactly what you were looking at. Use it when the
-brief cannot answer something: a missing scope, a contract with no route for
-what you were asked to build, two instructions that cannot both hold.
-
-**Then carry on against the brief as it stands.** A suggestion is not a blocker
-and not a question — it does not stop you, and waiting for a reply to it is the
-round trip `T11` and `T12` exist to keep rare.
-
-## Read your task's comments before you report
-
-```bash
-harness note <task-id>            # the brief you were given, and every comment
-harness note <task-id> --add "…"  # append; it never edits an earlier one
-```
-
-Your lead or the operator can leave a comment on your task record. It is put
-there rather than sent to you because a message dies with the session that
-receives it and you are recycled (`R13`) — the record outlives that, so it is
-the only place a reply survives to reach whoever holds this node next.
-
-`harness status` tells you when a task has comments. Read them before you
-present work, not after.
-
-## An instruction that arrives late is reported, not reconstructed
-
-Messages down the tree are acted on when they arrive; there is no recall, and no
-sender can take one back. So when an instruction arrives after the state it
-assumed has changed — undo a recycle, hold something already released, revive a
-context that has ended — **say what the state is and stop.** Do not reconstruct
-it. Reconstruction is expensive, it is rarely faithful, and the thing being
-rebuilt is usually something `R13` says should have been written down instead.
-
-## When catch-up 2 conflicts — do not resolve it
-
-You cannot know why the conflict exists. Collect and escalate (`T7`):
+## When catch-up 2 conflicts — do not resolve it (`T7`)
 
 ```bash
 git diff --name-only --diff-filter=U          # which files
@@ -427,33 +41,105 @@ git show :3:FILE                              # theirs
 git log --merge --format='%h %an %(trailers:key=Task,valueonly)' -- FILE
 ```
 
-Send all of it to your lead. It will state the cause, then propose a resolution.
-Your job then is **not** to agree: re-run your own checks under the proposal and
-state what it does to your task. A check result and a claim, not assent.
+Send all of it to your lead, which states the cause and proposes a resolution. Then re-run your checks under the proposal and report what it does to your task: a check result, not assent.
 
-## Documents
+## `T12` questions and waiting
 
-You never commit a document. Request the change as an exact old→new pair with a
-rationale and a pinned base (`T5`), and send it up. It is reviewed at every rank
-and applied only at rank 0. If `old` no longer matches when it lands, it is
-refused and returned — that is correct behaviour.
+Ask only about a gap the plan could not have covered. Do not ask for confirmation of what the plan says. If you can carry on, carry on. If the question stops you:
 
-## Checks
+```bash
+harness waiting "which pH bound applies to a derived reading" \
+  --still-moving "the parser and its tests; only the bound is blocked"
+harness waiting --clear          # the moment the answer lands
+```
 
-Run every check in your set, including after one fails (`I5`). Report pass, fail
-**and** each check's declared blind spot. Bailing at the first failure is how the
-other findings get lost.
+`--still-moving` lets your lead tell a stopped step from a stopped lane. Clearing is yours (`harness release` also clears it). `harness waiting` with no argument shows what you wait on and who waits on you. A question for your lead is never a `harness blocked`.
+
+## You write inside your worktree, and nowhere else
+
+For a path or permission outside it, raise a record (`I3`):
+
+```bash
+harness blocked ~/data/subset.db \
+  --why "dim=3 reduction output for 5,222 docs" \
+  --still-moving "everything but the render; the contract work is unaffected"
+```
+
+Then carry on with everything the block does not stop. The answer comes back as an outcome — a grant at your next spawn or recycle, a ruling, or a revised brief — not as a conversation; comments on your block go to rank 0. Do not ask a looser session to write for you (`harness grant` refuses by rank), do not retry with another tool, and do not stop.
+
+## Your brief, and pushing back on it
+
+```bash
+harness brief <task>                  # the brief, and any comments on it
+harness brief <task> --suggest "..."  # propose a change; your lead decides
+harness brief <task> --comment "..."  # context for whoever reads it next
+harness note <task-id>                # the task record and every comment
+harness note <task-id> --add "…"      # append; never edits an earlier one
+```
+
+`harness mark <task>` refuses without a brief on your node, with no override; ask your lead for one. `--write` refuses you by rank: you do not set your own task.
+
+Comments are context; act on the brief. If a comment makes the brief wrong, `--suggest` and let your lead rewrite it. A suggestion does not block you: carry on against the brief as it stands. Read your task's comments before you present.
+
+## What you noticed but must not act on
+
+Do not act on things outside your task, and do not let them die in your report. Record them for your lead:
+
+```bash
+harness finding pixel-depth \
+  --what "A size in pixels is not a size on screen ..." \
+  --how  "looked at a screenshot after the arm went green" \
+  --fact reachable-docs
+```
+
+`--how` is required. If a number sits behind it, record the fact first and cite it.
+
+## Write down what you measure, with the command
+
+```bash
+harness fact endpoint-reach --is "57 of 74" \
+  --from "python tools/probe.py --declared --count" \
+  --what "declared endpoint states a probe actually reached"
+```
+
+Do it for anything you had to work out how to measure. Look one up first (`harness fact --list`); `--recheck` refreshes a stale one. Cite facts in your presentation.
+
+## Checks (`I5`)
+
+`harness check` runs every manifest check, including after one fails, and records the result against your commit. Report pass, fail and each check's declared blind spot. `NOT RUN (timed out)` means the check's `"timeout"` expired: it is not a fail, but say it did not run. `… N earlier line(s) omitted` means output was cut. Presenting unchecked work is a choice; say so in your report.
 
 ## Commits
 
-Every commit carries a `Task:` trailer. Without it, an ancestor holding a
-conflicted hunk has author names and no route into any ledger.
+Every commit carries a `Task:` trailer.
 
-## You are recycled, so write it down
+## `T4` present and `T10` release
 
-Your session ends after your work lands and a fresh one takes this node (`R13`).
-Nothing you know survives that unless it is in a commit, a report to your lead,
-or the ledger. This is not a demotion — it is why your window is small and your
-task is short. Do not plan across tasks, do not rely on remembering an earlier
-conversation, and if something you learned matters beyond this commit, say it to
-your lead or put it in the commit message before you present.
+Your lead reads your diff, records the read, and runs `git merge --ff-only`. That merge is refused without the record, and a record you wrote yourself is refused. Skipping catch-up 2 makes it fail with `fatal: Not possible to fast-forward, aborting.` Never push.
+
+```bash
+harness mark <task-id> --done --note "what this work is"
+harness release
+harness spend <task-id>
+```
+
+`--done` records the work, releases the node and tells you what comes next. It does not close the task: `--close` refuses you by rank, and the task is closed by whoever issued it, which is your lead even when you are a lead yourself, never the operator.
+
+- **Then tell your lead.** `--done` prints the message and the name to send it to. Send it before you stop; your lead may have no turn in which to notice. If your lead is not running, it says so and there is nothing to send.
+- **coupled** next task: `--done` says so; read it and open it in this session.
+- otherwise you are done. Stop. Do not wait or poll for sign-off, and do not open anything else; your lead recycles the node.
+
+The `Stop` hook blocks your turn once if an open mark has work in it and was never presented; answer by presenting. `harness mark` refuses a second task while one is unpresented. If you cannot finish, use `harness blocked` or `harness brief <task> --suggest`, never silence. Present even from a different session than the one that opened the mark; it records no delta and says so.
+
+**Spend** is in tokens: report up, down and NEW (up + down, what a band means), never the raw total or resent. `spend` needs the `harness mark` you ran on accepting; without it, report the session total with its coverage stated, never an inferred share. Say in your report when you missed the band. If you think the band is wrong on opening, `harness mark <task> --band S|M|L` records your figure beside your lead's.
+
+## Documents (`T5`)
+
+You never commit a document. Send up an exact old→new pair with a rationale and a pinned base. Rank 0 applies it; if `old` no longer matches, it is refused and returned.
+
+## Late instructions, and being recycled (`R13`)
+
+An instruction that arrives after the state it assumed has changed (undo a recycle, revive a context): say what the state is and stop. Do not reconstruct.
+
+Your session ends after your work lands. Nothing survives except commits, your report, and the ledger. Do not plan across tasks; anything that matters beyond this commit goes to your lead or into the commit message before you present.
+
+Why each rule exists: `~/.claude/skills/harness/ref/why.md` — read only when you need the reason.

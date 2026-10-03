@@ -1,48 +1,24 @@
 ---
 name: harness
-description: Resolve this session's position in an Agent Workstream Harness role tree, claim or release its git node, and load the role-appropriate harness skills. Applies ONLY in repositories enrolled in the harness — both a committed .harness/tree.json and a local binding. Use when starting work in an enrolled worktree, when claiming or releasing a node, or when the user mentions the harness, the role tree, ranks, leads and members, or workstream nodes. In any project that is not enrolled this skill establishes that in one step and stops.
+description: Resolve this session's position in an Agent Workstream Harness role tree, claim or release its git node, and load the role-appropriate harness skills. Applies ONLY in repositories enrolled in the harness — a committed .harness/tree.json plus a local binding. Use when starting work in an enrolled worktree, when claiming or releasing a node, or when the user mentions the harness, the role tree, ranks, leads and members, or workstream nodes. In a project that is not enrolled it establishes that in one step and stops.
 ---
 
 # Harness — position and occupancy
 
-Spec: `ref/spec.md` (`R1`–`R11`) — the single copy. The role skills carry no
-spec of their own and point back here, so read it at most once per session.
-Diagram: `ref/tree.canvas`.
-CLI: `~/.claude/harness/bin/harness` — stdlib Python, no daemon, no server.
+CLI: `~/.claude/harness/bin/harness`. Spec, on demand only: `ref/spec.md`. Diagram: `ref/tree.canvas`.
 
 ## First: are we even in this?
 
-```bash
-~/.claude/harness/bin/harness whoami
-```
-
-**Exit 3 means not enrolled.** Say so in one line and stop. Do not offer to enrol
-unless asked. Enrolment takes two keys (`R9`) and both are deliberate:
-
-| key | where | meaning |
-| --- | --- | --- |
-| `.harness/tree.json` | in the repo, committed | this project defines a role tree |
-| `binding.json` | `~/.claude/harness/<slug>/` | *and this machine has joined it* |
+Run `~/.claude/harness/bin/harness whoami`. **Exit 3 means not enrolled:** say so in one line and stop. Do not offer to enrol unless asked. Enrolment takes two keys: `.harness/tree.json` committed in the repo, and `~/.claude/harness/<slug>/binding.json` on this machine.
 
 ## Then: prove position, then take it
 
-Position is derived, never declared (`R1`). The CLI reads it from
-`git rev-parse` — you cannot claim a role, only stand in one.
+Position is derived from git, never declared. The CLI queries `claude agents --json` itself; do not gather a roster (`--roster FILE` is for tests only).
 
-1. `harness whoami` — derives the node from git, checks the platform contract,
-   and asserts the session name against the branch.
-2. `harness claim`
-3. `harness doctor` — proves this worktree is actually guarded by demanding a
-   refusal, rather than reading config and trusting it. Exit 6 means unguarded;
-   stop and report which arm failed. It proves the DOCUMENT guard fires, and
-   only checks that the other hooks are present and match what was installed —
-   a green run is not a demonstration that the integration gate fires.
-4. Load exactly the skills `whoami` names under `skills`. Nothing else.
-
-You do **not** gather a roster. The CLI calls `claude agents --json` itself, which
-lists every live session including this one, so it learns its own name and every
-peer's liveness without being told. `--roster FILE` exists only to feed it a
-recorded roster for testing.
+1. `harness whoami` — derives the node, checks the platform contract, asserts the session name against the branch.
+2. `harness claim` — then work your queue until you are blocked on your lead or the operator. Claiming is not the end of the job.
+3. `harness doctor` — demands a refusal from the document guard. Exit 6: stop and report which arm failed. Green means the guard fires and the other hooks match what was installed; it does not prove the integration gate fires.
+4. Load exactly the skills `whoami` lists under `skills`. Nothing else.
 
 ```
 leaf      → harness + harness-upward
@@ -50,22 +26,11 @@ mid-lead  → harness + harness-upward + harness-downward
 top lead  → harness + harness-downward + harness-root
 ```
 
+`harness focus [task|--clear]` holds the owner's priority; nags outside it fold into one line. Nags appear only at orientation (session start and each prompt), not after every command.
+
 ## Prose goes in on stdin, not in quotes
 
-Every long argument here is prose — a brief, a finding, a reason — and prose
-about code contains backticks and `$()`. Written the obvious way, a shell eats
-them **before this program runs**:
-
-```bash
-harness brief x --for y --write "the `continue` stays"   # arrives as "the  stays"
-```
-
-The argument is simply shorter. Nothing can detect that, the command prints its
-success line, and what is stored is grammatical and wrong. It has already turned
-an instruction into one that named nothing and a defect report into one with no
-location. Both would have been acted on.
-
-Any long argument may be `-`, which reads it from stdin instead:
+The shell eats backticks and `$()` before the CLI runs, silently. Any long argument may be `-` (one per command), read from a quoted heredoc:
 
 ```bash
 harness brief x --for y --write - <<'EOF'
@@ -73,14 +38,7 @@ the `continue` stays, and $(anything) survives
 EOF
 ```
 
-**The quoted delimiter is what makes it literal** — `<<'EOF'`, not `<<EOF`. One
-`-` per command. Use it for anything naming code; for a short phrase with no
-backticks, quotes are still fine.
-
-It is also the faithful route. `--write "$(cat file)"` strips *every* trailing
-newline, so what is stored is a byte or more short of its source and a round
-trip never matches. `-` removes exactly the one the delimiter contributes and
-keeps the rest.
+`<<'EOF'`, not `<<EOF`. Avoid `"$(cat file)"`; it strips trailing newlines. Quotes are fine for a short phrase with no backticks.
 
 ## Exit codes are the contract
 
@@ -90,104 +48,28 @@ keeps the rest.
 | 3 | not enrolled | one line, stop |
 | 4 | refused | the harness declined: a live session holds the node, a recycle would strand work, or a measurement was asked for that cannot be derived. Not a fault — read the line and do what it says |
 | 5 | name/position mismatch | the session is misnamed — rename it, never rename the node |
-| 6 | `doctor` says this worktree is not guarded as configured | **Stop working.** A hook is missing, inert, or no longer the one that was installed. Nothing about Claude has changed and this is not a code you work around: read which arm failed. **Who repairs it depends on your rank, and the message says which you are** — below rank 0, report it upward and carry on, because `harness scaffold` rewrites the hooks every node in the tree runs and the CLI refuses it. At rank 0 it is yours, after reading the diff it prints. |
+| 6 | `doctor` says this worktree is not guarded as configured | **Stop working** and read which arm failed. Below rank 0, report it upward and carry on (`harness scaffold` is refused to you). At rank 0 it is yours, after reading the diff it prints. |
 
-`C1`–`C5` assert the undocumented Claude state this harness reads (`R8`). A
-failure means refuse, not degrade: a mis-identified session is how two of them
-end up holding one node, which is the failure the lock exists to prevent.
+No exit code at all, with the tool call *blocked by the auto-mode classifier*, means the harness never ran. Say the command did not run; hand the operator the exact command. Never ask another session to run something you were denied.
 
-**No exit code at all is a different animal, and it is not the harness.** If the
-tool call itself reports *blocked by the auto-mode classifier*, no harness
-process ever started: there is no exit code, no output, and nothing was decided
-about your tree. Do not report it as a refusal and do not invent a status for
-it — say the command did not run. The classifier keys on command text, so it is
-non-deterministic: the same read-only call may be allowed twice and blocked on
-the third, and a write may go through once its prose is shorter. The fix is a
-Bash permission rule in settings (`permissions.example.json` carries the harness
-ones); the workaround is to hand the operator the exact command. **Never ask
-another session to run something you were denied** — that is laundering a
-decision the operator made about you.
+## Claiming a held node
 
-## Forcing a stale claim
+`claim` judges liveness itself (the lock's pid on this host, then the session file, then a live roster row) and takes a dead holder's lock without help. `--force` is needed only for a lock claimed on another host, after you have checked it is not running there.
 
-`harness claim --force` is allowed only when the holder's ref is **absent from
-ListAgents**. It records who forced it. It refuses outright if the stale claim
-was made on another host — absence from a local roster does not prove death.
+## Propagating a tree (rank 0)
 
-## Propagating a tree
-
-From the rank-0 session, once the tree and worktrees exist:
-
-```bash
-harness spawn --dry-run     # check what it would launch, where, and as what
-harness spawn               # claude --bg -n <project>-<node>, one per node
-```
-
-Each node carries the model and effort it should be run as (`R12`). By default
-`opus[1m]` at `high` for rank 0 and `medium` for a lead — context follows the
-view, and a lead is where reports, conflicts and climbing documents accumulate —
-and plain `opus` at `medium` for a leaf — coding is the one workload where the
-effort curve is steep, and a leaf holds one task and is then recycled (`R13`). Set `model`/`effort` on a node in `tree.json` to override, or
-`--model`/`--effort` to override every node in one launch. `whoami` prints the
-pair under `run as`, so a session can see what it was meant to be.
-
-Each is a real session that derives its own position and claims it. Occupied
-nodes are skipped. View with `claude agents`, join with `claude attach <id>`.
-
-A subagent cannot hold a node — no session id, no lock, no row in the session
-table (`R6`). You may still spawn one for a bounded lookup and use its answer;
-what you cannot do is give it a node, a claim or a transaction.
+`harness spawn --dry-run`, then `harness spawn` (one `claude --bg` per node; occupied nodes skipped). Each node runs at the model and effort `whoami` prints under `run as`; override in `tree.json` or with `--model`/`--effort`. A subagent cannot hold a node, claim or transaction; use one only for bounded lookups.
 
 ## Releasing
 
-`harness release` at the end of a task. The ledger row is closed, never deleted:
-an ancestor resolving a deep conflict (`T8`) reads closed rows.
+`harness release` at the end of a task. The ledger row is closed, never deleted.
 
 ## Before you derive a number, look it up
 
-```bash
-harness fact --list                      # everything measured here
-harness fact <name>                      # the value, and the command that made it
-harness fact <name> --recheck            # run that command again, here, now
-harness fact <name> --is "..." --from "<command>" --what "..."
-```
-
-**`--from` is required.** A value with no way to reproduce it is a rumour with a
-figure attached: whoever reads it either believes you or pays the entire
-derivation again, and the second cost is the one that keeps being paid. Record
-the command and checking costs one `--recheck`.
-
-**Record the value in the command's own words**, not in yours. `2` and not
-"about two". A value you paraphrased is one `--recheck` can never compare
-against, and it will report a difference that is only your phrasing.
-
-**Read what it tells you about where it came from.** Two different things go
-stale, and they are not the same:
-
-- *the tree has moved since* — the figure is old at this commit. Re-run it.
-- *measured in another worktree* — it is a **different measurement**, not a
-  disagreement. Two lanes ran the same check honestly and got 1 and 9, because
-  an install directory that `git status` cannot see changes what a check counts.
-
-Any node may record a fact. It is not authority: a measurement tells nobody what
-to do. If it should change what someone does, that is a brief, and only a lead
-writes one.
+`harness fact --list`, `harness fact <name>`, `harness fact <name> --recheck`. Record with `harness fact <name> --is "..." --from "<command>" --what "..."`: `--from` is required, and the value goes in the command's own words. *Tree has moved since* means re-run; *measured in another worktree* is a different measurement, not a disagreement. A fact is not a brief.
 
 ## If you need to ask why
 
-```bash
-harness charter                     # what this project is for, and its features
-harness charter --feature <name>
-```
+`harness charter [--feature <name>]` — optional; read it when a brief seems to point away from the project's purpose. Only rank 0 and the operator write it.
 
-You are not required to read it. A complete brief is enough to work from, and
-loading the project's purpose into a scoped task hands back the context that
-task was scoped to exclude.
-
-It is there for the moment you need it: when a brief seems to point away from
-what the project appears to be for, when you are choosing between two readings
-of a scope, or when you simply want to know what any of this is in aid of. The
-answer used to depend on your lead being awake.
-
-Only rank 0 and the operator write it. If it is wrong, that is a `--suggest` on
-your brief or a word to your lead, not an edit.
+Why each rule exists: `ref/why.md` — read only when you need the reason.

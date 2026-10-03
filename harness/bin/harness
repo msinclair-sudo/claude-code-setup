@@ -9,7 +9,7 @@ up holding one node, which is the failure the lock exists to prevent.
 This tool does no reasoning. The agent gathers liveness with ListAgents and
 passes it in; this only asserts, derives and writes atomically.
 """
-import argparse, datetime, json, os, re, shlex, shutil, socket, subprocess, sys, time
+import argparse, datetime, fnmatch, json, os, re, shlex, shutil, socket, subprocess, sys, time
 from pathlib import Path
 
 OK, CONTRACT, NOT_ENROLLED, REFUSED, MISMATCH = 0, 2, 3, 4, 5
@@ -838,7 +838,7 @@ def _whoami(a):
         head = [b for b in q if not b.get("coupled_to")]
         fam = focus_family(ctx)
         if fam is not None:
-            print(f"focus    {json.loads((ctx.state / 'focus.json').read_text())['task']}"
+            print(f"focus    {', '.join(focus_tasks(ctx))}"
                   f" — the owner's priority; other work waits")
             head = [b for b in head if in_focus(fam, b["task"])]
         openm = [t for t, r in open_marks(ctx).items() if r.get("_node") == node]
@@ -2202,17 +2202,26 @@ def rank0_owes(ctx, node):
 # Which is also why this is a set of ids rather than a rendered block. What is
 # compared is what the reader would have to act on, not how it was phrased.
 
-def focus_family(ctx):
-    """The owner's focus as a set of task keys (it and every part split from it),
-    or None when no focus is set (obs 5, 6, 13)."""
+def focus_tasks(ctx):
+    """The focus as stored: a list of task names or globs, [] when unset."""
     try:
-        fo = json.loads((ctx.state / "focus.json").read_text()).get("task")
+        r = json.loads((ctx.state / "focus.json").read_text())
     except Exception:
-        return None
-    if not fo:
+        return []
+    return r.get("tasks") or ([r["task"]] if r.get("task") else [])
+
+
+def focus_family(ctx):
+    """The owner's focus as a set of task keys: every brief matching one of its
+    names or globs, and every part split from those. None when unset (obs 5, 6,
+    13, 53)."""
+    pats = [re.sub(r"[^A-Za-z0-9*?\[\]]", "_", t) for t in focus_tasks(ctx)]
+    if not pats:
         return None
     briefs = all_briefs(ctx)
-    fam, todo = {tkey(fo)}, [tkey(fo)]
+    fam = {p for p in pats if not any(c in p for c in "*?[")}
+    fam |= {k for k in briefs if any(fnmatch.fnmatchcase(k, p) for p in pats)}
+    todo = list(fam)
     while todo:
         k = todo.pop()
         for c, b in briefs.items():
@@ -2232,15 +2241,21 @@ def cmd_focus(a):
     if a.clear:
         f.unlink(missing_ok=True); print("focus cleared"); return
     if not a.task:
-        try:
-            r = json.loads(f.read_text())
-            print(f"focus: {r['task']}  ({r.get('why') or 'no reason given'}, set {r.get('at')})")
-        except Exception:
-            print("no focus set")
+        cur = focus_tasks(ctx)
+        if not cur:
+            print("no focus set"); return
+        r = json.loads(f.read_text())
+        fam = focus_family(ctx) or set()
+        print(f"focus: {', '.join(cur)}  ({r.get('why') or 'no reason given'}, "
+              f"set {r.get('at')}; {len(fam)} task(s) in it)")
         return
-    f.write_text(json.dumps({"task": a.task, "why": a.why or "",
+    f.write_text(json.dumps({"tasks": a.task, "why": a.why or "",
                              "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}) + "\n")
-    print(f"focus: {a.task} — nags outside it now fold into one line")
+    fam = focus_family(ctx) or set()
+    print(f"focus: {', '.join(a.task)} — {len(fam)} task(s) in it; "
+          f"nags outside fold into one line")
+    if not fam:
+        print("  nothing matches yet — check the names (`harness queue`)")
 
 
 def queue_items(ctx, node):
@@ -8026,7 +8041,8 @@ def main():
                     help="print nothing and exit 0 when not enrolled")
     add("unenrol", cmd_unenrol)
     fo = add("focus", cmd_focus)
-    fo.add_argument("task", nargs="?", help="task or segment the owner put first")
+    fo.add_argument("task", nargs="*",
+                    help="tasks, segments or globs (quote them: 'enrich*') the owner put first")
     fo.add_argument("--why", help="one line")
     fo.add_argument("--clear", action="store_true")
     a = p.parse_args()

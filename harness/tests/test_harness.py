@@ -123,6 +123,36 @@ class Orientation(unittest.TestCase):
         self.assertNotIn("handed:y", self.items(unactioned=["x", "y"]))
 
 
+class Focus(unittest.TestCase):
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None})
+        d = self.ctx.dir / "briefs"
+        d.mkdir()
+        for stem, frm in {"enrich_citations": None, "enrich_fulltext": None,
+                          "s7_pmc_core": "enrich-fulltext", "surface_polish": None}.items():
+            (d / f"{stem}.json").write_text(json.dumps({"from": frm} if frm else {}))
+
+    def focus(self, rec):
+        (self.ctx.dir / "focus.json").write_text(json.dumps(rec))
+        return hz.focus_family(self.ctx)
+
+    def test_glob_covers_several_segments_and_their_parts(self):
+        # obs 53: the owner's priority spans segments with no common parent.
+        fam = self.focus({"tasks": ["enrich*"]})
+        self.assertEqual(fam, {"enrich_citations", "enrich_fulltext", "s7_pmc_core"})
+
+    def test_several_names(self):
+        fam = self.focus({"tasks": ["enrich-citations", "surface-polish"]})
+        self.assertEqual(fam, {"enrich_citations", "surface_polish"})
+
+    def test_old_single_task_record_still_reads(self):
+        self.assertEqual(self.focus({"task": "enrich-fulltext"}),
+                         {"enrich_fulltext", "s7_pmc_core"})
+
+    def test_unset_is_none(self):
+        self.assertIsNone(hz.focus_family(self.ctx))
+
+
 class Records(unittest.TestCase):
     def test_author_is_not_told_of_own_comment(self):
         ctx = FakeCtx({"main": None, "dev": "main"})

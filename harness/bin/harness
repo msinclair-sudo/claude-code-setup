@@ -985,6 +985,12 @@ def cmd_claim(a):
                      f"recorded roster in tests,\n           and using it here means "
                      f"a session choosing what its own guard is allowed\n"
                      f"           to see.")
+    # Interactive sessions are not in the roster (obs 4). Warned, not refused:
+    # the owner often has a chat open in the repository directory.
+    for r in interactive_in(ctx.worktree, exclude={self_ref}):
+        print(f"warning: interactive session {r.get('name') or '?'} "
+              f"[{str(r.get('sessionId'))[:8]}] pid {r.get('pid')} is in this worktree "
+              f"— two sessions on one index")
     try:
         fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError:
@@ -1183,6 +1189,14 @@ def live_sessions():
             continue
         out.append(d)
     return out
+
+
+def interactive_in(worktree, exclude=()):
+    """Live interactive sessions whose cwd is this worktree or inside it."""
+    wt = str(worktree)
+    return [d for d in live_sessions()
+            if d.get("kind") == "interactive" and d.get("sessionId") not in exclude
+            and (d.get("cwd") == wt or str(d.get("cwd") or "").startswith(wt + "/"))]
 
 
 def build_index(ctx):

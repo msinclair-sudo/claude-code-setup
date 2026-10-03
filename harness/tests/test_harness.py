@@ -190,6 +190,18 @@ class FactStaleness(unittest.TestCase):
         self.assertEqual((fresh, same_wt), (False, True))
 
 
+class Occupancy(unittest.TestCase):
+    def test_interactive_session_in_worktree_is_seen(self):
+        # obs 4: the roster lists background sessions only.
+        rows = [{"kind": "interactive", "sessionId": "i1", "cwd": "/w/sub", "pid": 1},
+                {"kind": "interactive", "sessionId": "i2", "cwd": "/w2", "pid": 2},
+                {"kind": "bg", "sessionId": "b1", "cwd": "/w", "pid": 3},
+                {"kind": "interactive", "sessionId": "me", "cwd": "/w", "pid": 4}]
+        with mock.patch.object(hz, "live_sessions", return_value=rows):
+            self.assertEqual([r["sessionId"] for r in hz.interactive_in("/w", {"me"})],
+                             ["i1"])
+
+
 class Records(unittest.TestCase):
     def test_author_is_not_told_of_own_comment(self):
         ctx = FakeCtx({"main": None, "dev": "main"})

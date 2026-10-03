@@ -202,6 +202,23 @@ class Occupancy(unittest.TestCase):
                              ["i1"])
 
 
+class QueueShape(unittest.TestCase):
+    def test_preview_skips_shared_preamble(self):
+        # obs 14: seven briefs opening alike previewed alike.
+        pre = "ENRICH SEGMENT. Read plans/enrich first.\n"
+        a = {"text": pre + "S1 identity table"}
+        b = {"text": pre + "S2 status and memory"}
+        self.assertEqual(hz.brief_preview(a, [a, b]), "S1 identity table")
+        self.assertEqual(hz.brief_preview({"text": "only"}, []), "only")
+
+    def test_new_brief_joins_the_back_of_an_ordered_queue(self):
+        ctx = FakeCtx({"main": None})
+        with mock.patch.object(hz, "queue", return_value=[{"seq": 0}, {"seq": 3}, {}]):
+            self.assertEqual(hz.next_seq(ctx, "dev"), {"seq": 4})
+        with mock.patch.object(hz, "queue", return_value=[{}, {}]):
+            self.assertEqual(hz.next_seq(ctx, "dev"), {})
+
+
 class Records(unittest.TestCase):
     def test_author_is_not_told_of_own_comment(self):
         ctx = FakeCtx({"main": None, "dev": "main"})

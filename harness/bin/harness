@@ -5705,6 +5705,22 @@ def queue(ctx, node):
     return rows
 
 
+def next_seq(ctx, node):
+    """A new brief joins the BACK of an ordered queue (obs 14). Unordered, it
+    keeps write order."""
+    seqs = [b["seq"] for b in queue(ctx, node) if b.get("seq") is not None]
+    return {"seq": max(seqs) + 1} if seqs else {}
+
+
+def brief_preview(b, siblings):
+    """The brief's first line that no sibling shares, so briefs opening with a
+    common preamble do not all preview alike (obs 14)."""
+    lines = [l.strip() for l in (b.get("text") or "").splitlines() if l.strip()]
+    shared = {l.strip() for o in siblings if o is not b
+              for l in (o.get("text") or "").splitlines()}
+    return next((l for l in lines if l not in shared), lines[0] if lines else "")
+
+
 def couple_chain(ctx, task):
     """Every task coupled to this one, forward, in order. A chain runs in ONE
     session; the whole point is that the boundary between them is not a
@@ -5902,8 +5918,7 @@ def cmd_queue(a):
             stamps = set()
         for i, b in enumerate(head):
             mark = "next" if i == 0 and not openm else f"  {i + 1}."
-            print(f"    {mark:<4} {b['task']:<24} "
-                  f"{(b.get('text') or '').strip().splitlines()[0][:44] if b.get('text') else ''}")
+            print(f"    {mark:<4} {b['task']:<24} {brief_preview(b, head)[:44]}")
 
             if b.get("ordered_by") and stamps:
                 print(f"    {'':<4} {'':<24} ordered by {b['ordered_by']}: "
@@ -6188,6 +6203,8 @@ def cmd_brief(a):
             rec["band"] = band
         if (b or {}).get("seq") is not None:
             rec["seq"] = b["seq"]
+        elif b is None:
+            rec.update(next_seq(ctx, target))
         blk = a.from_block or (b or {}).get("from_block")
         if blk:
             rec["from_block"] = blk

@@ -1582,6 +1582,25 @@ def cmd_doctor(a):
         # everything that automates, which is the whole class of fault this
         # command exists to close.
         wiring_failed(fails)
+        # Nothing to refuse here, so prove the guard where it refuses: in each
+        # child's worktree (obs 9).
+        nodes = load_index(ctx)["nodes"]
+        bad = 0
+        for k in ctx.children(node):
+            wt = (nodes.get(k) or {}).get("worktree")
+            if not wt:
+                print(f"  {k:<12} no worktree"); continue
+            try:
+                r = subprocess.run([sys.executable, str(Path(__file__).resolve()), "doctor"],
+                                   cwd=wt, capture_output=True, text=True, timeout=120)
+                rc, why = r.returncode, (r.stderr or r.stdout).strip().splitlines()
+            except Exception as e:
+                rc, why = 1, [str(e)]
+            bad += rc != 0
+            print(f"  {k:<12} " + ("guarded" if rc == 0 else
+                                   f"UNGUARDED (exit {rc}): {(why or ['?'])[-1][:90]}"))
+        if bad:
+            die(UNGUARDED, f"{bad} child worktree(s) failed doctor — run it there to read why")
         return
 
     # 2. behaviour — the part that matters

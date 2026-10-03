@@ -97,7 +97,7 @@ harness brief <task> --for <child> --with <previous-task> --why "..." --write ".
 ## Focus
 
 ```bash
-harness focus <task> [--why "..."]   # set
+harness focus <task|'glob*'>... [--why "..."]   # set
 harness focus                        # show
 harness focus --clear
 ```

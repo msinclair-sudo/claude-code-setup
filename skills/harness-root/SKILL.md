@@ -25,7 +25,7 @@ Draft it from what the operator told you, mark what you inferred or guessed, and
 
 ## Focus
 
-When the operator names a priority, set it: `harness focus <task> --why "…"`. `harness focus` shows it, `harness focus --clear` ends it. While set, nags about other work fold into one line and `whoami`'s "next" names only in-focus work.
+When the operator names a priority, set it: `harness focus <task>... --why "…"` (several tasks, or a quoted glob such as `'enrich*'`; split parts follow their segment). `harness focus` shows it, `harness focus --clear` ends it. While set, nags about other work fold into one line and `whoami`'s "next" names only in-focus work.
 
 ## Briefs (`T1`)
 

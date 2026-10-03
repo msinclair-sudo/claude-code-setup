@@ -26,7 +26,7 @@ mid-lead  → harness + harness-upward + harness-downward
 top lead  → harness + harness-downward + harness-root
 ```
 
-`harness focus [task|--clear]` holds the owner's priority; nags outside it fold into one line. Nags appear only at orientation (session start and each prompt), not after every command.
+`harness focus [task|'glob*'...|--clear]` holds the owner's priority; nags outside it fold into one line. Nags appear only at orientation (session start and each prompt), not after every command.
 
 ## Prose goes in on stdin, not in quotes
 

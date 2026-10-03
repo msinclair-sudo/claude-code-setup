@@ -673,7 +673,8 @@ def _whoami(a):
         if kids:
             busy = {r.get("_node") for r in open_marks(ctx).values()
                     if not r.get("_presented_at")}
-            spare = [k for k in kids if k not in busy]
+            # A lead whose lanes hold open work is waiting on them, not idle.
+            spare = [k for k in kids if not busy & {k, *subtree(ctx, k)}]
             # Two different states, and they had one message. Recycling a child
             # with an empty queue buys a fresh session with nothing to open,
             # which is the state T15 exists to prevent — the advice was wrong,
@@ -835,6 +836,11 @@ def _whoami(a):
         # learns the work exists, and nothing else in the harness would say so.
         q = queue(ctx, node)
         head = [b for b in q if not b.get("coupled_to")]
+        fam = focus_family(ctx)
+        if fam is not None:
+            print(f"focus    {json.loads((ctx.state / 'focus.json').read_text())['task']}"
+                  f" — the owner's priority; other work waits")
+            head = [b for b in head if in_focus(fam, b["task"])]
         openm = [t for t, r in open_marks(ctx).items() if r.get("_node") == node]
         # A LEAD used to get a bare list here and no order — "handed 3 briefs" —
         # which names no first thing and does not say to begin. So it asked, and

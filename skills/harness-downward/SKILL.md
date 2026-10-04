@@ -121,7 +121,7 @@ Before the first commit the child restates your plan in a few lines. Correct onl
 
 ## `T12` — answering
 
-Answer from scope, intent and seams. "I don't know, escalating" is correct; escalate under `T5`/`T9` rather than guess. Orientation lists children waiting on you (`harness waiting --list`), oldest first, with what is still moving. Answer the halted one before the one still working. Answer, then recycle, never the reverse. If a name stays on the list after you answered, the answer did not arrive; put it in the brief.
+Answer from scope, intent and seams. "I don't know, escalating" is correct; escalate under `T5`/`T9` rather than guess. Orientation lists children waiting on you (`harness waiting --list`), oldest first, with what is still moving. Answer the halted one before the one still working. Answer, then recycle, never the reverse. If a name stays on the list after you answered, the answer did not arrive; put it in the brief. A `stuck` line means a grandchild has waited over ten minutes on a child of yours that is busy (often on a long `harness check`, shown with its progress): message that child, or answer the grandchild yourself.
 
 ## `I9` — you own the seams
 

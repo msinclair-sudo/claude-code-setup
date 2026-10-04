@@ -3,6 +3,7 @@ import importlib.machinery
 import importlib.util
 import io
 import json
+import os
 import socket
 import tempfile
 import time
@@ -343,6 +344,103 @@ class Baseline(unittest.TestCase):
         with self.assertRaises(SystemExit) as e:
             self.run_check("echo 'failed: a.py(1) b.py(1)'; exit 1")
         self.assertEqual(e.exception.code, hz.REFUSED)
+
+
+class CheckVisible(unittest.TestCase):
+    """obs 68, 69: a running check shows progress, and a timed-out arm keeps its output."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main"})
+        self.ctx.me, self.ctx.branch, self.ctx.worktree = "dev", "dev", self.ctx.dir
+        (self.ctx.dir / "checks").mkdir()
+
+    def check(self, command, timeout=30, out=None):
+        a = mock.Mock(set_baseline=False, timeout=timeout)
+        chk = [{"name": "arm", "command": command, "blindSpot": "-"}]
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.object(hz, "load_checks", return_value=chk), \
+             mock.patch.object(hz, "load_baseline", return_value=None), \
+             mock.patch("sys.stdout", out or io.StringIO()):
+            try:
+                hz.cmd_check(a)
+            except SystemExit:
+                pass
+        rep = next((self.ctx.dir / "checks").glob("dev-*.json"))
+        return json.loads(rep.read_text())["checks"][0]
+
+    def test_timeout_keeps_what_it_printed(self):
+        row = self.check("echo first; echo second; sleep 5", timeout=1)
+        self.assertTrue(row["timedOut"])
+        self.assertIn("second", row["stdout"])
+        self.assertEqual(row["lastLine"], "second")
+        self.assertIn("timed out after 1s", row["stderr"])
+        self.assertIn("second", (self.ctx.dir / "checks" / "dev-arm.out").read_text())
+
+    def test_redirected_output_and_running_record_appear_while_it_runs(self):
+        import threading
+        path = self.ctx.dir / "log.txt"
+        with open(path, "w") as fh:
+            t = threading.Thread(target=self.check, args=("sleep 1.5",), kwargs={"out": fh})
+            t.start()
+            time.sleep(0.7)
+            seen = path.read_text()
+            rec = json.loads(hz.check_running_path(self.ctx, "dev").read_text())
+            t.join()
+        self.assertIn("…     arm", seen)
+        self.assertEqual((rec["done"], rec["total"], rec["arm"]), (0, 1, "arm"))
+        self.assertFalse(hz.check_running_path(self.ctx, "dev").exists())
+
+    def test_clip_says_it_cut(self):
+        self.assertEqual(hz.clip("x" * 105), "x" * 100 + "…(+5 chars)")
+        self.assertEqual(hz.clip("short"), "short")
+
+
+class WaitChain(unittest.TestCase):
+    """obs 68: one reading of what a node is doing, and a stalled wait reaches the rank above."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_2": "dev"})
+        for d in ("waiting", "checks"):
+            (self.ctx.dir / d).mkdir()
+
+    def wait(self, since):
+        hz.waiting_path(self.ctx, "dev_2").write_text(json.dumps(
+            {"node": "dev_2", "parent": "dev", "asked": "ruling on X", "since": since}))
+
+    def checking(self, pid):
+        hz.check_running_path(self.ctx, "dev").write_text(json.dumps(
+            {"pid": pid, "total": 23, "done": 6, "arm": "pytest-all", "started": OLD,
+             "out": "/x/dev-pytest-all.out"}))
+
+    def test_activity(self):
+        self.wait(OLD)
+        self.assertTrue(hz.node_activity(self.ctx, "dev_2").startswith("waiting on dev 3h"))
+        self.checking(os.getpid())
+        self.assertEqual(hz.node_activity(self.ctx, "dev"), "check 7/23 (pytest-all), 3h00")
+        with mock.patch.object(hz, "pid_alive", return_value=False):
+            self.assertIn("check died at 7/23", hz.node_activity(self.ctx, "dev"))
+
+    def items(self, node):
+        with mock.patch.object(hz, "lead_owes", return_value=[]), \
+             mock.patch.object(hz, "rank0_owes", return_value=[]), \
+             mock.patch.object(hz, "focus_family", return_value=None), \
+             mock.patch.object(hz, "unread_brief_comments", return_value={}), \
+             mock.patch.object(hz, "unactioned_briefs", return_value=[]), \
+             mock.patch.object(hz, "open_marks", return_value={}), \
+             mock.patch.object(hz, "queue", return_value=[]):
+            return hz.queue_items(self.ctx, node)
+
+    def test_stalled_wait_reaches_the_rank_above(self):
+        self.wait(OLD)
+        self.checking(os.getpid())
+        main = self.items("main")
+        self.assertIn("stuck:dev_2", main)
+        self.assertIn("dev: check 7/23", main["stuck:dev_2"])
+        dev = self.items("dev")
+        self.assertIn("asked:dev_2", dev)
+        self.assertNotIn("stuck:dev_2", dev)
+        self.wait(time.strftime("%Y-%m-%dT%H:%M:%S%z"))
+        self.assertNotIn("stuck:dev_2", self.items("main"))
 
 
 class Pairs(unittest.TestCase):

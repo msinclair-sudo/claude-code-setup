@@ -702,8 +702,8 @@ def _whoami(a):
         if _kids:
             for r in stopped_rows(live_rows(agents_json(read_roster(a.roster)))):
                 child = (_idx.get("byWorktree") or {}).get(r.get("cwd", ""))
-                if child not in _kids:
-                    continue
+                if child not in _kids or child in open_waits(ctx):
+                    continue        # a recorded wait is listed above (obs 68)
                 print(f"WAITING  {child} is stopped at a prompt — it reads as idle "
                       f"and is not.")
                 print(f"         Not yours to clear: it wants a reply or a permission "
@@ -1190,6 +1190,7 @@ def cmd_status(a):
         tasks.setdefault(rec.get("_node") or "?", []).append(task)
         tasks_rec[task] = rec
 
+    _waits = open_waits(ctx)
     d = ctx.state / "locks"
     locks = sorted(d.glob("*.lock")) if d.is_dir() else []
     claimed, unassigned = set(), []
@@ -1200,7 +1201,9 @@ def cmd_status(a):
         # It reports `status: idle` — the same word as a session with nothing to
         # do — so the one state that needs a human at the keyboard rendered as
         # the state that needs nobody.
-        if peers.get(h["ref"], {}).get("stopped"):
+        # Unless the harness's own record says what it waits on (obs 68): then it
+        # is waiting on its lead, and the owner is not the one to act.
+        if peers.get(h["ref"], {}).get("stopped") and h["node"] not in _waits:
             live = "WAITING"
         claimed.add(h["node"])
         open_here = tasks.get(h["node"], [])
@@ -1216,6 +1219,9 @@ def cmd_status(a):
             work += f"   ctx {ktok(context_size(h['ref']))}"
         if reset_path(ctx, h["node"]).exists():
             work += "   reset pending"
+        act = node_activity(ctx, h["node"], _waits)
+        if act:
+            work += f"   {act}"
         if live == "gone" and last_write(h["ref"]):
             work += time.strftime("   (process gone, last write %H:%M)",
                                   time.localtime(last_write(h["ref"])))
@@ -1904,6 +1910,7 @@ CACHE_TTL = 60 * 60
 STALLED_SIGNOFF = 20 * 60      # a lead has not signed off presented work
 STALLED_IDLE = 20 * 60         # a child stands idle with work already written
 STALLED_APPROVAL = 60 * 60     # rank 0 has not decided a gated brief
+WAIT_STALL = 10 * 60          # a grandchild's wait the lead in between has not answered (obs 68)
 # Three contracts, three constants, and for a while one number doing all of it.
 # A presentation twenty minutes old is a lead mid-review; a child idle twenty
 # minutes is one being recycled; a gated brief twenty minutes old is nothing at
@@ -2533,10 +2540,20 @@ def queue_items(ctx, node):
     except Exception:
         pass
     try:
-        for n, r in open_waits(ctx).items():
+        _w = open_waits(ctx)
+        _below = set(subtree(ctx, node))
+        for n, r in _w.items():
             if r.get("parent") == node:
                 out[f"asked:{n}"] = (f"{n} is stopped waiting on you "
                                      f"({wait_age(r.get('since'))}): {r.get('asked')}")
+            elif n in _below and time.time() - (_epoch(r.get("since")) or time.time()) > WAIT_STALL:
+                # A wait the lead in between has not seen: it runs no harness
+                # command while a long job runs, so it is never told (obs 68).
+                up = r.get("parent")
+                doing = node_activity(ctx, up, _w)
+                out[f"stuck:{n}"] = (f"{n} has waited {wait_age(r.get('since'))} on {up}"
+                                     + (f" — {up}: {doing}" if doing else "")
+                                     + f". Message {up}, or answer {n} yourself")
     except Exception:
         pass
     try:
@@ -2587,7 +2604,7 @@ def queue_items(ctx, node):
         return parts[2] if parts[0] in ("sign off", "start", "down", "orphan") else parts[1]
     kept = {k: v for k, v in out.items()
             if k.startswith(("asked:", "comment:", "handed:", "heavy:", "sweep:", "uncovered:",
-                             "orphan:", "down:")) or in_focus(fam, task_of(k))}
+                             "orphan:", "down:", "stuck:")) or in_focus(fam, task_of(k))}
     if len(kept) < len(out):
         kept[f"fold:{len(out) - len(kept)}"] = (f"+{len(out) - len(kept)} item(s) "
                                                 f"outside the focus  — harness whoami")
@@ -2604,7 +2621,7 @@ def queue_items(ctx, node):
 # still fires once. The cooldown is what keeps that from being a per-turn tax:
 # a debt costs one line every DEBT_RENAG, not one line every turn.
 DEBT_RENAG = 10 * 60
-DEBT_KINDS = ("sign off:", "start:", "down:", "orphan:", "heavy:", "approve:", "task:", "asked:", "handed:",
+DEBT_KINDS = ("sign off:", "start:", "down:", "orphan:", "stuck:", "heavy:", "approve:", "task:", "asked:", "handed:",
               "sweep:")
 
 
@@ -3460,6 +3477,59 @@ def check_report_path(ctx, node, sha):
     return ctx.state_file("checks", f"{node}-{sha}", ".json")
 
 
+def check_running_path(ctx, node):
+    """Present only while `check` runs on this node (obs 68)."""
+    return ctx.state_file("checks", f"{node}.running", ".json")
+
+
+def check_output_paths(ctx, node, arm):
+    """Where an arm streams while it runs, overwritten each run (obs 69)."""
+    return (ctx.state_file("checks", f"{node}-{arm}", ".out"),
+            ctx.state_file("checks", f"{node}-{arm}", ".err"))
+
+
+def clip(line, n=100):
+    """A cut that says it is one (obs 69): a silent cut reads as the whole line."""
+    return line if len(line) <= n else f"{line[:n]}…(+{len(line) - n} chars)"
+
+
+def _tail(path, n=2000):
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, 2)
+            fh.seek(max(0, fh.tell() - n))
+            return fh.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+def run_arm(command, cwd, limit, outf, errf):
+    """One arm under `sh -c`, streamed to disk so a timeout keeps what it printed.
+
+    `subprocess.run(timeout=)` threw the output away with the process, so an arm
+    that ran twenty files and hung on the twenty-first reported nothing (obs 69).
+    Its own process group, so a timeout kills the whole arm, not just `sh`.
+    Returns (exit, stdout tail, stderr tail, timed_out)."""
+    outf.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(outf, "wb") as o, open(errf, "wb") as e:
+            pr = subprocess.Popen(["sh", "-c", command], cwd=str(cwd), stdout=o, stderr=e,
+                                  stdin=subprocess.DEVNULL, start_new_session=True)
+            try:
+                code = pr.wait(timeout=limit)
+                timed_out = False
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(pr.pid, 9)
+                except OSError:
+                    pr.kill()
+                pr.wait()
+                code, timed_out = 124, True
+    except Exception as ex:
+        return 125, "", str(ex), False
+    return code, _tail(outf), _tail(errf), timed_out
+
+
 def read_check_report(ctx, node, sha):
     f = check_report_path(ctx, node, sha)
     if not f.exists():
@@ -3587,51 +3657,72 @@ def cmd_check(a):
     node, _ = ctx.node()
     if a.set_baseline:
         return set_baseline(ctx, node, a.why)
+    # Line-buffered: a check redirected to a file printed nothing until it
+    # ended, so a 29-minute run read as 0 bytes whether running, hung or dead (obs 68).
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except Exception:
+        pass
     checks = load_checks(ctx)
     base = load_baseline(ctx)
     sha = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
     rc, dirt, _ = git("status", "--porcelain", cwd=ctx.worktree)
     rows, failed = [], 0
+    report = check_report_path(ctx, node, sha)
+    running = check_running_path(ctx, node)
+    running.parent.mkdir(parents=True, exist_ok=True)
+    started = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     print(f"{len(checks)} check(s) on {node} at {sha[:8]}"
           + (f"   ({len(dirt.splitlines())} uncommitted path(s) — this measures the "
              f"WORKTREE, not the commit)" if dirt.strip() else ""))
-    for c in checks:
-        t0 = time.time()
-        limit = c.get("timeout") or a.timeout      # per-check ceiling (obs 24)
-        timed_out = False
-        try:
-            r = subprocess.run(["sh", "-c", c["command"]], cwd=str(ctx.worktree),
-                               capture_output=True, text=True, timeout=limit)
-            code, out, err = r.returncode, r.stdout, r.stderr
-        except subprocess.TimeoutExpired:
-            code, out, err, timed_out = 124, "", f"timed out after {limit}s", True
-        except Exception as e:
-            code, out, err = 125, "", str(e)
-        dur = time.time() - t0
-        ok = code == 0
-        failed += (not ok)
-        rows.append({"name": c["name"], "command": c["command"],
-                     "blindSpot": c["blindSpot"], "exit": code,
-                     "seconds": round(dur, 2), "timedOut": timed_out,
-                     "failedFiles": failed_files(out),
-                     "stdout": out[-2000:], "stderr": err[-2000:]})
-        verdict = "NOT RUN (timed out)" if timed_out else "PASS" if ok else "FAIL"
-        print(f"  {verdict}  {c['name']:<18} {dur:5.1f}s"
-              + ("" if ok or timed_out else f"   exit {code}"))
-        if not ok and not timed_out:
-            lines = (err or out).strip().splitlines()
-            if len(lines) > 6:
-                print(f"        … {len(lines) - 6} earlier line(s) omitted")   # obs 34
-            for line in lines[-6:]:
-                print(f"        {line[:100]}")
-        if base and not ok:
-            bl = baseline_line(baseline_diff(rows[-1:], base)[c["name"]])
-            if bl:
-                print(f"        {bl}")
-        # The blind spot is printed beside the RESULT, not filed away in the
-        # manifest, because the moment it matters is the moment somebody is
-        # deciding what a pass means.
-        print(f"        cannot see: {c['blindSpot']}")
+    try:
+        for i, c in enumerate(checks):
+            limit = c.get("timeout") or a.timeout      # per-check ceiling (obs 24)
+            outf, errf = check_output_paths(ctx, node, c["name"])
+            running.write_text(json.dumps({
+                "pid": os.getpid(), "sha": sha, "total": len(checks), "done": i,
+                "arm": c["name"], "started": started, "out": str(outf),
+                "arm_started": time.strftime("%Y-%m-%dT%H:%M:%S%z")}) + "\n")
+            print(f"  …     {c['name']}")
+            t0 = time.time()
+            code, out, err, timed_out = run_arm(c["command"], ctx.worktree, limit, outf, errf)
+            dur = time.time() - t0
+            ok = code == 0
+            failed += (not ok)
+            last = next((x for x in reversed((out + "\n" + err).splitlines()) if x.strip()), "")
+            if timed_out:
+                err = (err + f"\ntimed out after {limit}s").lstrip("\n")
+            rows.append({"name": c["name"], "command": c["command"],
+                         "blindSpot": c["blindSpot"], "exit": code,
+                         "seconds": round(dur, 2), "timedOut": timed_out,
+                         "failedFiles": failed_files(out), "lastLine": last[-300:],
+                         "stdout": out[-2000:], "stderr": err[-2000:]})
+            verdict = "NOT RUN (timed out)" if timed_out else "PASS" if ok else "FAIL"
+            print(f"  {verdict}  {c['name']:<18} {dur:5.1f}s of {limit}"
+                  + ("" if ok or timed_out else f"   exit {code}"))
+            if timed_out and last:
+                print(f"        last output: {clip(last)}")
+            if not ok and not timed_out:
+                lines = (err or out).strip().splitlines()
+                if len(lines) > 6:
+                    print(f"        … {len(lines) - 6} earlier line(s) omitted")   # obs 34
+                for line in lines[-6:]:
+                    print(f"        {clip(line)}")
+            if not ok:
+                ff = rows[-1]["failedFiles"]
+                print(f"        report: {report}"
+                      + (f"  ({len(ff)} failed file(s) listed)" if ff else "")
+                      + f"\n        output: {outf}")
+            if base and not ok:
+                bl = baseline_line(baseline_diff(rows[-1:], base)[c["name"]])
+                if bl:
+                    print(f"        {bl}")
+            # The blind spot is printed beside the RESULT, not filed away in the
+            # manifest, because the moment it matters is the moment somebody is
+            # deciding what a pass means.
+            print(f"        cannot see: {c['blindSpot']}")
+    finally:
+        running.unlink(missing_ok=True)
     rep = {"node": node, "sha": sha, "branch": ctx.branch,
            "dirty": bool(dirt.strip()),
            "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -3641,9 +3732,8 @@ def cmd_check(a):
     if diff is not None:
         rep["baseline"] = base.get("sha")
         rep["new"] = sum(len(d["new"]) + d["notrun"] for d in diff.values())
-    f = check_report_path(ctx, node, sha)
-    f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text(json.dumps(rep, indent=2) + "\n")
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text(json.dumps(rep, indent=2) + "\n")
     print(f"\n{len(checks) - failed}/{len(checks)} passed — recorded against {sha[:8]}")
     if diff is not None:
         print("  " + baseline_summary(rep, base))
@@ -4200,7 +4290,7 @@ def cmd_integrate(a):
             # A refusal you cannot act on.
             print(f"skip {n:<12} fast-forward refused:")
             for line in (err or out).strip().splitlines()[:12]:
-                print(f"     {'':<12} {line[:100]}")
+                print(f"     {'':<12} {clip(line)}")
             failed += 1; continue
         done += 1
         print(f"  ✓  {n:<12} {here} → {tip[:8]}"
@@ -6262,6 +6352,9 @@ def cmd_queue(a):
             who = "   busy"
         else:
             who = f"   idle {human_age(occ[n][1])}" if occ[n][1] else "   idle"
+        act = node_activity(ctx, n)
+        if act and occ is not None and n in occ:
+            who = f"   {act}"
         print(f"{n}{who}")
         for t in openm:
             r = open_marks(ctx)[t]
@@ -7404,6 +7497,27 @@ def open_waits(ctx):
     return out
 
 
+def check_activity(ctx, node):
+    """A running `check` on this node, as a phrase, or None (obs 68)."""
+    try:
+        r = json.loads(check_running_path(ctx, node).read_text())
+    except Exception:
+        return None
+    where = f"{r.get('done', 0) + 1}/{r.get('total', '?')} ({r.get('arm')})"
+    if pid_alive(r.get("pid")) is False:
+        return f"check died at {where} — output in {r.get('out')}"
+    return f"check {where}, {wait_age(r.get('started'))}"
+
+
+def node_activity(ctx, node, waits=None):
+    """What a node is doing that the runtime's busy/idle cannot say: waiting on
+    its lead, or running a check. One reading, used by every surface (obs 68)."""
+    w = (open_waits(ctx) if waits is None else waits).get(node)
+    if w:
+        return f"waiting on {w.get('parent') or 'its lead'} {wait_age(w.get('since'))}: {w.get('asked')}"
+    return check_activity(ctx, node)
+
+
 def clear_wait(ctx, node):
     """Silently does nothing when nothing is waiting.
 
@@ -7503,7 +7617,20 @@ def cmd_waiting(a):
     f.write_text(json.dumps(rec, indent=2) + "\n")
     append_inbox(dict(rec, event="waiting"))
     print(f"{node} is marked as waiting on {parent}")
-    print(f"  {parent} sees it at its next harness command, and the viewer shows it now.")
+    # The record is read at the lead's next harness command, and a lead parked on
+    # a long job runs none, so the wait sat unseen behind a 29-minute check (obs 68).
+    # Same remedy as presenting: say it, now, to the running session.
+    _lead, _ = lead_address(ctx, parent)
+    _doing = check_activity(ctx, parent)
+    if _doing:
+        print(f"  {parent} is running {_doing} and runs no harness command until it ends.")
+    if _lead:
+        print(f"  The record does not reach it. Send this before you stop, in this turn:")
+        print(f"    SendMessage(to: \"{_lead}\", message: \"{node} is waiting on you: "
+              f"{a.asked}\")")
+    else:
+        print(f"  {parent} is not running, so nobody is told; its parent sees the wait "
+              f"after {WAIT_STALL // 60}m.")
     if not a.still_moving:
         print(f"  Nothing was recorded as still moving, so this reads as a full stop.")
         print(f"  If it is not one, say so: harness waiting {shlex.quote(a.asked)} "
@@ -8894,7 +9021,9 @@ def main():
                     help="set the order of a child's queue; unnamed keep their place behind")
     ck = add("check", cmd_check)
     ck.add_argument("--timeout", type=int, default=900, metavar="SEC",
-                    help="per-check timeout (default 900)")
+                    help="per-check timeout (default 900); a check's own \"timeout\" key "
+                         "in manifest.json overrides it. Arms run under `sh -c` (dash on "
+                         "Debian/Ubuntu), so bashisms such as $SECONDS read empty")
     ck.add_argument("--set-baseline", action="store_true",
                     help="record the failures in the report at HEAD as the known set")
     ck.add_argument("--why", help="with --set-baseline: one line")

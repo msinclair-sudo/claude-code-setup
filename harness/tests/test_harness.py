@@ -780,6 +780,40 @@ class Stale(unittest.TestCase):
         self.assertEqual(hz.ledger(self.ctx)[-1]["counts"], {"facts": 1, "findings": 1})
 
 
+class Orphan(unittest.TestCase):
+    """obs 63, 64: a session that died holding its task is work to resume, and
+    its parent is told at once."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev"})
+        for d in ("briefs", "marks"):
+            (self.ctx.dir / d).mkdir()
+        w = lambda p, o: (self.ctx.dir / p).write_text(json.dumps(o))
+        w("marks/merge.json", {"_node": "dev_1"})                       # open, unpresented
+        w("briefs/merge.json", {"task": "merge", "node": "dev_1"})
+        w("briefs/runs.json", {"task": "runs", "node": "dev_1", "after": ["merge"]})
+
+    def test_open_mark_is_resume_not_waiting(self):
+        st = hz.next_start(self.ctx, "dev_1")
+        self.assertEqual((st["skip"], st["line"].split()[:2]), (None, ["resumes", "merge"]))
+        (self.ctx.dir / "marks" / "merge.json").write_text(
+            json.dumps({"_node": "dev_1", "_presented_at": "x"}))
+        self.assertIn("waits", hz.next_start(self.ctx, "dev_1")["skip"])
+
+    def test_parent_is_told_when_the_holder_dies(self):
+        self.ctx.lock("dev_1", 1)
+        with mock.patch.object(hz, "holder_alive", return_value=False), \
+             mock.patch.object(hz, "last_write", return_value=time.time() - 600):
+            rows = hz.lead_owes(self.ctx, "dev")
+            self.assertEqual([r[:3] for r in rows if r[0] == "orphan"], [("orphan", "dev_1", "merge")])
+            self.ctx.lock("dev", 1)
+            down = [r for r in hz.lead_owes(self.ctx, "main") if r[0] == "down"]
+            self.assertEqual(down[0][1], "dev")                           # a dead lead too
+        with mock.patch.object(hz, "holder_alive", return_value=False), \
+             mock.patch.object(hz, "last_write", return_value=time.time() - 30):
+            self.assertEqual([r for r in hz.lead_owes(self.ctx, "dev") if r[0] == "orphan"], [])
+
+
 class Records(unittest.TestCase):
     def test_author_is_not_told_of_own_comment(self):
         ctx = FakeCtx({"main": None, "dev": "main"})

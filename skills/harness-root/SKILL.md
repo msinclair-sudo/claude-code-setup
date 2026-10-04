@@ -113,7 +113,7 @@ harness grant --list                        # live and revoked
 harness grant <node> <path> --revoke        # stays on the record
 ```
 
-Grants live in `~/.claude/harness/<slug>/grants.json`, never in `tree.json`. They apply at the next spawn or recycle. Grant the path, record the reason, revoke it when the task closes.
+Grants live in `~/.claude/harness/<slug>/grants.json`, never in `tree.json`. They apply at the next spawn or recycle. Grant the path, record the reason, revoke it when the task closes. A grant does not clear Claude Code's permission classifier: when the owner authorises a class of live write, the route is a project permission rule the owner adds, named in the grant's reason.
 
 Blocks notify once, when recorded: the operator's `~/.claude/harness/notify` hook if present (run with `HARNESS_SUMMARY`, `HARNESS_COUNT`, `HARNESS_JSON`), the statusline badge, and `harness needs`. If they have no notifier, say so once; don't install one.
 

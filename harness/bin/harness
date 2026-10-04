@@ -1525,7 +1525,7 @@ def cmd_spawn(a):
             _rank0 = ctx.rank(n) == 0
         except Exception:
             _rank0 = False                 # unresolvable rank: keep the gate
-        _below = set(subtree(ctx, n))
+        _below = set(subtree(ctx, n)) | {n}     # its own open mark is work to resume (obs 64)
         _lead_work = sum(1 for r in open_marks(ctx).values() if r.get("_node") in _below)
         _waiting = [b for b in queue(ctx, n) if not b.get("coupled_to") and waits_on(ctx, b)]
         if not nq and _waiting and not _lead_work:
@@ -1533,7 +1533,10 @@ def cmd_spawn(a):
                   + "; ".join(f"{b['task']} {waits_on(ctx, b)[0]}" for b in _waiting[:2]))
             skipped += 1; continue
         if not nq and _lead_work:
-            print(f"       {n:<12} starts on {_lead_work} open task(s) below it")
+            _own = [t for t, r in open_marks(ctx).items()
+                    if r.get("_node") == n and not r.get("_presented_at")]
+            print(f"       {n:<12} " + (f"resumes {_own[0]} — its open task" if _own else
+                                         f"starts on {_lead_work} open task(s) below it"))
         elif not nq and not a.empty and not _rank0:
             print(f"  skip {n:<12} nothing briefed — it would have no task to open.")
             print(f"  {'':<17} harness brief <task> --for {n} --write \"...\"   "
@@ -2272,13 +2275,27 @@ def lead_owes(ctx, node):
                 owed.append(("sign off", r["_node"], mark_label(r, t),
                              time.time() - then))
     for k in kids:
-        if any(r.get("_node") == k and not r.get("_presented_at")
-               for r in marks.values()):
+        try:
+            _held = json.loads(ctx.lock_path(k).read_text())
+        except Exception:
+            _held = None
+        _dead = _held is not None and holder_alive(_held) is False
+        _lw = last_write((_held or {}).get("ref")) if _dead else None
+        _gone = time.time() - _lw if _lw else 0
+        own = [t for t, r in marks.items()
+               if r.get("_node") == k and not r.get("_presented_at")]
+        if own:
+            # A session that ended holding its task is not "mid-task" (obs 63,
+            # 64): say so now, not when a message to it bounces.
+            if _dead and _gone > 120:
+                owed.append(("orphan", k, own[0], _gone))
             continue                       # mid-task, nothing owed
         # A lead whose subtree holds an open mark is waiting on it, not idle
-        # (obs 19, 22, 27).
+        # (obs 19, 22, 27) -- unless the lead itself has gone.
         below = set(subtree(ctx, k))
         if any(r.get("_node") in below for r in marks.values()):
+            if _dead and _gone > 120:
+                owed.append(("down", k, "and its lanes still hold open work", _gone))
             continue
         q = startable(ctx, k)
         if not q:
@@ -2296,8 +2313,10 @@ def lead_owes(ctx, node):
             stamps.append(last_write(held.get("ref")))
         last = max([x for x in stamps if x] or [0])
         if last and time.time() - last > STALLED_IDLE:
-            owed.append(("start" if alive is not False else "down", k,
-                         q[0]["task"], time.time() - last))
+            if alive is not False:
+                owed.append(("start", k, q[0]["task"], time.time() - last))
+            else:
+                owed.append(("down", k, f"'{q[0]['task']}' queued", time.time() - last))
     # A child carrying more context than its rank should (obs 60).
     for k in kids:
         warn = context_limits(ctx, k)[0]
@@ -2330,10 +2349,12 @@ def owed_line(kind, child, task, age):
                     f"  — harness mark {task} --close",
         "start": f"{child} quiet {human_age(age)}, '{task}' queued"
                  f"  — message it to start (SendMessage)",
-        "down": f"{child} has no running session, '{task}' queued"
+        "down": f"{child} has no running session, {task}"
                 f"  — harness spawn {child}",
         "heavy": f"{child} at {task} context"
                  f"  — harness recycle {child} --at-quiet",
+        "orphan": f"{child}'s session ended {human_age(age)} ago holding '{task}' open"
+                  f"  — harness recycle {child} (it resumes the task)",
     }[kind]
 
 
@@ -2565,9 +2586,10 @@ def queue_items(ctx, node):
     # The item's task is the third field of a node row, else the second.
     def task_of(k):
         parts = k.split(":")
-        return parts[2] if parts[0] in ("sign off", "start", "down") else parts[1]
+        return parts[2] if parts[0] in ("sign off", "start", "down", "orphan") else parts[1]
     kept = {k: v for k, v in out.items()
-            if k.startswith(("asked:", "comment:", "handed:", "heavy:", "sweep:", "uncovered:")) or in_focus(fam, task_of(k))}
+            if k.startswith(("asked:", "comment:", "handed:", "heavy:", "sweep:", "uncovered:",
+                             "orphan:", "down:")) or in_focus(fam, task_of(k))}
     if len(kept) < len(out):
         kept[f"fold:{len(out) - len(kept)}"] = (f"+{len(out) - len(kept)} item(s) "
                                                 f"outside the focus  — harness needs")
@@ -2584,7 +2606,7 @@ def queue_items(ctx, node):
 # still fires once. The cooldown is what keeps that from being a per-turn tax:
 # a debt costs one line every DEBT_RENAG, not one line every turn.
 DEBT_RENAG = 10 * 60
-DEBT_KINDS = ("sign off:", "start:", "down:", "heavy:", "approve:", "task:", "asked:", "handed:",
+DEBT_KINDS = ("sign off:", "start:", "down:", "orphan:", "heavy:", "approve:", "task:", "asked:", "handed:",
               "sweep:")
 
 
@@ -2743,7 +2765,8 @@ def cmd_hook_stop(a):
         # aged past a threshold, so a design conversation is not interrupted over
         # a child that has been idle for ninety seconds.
         fam = focus_family(ctx)
-        owed = [o for o in lead_owes(ctx, node) if o[0] != "heavy" and in_focus(fam, o[2])]
+        owed = [o for o in lead_owes(ctx, node) if o[0] != "heavy"
+                and (o[0] in ("orphan", "down") or in_focus(fam, o[2]))]
         if owed:
             nl = chr(10)
             lines = []
@@ -4502,24 +4525,22 @@ def cmd_recycle(a):
             else:
                 print(f"  escalating {n:<12} {was} -> {effort}")
 
+        # What the fresh session will open, decided BEFORE the dry-run branch so
+        # the dry run and the real command cannot disagree (obs 64). The node's
+        # own open mark comes first: a session that died mid-task left work to
+        # RESUME, which is not "nothing to do" and not "waiting".
+        start = next_start(ctx, n)
+        if start["skip"] and not a.force:
+            print(f"  skip {n:<12} {start['skip']}  (--force starts it anyway)")
+            continue
+        line = start["line"] if not start["skip"] else \
+            f"{start['skip']} — started anyway (--force)"
         if a.dry_run:
             who = ", ".join(holders) if holders else "nobody there — would just start one"
-            print(f"  would recycle {n:<12} {model}/{effort:<7} {who}")
+            print(f"  would recycle {n:<12} {model}/{effort:<7} {who}; {line}")
             done += 1
             continue
-
-        nq = startable(ctx, n)
-        waiting = [b for b in queue(ctx, n) if not b.get("coupled_to") and waits_on(ctx, b)]
-        if not nq and waiting:
-            print(f"  skip {n:<12} every queued task waits: "
-                  + "; ".join(f"{b['task']} {waits_on(ctx, b)[0]}" for b in waiting[:2]))
-            continue
-        if not nq:
-            print(f"  note {n:<12} nothing queued — the fresh session will have "
-                  f"no task to open")
-        else:
-            print(f"       {n:<12} starts on {nq[0]['task']}"
-                  + (f", then {len(nq) - 1} more" if len(nq) > 1 else ""))
+        print(f"       {n:<12} {line}")
         name = f"{idx['project']}-{n}"
         gr = grants_for(ctx, n)
         cmd = launch_cmd(ctx, n, name, gr, model, effort, a.prompt)
@@ -6194,6 +6215,26 @@ def segment_count(ctx, seg):
     x = next((x for x in delegated(ctx, (sb or {}).get("node"))
               if tkey(x["key"]) == tkey(seg)), None)
     return (x["done"], len(x["children"])) if x else (0, 0)
+
+
+def next_start(ctx, node):
+    """What a fresh session on `node` would open: {"line", "skip"}. Its own
+    open, unpresented mark first (resume); then the first startable brief;
+    a queue that only waits is a skip; an empty one is a note."""
+    own = [t for t, r in open_marks(ctx).items()
+           if r.get("_node") == node and not r.get("_presented_at")]
+    if own:
+        return {"line": f"resumes {own[0]} — its open task", "skip": None}
+    nq = startable(ctx, node)
+    if nq:
+        return {"line": f"starts on {nq[0]['task']}"
+                        + (f", then {len(nq) - 1} more" if len(nq) > 1 else ""), "skip": None}
+    waiting = [b for b in queue(ctx, node) if not b.get("coupled_to") and waits_on(ctx, b)]
+    if waiting:
+        return {"line": "", "skip": "every queued task waits: " + "; ".join(
+            f"{b['task']} {waits_on(ctx, b)[0]}" for b in waiting[:2])}
+    return {"line": "nothing queued — the fresh session will have no task to open",
+            "skip": None}
 
 
 def next_seq(ctx, node):

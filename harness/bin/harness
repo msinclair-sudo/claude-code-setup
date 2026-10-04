@@ -439,7 +439,28 @@ def reset_path(ctx, node):
     return ctx.state_file("resets", node, ".json")
 
 
-def request_reset(ctx, nodes):
+def _ktok_arg(v):
+    """'400k' / '1.2m' / '400000' → tokens."""
+    m = re.fullmatch(r"\s*([\d.]+)\s*([kKmM]?)\s*", str(v or ""))
+    if not m:
+        die(REFUSED, f"--by {v}: say it in tokens, e.g. 400k")
+    return int(float(m.group(1)) * {"": 1, "k": 1e3, "m": 1e6}[m.group(2).lower()])
+
+
+def _minutes_arg(v):
+    m = re.fullmatch(r"\s*(\d+)\s*(m|min|h)?\s*", str(v or ""))
+    if not m:
+        die(REFUSED, f"--within {v}: say it in minutes or hours, e.g. 60m")
+    return int(m.group(1)) * (60 if m.group(2) == "h" else 1)
+
+
+def reset_ceiling(r):
+    """The reset's ceiling as words, for status and the request (obs 66)."""
+    t = time.strftime("%H:%M", time.localtime(r["deadline"])) if r.get("deadline") else "?"
+    return f"forced at {ktok(r.get('by_tokens'))} or {t}"
+
+
+def request_reset(ctx, nodes, by=None, within=None):
     """`recycle <node> --at-quiet` (obs 60): recorded here, carried out by the
     node's own Stop hook, which flushes first and resets at a quiet turn end."""
     if not nodes:
@@ -453,12 +474,20 @@ def request_reset(ctx, nodes):
             die(REFUSED, "rank 0 is never reset; it compacts at its --autocompact threshold")
         p = reset_path(ctx, n)
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps({"by": me or "operator", "flushed": False,
-                                 "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}) + "\n")
+        # A ceiling, because a busy lead never ends a turn quiet: dev's reset,
+        # queued at 303k, had not fired an hour and 42k tokens later (obs 66).
+        warn = context_limits(ctx, n)[0] or 300_000
+        rec = {"by": me or "operator", "flushed": False,
+               "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+               "by_tokens": _ktok_arg(by) if by else warn + 100_000,
+               "deadline": time.time() + 60 * (_minutes_arg(within) if within else 60)}
+        p.write_text(json.dumps(rec) + "\n")
         print(f"reset pending for {n}. At its next turn end it is asked to write what it "
               f"holds only in\n  context into the records; at the next quiet one after "
-              f"that it is replaced.\n  `harness status` shows it; delete it with "
-              f"rm {p}")
+              f"that it is replaced, or regardless\n  once it is "
+              f"{reset_ceiling(rec)}.\n"
+              f"  Hold non-urgent messages to {n} until then: each one restarts the quiet clock.\n"
+              f"  `harness status` shows it; cancel it with rm {p}")
 
 
 def reset_step(ctx, node, launch_only=False):
@@ -478,11 +507,24 @@ def reset_step(ctx, node, launch_only=False):
             f"seam you are watching, a held recycle (`harness note <task> --add -`, "
             f"`harness brief`, `--after`). Then end your turn."}}))
         return True
-    if r.get("flushed") and reset_quiet(ctx, node):
+    if r.get("flushed") and (reset_quiet(ctx, node) or reset_due(ctx, node, r)):
         launch_reset(ctx, node)
         p.unlink()
         return True
     return False
+
+
+def reset_due(ctx, node, r):
+    """Past the ceiling: launch at this turn end, quiet or not (obs 66). Only the
+    quiet test is skipped; `recycle` keeps its own guards."""
+    if r.get("deadline") and time.time() >= r["deadline"]:
+        return True
+    try:
+        ref = json.loads(ctx.lock_path(node).read_text()).get("ref")
+    except Exception:
+        return False
+    size = context_size(ref) if ref else None
+    return bool(size and r.get("by_tokens") and size >= r["by_tokens"])
 
 
 def reset_quiet(ctx, node):
@@ -709,6 +751,14 @@ def _whoami(a):
                 print(f"         Not yours to clear: it wants a reply or a permission "
                       f"answered, and\n         both are at a keyboard. Do not recycle "
                       f"it into the same prompt.")
+    except Exception:
+        pass
+    # A held resource reaches every lane here, before its next `check` (obs 66).
+    try:
+        for h in live_holds(ctx):
+            print(f"hold     {h['path']} — {h['why']} (by {h['by']}"
+                  + (f", until {h['until']}" if h.get("until") else "")
+                  + "). `harness check` skips the arms that read it.")
     except Exception:
         pass
     # Segments this node split. Discharged for queueing the moment they were
@@ -1223,7 +1273,12 @@ def cmd_status(a):
         if live in ("live", "WAITING"):
             work += f"   ctx {ktok(context_size(h['ref']))}"
         if reset_path(ctx, h["node"]).exists():
-            work += "   reset pending"
+            try:
+                _r = json.loads(reset_path(ctx, h["node"]).read_text())
+                work += (f"   reset pending ({'flushed; ' if _r.get('flushed') else ''}"
+                         f"{reset_ceiling(_r)}) — hold non-urgent messages")
+            except Exception:
+                work += "   reset pending"
         act = node_activity(ctx, h["node"], _waits)
         if act:
             work += f"   {act}"
@@ -3149,6 +3204,13 @@ def cmd_mark(a):
         return
 
     if a.close:
+        _held = close_waits(ctx, load_brief(ctx, a.task)[1])
+        if _held and not a.force:
+            die(REFUSED, f"'{a.task}' closes only after: {'; '.join(_held)}\n"
+                         f"           Set by {(load_brief(ctx, a.task)[1] or {}).get('close_after_by')}. "
+                         f"--force overrides a recorded condition.")
+        if _held:
+            print(f"--force: closing '{a.task}' against its recorded condition: {'; '.join(_held)}")
         # A segment discharged by splitting it has no mark and never will —
         # nobody opened one, because nobody executed it. That made it
         # uncloseable, so it stayed on the board forever looking like work not
@@ -3583,7 +3645,7 @@ def baseline_diff(rows, base):
     out = {}
     for r in rows:
         b = (base.get("arms") or {}).get(r["name"]) or {"failed": False, "files": []}
-        if r.get("timedOut") or r.get("exit") == 125:
+        if r.get("timedOut") or r.get("exit") == 125 or r.get("held"):
             out[r["name"]] = {"new": [], "gone": [], "same": 0, "notrun": True}
             continue
         now, was = r.get("failedFiles"), b.get("files")
@@ -3680,6 +3742,7 @@ def cmd_check(a):
     rows, failed = [], 0
     report = check_report_path(ctx, node, sha)
     running = check_running_path(ctx, node)
+    holds = live_holds(ctx)
     running.parent.mkdir(parents=True, exist_ok=True)
     started = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     print(f"{len(checks)} check(s) on {node} at {sha[:8]}"
@@ -3689,6 +3752,15 @@ def cmd_check(a):
         for i, c in enumerate(checks):
             limit = c.get("timeout") or a.timeout      # per-check ceiling (obs 24)
             outf, errf = check_output_paths(ctx, node, c["name"])
+            h = hold_catching(c, holds)
+            if h:
+                why = f"{h['why']} — {h['by']}" + (f", until {h['until']}" if h.get("until") else "")
+                rows.append({"name": c["name"], "command": c["command"],
+                             "blindSpot": c["blindSpot"], "exit": None, "held": why,
+                             "seconds": 0, "timedOut": False, "failedFiles": None,
+                             "stdout": "", "stderr": ""})
+                print(f"  NOT RUN (held: {why})  {c['name']}")
+                continue
             running.write_text(json.dumps({
                 "pid": os.getpid(), "sha": sha, "total": len(checks), "done": i,
                 "arm": c["name"], "started": started, "out": str(outf),
@@ -3737,14 +3809,18 @@ def cmd_check(a):
            "dirty": bool(dirt.strip()),
            "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
            "session": os.environ.get("CLAUDE_CODE_SESSION_ID", ""),
-           "passed": failed == 0, "failed": failed, "checks": rows}
+           "passed": failed == 0 and not any(r.get("held") for r in rows),
+           "failed": failed, "held": sum(1 for r in rows if r.get("held")), "checks": rows}
     diff = baseline_diff(rows, base) if base else None
     if diff is not None:
         rep["baseline"] = base.get("sha")
         rep["new"] = sum(len(d["new"]) + d["notrun"] for d in diff.values())
     report.parent.mkdir(parents=True, exist_ok=True)
     report.write_text(json.dumps(rep, indent=2) + "\n")
-    print(f"\n{len(checks) - failed}/{len(checks)} passed — recorded against {sha[:8]}")
+    nheld = rep["held"]
+    print(f"\n{len(checks) - failed - nheld}/{len(checks)} passed"
+          + (f", {nheld} held (not run — this report does not cover them)" if nheld else "")
+          + f" — recorded against {sha[:8]}")
     if diff is not None:
         print("  " + baseline_summary(rep, base))
         if rep["new"]:
@@ -4072,6 +4148,8 @@ def cmd_review(a):
             print(f"   checks       " + (baseline_summary(_crep, _base) if _base else
                   f"FAILED {_crep.get('failed')} of {len(_crep.get('checks') or [])}:"))
             for c in _crep.get("checks") or []:
+                if c.get("held"):
+                    print(f"                  {c['name']}  NOT RUN (held: {c['held']})")
                 if c.get("exit"):
                     print(f"                  {c['name']}  exit {c['exit']}"
                           + (f"  {baseline_line(_diff[c['name']])}" if c["name"] in _diff else ""))
@@ -4365,7 +4443,7 @@ def cmd_recycle(a):
     """
     ctx = Ctx(); ctx.require_enrolled()
     if a.at_quiet:
-        return request_reset(ctx, a.node)
+        return request_reset(ctx, a.node, a.by, a.within)
     idx = load_index(ctx, refresh=True)
     if a.when_idle:
         wait_until_idle(idx, a.node)
@@ -5975,11 +6053,12 @@ def delegated(ctx, node):
         # command, and a reviewer reading the log cannot tell them apart.
         settled = [r for r in rows if r["state"] in ("closed", "superseded")]
         unc = segment_coverage(ctx, k, kids)[1]
+        held = close_waits(ctx, b)
         out.append({"task": b.get("task") or k, "key": k, "children": rows,
                     "done": len(settled),
                     "gone": sum(1 for r in rows if r["state"] == "superseded"),
-                    "uncovered": unc or [],
-                    "ready": len(settled) == len(rows) and not unc,
+                    "uncovered": unc or [], "held": held,
+                    "ready": len(settled) == len(rows) and not unc and not held,
                     "closed_at": closed_at})
     return out
 
@@ -6192,6 +6271,12 @@ def waits_on(ctx, b):
     return out
 
 
+def close_waits(ctx, b):
+    """Why a segment may not close yet (obs 67): the tasks its close was set to
+    wait on, read like `--after`. A condition in a note lost to "all parts settled"."""
+    return waits_on(ctx, {"after": (b or {}).get("close_after") or []})
+
+
 def startable(ctx, node):
     """The queue a session can actually open, in order: no coupled tasks, nothing
     that waits on another task."""
@@ -6401,6 +6486,7 @@ def cmd_queue(a):
         for x in deleg:
             done = (f"{x['done']}/{len(x['children'])} parts settled"
                     + (f" ({x['gone']} superseded)" if x.get("gone") else "")
+                    + (f"; closes {', '.join(x['held'])}" if x.get("held") else "")
                     + (f"; no part covers {','.join(map(str, x['uncovered']))}"
                        if x.get("uncovered") else ""))
             print(f"    split {x['task']:<24} "
@@ -6457,7 +6543,7 @@ def unread_brief_comments(ctx, who):
 def brief_carry(rec, b):
     """What a rewrite keeps that the writer did not write: the owner's rulings
     (T17), and who has read it, which the ruling notices are timed against."""
-    for k in ("rulings", "read"):
+    for k in ("rulings", "read", "close_after"):
         if (b or {}).get(k):
             rec[k] = b[k]
     return rec
@@ -6861,6 +6947,28 @@ def cmd_brief(a):
                   f"by {h.get('written_by')} at {str(h.get('written_at'))[:19]}")
             for line in (h.get("text") or "").splitlines():
                 print(f"      {line}")
+        return
+
+    if a.close_after:
+        if b is None:
+            die(REFUSED, f"no brief for '{a.task}'")
+        target = b.get("node")
+        parent = ctx.tree["nodes"].get(target, {}).get("parent")
+        if sid and parent != me and ctx.rank(me) != 0:
+            die(REFUSED, f"'{a.task}' is {target}'s; its close is set by '{parent}' or rank 0")
+        tasks = [] if [x.lower() for x in a.close_after] == ["none"] else list(a.close_after)
+        for y in tasks:
+            if tkey(y) == tkey(a.task):
+                die(REFUSED, f"'{a.task}' cannot close after itself")
+            if load_brief(ctx, y)[1] is None and not ctx.state_file("marks", y, ".json").exists():
+                die(REFUSED, f"--close-after {y}: no brief or task by that name")
+        if tasks:
+            b["close_after"], b["close_after_by"] = tasks, who
+        else:
+            b.pop("close_after", None); b.pop("close_after_by", None)
+        f.write_text(json.dumps(b, indent=2) + "\n")
+        print(f"'{a.task}' closes only after {', '.join(tasks)} — `mark --close` refuses "
+              f"until then" if tasks else f"'{a.task}' has no close condition")
         return
 
     if a.supersede is not None:
@@ -8633,6 +8741,86 @@ def run_sweep(ctx, unit, plan, why, by):
     return entry
 
 
+def _expand(path):
+    return os.path.normpath(os.path.expandvars(os.path.expanduser(str(path))))
+
+
+def live_holds(ctx):
+    """Holds on shared resources still in force (obs 66). One with --until lifts
+    itself when that task is signed off, read here, so nothing has to clean up."""
+    d = ctx.state / "holds"
+    out = []
+    for f in (sorted(d.glob("*.json")) if d.is_dir() else []):
+        try:
+            h = json.loads(f.read_text())
+        except Exception:
+            continue
+        if h.get("until") and task_state(ctx, h["until"]) in ("closed", "superseded"):
+            continue
+        out.append(h)
+    return out
+
+
+def hold_catching(check, holds):
+    """The hold that stops this check, or None. A check that declares `reads` is
+    matched on those paths; one that does not, on its command text."""
+    reads = [_expand(r) for r in check.get("reads") or []]
+    cmd = os.path.expandvars(os.path.expanduser(check.get("command") or ""))
+    cmd = cmd.replace("$HOME", os.path.expanduser("~")).replace("${HOME}", os.path.expanduser("~"))
+    for h in holds:
+        p = _expand(h.get("path"))
+        if reads:
+            if any(r.startswith(p) or p.startswith(r) for r in reads):
+                return h
+        elif p in cmd:
+            return h
+    return None
+
+
+def cmd_hold(a):
+    """`hold <path> --why`: no check reads this while a shared job holds it (obs 66).
+
+    The rule was prose in one lane's briefs, and the habit — `harness check`
+    before presenting — is in the skill, so the habit won and a full sweep ran
+    against a database a live job was writing. `check` reads holds, so the rule
+    reaches every lane without anyone having to tell it."""
+    ctx = Ctx(); ctx.require_enrolled()
+    if a.list or not a.path:
+        hs = live_holds(ctx)
+        if not hs:
+            print("no holds")
+        for h in hs:
+            print(f"  {h['path']}  — {h['why']}  (by {h['by']}"
+                  + (f", until {h['until']}" if h.get("until") else "") + ")")
+        return
+    me, _ = ctx.node()
+    if os.environ.get("CLAUDE_CODE_SESSION_ID") and ctx.rank(me) != 0 and not ctx.children(me):
+        die(REFUSED, "a hold is a lead's or rank 0's: it stops checks across the tree")
+    f = ctx.state_file("holds", slug(_expand(a.path)), ".json")
+    if a.release:
+        if not f.exists():
+            die(REFUSED, f"no hold on {a.path}")
+        f.unlink()
+        print(f"released {a.path}")
+        return
+    if not (a.why or "").strip():
+        die(REFUSED, 'say why: harness hold <path> --why "..."')
+    if a.until and load_brief(ctx, a.until)[1] is None and \
+            not ctx.state_file("marks", a.until, ".json").exists():
+        die(REFUSED, f"--until {a.until}: no brief or task by that name")
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps({"path": a.path, "why": a.why, "by": me, "until": a.until or "",
+                             "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}, indent=2) + "\n")
+    caught = [c["name"] for c in (json.loads((ctx.repo / ".harness" / "manifest.json")
+                                             .read_text()).get("checks") or [])
+              if hold_catching(c, [{"path": a.path}])] \
+        if (ctx.repo / ".harness" / "manifest.json").exists() else []
+    print(f"held {a.path}" + (f" until {a.until} closes" if a.until else "")
+          + f". `check` skips {len(caught)} arm(s)"
+          + (f": {', '.join(caught)}" if caught else
+             " — none names it; declare \"reads\" in the manifest"))
+
+
 def cmd_sweep(a):
     """`sweep` lists complete units; `sweep <unit> --dry-run` shows one; with
     `--why` rank 0 runs it, or `--keep --why` declines it. Both are ledgered."""
@@ -9422,6 +9610,11 @@ def main():
     rcy.add_argument("--at-quiet", action="store_true",
                      help="reset a lead at its next quiet turn end, after it flushes its "
                           "state into the records")
+    rcy.add_argument("--by", metavar="TOKENS",
+                     help="with --at-quiet: reset regardless once its context reaches this "
+                          "(default: its warning + 100k, 400k for a lead)")
+    rcy.add_argument("--within", metavar="MIN",
+                     help="with --at-quiet: reset regardless after this long (default 60m)")
     rcy.add_argument("--when-idle", action="store_true", help=argparse.SUPPRESS)
     rcy.add_argument("--force", action="store_true",
                      help="recycle despite dirty worktree, unintegrated commits or busy session")
@@ -9508,6 +9701,9 @@ def main():
                     help="operator only: release a gated task into its node's queue")
     br.add_argument("--decline", metavar="WHY",
                     help="operator only: refuse a gated task, on the record")
+    br.add_argument("--close-after", action="append", metavar="TASK",
+                    help="this segment may be closed only once TASK is signed off "
+                         "(obs 67); repeatable; '--close-after none' clears")
     br.add_argument("--supersede", metavar="WHY",
                     help="withdraw a brief you wrote — nothing will start it again")
     br.add_argument("--by", dest="superseded_for", metavar="TASK",
@@ -9608,6 +9804,12 @@ def main():
     ps.add_argument("--quiet", action="store_true",
                     help="print nothing and exit 0 when not enrolled")
     add("unenrol", cmd_unenrol)
+    hd = add("hold", cmd_hold)
+    hd.add_argument("path", nargs="?", help="a shared resource (file or directory)")
+    hd.add_argument("--why", help="one line: what holds it")
+    hd.add_argument("--until", metavar="TASK", help="lifts when TASK is signed off")
+    hd.add_argument("--release", action="store_true")
+    hd.add_argument("--list", action="store_true")
     sw = add("sweep", cmd_sweep)
     sw.add_argument("unit", nargs="?", help="a complete unit (see bare `harness sweep`)")
     sw.add_argument("--dry-run", action="store_true")

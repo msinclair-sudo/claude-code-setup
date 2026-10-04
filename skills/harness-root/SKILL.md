@@ -45,6 +45,8 @@ A brief is rewritten in place; `harness note` is the append-only half. Write a s
 
 `harness queue dev_1 --order doi-index,ingest-2024 --why "…"`. You may order any node's queue. Every reorder needs `--why`. A lead may override you with a reason; read the queue after reordering.
 
+Make a condition structural, not a note: a note does not stop a close or a check. `harness brief <segment> --close-after <task>` refuses `mark --close` until that task is signed off. `harness hold <path> --why "..." [--until <task>]` makes every `check` arm that reads a shared resource print `NOT RUN (held: …)` while a job holds it.
+
 ## Asking the owner
 
 Use `harness ask` (see `harness-downward`), as leads do. When the owner is in your session, asking them directly is fine; record the answer where it is used (a brief, a fact or the charter). Do not use a block for a question: a block means "I cannot reach X".

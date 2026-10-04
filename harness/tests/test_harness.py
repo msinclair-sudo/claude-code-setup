@@ -443,6 +443,105 @@ class WaitChain(unittest.TestCase):
         self.assertNotIn("stuck:dev_2", self.items("main"))
 
 
+class CloseAfter(unittest.TestCase):
+    """obs 67: a segment's close waits on a task, structurally."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev", "dev_2": "dev"})
+        for d in ("briefs", "marks"):
+            (self.ctx.dir / d).mkdir()
+        self.w = lambda p, o: (self.ctx.dir / p).write_text(json.dumps(o))
+        self.w("briefs/seg.json", {"task": "seg", "node": "dev", "close_after": ["later"],
+                                   "close_after_by": "main"})
+        self.w("briefs/p1.json", {"task": "p1", "node": "dev_1", "from": "seg"})
+        self.w("marks/p1.json", {"_node": "dev_1", "_closed_at": "2026"})
+        self.w("briefs/later.json", {"task": "later", "node": "dev_2"})
+
+    def test_settled_parts_do_not_make_it_ready(self):
+        (x,) = hz.delegated(self.ctx, "dev")
+        self.assertFalse(x["ready"])
+        self.assertTrue(x["held"][0].startswith("after later"))
+        self.w("marks/later.json", {"_node": "dev_2", "_closed_at": "2026"})
+        self.assertTrue(hz.delegated(self.ctx, "dev")[0]["ready"])
+
+    def test_close_refuses_while_held(self):
+        import argparse
+        a = argparse.Namespace(task="seg", done=False, abandon=None, requeue_after=None,
+                               close=True, force=False)
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "s"}), \
+             mock.patch("sys.stderr", io.StringIO()) as err:
+            with self.assertRaises(SystemExit) as e:
+                hz.cmd_mark(a)
+        self.assertEqual(e.exception.code, hz.REFUSED)
+        self.assertIn("closes only after", err.getvalue())
+
+
+class Hold(unittest.TestCase):
+    """obs 66: a held resource stops the checks that read it."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main"})
+        self.ctx.me, self.ctx.branch, self.ctx.worktree = "dev", "dev", self.ctx.dir
+        for d in ("holds", "checks", "marks", "briefs"):
+            (self.ctx.dir / d).mkdir()
+
+    def test_matching(self):
+        db = [{"path": "~/data/subset.db"}]
+        self.assertTrue(hz.hold_catching({"command": "py t.py $HOME/data/subset.db"}, db))
+        self.assertIsNone(hz.hold_catching({"command": "py t.py other.db"}, db))
+        self.assertTrue(hz.hold_catching({"command": "x", "reads": ["~/data"]}, db))
+        self.assertIsNone(hz.hold_catching({"command": "~/data/subset.db", "reads": ["/elsewhere"]}, db))
+
+    def test_until_lifts_it(self):
+        (self.ctx.dir / "holds" / "h.json").write_text(json.dumps(
+            {"path": "/x", "why": "job", "by": "dev", "until": "job"}))
+        (self.ctx.dir / "briefs" / "job.json").write_text(json.dumps({"task": "job", "node": "dev"}))
+        self.assertEqual(len(hz.live_holds(self.ctx)), 1)
+        (self.ctx.dir / "marks" / "job.json").write_text(json.dumps({"_node": "dev", "_closed_at": "x"}))
+        self.assertEqual(hz.live_holds(self.ctx), [])
+
+    def test_check_skips_a_held_arm(self):
+        (self.ctx.dir / "holds" / "h.json").write_text(json.dumps(
+            {"path": str(self.ctx.dir / "db"), "why": "live merge", "by": "dev", "until": ""}))
+        touched = self.ctx.dir / "ran"
+        chk = [{"name": "arm", "command": f"touch {touched}; cat {self.ctx.dir}/db", "blindSpot": "-"}]
+        a = mock.Mock(set_baseline=False, timeout=30)
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.object(hz, "load_checks", return_value=chk), \
+             mock.patch.object(hz, "load_baseline", return_value=None), \
+             mock.patch("sys.stdout", io.StringIO()):
+            hz.cmd_check(a)                              # no SystemExit: nothing failed
+        rep = json.loads(next((self.ctx.dir / "checks").glob("dev-*.json")).read_text())
+        self.assertFalse(touched.exists())
+        self.assertEqual((rep["passed"], rep["held"]), (False, 1))
+        self.assertIn("live merge", rep["checks"][0]["held"])
+
+
+class ResetCeiling(unittest.TestCase):
+    """obs 66 addendum: a pending reset fires past its ceiling even when never quiet."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main"})
+        self.ctx.lock("dev", 1, ref="sid-dev")
+        (self.ctx.dir / "resets").mkdir()
+
+    def step(self, size, deadline):
+        hz.reset_path(self.ctx, "dev").write_text(json.dumps(
+            {"by": "main", "flushed": True, "by_tokens": 400_000, "deadline": deadline}))
+        with mock.patch.object(hz, "reset_quiet", return_value=False), \
+             mock.patch.object(hz, "context_size", return_value=size), \
+             mock.patch.object(hz, "launch_reset") as launch:
+            hz.reset_step(self.ctx, "dev")
+        return launch.called
+
+    def test_ceiling(self):
+        later = time.time() + 3600
+        self.assertFalse(self.step(300_000, later))
+        self.assertTrue(self.step(410_000, later))
+        self.assertTrue(self.step(300_000, time.time() - 1))
+
+
 class Pairs(unittest.TestCase):
     """obs 25, 47: document pairs travel as data and apply all-or-nothing."""
 

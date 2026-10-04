@@ -9511,20 +9511,19 @@ def cmd_ask(a):
         print(f"rejected {rec['id']}; {rec.get('asker_node')} is told once not to ask again")
 
 
-INTERMEDIARY_TOOLS = ("Bash(harness ask:*)", "Bash(harness brief:*)", "Bash(harness fact:*)",
-                      "Bash(harness finding:*)", "Bash(git -C * log:*)", "Bash(git -C * show:*)",
-                      "Bash(git -C * diff:*)", "Bash(git -C * status:*)", "Read", "Grep", "Glob")
-INTERMEDIARY_PROMPT = ("You are the harness intermediary. Load the harness-intermediary "
-                       "skill now and follow it.")
+# --restricted ignores the owner's user settings (whose allow rules would
+# otherwise let it run anything they allow) and drops every tool --tools does not
+# name. Bash is named only for these. Git rules name each repo exactly: a `*`
+# before the subcommand would also match `-c ...`, which can run anything.
+INTERMEDIARY_TOOLS = ("Read", "Grep", "Glob", "Bash", "SendMessage", "ListAgents")
+INTERMEDIARY_GIT = ("log", "show", "diff", "status")
 
 
 def intermediary_cmd(model=None, effort=None):
     """The intermediary's `claude` line. Every variadic list (--add-dir,
-    --allowedTools, --disallowedTools) is closed by the flag after it.
-    --disallowedTools rather than --tools: whether SendMessage is a built-in
-    name `--tools` accepts is undocumented, and the intermediary cannot work
-    without it."""
-    dirs = [str(HOME_STATE)]
+    --tools, --allowedTools) is closed by the flag after it. Its skill is
+    passed as a system-prompt file: --restricted does not load user skills."""
+    dirs, repos = [str(HOME_STATE)], []
     for pdir, repo in ask_projects():
         cand = [repo]
         try:
@@ -9534,12 +9533,18 @@ def intermediary_cmd(model=None, effort=None):
             pass
         for d in cand:
             if d and d not in dirs and Path(d).is_dir():
-                dirs.append(d)
-    cmd = ["claude", "-n", INTERMEDIARY, "--add-dir", *dirs,
-           "--allowedTools", *INTERMEDIARY_TOOLS,
-           "--disallowedTools", "Edit", "Write", "NotebookEdit",
+                dirs.append(d); repos.append(d)
+    allow = ["Bash(harness ask *)"]
+    for d in repos:
+        for q in ('"', "'") + (("",) if " " not in d else ()):
+            allow += [f"Bash(git -C {q}{d}{q} {g} *)" for g in INTERMEDIARY_GIT]
+    skill = Path.home() / ".claude" / "skills" / INTERMEDIARY / "SKILL.md"
+    # --strict-mcp-config: no MCP servers or connectors, which could write outside.
+    cmd = ["claude", "-n", INTERMEDIARY, "--restricted", "--strict-mcp-config", "--add-dir", *dirs,
+           "--tools", *INTERMEDIARY_TOOLS,
+           "--allowedTools", *allow,
            "--permission-mode", "dontAsk",
-           "--append-system-prompt", INTERMEDIARY_PROMPT]
+           "--append-system-prompt-file", str(skill)]
     if model:
         cmd += ["--model", model]
     if effort:

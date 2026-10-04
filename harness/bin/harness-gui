@@ -1421,7 +1421,7 @@ async function tick() {
   LAST = sig;
   // Above everything, including the banners: it is the same reference whatever
   // state the trees are in, and one row of it is cheaper than looking it up.
-  let h = ROUTE() === 'owner' ? '' : cmdbar(d.commands || []);
+  let h = ROUTE() === 'issues' ? '' : cmdbar(d.commands || []);
   if (d.stale_server) {
     h += '<div class="banner"><b>This server is older than the code on disk</b> ' +
          '&mdash; it started at ' + esc(d.started) + ' and the page you are looking ' +
@@ -1438,7 +1438,7 @@ async function tick() {
          esc(d.stale_install) + '<br>Every session is reading older instructions ' +
          'than the source. Run <code>bash install.sh</code> from the source tree.</div>';
   }
-  if (ROUTE() === 'owner') { paint(h + ownerView(d)); return; }
+  if (ROUTE() === 'issues') { paint(h + ownerView(d)); return; }
   h += d.projects.map((p, pi) => {
     p.nodes.forEach(n => n._slug = p.slug);
     return '<div class="proj"><h2>' + esc(p.project) + '</h2>' +
@@ -1542,18 +1542,20 @@ const AMSG = {};          // ask key -> the CLI's last refusal, shown on the ite
 let FILTER = '';          // the rulings filter, applied client-side
 let LASTD = null;         // the last state read, so a keystroke can re-filter
 // The pages, in tab order. The first is the default (no hash).
-const TABS = [{route: 'tree', label: 'Agents'}, {route: 'owner', label: 'Issues'}];
+const TABS = [{route: 'agents', label: 'Agents'}, {route: 'issues', label: 'Issues'}];
+// Old addresses, kept so a bookmark still lands.
+const ALIAS = {owner: 'issues', tree: 'agents'};
 const ROUTE = () => {
-  const h = location.hash.slice(1);
+  const h = ALIAS[location.hash.slice(1)] || location.hash.slice(1);
   return TABS.some(t => t.route === h) ? h : TABS[0].route;
 };
 function tabs(N) {
   document.getElementById('tabs').innerHTML = TABS.map((t, i) => {
-    const n = t.route === 'owner' && N ? ' (' + N + ')' : '';
+    const n = t.route === 'issues' && N ? ' (' + N + ')' : '';
     const cls = (t.route === ROUTE() ? 'on' : '') + (n ? ' due' : '');
-    const tip = t.route === 'owner'
+    const tip = t.route === 'issues'
       ? (N ? N + ' ask(s) waiting on your ruling' : 'nothing waiting on you') : '';
-    return '<a class="' + cls + '" href="#' + (i ? t.route : '') + '" title="' + tip +
+    return '<a class="' + cls + '" href="#' + t.route + '" title="' + tip +
            '">' + t.label + n + '</a>';
   }).join('');
 }

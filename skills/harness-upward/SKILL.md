@@ -102,7 +102,7 @@ harness fact endpoint-reach --is "57 of 74" \
   --what "declared endpoint states a probe actually reached"
 ```
 
-Do it for anything you had to work out how to measure. Look one up first (`harness fact --list`); `--recheck` refreshes a stale one. Cite facts in your presentation.
+Do it for anything you had to work out how to measure. Look one up first (`harness fact --list`); `--recheck` refreshes a stale one. Cite facts in your presentation. A scratch file a fact or note depends on survives cleanup only if named as a path: `$CLAUDE_JOB_DIR/tmp/<file>`.
 
 ## Checks (`I5`)
 

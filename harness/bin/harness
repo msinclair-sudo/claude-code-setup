@@ -2381,8 +2381,12 @@ def rank0_owes(ctx, node):
     # One line however many: a backlog of units must not become a page of nags.
     try:
         n = len(completed_units(ctx))
-        if n:
-            owed.append(("sweep", "units", f"{n} complete unit(s)", 0))
+        sf, sn = stale_records(ctx)
+        m = len(sf) + len(sn)
+        if n or m:
+            owed.append(("sweep", "units", ", ".join(
+                ([f"{n} complete unit(s)"] if n else []) +
+                ([f"{m} stale record(s)"] if m else [])), 0))
     except Exception:
         pass
     return owed
@@ -5417,7 +5421,8 @@ def cmd_charter(a):
 def load_fact(ctx, name):
     f = ctx.state_file("facts", name, ".json")
     if not f.exists():
-        return f, None
+        # Folded by `sweep --stale`: still readable; a new observation revives it.
+        return f, archived_knowledge(ctx, "facts", name)
     try:
         return f, json.loads(f.read_text())
     except json.JSONDecodeError:
@@ -5629,6 +5634,12 @@ def cmd_fact(a):
                   f"anything having changed.")
         return
 
+    if not f.exists():
+        print("[archived] folded by `harness sweep --stale`; a new observation brings it back")
+    for x in (r.get("observations") or [])[-3:]:
+        for g in gone_job_files(x):
+            print(f"  GONE     --from reads {g} — it no longer exists; this observation "
+                  f"can't be re-checked")
     fresh, same_wt, head, rel = fact_state(ctx, o)
     print(f"{r.get('name')} = {o.get('value')}")
     if r.get("what"):
@@ -5765,6 +5776,10 @@ def cmd_finding(a):
         return
 
     _, r = (f, json.loads(f.read_text())) if f.exists() else (f, None)
+    if r is None and not (a.to or a.ruled is not None or a.drop is not None or a.what):
+        r = archived_knowledge(ctx, "findings", a.name)
+        if r is not None:
+            print("[archived] folded by `harness sweep --stale`")
 
     if a.to or a.ruled is not None:
         return finding_route(ctx, node, who, a, r, f)
@@ -8608,6 +8623,111 @@ def _live_sids():
     return {d.get("sessionId") for d in live_sessions()}
 
 
+_SID8 = re.compile(r"session ([0-9a-f]{8})")
+_FULLSID = re.compile(r'"_session": "([0-9a-f]{8})[0-9a-f-]{28}"')
+_PATHCH = r"[^\s\"'\\;|&)<>`,]"
+_LITJOB = re.compile(r"\.claude/jobs/([0-9a-f]{8})(/tmp(?:/" + _PATHCH + r"*)?)?")
+_ENVJOB = re.compile(r"\$\{?CLAUDE_JOB_DIR\}?(/tmp(?:/" + _PATHCH + r"*)?)?")
+
+
+def job_dirs():
+    """Session id, and its 8-char prefix, to its background job's folder."""
+    out = {}
+    for st in (JOBS.glob("*/state.json") if JOBS.is_dir() else []):
+        try:
+            d = json.loads(st.read_text())
+        except Exception:
+            continue
+        for sid in {d.get("sessionId"), d.get("resumeSessionId")} - {None, ""}:
+            out[sid] = out[sid[:8]] = st.parent
+    return out
+
+
+def record_texts(ctx):
+    """Every record that can cite a file, as (who, text, author sessions). Fact
+    observations are separate, because each has its own author."""
+    out = []
+    def add(who, obj):
+        t = obj if isinstance(obj, str) else json.dumps(obj)
+        out.append((who, t, set(_SID8.findall(t)) | set(_FULLSID.findall(t))))
+    for kind in ("findings", "briefs", "marks", "pairs"):
+        d = ctx.state / kind
+        for f in (d.glob("*.json") if d.is_dir() else []):
+            add(f"{kind}/{f.stem}", f.read_text(errors="replace"))
+    d = ctx.state / "facts"
+    for f in (d.glob("*.json") if d.is_dir() else []):
+        try:
+            r = json.loads(f.read_text())
+        except Exception:
+            continue
+        for o in r.get("observations") or []:
+            add(f"facts/{f.stem}", o)
+    if baseline_path(ctx).exists():
+        add("checks/baseline", baseline_path(ctx).read_text())
+    ad = archive_dir(ctx)
+    for rf in (ad.glob("*/records.json") if ad.is_dir() else []):
+        try:
+            for t, v in json.loads(rf.read_text()).get("tasks", {}).items():
+                add(f"archive/{rf.parent.name}/{t}", v)
+        except Exception:
+            pass
+    kf = ad / "knowledge.json"
+    if kf.exists():
+        try:
+            k = json.loads(kf.read_text())
+            for n, r in (k.get("facts") or {}).items():
+                for o in r.get("observations") or []:
+                    add(f"archive/facts/{n}", o)
+            for n, r in (k.get("findings") or {}).items():
+                add(f"archive/findings/{n}", r)
+        except Exception:
+            pass
+    return out
+
+
+def _tmp_files(jd, cache={}):
+    if jd not in cache:
+        t = Path(jd) / "tmp"
+        cache[jd] = ([str(f.relative_to(t)) for f in t.rglob("*") if f.is_file()]
+                     if t.is_dir() else [])
+    return cache[jd]
+
+
+def job_refs(ctx, texts=None, jobs=None):
+    """What records cite inside job tmp/ folders: {job dir: {"all": who|None,
+    "files": {rel: who}}}. Only PATHS protect: a literal jobs path, a
+    $CLAUDE_JOB_DIR path resolved through the record's author session, or a
+    file in the author's own tmp/ named in the record. A bare session id is
+    authorship, not a citation, and keeps nothing."""
+    jobs = job_dirs() if jobs is None else jobs
+    refs = {}
+    def cite(jd, rel, who):
+        r = refs.setdefault(Path(jd), {"all": None, "files": {}})
+        rel = (rel or "").removeprefix("/tmp").strip("/")
+        if not rel:
+            r["all"] = r["all"] or who
+        else:
+            r["files"].setdefault(rel, who)
+    for who, text, authors in (record_texts(ctx) if texts is None else texts):
+        for m in _LITJOB.finditer(text):
+            jd = jobs.get(m.group(1)) or (JOBS / m.group(1))
+            cite(jd, m.group(2), who)
+        own = [jobs[a] for a in authors if a in jobs]
+        for m in _ENVJOB.finditer(text):
+            for jd in own:
+                cite(jd, m.group(1), who)
+        for jd in own:
+            for rel in _tmp_files(jd):
+                base = rel.rsplit("/", 1)[-1]
+                if len(base) >= 5 and base in text:
+                    cite(jd, rel, who)
+    return refs
+
+
+def _kept(rel, keep):
+    return any(rel == k or rel.startswith(k + "/") for k in keep)
+
+
 def sweep_plan(ctx, unit):
     """Everything a sweep of `unit` would touch, and what it keeps and why."""
     tasks = {tkey(t) for t in unit["tasks"]}
@@ -8624,32 +8744,10 @@ def sweep_plan(ctx, unit):
         sid = r.get("_session")
         if sid:
             sids.setdefault(sid, []).append((k, r.get("_node")))
-    plan = {"unit": unit["name"], "transcripts": [], "tmp": [], "records": [],
-            "blocks": [], "caches": [], "kept": [], "skipped": []}
-    # What remaining records say, to keep anything they cite.
-    corpus = []
-    for kind in ("facts", "findings", "briefs", "marks", "pairs"):
-        d = ctx.state / kind
-        for f in (d.glob("*.json") if d.is_dir() else []):
-            if kind in ("briefs", "marks", "pairs") and f.stem in tasks:
-                continue
-            corpus.append((f"{kind}/{f.stem}", f.read_text(errors="replace")))
-    bp = baseline_path(ctx)
-    if bp.exists():
-        corpus.append(("checks/baseline", bp.read_text()))
-
-    def cited(*needles):
-        return next((who for who, text in corpus if any(n and n in text for n in needles)), None)
-
-    jobs = {}
-    for st in (JOBS.glob("*/state.json") if JOBS.is_dir() else []):
-        try:
-            d = json.loads(st.read_text())
-        except Exception:
-            continue
-        for sid in {d.get("sessionId"), d.get("resumeSessionId")} - {None, ""}:
-            if st.parent not in jobs.setdefault(sid, []):
-                jobs[sid].append(st.parent)
+    plan = {"unit": unit["name"], "transcripts": [], "tmp": [], "tmp_keep": {},
+            "records": [], "blocks": [], "caches": [], "kept": [], "skipped": []}
+    jobs = job_dirs()
+    refs = job_refs(ctx, jobs=jobs)
     for sid, owned in sorted(sids.items()):
         if not any(k in tasks for k, _ in owned):
             continue
@@ -8661,17 +8759,21 @@ def sweep_plan(ctx, unit):
             plan["skipped"].append((sid[:8], why)); continue
         t = transcript_for(sid)
         if t:
-            c = cited(sid)
-            (plan["kept"] if c else plan["transcripts"]).append(
-                (str(t), _size(t)) if not c else (str(t), f"cited by {c}"))
-        for jd in jobs.get(sid, []):
-            tmp = jd / "tmp"
-            if tmp.is_dir():
-                c = cited(str(tmp), jd.name)
-                if c:
-                    plan["kept"].append((str(tmp), f"cited by {c}"))
-                else:
-                    plan["tmp"].append((str(tmp), _size(tmp)))
+            plan["transcripts"].append((str(t), _size(t)))
+        jd = jobs.get(sid)
+        tmp = jd / "tmp" if jd else None
+        if not (tmp and tmp.is_dir()) or str(tmp) in plan["tmp_keep"]:
+            continue
+        r = refs.get(jd) or {"all": None, "files": {}}
+        if r["all"]:
+            plan["kept"].append((str(tmp), f"cited by {r['all']}")); continue
+        keep = sorted(r["files"])
+        gone = sum((tmp / rel).stat().st_size for rel in _tmp_files(jd)
+                   if not _kept(rel, keep))
+        plan["tmp"].append((str(tmp), gone))
+        plan["tmp_keep"][str(tmp)] = keep
+        for rel in keep:
+            plan["kept"].append((str(tmp / rel), f"cited by {r['files'][rel]}"))
     for kind in ("briefs", "marks", "pairs"):
         for t in sorted(tasks):
             f = ctx.state_file(kind, t, ".json")
@@ -8686,11 +8788,6 @@ def sweep_plan(ctx, unit):
         if ts and all(tkey(x) in tasks for x in ts):
             plan["blocks"].append((str(f), f.stat().st_size))
     plan["caches"] = stale_caches(ctx, live)
-    # Belt and braces: a path on the keep list is never also deleted, whatever
-    # route (a resumed session sharing a job dir) put it on both.
-    kept = {k for k, _ in plan["kept"]}
-    for k in ("transcripts", "tmp"):
-        plan[k] = list({p: s for p, s in plan[k] if p not in kept}.items())
     return plan
 
 
@@ -8724,6 +8821,89 @@ def stale_caches(ctx, live):
     return out
 
 
+def stale_records(ctx, days=14):
+    """Facts and findings nobody needs on the board (no open record cites them),
+    as ({fact: reason}, {finding: reason}). Open findings are never stale."""
+    declined = {n for e in ledger(ctx) if e.get("kept") and e.get("kind") == "stale"
+                for n in e.get("names") or []}
+    open_briefs = [b for b in all_briefs(ctx).values()
+                   if task_state(ctx, b.get("task")) not in ("closed", "superseded")]
+    open_f = open_findings(ctx)
+    open_marks_ = list(open_marks(ctx).values())
+    text = json.dumps(open_briefs) + json.dumps(list(open_f.values())) + json.dumps(open_marks_)
+    cited = {tkey(n) for b in open_briefs for n in (b.get("facts") or [])} | \
+            {tkey(r["fact"]) for r in open_f.values() if r.get("fact")}
+    facts, finds = {}, {}
+    now = time.time()
+    for k, r in all_facts(ctx).items():
+        name = r.get("name") or k
+        last = _epoch(((r.get("observations") or [{}])[-1]).get("at"))
+        if k in declined or tkey(name) in cited or name in text:
+            continue
+        if last and now - last > days * 86400:
+            facts[k] = f"uncited, last observed {human_age(now - last)} ago"
+    for k, r in all_findings(ctx).items():
+        if k in declined or k in open_f:
+            continue
+        why = ("dropped" if r.get("dropped_at") else "ruled" if r.get("ruled_at") else
+               f"became {r['became']}, closed" if r.get("became") and
+               task_state(ctx, r["became"]) == "closed" else None)
+        if why:
+            finds[k] = why
+    return facts, finds
+
+
+def fold_stale(ctx, facts, finds, why, by):
+    """Fold stale facts and findings into archive/knowledge.json; one ledger line."""
+    ad = archive_dir(ctx)
+    ad.mkdir(parents=True, exist_ok=True)
+    kf = ad / "knowledge.json"
+    k = json.loads(kf.read_text()) if kf.exists() else {"facts": {}, "findings": {}}
+    for kind, names in (("facts", facts), ("findings", finds)):
+        for n in names:
+            f = ctx.state_file(kind, n, ".json")
+            try:
+                k[kind][n] = json.loads(f.read_text())
+            except Exception:
+                continue
+    kf.write_text(json.dumps(k, indent=1) + "\n")
+    for kind, names in (("facts", facts), ("findings", finds)):
+        for n in names:
+            if n in k[kind]:
+                ctx.state_file(kind, n, ".json").unlink(missing_ok=True)
+    with open(ad / "ledger.jsonl", "a") as fh:
+        fh.write(json.dumps({"unit": f"stale {time.strftime('%Y-%m-%dT%H:%M')}", "kind": "stale",
+                             "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "by": by, "why": why,
+                             "freed": 0, "counts": {"facts": len(facts), "findings": len(finds)}})
+                 + "\n")
+
+
+def archived_knowledge(ctx, kind, name):
+    try:
+        k = json.loads((archive_dir(ctx) / "knowledge.json").read_text())
+    except Exception:
+        return None
+    return (k.get(kind) or {}).get(tkey(name)) or (k.get(kind) or {}).get(name)
+
+
+def gone_job_files(o, jobs=None):
+    """Job files an observation's command reads that no longer exist."""
+    jobs = job_dirs() if jobs is None else jobs
+    t = json.dumps(o)
+    out = []
+    for m in _LITJOB.finditer(t):
+        p = (jobs.get(m.group(1)) or JOBS / m.group(1))
+        p = p / (m.group(2) or "").lstrip("/") if m.group(2) else p
+        if not Path(p).exists():
+            out.append(m.group(0))
+    for a in set(_SID8.findall(t)):
+        jd = jobs.get(a)
+        for m in _ENVJOB.finditer(t):
+            if not (jd and (jd / (m.group(1) or "/tmp").lstrip("/")).exists()):
+                out.append(f"{m.group(0)} (session {a})")
+    return out
+
+
 def print_sweep_plan(plan):
     mb = lambda rows: sum(r[1] for r in rows if isinstance(r[1], int)) / 1e6
     print(f"sweep {plan['unit']}")
@@ -8753,7 +8933,18 @@ def run_sweep(ctx, unit, plan, why, by):
         if gzip.decompress(dst.read_bytes()) == data:
             src.unlink(); freed += size - dst.stat().st_size
     for path, size in plan["tmp"]:
-        shutil.rmtree(path, ignore_errors=True); freed += size
+        keep = plan.get("tmp_keep", {}).get(path) or []
+        if not keep:
+            shutil.rmtree(path, ignore_errors=True)
+        else:
+            t = Path(path)
+            for f in sorted(t.rglob("*"), key=lambda x: -len(x.parts)):
+                rel = str(f.relative_to(t))
+                if f.is_file() and not _kept(rel, keep):
+                    f.unlink()
+                elif f.is_dir() and not any(f.iterdir()):
+                    f.rmdir()
+        freed += size
     rf = ud / "records.json"
     recs = json.loads(rf.read_text()) if rf.exists() else {"tasks": {}, "blocks": {}}
     for path, size in plan["records"]:
@@ -8788,6 +8979,8 @@ def cmd_sweep(a):
     """`sweep` lists complete units; `sweep <unit> --dry-run` shows one; with
     `--why` rank 0 runs it, or `--keep --why` declines it. Both are ledgered."""
     ctx = Ctx(); ctx.require_enrolled()
+    if a.stale:
+        return sweep_stale(ctx, a)
     units = completed_units(ctx)
     if not a.unit and not a.all:
         if not units:
@@ -8836,6 +9029,31 @@ def sweep_decider(ctx):
             die(REFUSED, "sweeping is rank 0's decision, or the operator's from a shell")
         return node
     return "operator"
+
+
+def sweep_stale(ctx, a):
+    """`sweep --stale`: facts and findings no open record needs, folded on a decision."""
+    days = int(re.sub(r"\D", "", a.older_than or "14") or 14)
+    facts, finds = stale_records(ctx, days)
+    for kind, rows in (("fact", facts), ("finding", finds)):
+        for n, why in sorted(rows.items()):
+            print(f"  {kind:<8} {n:<48} {why}")
+    print(f"  {len(facts)} fact(s), {len(finds)} finding(s) — folded into "
+          f"archive/knowledge.json, still readable by name")
+    if a.dry_run or not (a.why or "").strip():
+        if not a.dry_run:
+            print('\n  Nothing done. Decide: harness sweep --stale --why "..."  or  --keep --why')
+        return
+    by = sweep_decider(ctx)
+    if a.keep:
+        archive_dir(ctx).mkdir(parents=True, exist_ok=True)
+        with open(archive_dir(ctx) / "ledger.jsonl", "a") as fh:
+            fh.write(json.dumps({"unit": "stale", "kind": "stale", "kept": True,
+                                 "names": sorted(facts) + sorted(finds), "by": by, "why": a.why,
+                                 "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}) + "\n")
+        print("kept — recorded; these will not be offered again"); return
+    fold_stale(ctx, facts, finds, a.why, by)
+    print(f"folded {len(facts)} fact(s) and {len(finds)} finding(s) into the archive")
 
 
 def sweep_many(ctx, units, a):
@@ -9223,6 +9441,9 @@ def main():
     sw.add_argument("--dry-run", action="store_true")
     sw.add_argument("--keep", action="store_true", help="decline: keep it, recorded")
     sw.add_argument("--all", action="store_true", help="every complete unit, one decision")
+    sw.add_argument("--stale", action="store_true",
+                    help="facts and findings no open record needs (closed findings; uncited, old facts)")
+    sw.add_argument("--older-than", metavar="DAYS", help="with --stale: fact age, default 14")
     sw.add_argument("--why", help="the decision, one line")
     ar = add("archive", cmd_archive)
     ar.add_argument("unit", nargs="?", help="a swept unit, or a task in one")

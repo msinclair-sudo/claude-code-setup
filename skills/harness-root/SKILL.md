@@ -119,7 +119,7 @@ Blocks notify once, when recorded: the operator's `~/.claude/harness/notify` hoo
 
 ## Cleaning up
 
-When a split segment closes or the focus completes, orientation says `N complete unit(s) await a cleanup decision`. Read `harness sweep <unit> --dry-run` (or `--all --dry-run`), then decide: `harness sweep <unit> --why "..."` gzips the unit's lane transcripts into the archive, deletes their job `tmp/`, folds the unit's briefs, marks and notes into one archive file and prunes dead caches; `--keep --why` declines. Anything a remaining record cites is kept and listed. Every decision goes to the ledger; `harness archive [<unit> [task]]` reads it back, and archived tasks still read as closed.
+When a split segment closes or the focus completes, orientation says `N complete unit(s) await a cleanup decision`. Read `harness sweep <unit> --dry-run` (or `--all --dry-run`), then decide: `harness sweep <unit> --why "..."` gzips the unit's lane transcripts into the archive, deletes their job `tmp/`, folds the unit's briefs, marks and notes into one archive file and prunes dead caches; `--keep --why` declines. Only paths protect: a file a record names (a jobs path, or `$CLAUDE_JOB_DIR/tmp/<file>` resolved through its author) is kept, file by file. `harness sweep --stale --dry-run` offers closed findings and uncited facts older than 14 days; folded, they stay readable by name. Every decision goes to the ledger; `harness archive [<unit> [task]]` reads it back, and archived tasks still read as closed.
 
 ## Shrinking the tree (`R3`)
 

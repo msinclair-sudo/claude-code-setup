@@ -554,13 +554,15 @@ class Sweep(unittest.TestCase):
         (self.proj / "p").mkdir()
         for sid in (self.A, self.B, self.L):
             (self.proj / "p" / f"{sid}.jsonl").write_text('{"x": 1}\n' * 50)
-        self.jobs = Path(tempfile.mkdtemp())
+        self.jobs = Path(tempfile.mkdtemp()) / ".claude" / "jobs"
         for sid in (self.A, self.B):
             jd = self.jobs / sid[:8]
             (jd / "tmp").mkdir(parents=True)
             (jd / "tmp" / "scratch.db").write_bytes(b"0" * 1000)
+            (jd / "tmp" / "cd3.py").write_text("print(1)")
             (jd / "state.json").write_text(json.dumps({"sessionId": sid}))
-        w("facts/r9.json", {"value": f"measured in {self.jobs / self.B[:8] / 'tmp'}"})
+        w("facts/r9.json", {"name": "r9", "observations": [
+            {"value": "3", "command": f"ls {self.jobs / self.B[:8] / 'tmp'}", "by": "dev_1 (session x)"}]})
         (d / "seen" / "dead-session.json").write_text("{}")
         self.p = [mock.patch.object(hz, "PROJECTS", self.proj),
                   mock.patch.object(hz, "JOBS", self.jobs),
@@ -582,7 +584,7 @@ class Sweep(unittest.TestCase):
         self.assertEqual(len(plan["transcripts"]), 2)                 # lanes, not the lead
         self.assertIn((self.L[:8], "a lead or rank 0"), plan["skipped"])
         self.assertEqual([Path(p).parent.name for p, _ in plan["tmp"]], [self.A[:8]])
-        self.assertIn("cited by facts/r9", plan["kept"][0][1])         # B's tmp is cited
+        self.assertIn("cited by facts/r9", plan["kept"][0][1])         # B's tmp is cited whole
         self.assertTrue((self.proj / "p" / f"{self.A}.jsonl").exists())
 
     def test_sweep_archives_deletes_folds_and_ledgers(self):
@@ -708,6 +710,74 @@ class Covers(unittest.TestCase):
         (self.ctx.dir / "marks" / "s6a.json").write_text(json.dumps({"_closed_at": "x"}))
         x = hz.delegated(self.ctx, "dev")[0]
         self.assertEqual((x["uncovered"], x["ready"]), ([], True))
+
+
+class Protection(Sweep):
+    """obs 61: a sweep deleted a script a fact's --from ran; only paths protect,
+    resolved through the author, and kept file by file."""
+
+    def test_job_dir_var_resolves_through_the_author_and_keeps_one_file(self):
+        (self.ctx.dir / "facts" / "nested.json").write_text(json.dumps({"name": "nested",
+            "observations": [{"value": "1", "command": "python3 $CLAUDE_JOB_DIR/tmp/cd3.py",
+                              "by": f"dev_1 (session {self.A[:8]})"}]}))
+        u = self.unit()
+        plan = hz.sweep_plan(self.ctx, u)
+        tmp = str(self.jobs / self.A[:8] / "tmp")
+        self.assertEqual(plan["tmp_keep"][tmp], ["cd3.py"])
+        hz.run_sweep(self.ctx, u, plan, "w", "main")
+        self.assertTrue((self.jobs / self.A[:8] / "tmp" / "cd3.py").exists())
+        self.assertFalse((self.jobs / self.A[:8] / "tmp" / "scratch.db").exists())
+
+    def test_the_units_own_note_protects_a_named_file(self):
+        m = self.ctx.dir / "marks" / "s1a.json"
+        r = json.loads(m.read_text())
+        r["_comments"] = [{"by": f"dev_1 (session {self.A[:8]})", "text": "kept scratch.db for S2"}]
+        m.write_text(json.dumps(r))
+        plan = hz.sweep_plan(self.ctx, self.unit())
+        self.assertEqual(plan["tmp_keep"][str(self.jobs / self.A[:8] / "tmp")], ["scratch.db"])
+
+    def test_authorship_alone_protects_nothing(self):
+        (self.ctx.dir / "findings").mkdir()
+        (self.ctx.dir / "findings" / "x.json").write_text(json.dumps(
+            {"name": "x", "by": f"dev_1 (session {self.A[:8]})", "what": "noticed a thing"}))
+        plan = hz.sweep_plan(self.ctx, self.unit())
+        self.assertEqual(plan["tmp_keep"][str(self.jobs / self.A[:8] / "tmp")], [])
+
+    def test_gone_job_file_is_reported(self):
+        o = {"command": "python3 $CLAUDE_JOB_DIR/tmp/gone.py", "by": f"x (session {self.A[:8]})"}
+        with mock.patch.object(hz, "job_dirs", return_value={self.A[:8]: self.jobs / self.A[:8]}):
+            self.assertEqual(len(hz.gone_job_files(o)), 1)
+            o["command"] = "python3 $CLAUDE_JOB_DIR/tmp/cd3.py"
+            self.assertEqual(hz.gone_job_files(o), [])
+
+
+class Stale(unittest.TestCase):
+    """Closed findings and old uncited facts fold into the archive on a decision."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main"})
+        for d in ("facts", "findings", "briefs", "marks"):
+            (self.ctx.dir / d).mkdir()
+        w = lambda p, o: (self.ctx.dir / p).write_text(json.dumps(o))
+        w("facts/old.json", {"name": "old", "observations": [{"at": "2026-09-01T00:00:00+1000", "value": 1}]})
+        w("facts/cited.json", {"name": "cited", "observations": [{"at": "2026-09-01T00:00:00+1000", "value": 1}]})
+        w("facts/fresh.json", {"name": "fresh", "observations": [{"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "value": 1}]})
+        w("briefs/t.json", {"task": "t", "node": "dev", "facts": ["cited"]})
+        w("findings/dropped.json", {"name": "dropped", "to": "dev", "dropped_at": "x"})
+        w("findings/open.json", {"name": "open", "to": "dev"})
+
+    def test_rule(self):
+        facts, finds = hz.stale_records(self.ctx, days=14)
+        self.assertEqual(sorted(facts), ["old"])
+        self.assertEqual(finds, {"dropped": "dropped"})
+
+    def test_fold_keeps_them_readable(self):
+        facts, finds = hz.stale_records(self.ctx, days=14)
+        hz.fold_stale(self.ctx, facts, finds, "tidy", "main")
+        self.assertFalse((self.ctx.dir / "facts" / "old.json").exists())
+        self.assertEqual(hz.load_fact(self.ctx, "old")[1]["name"], "old")
+        self.assertEqual(hz.archived_knowledge(self.ctx, "findings", "dropped")["name"], "dropped")
+        self.assertEqual(hz.ledger(self.ctx)[-1]["counts"], {"facts": 1, "findings": 1})
 
 
 class Records(unittest.TestCase):

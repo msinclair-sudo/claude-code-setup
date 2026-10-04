@@ -1,13 +1,9 @@
----
-tags:
-  - Decision
----
-
 # Agent Workstream Harness
 
 > [!abstract] Note Role
-> **Contains**: the roles, git nodes, transactions and invariants of the multi-agent git harness. Every transaction carries an index (`T*`) referenced from the edges of [[Agent Workstream Harness.canvas]]; every invariant carries an index (`I*`).
+> **Contains**: the roles, git nodes, transactions and invariants of the multi-agent git harness. Every transaction carries an index (`T*`) referenced from the edges of `tree.canvas` beside this file; every invariant carries an index (`I*`).
 > **Cannot contain**: implementation code, installation steps, or per-project scope assignments.
+> **Lives here only**: this file is the spec. There is no other copy; edit it in the setup repo.
 
 ## Roles
 
@@ -384,6 +380,8 @@ A brief exists **before** its mark: the lead writes it, then the member accepts.
 ### T17 — Rank 0 asks the owner (removed; being redesigned)
 
 `harness decision` was removed on 2026-10-05, with its records. It was the first attempt at a channel from the tree to the owner, and it was the wrong shape: the asker wrote the question to justify itself, the owner had no way to reply but a quoted shell argument, nothing closed an item, and nothing told the owner one existed. Three were raised and none was ever answered. The replacement is an intermediary session between rank 0 and the leads on one side and the owner on the other; its scope is in `harness/design/owner-channel.md` in the setup repo. Until it exists, ask the owner in your own session when they are present.
+
+## Invariants
 
 ### I1 — One session per branch
 

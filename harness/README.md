@@ -18,7 +18,6 @@ roles could read the same 30 KB twice without being able to tell it had.
 
 ```bash
 harness/sync-spec.sh --check      # exit 1 if a role re-grew a spec, or a pointer went stale
-harness/sync-spec.sh --from "/path/to/Agent Workstream Harness.md"
 ```
 
 Nothing runs `--check` automatically, so a re-duplication stays silent until

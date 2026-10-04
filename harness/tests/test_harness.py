@@ -542,6 +542,78 @@ class ResetCeiling(unittest.TestCase):
         self.assertTrue(self.step(300_000, time.time() - 1))
 
 
+class TimeGate(unittest.TestCase):
+    """obs 70: a task can wait on a clock, read by every start path."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev"})
+        (self.ctx.dir / "briefs").mkdir()
+
+    def test_parse(self):
+        import datetime as dt
+        now = dt.datetime(2026, 10, 4, 23, 0, tzinfo=dt.timezone.utc).timestamp()
+        self.assertEqual(hz.utc_label(hz.parse_utc("00:05Z", now)), "2026-10-05 00:05Z")
+        self.assertEqual(hz.utc_label(hz.parse_utc("22:00Z", now)), "2026-10-05 22:00Z")
+        self.assertEqual(hz.utc_label(hz.parse_utc("2026-10-06T01:30Z", now)), "2026-10-06 01:30Z")
+
+    def test_waits_until_then_starts(self):
+        b = {"task": "job", "node": "dev_1", "not_before": time.time() + 3600}
+        (self.ctx.dir / "briefs" / "job.json").write_text(json.dumps(b))
+        self.assertTrue(hz.waits_on(self.ctx, b)[0].startswith("until "))
+        self.assertEqual(hz.startable(self.ctx, "dev_1"), [])
+        b["not_before"] = time.time() - 1
+        (self.ctx.dir / "briefs" / "job.json").write_text(json.dumps(b))
+        self.assertEqual([x["task"] for x in hz.startable(self.ctx, "dev_1")], ["job"])
+
+
+class Requires(unittest.TestCase):
+    """obs 68/70: "X must be an ancestor" is checked at presenting, not at commit."""
+
+    def setUp(self):
+        import subprocess
+        self.env = mock.patch.dict(os.environ, {
+            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+            "CLAUDE_CODE_SESSION_ID": "sess"})
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        self.ctx = FakeCtx({"main": None, "dev": "main"})
+        self.ctx.me = "dev"
+        repo = self.ctx.dir / "repo"
+        repo.mkdir()
+        g = lambda *a: subprocess.run(["git", *a], cwd=repo, capture_output=True, text=True).stdout.strip()
+        g("init", "-q", "-b", "dev")
+        g("commit", "-q", "--allow-empty", "-m", "a")
+        g("checkout", "-q", "-b", "main")
+        g("commit", "-q", "--allow-empty", "-m", "ruling")
+        self.ruling = g("rev-parse", "HEAD")
+        g("checkout", "-q", "dev")
+        self.g = g
+        self.ctx.repo = self.ctx.worktree = repo
+        for d in ("briefs", "marks"):
+            (self.ctx.dir / d).mkdir()
+        (self.ctx.dir / "briefs" / "t.json").write_text(json.dumps(
+            {"task": "t", "node": "dev", "requires": [{"ref": "main", "sha": self.ruling}]}))
+        (self.ctx.dir / "marks" / "t.json").write_text(json.dumps({"_node": "dev"}))
+
+    def present(self):
+        import argparse
+        a = argparse.Namespace(task="t", done=True)
+        err = io.StringIO()
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch("sys.stderr", err), mock.patch("sys.stdout", io.StringIO()):
+            try:
+                hz.cmd_mark(a)
+            except (SystemExit, AttributeError, Exception):
+                pass
+        return err.getvalue()
+
+    def test_refused_until_head_contains_it(self):
+        self.assertIn("requires main", self.present())
+        self.g("merge", "-q", "--ff-only", "main")
+        self.assertNotIn("requires main", self.present())
+
+
 class Pairs(unittest.TestCase):
     """obs 25, 47: document pairs travel as data and apply all-or-nothing."""
 

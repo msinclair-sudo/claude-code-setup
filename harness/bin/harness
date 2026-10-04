@@ -3043,6 +3043,16 @@ def cmd_mark(a):
             die(REFUSED, f"'{a.task}' is already closed")
         if rec.get("_node") and rec["_node"] != node:
             die(REFUSED, f"'{a.task}' belongs to '{rec['_node']}', not '{node}'")
+        # "X must be an ancestor" checked here, at presenting, not at the first
+        # commit: required early, it met a lead holding its tree still for a
+        # check and stopped two lanes in an hour (obs 68, 70).
+        _miss = [x for x in (load_brief(ctx, a.task)[1] or {}).get("requires") or []
+                 if git("merge-base", "--is-ancestor", x["sha"], "HEAD", cwd=ctx.worktree)[0]]
+        if _miss:
+            die(REFUSED, f"'{a.task}' requires "
+                         + ", ".join(f"{x['ref']} ({x['sha'][:8]})" for x in _miss)
+                         + " in HEAD before presenting.\n           Catch up "
+                           "(harness behind), then present again.")
         # Presenting must not be blocked by an unmeasurable cost either. A
         # member that cannot present is a member whose finished work is
         # invisible to everyone above it, which is a strictly worse outcome
@@ -3421,6 +3431,11 @@ def cmd_mark(a):
         die(REFUSED, f"'{a.task}' waits: {'; '.join(_after)}.\n           Stop and say "
                      f"so; it opens when that is signed off. A lead that wants it\n"
                      f"           now re-briefs it with --after none.")
+    _until = [r for r in waits_on(ctx, b) if r.startswith("until ")]
+    if _until:
+        die(REFUSED, f"'{a.task}' waits {_until[0]}: it may not start before then.\n"
+                     f"           A lead that wants it now: harness brief {a.task} "
+                     f"--not-before none")
     if ((b.get("approval") or {}).get("state")) == "declined":
         die(REFUSED, f"'{a.task}' was declined by the operator: "
                      f"{(b['approval'].get('why'))}")
@@ -6253,6 +6268,30 @@ def task_node(ctx, task):
         return (load_brief(ctx, task)[1] or {}).get("node")
 
 
+def parse_utc(v, now=None):
+    """'00:05Z' (the next one) or a full ISO time → epoch seconds, UTC (obs 70)."""
+    v = str(v or "").strip()
+    now = time.time() if now is None else now
+    m = re.fullmatch(r"(\d{1,2}):(\d{2})Z?", v)
+    if m:
+        d = datetime.datetime.fromtimestamp(now, datetime.timezone.utc).replace(
+            hour=int(m.group(1)), minute=int(m.group(2)), second=0, microsecond=0)
+        if d.timestamp() <= now:
+            d += datetime.timedelta(days=1)
+        return d.timestamp()
+    try:
+        d = datetime.datetime.fromisoformat(v.replace("Z", "+00:00"))
+    except ValueError:
+        die(REFUSED, f"--not-before {v}: give a UTC time, 00:05Z or 2026-10-05T00:05Z")
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=datetime.timezone.utc)
+    return d.timestamp()
+
+
+def utc_label(t):
+    return datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime("%Y-%m-%d %H:%MZ")
+
+
 def waits_on(ctx, b):
     """Why a brief cannot start yet, as reasons; [] when it can (obs 15, 59).
     One rule for every path that picks or opens a task."""
@@ -6268,6 +6307,10 @@ def waits_on(ctx, b):
             y = nxt
         if st not in ("closed", "superseded"):
             out.append(f"after {y} ({st} on {task_node(ctx, y) or '?'})")
+    # A clock, not only a task (obs 70): the gate every start path already reads.
+    nb = b.get("not_before")
+    if nb and time.time() < nb:
+        out.append(f"until {utc_label(nb)} (in {human_age(nb - time.time())})")
     return out
 
 
@@ -6543,9 +6586,13 @@ def unread_brief_comments(ctx, who):
 def brief_carry(rec, b):
     """What a rewrite keeps that the writer did not write: the owner's rulings
     (T17), and who has read it, which the ruling notices are timed against."""
-    for k in ("rulings", "read", "close_after"):
-        if (b or {}).get(k):
+    for k in ("rulings", "read", "close_after", "close_after_by", "not_before",
+              "requires"):
+        if k not in rec and (b or {}).get(k):
             rec[k] = b[k]
+    for k in ("not_before", "requires"):
+        if k in rec and rec[k] is None:
+            del rec[k]                  # an explicit 'none' this rewrite
     return rec
 
 
@@ -6813,6 +6860,18 @@ def cmd_brief(a):
                 rec["after"] = afters
         elif (b or {}).get("after"):
             rec["after"] = b["after"]
+        if a.not_before:
+            rec["not_before"] = (None if a.not_before.lower() == "none"
+                                 else parse_utc(a.not_before))
+        if a.requires and [x.lower() for x in a.requires] == ["none"]:
+            rec["requires"] = None
+        elif a.requires:
+            rec["requires"] = []
+            for r in a.requires:
+                rc, sha, _ = git("rev-parse", "--verify", f"{r}^{{commit}}", cwd=ctx.repo)
+                if rc:
+                    die(REFUSED, f"--requires {r}: no such commit here")
+                rec["requires"].append({"ref": r, "sha": sha.strip()})
         blk = a.from_block or (b or {}).get("from_block")
         if blk:
             rec["from_block"] = blk
@@ -6947,6 +7006,39 @@ def cmd_brief(a):
                   f"by {h.get('written_by')} at {str(h.get('written_at'))[:19]}")
             for line in (h.get("text") or "").splitlines():
                 print(f"      {line}")
+        return
+
+    if a.write is None and (a.not_before or a.requires):
+        if b is None:
+            die(REFUSED, f"no brief for '{a.task}'")
+        target = b.get("node")
+        parent = ctx.tree["nodes"].get(target, {}).get("parent")
+        if sid and parent != me and ctx.rank(me) != 0:
+            die(REFUSED, f"'{a.task}' is {target}'s; its gates are set by '{parent}' or rank 0")
+        if a.not_before:
+            if a.not_before.lower() == "none":
+                b.pop("not_before", None)
+                print(f"'{a.task}' has no time gate")
+            else:
+                b["not_before"] = parse_utc(a.not_before)
+                print(f"'{a.task}' starts no earlier than {utc_label(b['not_before'])}: "
+                      f"`mark`, `recycle` and a close-into-next all skip it until then")
+        if a.requires:
+            if [x.lower() for x in a.requires] == ["none"]:
+                b.pop("requires", None)
+                print(f"'{a.task}' requires nothing at presenting")
+            else:
+                reqs = []
+                for r in a.requires:
+                    rc, sha, _ = git("rev-parse", "--verify", f"{r}^{{commit}}", cwd=ctx.repo)
+                    if rc:
+                        die(REFUSED, f"--requires {r}: no such commit here")
+                    reqs.append({"ref": r, "sha": sha.strip()})
+                b["requires"] = reqs
+                print(f"'{a.task}' presents only once its HEAD contains "
+                      + ", ".join(f"{x['ref']} ({x['sha'][:8]})" for x in reqs)
+                      + ". Commit freely before then.")
+        f.write_text(json.dumps(b, indent=2) + "\n")
         return
 
     if a.close_after:
@@ -9701,6 +9793,13 @@ def main():
                     help="operator only: release a gated task into its node's queue")
     br.add_argument("--decline", metavar="WHY",
                     help="operator only: refuse a gated task, on the record")
+    br.add_argument("--not-before", metavar="UTC",
+                    help="the task starts no earlier than this UTC time: 00:05Z (the next "
+                         "one) or 2026-10-05T00:05Z; 'none' clears (obs 70)")
+    br.add_argument("--requires", action="append", metavar="REF",
+                    help="the task presents only once its HEAD contains REF (resolved to a "
+                         "commit now); checked at `mark --done`, not at commit; repeatable; "
+                         "'none' clears")
     br.add_argument("--close-after", action="append", metavar="TASK",
                     help="this segment may be closed only once TASK is signed off "
                          "(obs 67); repeatable; '--close-after none' clears")

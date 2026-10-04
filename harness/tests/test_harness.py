@@ -1,11 +1,13 @@
 """Liveness and nag rules. Run: python3 -m unittest discover harness/tests"""
 import importlib.machinery
 import importlib.util
+import io
 import json
 import socket
 import tempfile
 import time
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -778,6 +780,16 @@ class Stale(unittest.TestCase):
         self.assertEqual(hz.load_fact(self.ctx, "old")[1]["name"], "old")
         self.assertEqual(hz.archived_knowledge(self.ctx, "findings", "dropped")["name"], "dropped")
         self.assertEqual(hz.ledger(self.ctx)[-1]["counts"], {"facts": 1, "findings": 1})
+
+    def test_nag_names_the_command_that_clears_it(self):
+        """obs 65: the stale nag pointed at `sweep`, which only lists units."""
+        rows = [r for r in hz.rank0_owes(self.ctx, "main") if r[0] == "sweep"]
+        self.assertEqual([r[1:3] for r in rows], [("stale", "2 stale record(s)")])
+        a = mock.Mock(stale=False, unit=None, all=True)
+        out = io.StringIO()
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), redirect_stdout(out):
+            hz.cmd_sweep(a)
+        self.assertIn("2 stale record(s) — harness sweep --stale", out.getvalue())
 
 
 class Orphan(unittest.TestCase):

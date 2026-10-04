@@ -2404,10 +2404,11 @@ def rank0_owes(ctx, node):
         n = len(completed_units(ctx))
         sf, sn = stale_records(ctx)
         m = len(sf) + len(sn)
-        if n or m:
-            owed.append(("sweep", "units", ", ".join(
-                ([f"{n} complete unit(s)"] if n else []) +
-                ([f"{m} stale record(s)"] if m else [])), 0))
+        # One row per population, each naming the command that acts on it (obs 65).
+        if n:
+            owed.append(("sweep", "units", f"{n} complete unit(s)", 0))
+        if m:
+            owed.append(("sweep", "stale", f"{m} stale record(s)", 0))
     except Exception:
         pass
     return owed
@@ -2526,8 +2527,8 @@ def queue_items(ctx, node):
                            f"  — harness brief {label} --approve",
                 "task": f"block '{label}' was answered {human_age(age)} ago and "
                         f"produced no task  — harness blocked --decided",
-                "sweep": f"{label} await a cleanup decision"
-                         f"  — harness sweep  (then --dry-run, --why)",
+                "sweep": f"{label} await a cleanup decision  — harness sweep"
+                         + (" --stale --dry-run" if ident == "stale" else "  (then --dry-run, --why)"),
             }.get(kind)
             out[f"{kind}:{ident}"] = _line or (
                 f"'{label}' ({kind}) has been waiting {human_age(age)}"
@@ -9023,9 +9024,13 @@ def cmd_sweep(a):
     if a.stale:
         return sweep_stale(ctx, a)
     units = completed_units(ctx)
+    if not units and (a.all or not a.unit):
+        sf, sn = stale_records(ctx)
+        print("nothing complete to sweep" + (
+            f"; {len(sf) + len(sn)} stale record(s) — harness sweep --stale --dry-run"
+            if sf or sn else ""))
+        return
     if not a.unit and not a.all:
-        if not units:
-            print("nothing complete to sweep"); return
         for u in units:
             print(f"  {u['kind']:<8} {u['name']:<32} {len(u['tasks'])} task(s)"
                   f"  — harness sweep '{u['name']}' --dry-run")

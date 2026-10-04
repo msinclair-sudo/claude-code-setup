@@ -181,11 +181,9 @@ def is_stopped(row):
     cheapest first. A queue that confidently prescribes the wrong action is
     worse than one that says it does not know.
 
-    Why it is read at all — R14 opens on a measurement taken 2026-08-31: that the roster carried
-    `status` and `state` (working/done) and nothing that could tell a session
-    stopped dead on a refused permission from one that was working. The notify
-    hook, `needs`, the viewer's attention panel and the twenty-minute escalation
-    all exist to work around that.
+    Why it is read at all — a measurement taken 2026-08-31 found that the roster
+    carried `status` and `state` (working/done) and nothing that could tell a
+    session stopped dead on a refused permission from one that was working.
 
     The runtime has since grown the distinction, and nothing here looked. Cost,
     measured on a live tree 2026-09-08: a lead sat at a prompt for forty minutes
@@ -706,11 +704,11 @@ def _whoami(a):
                 child = (_idx.get("byWorktree") or {}).get(r.get("cwd", ""))
                 if child not in _kids:
                     continue
-                print(f"WAITING  {child} is waiting on the operator — it reads as idle "
+                print(f"WAITING  {child} is stopped at a prompt — it reads as idle "
                       f"and is not.")
                 print(f"         Not yours to clear: it wants a reply or a permission "
-                      f"answered, and\n         both are at a keyboard. It is in "
-                      f"`harness needs`.")
+                      f"answered, and\n         both are at a keyboard. Do not recycle "
+                      f"it into the same prompt.")
     except Exception:
         pass
     # Segments this node split. Discharged for queueing the moment they were
@@ -912,8 +910,9 @@ def _whoami(a):
                        if gb.get("node") == node
                        or ctx.tree["nodes"].get(gb.get("node"), {}).get("parent") == node)
         if gated:
-            print(f"gated    {len(gated)} brief(s) waiting on the operator: "
-                  f"{', '.join(gated)}  — not staffable")
+            print(f"gated    {len(gated)} brief(s) waiting on approval: "
+                  f"{', '.join(gated)}  — not staffable; rank 0 approves with "
+                  f"harness brief <task> --approve")
     except Exception:
         pass
     try:
@@ -954,7 +953,7 @@ def _whoami(a):
             return ("  (outside the owner's focus; your lead ordered it)"
                     if fam is not None and not in_focus(fam, b["task"]) else "")
         openm = [t for t, r in open_marks(ctx).items() if r.get("_node") == node]
-        # Briefs that wait on another task or a decision are not "next" (obs 59).
+        # Briefs that wait on another task are not "next" (obs 59).
         wait = [b for b in head if waits_on(ctx, b)]
         head = [b for b in head if b not in wait]
         for b in wait[:3]:
@@ -1024,7 +1023,7 @@ def _whoami(a):
                 print(f"unclaimed {len(stale_m) + len(unattr_m)} open task record(s) "
                       f"claimed by no node — harness status")
             if nb:
-                print(f"blocked  {nb} lane(s) waiting on the operator — harness needs")
+                print(f"blocked  {nb} open block(s) — harness blocked --list")
         except Exception:
             pass
     # Orientation has just said all of it, so record it as told. Without this
@@ -2519,9 +2518,7 @@ def queue_items(ctx, node):
             # Selected by kind, with an explicit fallback. This was an
             # if/else whose else-branch hardcoded the word "block", so the day a
             # third kind arrived it would have described itself as a block and
-            # named a command that could not find it. Same subtraction as the
-            # `needs` footer and the viewer's attention filter, both fixed
-            # earlier today; this is the third instance and it was still live.
+            # named a command that could not find it.
             _line = {
                 "approve": f"'{label}' waits on your approval ({human_age(age)})"
                            f"  — harness brief {label} --approve",
@@ -2532,7 +2529,7 @@ def queue_items(ctx, node):
             }.get(kind)
             out[f"{kind}:{ident}"] = _line or (
                 f"'{label}' ({kind}) has been waiting {human_age(age)}"
-                f"  — harness needs")
+                f"  — harness status")
     except Exception:
         pass
     try:
@@ -2593,7 +2590,7 @@ def queue_items(ctx, node):
                              "orphan:", "down:")) or in_focus(fam, task_of(k))}
     if len(kept) < len(out):
         kept[f"fold:{len(out) - len(kept)}"] = (f"+{len(out) - len(kept)} item(s) "
-                                                f"outside the focus  — harness needs")
+                                                f"outside the focus  — harness whoami")
     return kept
 
 
@@ -2805,12 +2802,12 @@ def cmd_hook_stop(a):
                     # described itself as a block would send the reader to a
                     # command that cannot find it.
                     return (f"  '{label}' ({kind}) has been waiting "
-                            f"{human_age(age)}:{nl}    harness needs")
+                            f"{human_age(age)}:{nl}    harness status")
                 lines = [_owed(kind, label, age)
                          for kind, ident, label, age in mine[:4]]
                 print(json.dumps({"hookSpecificOutput": {
                     "hookEventName": "Stop", "decision": "block", "reason":
-                    f"You are about to stop holding the operator's queue.{nl}{nl}"
+                    f"You are about to stop with these still yours:{nl}{nl}"
                     + f"{nl}{nl}".join(lines) + f"{nl}{nl}"
                     + "Nobody below you may do either, and you are the node that is "
                       "never recycled — so nothing will re-orient you into noticing. "
@@ -3064,7 +3061,7 @@ def cmd_mark(a):
             print(f"  is exactly how finished work sits invisible for half an hour.")
         elif parent:
             print(f"\n  {parent} is not running, so there is nobody to tell. It is on the")
-            print(f"  record and the operator can see it:  harness needs")
+            print(f"  record:  harness status")
         # What happens to this session next, said here rather than left to be
         # worked out. A member that has presented and does not know whether it is
         # continuing will fill the gap, and what it fills it with is a question.
@@ -3328,24 +3325,8 @@ def cmd_mark(a):
         die(REFUSED,
             f"'{a.task}' is not approved. It was written from something noticed rather "
             f"than\n           asked for, and the operator has not said it is worth a "
-            f"session yet.\n           It is in `harness needs`. Carry on with what is "
-            f"queued.")
-    # The decision gate, a sibling of the approval gate above and refused the
-    # same way. Answering does not lift it; CLOSING does -- that is the point at
-    # which the answer has become work, and it is the same rule T13 applies to a
-    # block. The escape is named, because a gate with no escape is how a lane
-    # sits idle overnight waiting for a human who is not there.
-    _gb = b.get("gated_by")
-    if _gb:
-        _gr = open_decision(ctx, _gb)
-        if _gr:
-            die(REFUSED,
-                f"'{a.task}' waits on an open decision: {_gr.get('need')}\n"
-                f"           Raised by '{_gr.get('node')}' and it is the operator's to "
-                f"answer, not\n           yours and not your lead's. It is in `harness "
-                f"needs`.\n           If the work should go ahead regardless, that is "
-                f"rank 0 closing it:\n             harness blocked "
-                f"{shlex.quote(_gb)} --no-task \"why it needs no answer\"")
+            f"session yet.\n           Rank 0 approves it: harness brief {a.task} --approve. "
+            f"Carry on with what is queued.")
     _after = [r for r in waits_on(ctx, b) if r.startswith("after ")]
     if _after:
         die(REFUSED, f"'{a.task}' waits: {'; '.join(_after)}.\n           Stop and say "
@@ -4481,7 +4462,7 @@ def cmd_recycle(a):
                 # same prompt — so the sweep costs a session and changes
                 # nothing, and whatever the halted one was about to be told is
                 # gone. Only a human at the keyboard clears this.
-                print(f"  skip {n:<12} WAITING ON THE OPERATOR — it reads as idle and it "
+                print(f"  skip {n:<12} STOPPED AT A PROMPT — it reads as idle and it "
                       f"is not.\n       {'':<12} Recycling is not the remedy: a "
                       f"replacement starts cold and, if it\n       {'':<12} was a "
                       f"permission prompt, meets the same one. Send it a prompt, or\n"
@@ -4882,197 +4863,11 @@ def grant_flags(rows, model, effort):
     return out
 
 
-# ── R14: the operator's queue ────────────────────────────────────────────────
-
-def scan_needs(rows=None):
-    """Every open block on this machine, across every enrolled project.
-
-    Deliberately builds no Ctx. The operator is usually not standing in the
-    repository that needs them — often not in any repository — and a command
-    that only works from the right directory is one they will not run.
-
-    `rows` is an already-read roster, and it is a parameter for two reasons.
-    Testing: the stopped-session arm called `claude` directly at first, which
-    made the one arm here that reports a halted lane the one arm nothing could
-    exercise, and an untested arm in this file has a record of being an arm that
-    never fires. Cost: the viewer calls this on every poll and already holds a
-    cached roster, so fetching one here would have put a `claude` process on a
-    three-second timer for as long as a tab stayed open — the exact spend that
-    cache was added to stop.
-    """
-    out = []
-    for pdir in sorted(p for p in HOME_STATE.glob("*")
-                       if p.is_dir() and (p / "binding.json").exists()):
-        repo = ""
-        try:
-            repo = json.loads((pdir / "binding.json").read_text()).get("repo", "")
-        except Exception:
-            pass
-        proj = Path(repo).name if repo else pdir.name
-        b = pdir / "blocks"
-        for f in (sorted(b.glob("*.json")) if b.is_dir() else []):
-            try:
-                r = json.loads(f.read_text())
-            except Exception:
-                continue
-            if r.get("resolved_at"):
-                continue
-            # Off the record, not assumed. A block and a decision share this
-            # store deliberately -- one consequence machinery, one definition of
-            # "answered" -- and only the rendering forks.
-            r["_repo"], r["_project"] = repo, proj
-            r["_kind"] = "decision" if r.get("kind") == "decision" else "block"
-            # Answered means the operator's word is still the LAST word, not
-            # that they once said something. It used to mean the second, and
-            # that made their own reply the thing that hid the block: a lane
-            # came back with "the reason you gave cannot be the reason", the
-            # tree discussed it for six hours, and none of it reached the one
-            # person who could settle it, because they had already spoken once.
-            #
-            # A grant is different and stays answered. There the operator did
-            # the thing rather than said something, and the reach exists now
-            # whatever anyone says about it afterwards.
-            cs = r.get("comments") or []
-            ops = [c.get("at") or "" for c in cs if c.get("by") == "operator"]
-            last_op = max(ops) if ops else ""
-            since = [c for c in cs if ops and (c.get("at") or "") > last_op]
-            r["_answered"] = bool(r.get("resolved_by") == "grant"
-                                  or (ops and not since))
-            r["_reopened"] = bool(ops and since and r.get("resolved_by") != "grant")
-            r["_new_since"] = len(since)
-            r["_answered_at"] = last_op
-            out.append(r)
-        # Two different things wait on the operator and they are not the same
-        # question. A block asks whether a lane may REACH something. An approval
-        # asks whether work nobody requested is worth a session at all. Both are
-        # theirs and belong in one queue; neither should be phrased as the other.
-        bd = pdir / "briefs"
-        for f in (sorted(bd.glob("*.json")) if bd.is_dir() else []):
-            try:
-                r = json.loads(f.read_text())
-            except Exception:
-                continue
-            if (r.get("approval") or {}).get("state") != "pending":
-                continue
-            # A brief that was gated and then withdrawn. --supersede voids the
-            # request now, but a brief gated BEFORE that existed still carries
-            # both flags, and asking the operator to decide about work nothing
-            # can start is worse than not asking. Read as state rather than
-            # repaired in place: this is a reader, and rewriting somebody's
-            # brief from a scan is how two writers appear where there was one.
-            if r.get("superseded_at"):
-                continue
-            out.append({"_repo": repo, "_project": proj, "_kind": "approval",
-                        "task": r.get("task") or f.stem, "node": r.get("node"),
-                        "need": f"approve the task '{r.get('task') or f.stem}'",
-                        "why": (r.get("text") or "").strip(),
-                        "from_finding": r.get("from_finding") or "",
-                        "raised_at": (r.get("approval") or {}).get("asked_at"),
-                        "asked_by": (r.get("approval") or {}).get("asked_by")})
-
-    # A third thing waits on the operator, and it is the only one that never
-    # asked. A block and an approval are raised — some session decided to put
-    # them here. A session halted at a prompt raised nothing and can raise
-    # nothing, because raising takes a turn and it does not get one.
-    #
-    # It passes R14's own test for this panel exactly, which is the narrow one:
-    # only the operator can clear it, no rank in the tree has the authority, and
-    # it is not somebody else's work-in-progress. A sign-off is dev's; a briefed
-    # idle child is its lead's; this is nobody's but yours.
-    #
-    # One roster read for every project on the machine, not one per project.
-    try:
-        live = live_rows(rows if rows is not None else agents_json())
-    except Exception:
-        live = []
-    for r in stopped_rows(live):
-        # Aged, like everything else that climbs. A session waiting on a reply
-        # is the ordinary state between turns and belongs to its lead, who is
-        # told at orientation and can see it on the node in the viewer. Only
-        # one that has been sitting there long enough to be a genuine halt is
-        # the operator's, and putting the fresh ones here filled their queue
-        # with the tree working normally -- which teaches a reader to stop
-        # opening it, and the queue only works when it is usually empty.
-        _age, _ = last_turn(r.get("sessionId") or "")
-        if not _age or _age < STALLED_APPROVAL:
-            continue
-        cwd = r.get("cwd") or ""
-        for pdir in sorted(p for p in HOME_STATE.glob("*")
-                       if p.is_dir() and (p / "binding.json").exists()):
-            try:
-                idx = json.loads((pdir / "index.json").read_text())
-            except Exception:
-                continue
-            node = (idx.get("byWorktree") or {}).get(cwd)
-            if not node:
-                continue
-            repo = idx.get("repo") or ""
-            out.append({"_repo": repo, "_project": Path(repo).name if repo else pdir.name,
-                        "_kind": "stopped", "node": node,
-                        "session": r.get("sessionId") or "",
-                        "name": r.get("name") or "?",
-                        "need": f"'{node}' is waiting on you",
-                        "_age": _age,
-                        "raised_at": None})
-            break
-    # Stopped rows carry no raised_at — nothing recorded them, which is the
-    # point — so they sort to the front rather than to a random position. They
-    # are also the only row here where something has already halted.
-    out.sort(key=lambda r: (r.get("raised_at") is not None, r.get("raised_at") or ""))
-    return out
-
-
-def write_needs(rows):
-    """A derived cache, for readers that must be cheap and must never fail.
-
-    Written for the statusline, which rendered on every prompt and could not
-    walk every project's block directory. That reader is gone — a count shown in
-    every session on the machine, enrolled or not, shouts about a project you are
-    not in from a place you cannot act on it. What remains is the `notify` hook,
-    handed the same rows as HARNESS_JSON. Same split as index.json either way:
-    the records are the truth, this is a convenience rebuilt from them.
-    """
-    p = HOME_STATE / "needs.json"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(
-        {"generated": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-         "count": len(rows),
-         "open": [{k: v for k, v in r.items() if k != "session"} for r in rows]},
-        indent=2) + "\n")
-
-
 def append_inbox(rec):
     p = HOME_STATE / "inbox.jsonl"
     p.parent.mkdir(parents=True, exist_ok=True)
     with p.open("a") as fh:
         fh.write(json.dumps(rec) + "\n")
-
-
-def notify(kind, rows):
-    """Fire the operator's own notifier, if they installed one.
-
-    The harness does not choose the channel. `notify-send` is wrong over ssh,
-    wrong on a Mac and wrong in WSL, which is three of three on the machines
-    this has run on. `~/.claude/harness/notify`, executable, is run with the
-    detail in the environment; absent, the record is still written and the
-    statusline still shows it. Never raises, never blocks for long: a notifier
-    that fails must not take the block record down with it.
-    """
-    hook = HOME_STATE / "notify"
-    if not (hook.exists() and os.access(hook, os.X_OK)):
-        return False
-    first = rows[0] if rows else {}
-    summary = (f"{len(rows)} thing(s) need you — "
-               f"{first.get('_project', '?')}/{first.get('node', '?')}: "
-               f"{first.get('need', '')}")
-    env = dict(os.environ, HARNESS_EVENT=kind, HARNESS_COUNT=str(len(rows)),
-               HARNESS_SUMMARY=summary, HARNESS_JSON=json.dumps(rows))
-    try:
-        subprocess.run([str(hook)], env=env, timeout=10,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return True
-    except Exception:
-        return False
 
 
 def _epoch(ts):
@@ -6270,16 +6065,6 @@ def couple_chain(ctx, task):
         out.append(nxt)
 
 
-def open_decision(ctx, name):
-    """The block record of an open decision named `name`, or None. Matched on
-    the sanitised stem, because that is how it is stored."""
-    gk = re.sub(r"[^A-Za-z0-9]", "_", name or "")
-    d = ctx.state / "blocks"
-    gf = next((f for f in d.glob("*.json") if f.stem.endswith(gk)), None) if d.is_dir() else None
-    gr = json.loads(gf.read_text()) if gf else None
-    return gr if gr and not gr.get("consequence") else None
-
-
 def task_node(ctx, task):
     """Which node a task belongs to, from its mark or its brief."""
     mf = ctx.state_file("marks", task, ".json")
@@ -6304,14 +6089,12 @@ def waits_on(ctx, b):
             y = nxt
         if st not in ("closed", "superseded"):
             out.append(f"after {y} ({st} on {task_node(ctx, y) or '?'})")
-    if b.get("gated_by") and open_decision(ctx, b["gated_by"]):
-        out.append(f"decision {b['gated_by']} is open")
     return out
 
 
 def startable(ctx, node):
     """The queue a session can actually open, in order: no coupled tasks, nothing
-    that waits on another task or an open decision."""
+    that waits on another task."""
     return [b for b in queue(ctx, node) if not b.get("coupled_to") and not waits_on(ctx, b)]
 
 
@@ -6485,7 +6268,7 @@ def cmd_queue(a):
             state = "presented, waiting on sign-off" if r.get("_presented_at") else "OPEN"
             print(f"    ▸ {mark_label(r, t):<24} {state}")
         for gb in gated:
-            print(f"    gate {gb['task']:<24} waiting on the operator "
+            print(f"    gate {gb['task']:<24} waiting on approval "
                   f"({_ago((gb.get('approval') or {}).get('asked_at'))})")
         head = [b for b in q if not b.get("coupled_to")]
         # One stamp for the whole queue is the usual case — say it once. Repeating
@@ -6870,13 +6653,9 @@ def cmd_brief(a):
             print(f"  from {fnd.get('from')}'s finding '{a.from_finding}' — it stops "
                   f"asking you for a decision")
         if (rec.get("approval") or {}).get("state") == "pending":
-            write_needs(scan_needs())
-            told = notify("approval", scan_needs())
-            print(f"  NOT STAFFABLE until the operator approves it. It is queued "
-                  f"nowhere and\n  `harness mark {a.task}` is refused until then."
-                  + ("  (notifier fired)" if told else ""))
-            print(f"  It is in `harness needs` and in the viewer, with your text, "
-                  f"for them to read.")
+            print(f"  NOT STAFFABLE until it is approved. It is queued nowhere and\n"
+                  f"  `harness mark {a.task}` is refused until then.")
+            print(f"  Rank 0 approves it: harness brief {a.task} --approve")
         if a.with_task:
             print(f"  runs in the SAME session as '{a.with_task}', which is why it "
                   f"is not queued separately")
@@ -7025,8 +6804,6 @@ def cmd_brief(a):
             b["approval"]["decided_by"] = b["superseded_by"]
             b["approval"]["why"] = f"the brief was superseded: {a.supersede}"
         f.write_text(json.dumps(b, indent=2) + "\n")
-        if voided:
-            write_needs(scan_needs())
         print(f"superseded {a.task}: {a.supersede}")
         if voided:
             print(f"  Its pending approval is withdrawn — the operator is no longer "
@@ -7051,8 +6828,8 @@ def cmd_brief(a):
         # work it just briefed is the gate approving itself. The CLI cannot
         # authenticate an operator and does not pretend to, so it refused the
         # one case it could identify. Changed on the operator's instruction
-        # 2026-09-07, after that refusal left rank 0 unable to act on the queue
-        # `harness needs` exists to give it.
+        # 2026-09-07, after that refusal left rank 0 unable to act on the
+        # approvals waiting for it.
         #
         # The refusal below rank 0 is untouched, and it is the arm that was
         # always load-bearing: a lead approving its own child's brief staffs
@@ -7062,9 +6839,8 @@ def cmd_brief(a):
             die(REFUSED,
                 f"'{me}' is rank {ctx.rank(me)}. Approving work is the operator's, or "
                 f"rank 0's on their\n           behalf: a lead approving the brief it "
-                f"wrote is the gate approving itself.\n           Raise it upward. It "
-                f"is in `harness needs` and in `harness gui`, where it\n           can "
-                f"be read and decided.")
+                f"wrote is the gate approving itself.\n           Raise it upward: "
+                f"rank 0 approves it with harness brief {a.task} --approve")
         ap = b["approval"]
         ap["state"] = "approved" if a.approve else "declined"
         ap["decided_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
@@ -7089,7 +6865,6 @@ def cmd_brief(a):
         if selfsame:
             ap["self_approved"] = True
         f.write_text(json.dumps(b, indent=2) + "\n")
-        write_needs(scan_needs())
         if selfsame:
             print(f"  NOTE: {me} asked for this and {me} decided it. Recorded as "
                   f"self_approved —\n        nothing outside this node has seen the "
@@ -7146,7 +6921,7 @@ def cmd_brief(a):
         print(f"  splits   {b['from']}")
     ap = b.get("approval") or {}
     if ap.get("state") == "pending":
-        print(f"  GATED    not staffable — waiting on the operator since "
+        print(f"  GATED    not staffable — waiting on approval since "
               f"{_ago(ap.get('asked_at'))}")
     elif ap.get("state") == "declined":
         print(f"  DECLINED by the operator: {ap.get('why')}")
@@ -7314,185 +7089,6 @@ def cmd_note(a):
             print(f"      {line}")
 
 
-def cmd_needs(a):
-    """One place the operator looks, and everything a decision needs in it.
-
-    A block reaches the operator as a record rather than a message because a
-    message arrives in one transcript, out of order, behind whatever else is in
-    it, and dies with the session that sent it. This prints every open one on
-    the machine with the command that clears it already written out — the
-    operator should never have to assemble `harness grant` by hand from a
-    transcript, and a queue that costs effort to read is a queue that is not read.
-    """
-    _ov = read_roster(a.__dict__.get("roster"))
-    rows = scan_needs(agents_json(_ov) if _ov is not None else None)
-    write_needs(rows)
-    # The cache above is machine-wide on purpose — the notify hook is handed
-    # every project. What is PRINTED is not.
-    #
-    # R14 made this command global for a good reason: the operator is usually
-    # not standing in the repository that wants them, and often not in a
-    # repository at all. That reasoning is about the operator. But `whoami`
-    # points rank-0 SESSIONS here too, and a session in one project reading
-    # another project's queue is a leak in the one direction the design is
-    # otherwise strict about — it can neither act on those rows nor should it
-    # know they exist. Reported by the operator, who found one tree's items in
-    # another tree's session.
-    #
-    # So: inside an enrolled repository this is that repository's queue; outside
-    # one it is the whole machine, which is the operator case R14 described.
-    # `--all` restores the wide view from anywhere.
-    here = None
-    if not a.__dict__.get("all"):
-        try:
-            c = Ctx()
-            if c.tree_path.exists() and c.binding_path.exists():
-                here = str(c.repo)
-        # SystemExit as well as Exception, and the distinction is the whole
-        # command: `Ctx()` REFUSES by raising SystemExit, which an ordinary
-        # `except Exception` does not catch — a trap this codebase has already
-        # written up once, in the Stop hook. Caught here it means "not in a
-        # repository", which is R14's primary case: the operator standing
-        # anywhere at all, wanting the machine-wide view. Uncaught it killed
-        # exactly that call with `not inside a git worktree`.
-        except SystemExit:
-            here = None
-        except Exception:
-            here = None
-    if here:
-        rows = [r for r in rows if r.get("_repo") == here]
-    done = [r for r in rows if r.get("_answered")]
-    rows = [r for r in rows if not r.get("_answered")]
-    if not rows:
-        print("nothing needs you"
-              + (f" in {Path(here).name}" if here else " in any enrolled project")
-              + (f"  ({len(done)} answered, with rank 0)" if done else "")
-              + ("   (this project only — harness needs --all)" if here else ""))
-        return
-    if here:
-        print(f"{Path(here).name} only. Other projects on this machine are not "
-              f"yours from here:\n  harness needs --all\n")
-    for r in rows:
-        node, need = r.get("node", "?"), r.get("need", "")
-        if r.get("_kind") == "stopped":
-            # Three lines. What, how long, what to type. The paragraph that
-            # explained the runtime's two meanings was the same on every one of
-            # these and is in the spec, said once.
-            print(f"{r['_project']} · {node}{'':<4}WAITING {human_age(r.get('_age') or 0)}"
-                  f"  — prompt it, or attach if it is a permission ask")
-            print(f"  claude attach {(r.get('session') or '')[:8]}\n")
-            continue
-        if r.get("_kind") == "approval":
-            print(f"{r['_project']} · {node}{'':<4}APPROVAL   asked "
-                  f"{_ago(r.get('raised_at') or '')}")
-            print(f"  task     {r.get('task')}   written by {r.get('asked_by')}")
-            if r.get("from_finding"):
-                print(f"  from     '{r['from_finding']}', something a lane noticed "
-                      f"while doing something else")
-            # The first line and the size, not the brief. Fourteen lines of
-            # somebody else's plan is a document in a queue entry, and this
-            # output reaches a session's context when a session runs the
-            # command. Reading the task is still the right thing before
-            # deciding -- it is one command away and named here.
-            _txt = (r.get("why") or "").strip().splitlines()
-            print(f"  gist     {_txt[0][:88] if _txt else '(no text)'}")
-            if len(_txt) > 1:
-                print(f"  read it  (cd {shlex.quote(r.get('_repo') or '.')} && "
-                      f"harness brief {shlex.quote(r.get('task') or '')})"
-                      f"   [{len(_txt)} lines]")
-            repo = r.get("_repo") or "."
-            print(f"  approve  (cd {shlex.quote(repo)} && harness brief "
-                  f"{shlex.quote(r.get('task') or '')} --approve)")
-            print(f"  decline  (cd {shlex.quote(repo)} && harness brief "
-                  f"{shlex.quote(r.get('task') or '')} --decline \"why\")")
-            print(f"  Nobody is idle over this — the lane carried on with its queue.")
-            print()
-            continue
-        if r.get("_answered"):
-            continue
-        repo = r.get("_repo") or "."
-        if r.get("_kind") == "decision" and not r.get("_reopened"):
-            print(f"{r['_project']} · {node}{'':<4}DECISION   asked "
-                  f"{_ago(r.get('raised_at') or '')}")
-            print(f"  {need}")
-            print(f"  turns on   {r.get('still_moving')}")
-            if r.get("options"):
-                print(f"  options    {r.get('options')}")
-            if r.get("gates"):
-                print(f"  gates      {', '.join(r['gates'])} — refused at mark until "
-                      f"this closes")
-            # No grant line. There is nothing to grant, and offering one was the
-            # whole defect this record kind exists to fix.
-            print(f"  answer     (cd {shlex.quote(repo)} && harness decision "
-                  f"{shlex.quote(r.get('name') or '')} --answer \"...\")")
-            print()
-            continue
-        # One you already answered, that has come back. It is a different item
-        # from a fresh block and reads as one: the thing you have not seen is
-        # the reply, not the request, so the reply is what gets the space.
-        if r.get("_reopened"):
-            cs = r.get("comments") or []
-            mine = [c for c in cs if c.get("by") == "operator"]
-            since = [c for c in cs if (c.get("at") or "") > (r.get("_answered_at") or "")]
-            print(f"{r['_project']} · {node}{'':<4}YOU ANSWERED "
-                  f"{_ago(r.get('_answered_at') or '')} — "
-                  f"{len(since)} repl{'y has' if len(since) == 1 else 'ies have'} "
-                  f"come back since")
-            print(f"  asked    {need}")
-            print(f"  you said {(mine[-1].get('text') or '').strip()[:150]}")
-            for c in since[:-1]:
-                print(f"  earlier  {c.get('by')} {_ago(c.get('at') or '')}: "
-                      f"{(c.get('text') or '').strip().splitlines()[0][:100]}")
-            last = since[-1]
-            print(f"\n  {last.get('by')}, {_ago(last.get('at') or '')}:")
-            lines = (last.get("text") or "").strip().splitlines()
-            for line in lines[:16]:
-                print(f"      {line}")
-            if len(lines) > 16:
-                print(f"      … {len(lines) - 16} more line(s) — harness blocked --list")
-            print(f"\n  reply    (cd {shlex.quote(repo)} && harness blocked "
-                  f"{shlex.quote(need)} --comment \"...\")")
-            print(f"  settle   (cd {shlex.quote(repo)} && harness blocked "
-                  f"{shlex.quote(need)} --resolve --no-task \"why it produced none\")")
-            print()
-            continue
-        print(f"{r['_project']} · {node}{'':<4}raised {_ago(r.get('raised_at', ''))}")
-        print(f"  needs    {need}")
-        print(f"  for      {r.get('why') or '—'}")
-        if r.get("still_moving"):
-            print(f"  moving   {r['still_moving']}")
-        reason = (r.get("why") or "").replace("'", "")[:60] or "see the block record"
-        print(f"  grant    (cd {shlex.quote(repo)} && harness grant {node} "
-              f"{shlex.quote(need)} --reason {shlex.quote(reason)})")
-        print(f"  then     (cd {shlex.quote(repo)} && harness recycle {node})")
-        print()
-    # Counted by kind rather than by "everything that is not an approval". The
-    # old form was a subtraction, so a third kind silently became a block —
-    # which it did, and the tally read `1 block(s)` over a stopped session.
-    ns = sum(1 for r in rows if r.get("_kind") == "stopped")
-    nb = sum(1 for r in rows if r.get("_kind") == "block")
-    ndc = sum(1 for r in rows if r.get("_kind") == "decision")
-    na = sum(1 for r in rows if r.get("_kind") == "approval")
-    nr = sum(1 for r in rows if r.get("_reopened"))
-    print((f"{ns} stopped, " if ns else "")
-          + (f"{ndc} decision(s), " if ndc else "")
-          + f"{nb} block(s)"
-          + (f" ({nr} you already answered)" if nr else "")
-          + f", {na} approval(s)"
-          + (f", {len(done)} answered and with rank 0" if done else "") + "."
-          # Only when there is something to grant. It read as standing advice
-          # under a queue whose only item was a halted session, so the operator
-          # was told how granting works about a thing no grant would touch.
-          + ("  Granting also closes a block; the node\npicks the reach up when it "
-             "is next spawned or recycled, never mid-task." if nb else "")
-          + ("\nA stopped lane is not waiting on a decision — it is waiting on a "
-             "keystroke, and\nnothing else in this queue is." if ns else ""))
-    if not (HOME_STATE / "notify").exists():
-        print(f"\nNo notifier installed. To be told rather than to look, make "
-              f"{HOME_STATE / 'notify'}\nexecutable — it is run with HARNESS_SUMMARY, "
-              f"HARNESS_COUNT and HARNESS_JSON in the environment.")
-
-
 def cmd_grant(a):
     """Record what a node may reach outside its worktree. Append-only.
 
@@ -7560,8 +7156,8 @@ def cmd_grant(a):
         print(f"already granted: {key} on {a.node}"); return
     rows.append(rec)
     p.write_text(json.dumps(g, indent=2) + "\n")
-    # Close the block this answers. Left open, the operator's queue keeps naming
-    # something already dealt with, and a queue that lies is one nobody reads.
+    # Close the block this answers. Left open, `blocked --list` keeps naming
+    # something already dealt with, and a list that lies is one nobody reads.
     closed = 0
     bd = ctx.state / "blocks"
     for bf in (sorted(bd.glob("*.json")) if bd.is_dir() else []):
@@ -7581,7 +7177,6 @@ def cmd_grant(a):
         bf.write_text(json.dumps(br, indent=2) + "\n")
         append_inbox(dict(br, event="resolved"))
         closed += 1
-    write_needs(scan_needs())
     print(f"granted {key}\n  to {a.node}, by {rec['granted_by']}"
           + (f"\n  reason: {rec['reason']}" if rec["reason"] else ""))
     print("  applies at the next spawn or recycle; a running session keeps what it had")
@@ -7693,8 +7288,7 @@ def in_flight(ctx):
 
 
 def answered(r):
-    return (r.get("self_answered")
-            or r.get("resolved_by") == "grant"
+    return (r.get("resolved_by") == "grant"
             or any(c.get("by") == "operator" for c in (r.get("comments") or [])))
 
 
@@ -7981,7 +7575,6 @@ def cmd_blocked(a):
                 c["tasks"].append(t)
         c["by"], c["at"] = node, time.strftime("%Y-%m-%dT%H:%M:%S%z")
         f.write_text(json.dumps(r, indent=2) + "\n")
-        write_needs(scan_needs())
         print(f"{r.get('need')} → " + ", ".join(
             f"{t} ({task_state(ctx, t)})" for t in c["tasks"])
             + ("   (block closed)" if closed else ""))
@@ -7999,7 +7592,6 @@ def cmd_blocked(a):
         r["consequence"] = {"tasks": [], "none": a.no_task,
                             "by": node, "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
         f.write_text(json.dumps(r, indent=2) + "\n")
-        write_needs(scan_needs())
         print(f"{r.get('need')} → no task: {a.no_task}"
               + ("   (block closed)" if closed else ""))
         print(f"  '{r.get('node')}' is not told — if it should be, that is a brief "
@@ -8044,7 +7636,7 @@ def cmd_blocked(a):
                 if r.get("need") == a.need or k.endswith(re.sub(r"[^A-Za-z0-9]", "_",
                                                                 a.need or ""))]
         if not hits:
-            die(REFUSED, f"no open block for '{a.need}'. `harness needs` lists them.")
+            die(REFUSED, f"no open block for '{a.need}'. `harness blocked --list` lists them.")
         k, r = hits[0]
         bf = ctx.state / "blocks" / (k + ".json")
         r.setdefault("comments", []).append(
@@ -8053,7 +7645,6 @@ def cmd_blocked(a):
                     if os.environ.get("CLAUDE_CODE_SESSION_ID") else "operator"),
              "text": a.comment})
         bf.write_text(json.dumps(r, indent=2) + "\n")
-        write_needs(scan_needs())
         root = next((n for n in ctx.tree["nodes"] if ctx.rank(n) == 0), "rank 0")
         print(f"commented on the block '{r.get('need')}' ({len(r['comments'])} total)")
         print(f"  '{root}' sees it at its next harness command — NOT '{r.get('node')}'.")
@@ -8102,7 +7693,6 @@ def cmd_blocked(a):
         r["resolved_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
         r["resolved_by"] = node
         f.write_text(json.dumps(r, indent=2) + "\n")
-        write_needs(scan_needs())
         append_inbox(dict(r, event="resolved"))
         print(f"resolved: {a.need}")
         if a.task:
@@ -8116,157 +7706,12 @@ def cmd_blocked(a):
            "raised_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
            "session": os.environ.get("CLAUDE_CODE_SESSION_ID", "")}
     f.write_text(json.dumps(rec, indent=2) + "\n")
-    rows = scan_needs()
-    write_needs(rows)
     append_inbox(dict(rec, event="raised"))
-    told = notify("raised", rows)
     print(f"raised on {node}: {a.need}")
-    print(f"  {len(rows)} thing(s) now need the operator"
-          + ("  (notifier fired)" if told else "  (no notifier installed — "
-             "it is in `harness needs` and the statusline)"))
+    print(f"  rank 0 sees it in `harness blocked --list`")
     print("  Do not route around it, do not ask a session with looser settings to do")
     print("  it for you, and do not stop: carry on with everything this does not")
     print("  block, and say in your report what it does.")
-
-
-def cmd_decision(a):
-    """T17: rank 0 asks the operator a ruling question.
-
-    THE GAP. Rank 0's only upward channel was `harness blocked`, whose help says
-    what it is for -- "a path, a command, a permission" -- and every block
-    renders to the operator as a grant, unconditionally, in both `cmd_needs` and
-    the viewer. So a question about SCOPE rather than reach had to be dressed as
-    a permission request, and the operator was offered a `harness grant` command
-    that made no sense for it. The alternative was prose in rank 0's own
-    transcript, which is what the live tree actually did: `biblion2-main` wrote
-    "Next action is yours: run claude attach ..." into its away-summary, where it
-    was found only by reading the .jsonl by hand.
-
-    ONE STORE, TWO KINDS, and that split is the whole design. The record is a
-    block record with `kind: "decision"`, in the same `blocks/` directory, so
-    `answered()`, `settle()`, `decided_blocks()`, `in_flight()`,
-    `stamp_consequence()`, `unread_block_comments()`, `--task`, `--no-task`,
-    `--resolve` and `harness brief --from-block` all work on it UNCHANGED. What
-    forks is the rendering, which was the defect. A second store would have
-    duplicated T13's "answered is not closed" in a second place, and
-    `task_state`'s own docstring is the argument against that: every state is
-    read off records that already exist, with no second store to fall out of
-    step.
-
-    ANSWERING IS `--comment`. An operator comment already sets `by: "operator"`,
-    which is already what `answered()` tests, which already flips `_answered` in
-    `scan_needs` and already moves the row into `decided_blocks` and
-    `rank0_owes`. `--answer` is a thin alias, and being one is what makes
-    `_reopened` work for free: a lane replying after the operator's answer brings
-    the item back, which is T13's most expensive lesson and would have been lost
-    by storing an answer in a field of its own.
-    """
-    ctx = Ctx(); ctx.require_enrolled()
-    node, _ = ctx.node()
-    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
-    # Idiom B, as used by `grant`, `brief --approve` and `charter`: refuse only
-    # the case that can be identified. A session below rank 0 raising this is
-    # reaching past the rank that owns the question -- a lead with a question
-    # asks ITS lead, which is T12. No session id means a human at a shell, and
-    # the CLI cannot authenticate an operator, so it does not pretend to.
-    if sid and ctx.rank(node) != 0:
-        die(REFUSED,
-            f"'{node}' is rank {ctx.rank(node)}. A decision is a question for the operator,\n"
-            f"           and only rank 0 holds that conversation. Yours goes to your lead:\n"
-            "           harness waiting '...' --still-moving '...'   (T12)")
-
-    f = ctx.state_file("blocks", f"{node}-{a.name}", ".json")
-    f.parent.mkdir(parents=True, exist_ok=True)
-
-    if a.answer is not None:
-        # Delegated to the comment path rather than reimplemented, so there is
-        # one definition of what answering is and one thing `answered()` tests.
-        if not f.exists():
-            die(REFUSED, f"no decision '{a.name}' on '{node}' — harness needs lists them")
-        r = json.loads(f.read_text())
-        by = f"{node} (session {sid[:8]})" if sid else "operator"
-        r.setdefault("comments", []).append(
-            {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "by": by, "text": a.answer})
-        # The T16 remedy, not a refusal. Rank 0 answering its own question from a
-        # session is a closed loop wearing the operator's signature, and refusing
-        # it would leave the tree waiting for a human who may not be there. So it
-        # is recorded and said on the line: provenance nobody reads is provenance
-        # nobody corrects.
-        if sid:
-            r["self_answered"] = True
-        f.write_text(json.dumps(r, indent=2) + "\n")
-        write_needs(scan_needs())
-        print(f"answered {a.name}")
-        if sid:
-            print(f"  self_answered — this was answered by {node}, not by the operator.")
-        print(f"  It is NOT closed. An answer is not a task (T13): say what work it")
-        print(f"  produced, or that it produced none:")
-        print(f"    harness blocked {shlex.quote(a.name)} --task <task>")
-        print(f"    harness blocked {shlex.quote(a.name)} --no-task \"why not\"")
-        return
-
-    if not (a.ask or "").strip():
-        die(REFUSED, "--ask is the question, and there is no decision without one")
-    if not (a.turns or "").strip():
-        # Stricter than `blocked`, whose --still-moving is optional, and the
-        # difference is deliberate rather than inherited: a block names a thing
-        # you cannot reach, which is legible on its own. A question is not. What
-        # turns on it is the only thing that lets the operator order it against
-        # everything else asking for them, and without it they must reconstruct
-        # that from the question every time.
-        die(REFUSED,
-            "--turns is required: what is waiting on this answer.\n"
-            "           It is how the operator judges urgency without "
-            "reconstructing it,\n           and it is the one thing they cannot "
-            "work out from the question.")
-    if f.exists() and not json.loads(f.read_text()).get("resolved_at"):
-        print(f"already asked: {a.name} on {node}"); return
-
-    rec = {"node": node, "need": a.ask, "why": a.ask,
-           "still_moving": a.turns,
-           "kind": "decision",
-           # `need` carries the QUESTION so every existing reader -- needs, the
-           # viewer, --list, the notifier summary -- shows something meaningful
-           # without knowing this kind exists. `name` is the handle the file is
-           # keyed on and the only thing --answer can be given.
-           "name": a.name,
-           "options": a.options or "",
-           "gates": list(a.gates or []),
-           "repo": str(ctx.repo),
-           "raised_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-           "session": sid}
-    f.write_text(json.dumps(rec, indent=2) + "\n")
-
-    # The gate, recorded on both ends. A brief that names an open decision is
-    # refused at `mark` beside the approval gate it sits next to.
-    gated = []
-    for t in (a.gates or []):
-        bf, b = load_brief(ctx, t)
-        if b is None:
-            die(REFUSED, f"no brief '{t}' to gate. --gates names work that is "
-                         f"waiting on this answer.")
-        b["gated_by"] = a.name
-        bf.write_text(json.dumps(b, indent=2) + "\n")
-        gated.append(t)
-
-    rows = scan_needs()
-    write_needs(rows)
-    append_inbox(dict(rec, event="asked"))
-    told = notify("raised", rows)
-    print(f"asked: {a.ask}")
-    print(f"  {len(rows)} thing(s) now need the operator"
-          + ("  (notifier fired)" if told else "  (no notifier installed — "
-             "it is in `harness needs`)"))
-    if gated:
-        print(f"  gates {', '.join(gated)} — harness mark refuses them until this "
-              f"closes")
-    if not (a.options or "").strip():
-        # Warned, not refused: some questions genuinely have no shortlist, and
-        # refusing those would push them back into a transcript, which is the
-        # thing this command exists to stop.
-        print(f"  No --options given, so this costs the operator a paragraph to "
-              f"answer\n  rather than a word. Name the candidates when you can.")
-    print(f"  Nobody waits on the answer except what --gates named. Carry on.")
 
 
 def cmd_scaffold(a):
@@ -9453,27 +8898,11 @@ def main():
     ck.add_argument("--set-baseline", action="store_true",
                     help="record the failures in the report at HEAD as the known set")
     ck.add_argument("--why", help="with --set-baseline: one line")
-    dc = add("decision", cmd_decision)
-    dc.add_argument("name", help="short name for the question")
-    dc.add_argument("--ask", help="the question, one line")
-    dc.add_argument("--turns", help="what is waiting on the answer — required, and "
-                                    "it is how the operator judges urgency")
-    dc.add_argument("--options", help="candidate answers, e.g. 'a | b | c'. Not "
-                                      "required; an open question costs a paragraph")
-    dc.add_argument("--gates", action="append", metavar="TASK",
-                    help="a brief that may not start until this closes (repeatable)")
-    dc.add_argument("--answer", help="the operator's ruling. Records it and leaves "
-                                     "the decision OPEN — an answer is not a task")
     add("hook-stop", cmd_hook_stop)
     add("hook-orient", cmd_hook_orient)
     wh.add_argument("--delta", action="store_true",
                     help="print only what has changed since this session was last "
                          "told, and nothing when nothing has")
-    nd = add("needs", cmd_needs)
-    nd.add_argument("--all", action="store_true",
-                    help="every enrolled project on this machine, not just this one")
-    nd.add_argument("--roster", metavar="FILE",
-                    help="a `claude agents --json` capture, for testing")
     add("index", cmd_index)
     ps = add("position", cmd_position)
     ps.add_argument("--format", choices=["line", "json"], default="line")

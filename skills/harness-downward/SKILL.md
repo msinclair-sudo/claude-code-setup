@@ -213,7 +213,7 @@ harness finding <name> --to <child>                  # hand it down a rank
 harness finding <name> --ruled "<commit or doc ref>"  # answered by a document: closed, not declined
 ```
 
-A brief from a finding is gated on approval, unless rank 0 handed the finding down (that was the approval): `mark` refuses it and `recycle` skips it until approved. You cannot approve it; it shows in `harness needs` for the operator or rank 0. Decline what you would not spend a session on. `--needs-approval` puts the same gate on any brief.
+A brief from a finding is gated on approval, unless rank 0 handed the finding down (that was the approval): `mark` refuses it and `recycle` skips it until approved. You cannot approve it; rank 0 sees it at orientation. Decline what you would not spend a session on. `--needs-approval` puts the same gate on any brief.
 
 ## You are also somebody's child
 

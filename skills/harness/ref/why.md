@@ -70,19 +70,15 @@ Reaching past a lead into a grandchild's brief skips the translation the lead ex
 
 ### Approving briefs
 
-Approval was once refused to every session including rank 0, because a lead approving its own brief is the gate approving itself. The cost was a tree that stopped: `harness needs` named approvals nobody present could move, and the subtree waited on an absent human. Since 2026-09-07 rank 0 may act. The CLI cannot tell you from the operator except in the record, so `self_approved` is shown on the line for later readers to find decisions nothing outside this node saw.
+Approval was once refused to every session including rank 0, because a lead approving its own brief is the gate approving itself. The cost was a tree that stopped: orientation named approvals nobody present could move, and the subtree waited on an absent human. Since 2026-09-07 rank 0 may act. The CLI cannot tell you from the operator except in the record, so `self_approved` is shown on the line for later readers to find decisions nothing outside this node saw.
 
 ### Priority
 
 Reordering changes no brief's text; it says which matters first, and that belongs to the node that holds the charter and talks to the operator. That is why your reach over queues is wider than over briefs. A reorder with no `--why` reads as noise and gets changed back. A lead may know a dependency you don't; the harness can't tell a correction from an override, so it records both and shows you.
 
-### Asking the operator for a ruling (`T17`)
-
-What is waiting on the answer is the one thing the operator cannot work out from the question, and it is how your question is ordered against everything else asking for them; hence `--turns` is the CLI's only required prose argument. A shortlist of options costs them a word where an open question costs a paragraph. A block renders to the operator as a grant, so a question filed as a block asks them to answer a different question. Before `decision` existed, rank 0 wrote its questions into its own away-summary, where nobody read them. Self-answering is allowed because a queue that waits on an absent operator is the overnight stall.
-
 ### Blocks: comments and closing them
 
-A block leaves the tree; what comes back is usually reasoning, not an instruction. Sent straight to the lane, it is contextual noise in a task scoped to avoid exactly that. An answered block sits in a record leads don't read and a transcript that ends at your next recycle, and a decision nobody is tasked with does not move: a task is the only thing that travels. With no memory across a respawn, an answered block with nothing linked looks like a decision nobody acted on, which is how the same brief gets written twice. Answered blocks stay out of `harness needs` because asking the operator to decide twice is how a queue stops being read. `--no-task` is often right (a reach grant usually removes an obstacle without adding work), but it carries a reason because an unexplained silence and a forgotten decision look identical afterwards. You close blocks anywhere because you held the conversation; leaving the close to the lane hands the decision to the one party not in it. The work a ruling releases may span lanes that raised nothing, which is why you brief the whole of it to the lead and let `--from-block` leave the lineage readable (`answers the block '<need>'`).
+A block leaves the tree; what comes back is usually reasoning, not an instruction. Sent straight to the lane, it is contextual noise in a task scoped to avoid exactly that. An answered block sits in a record leads don't read and a transcript that ends at your next recycle, and a decision nobody is tasked with does not move: a task is the only thing that travels. With no memory across a respawn, an answered block with nothing linked looks like a decision nobody acted on, which is how the same brief gets written twice. `--no-task` is often right (a reach grant usually removes an obstacle without adding work), but it carries a reason because an unexplained silence and a forgotten decision look identical afterwards. You close blocks anywhere because you held the conversation; leaving the close to the lane hands the decision to the one party not in it. The work a ruling releases may span lanes that raised nothing, which is why you brief the whole of it to the lead and let `--from-block` leave the lineage readable (`answers the block '<need>'`).
 
 ### Applying a document request (`T5`)
 
@@ -100,7 +96,7 @@ The required "what it cannot see" field is what makes "report all three" enforce
 
 ### Grants (`I11`)
 
-Grants are never in `tree.json` because the tree is a document you edit: permissions there would be ones you could widen for yourself, and they would travel by merge to machines whose owner never agreed. They apply only at spawn or recycle (as `--settings` and `--add-dir`), so a grant or revoke never changes a lane mid-task. Your grants and a human's differ only in `granted_by`. A grant made for one task persists for everything that node does afterwards, and once nobody remembers why it exists nobody removes it. Nothing polls because nothing is running to poll (`R4`), so notification happens at record time or not at all. The notify hook is the operator's because what it does depends on a machine you are not on.
+Grants are never in `tree.json` because the tree is a document you edit: permissions there would be ones you could widen for yourself, and they would travel by merge to machines whose owner never agreed. They apply only at spawn or recycle (as `--settings` and `--add-dir`), so a grant or revoke never changes a lane mid-task. Your grants and a human's differ only in `granted_by`. A grant made for one task persists for everything that node does afterwards, and once nobody remembers why it exists nobody removes it.
 
 ### Shrinking the tree (`R3`)
 
@@ -256,7 +252,7 @@ Confirming what the plan already says is information arriving in pieces, the cos
 
 ### You write inside your worktree, and nowhere else
 
-A file outside the repository has no owner, no scope, no instrument that reds, no review at `T4` and no ref recording the change (`I3`). A block record reaches the operator's notifier and statusline, sits in `harness needs`, and survives your recycle, which a message would not. `--still-moving` lets the operator tell a stopped lane from a stopped step without reading your transcript. Comments on a block go to rank 0 because the operator's reasoning, delivered into a scoped task, is the noise the scope exists to keep out. Asking a looser session to do the write routes around the operator's decision instead of implementing it.
+A file outside the repository has no owner, no scope, no instrument that reds, no review at `T4` and no ref recording the change (`I3`). A block record reaches rank 0's orientation and `harness blocked --list`, and survives your recycle, which a message would not. `--still-moving` lets the operator tell a stopped lane from a stopped step without reading your transcript. Comments on a block go to rank 0 because the operator's reasoning, delivered into a scoped task, is the noise the scope exists to keep out. Asking a looser session to do the write routes around the operator's decision instead of implementing it.
 
 ### Your brief, and pushing back on it
 

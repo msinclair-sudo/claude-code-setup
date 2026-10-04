@@ -440,11 +440,6 @@ class After(unittest.TestCase):
         self.mark("new")
         self.assertIn("after new", hz.waits_on(self.ctx, {"after": ["old"]})[0])
 
-    def test_open_decision_waits(self):
-        (self.ctx.dir / "blocks" / "main_embed_model.json").write_text(json.dumps({"need": "q"}))
-        self.assertEqual(hz.waits_on(self.ctx, {"gated_by": "embed-model"}),
-                         ["decision embed-model is open"])
-
     def test_startable_and_next_after_skip_waiting(self):
         self.brief("ledger", node="dev_2")
         self.mark("ledger")

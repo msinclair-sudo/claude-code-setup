@@ -248,7 +248,7 @@ Presented work does **not** hold the node: `recycle --idle` sweeps it, because t
 
 **Presenting does not reach the lead, and the member must. This is T10's last step, not a courtesy.** The claim that the lead is told at orientation was written here and was false in the only case that matters. Every mechanism that tells a lead anything — the Stop hook, edge-triggered orientation — fires when the *lead* takes a turn, and a member presenting gives it no reason to take one. Worse, the thresholds guarantee the miss: a presentation is only owed after `STALLED_SIGNOFF`, by which point the lead has been standing still at least that long, so the condition becomes true strictly after the last moment anything could have tested it. Measured on a live tree 2026-09-08 — a lead stopped at 11:21:10, its members presented at 11:25:47 and 11:44:14, and neither hook could fire for either; both sat unsigned until the operator prompted rank 0 by hand twenty-eight minutes later, for the third time that evening. It was read every time as a lead that forgot, and it was never that.
 
-No command can close this from below: checked against the CLI 2026-09-08, `claude` offers attach, logs, stop, rm and respawn and nothing that delivers a prompt into a running session. The only transport is a message from another session, so it must be sent by somebody mid-turn — and the member that has just presented is the only party that qualifies. `harness mark <task> --done` resolves the lead's live session from its claim and prints the message and the address; if the lead is not running it says so instead, because sending a member after a dead session is worse than the record it already wrote. The push is the member's; the record remains the fallback the operator reads with `harness needs`.
+No command can close this from below: checked against the CLI 2026-09-08, `claude` offers attach, logs, stop, rm and respawn and nothing that delivers a prompt into a running session. The only transport is a message from another session, so it must be sent by somebody mid-turn — and the member that has just presented is the only party that qualifies. `harness mark <task> --done` resolves the lead's live session from its claim and prints the message and the address; if the lead is not running it says so instead, because sending a member after a dead session is worse than the record it already wrote. The push is the member's; the record remains the fallback the lead reads at orientation.
 
 **Enforcement** `harness mark <task> --close` writes the record: the closing sha, the closing session, and the delta if it is subtractable. `harness release` frees the node. `harness stop <node>` ends the session that held it: `claude stop` is a full teardown — the process dies, the session file is removed, and it leaves `claude agents --json`. A lead can reap its whole layer with `harness stop --children`, and no session may stop itself.
 **The close is the point, and it had no record until 2026-08-31.** "Released" was a claim in a message rather than a fact in a store, so nothing could tell a node still working from a node finished and still standing there. `harness status` now names the difference — an open task, or `unassigned` — and `harness recycle --idle` sweeps exactly the children that have none. Closing is always permitted even when the measurement is not: a task closed in a different session than it opened records `_delta: null` and says why, because refusing the close over an unmeasurable cost would leave the task open forever and destroy the one signal this exists to give.
@@ -370,7 +370,7 @@ A brief exists **before** its mark: the lead writes it, then the member accepts.
 
 **Approval is the operator's, and rank 0 decides on their behalf.** Every rank *below* rank 0 is refused, because a lead approving the brief it just wrote is the gate approving itself. This remains stricter than [[#I11 — Reach beyond the worktree is granted at enrolment]] in what it means, if no longer in who may act: a grant is a capability rank 0 already holds, so making one gives it nothing, while an approval is a *decision* about whether unrequested work is worth a session. The CLI still cannot authenticate an operator and does not pretend to — it records who decided.
 
-**Changed 2026-09-07, on the operator's instruction, and the reasoning it replaces is kept rather than deleted.** The rule was *no session, rank 0 included*. What it cost was concrete: `harness needs` is rank 0's own orientation surface, it prints pending approvals, and rank 0 could read every one of them and act on none — so the queue named the operator's attention as the only thing that could move, and the tree waited for a human who was not at the keyboard. That is [[#R13 — Everything below rank 0 starts cold]]'s overnight stall by another route. The risk the old rule named did not go away; it was traded, knowingly, for a tree that runs.
+**Changed 2026-09-07, on the operator's instruction, and the reasoning it replaces is kept rather than deleted.** The rule was *no session, rank 0 included*. What it cost was concrete: rank 0's orientation printed pending approvals, and rank 0 could read every one of them and act on none — so the queue named the operator's attention as the only thing that could move, and the tree waited for a human who was not at the keyboard. That is [[#R13 — Everything below rank 0 starts cold]]'s overnight stall by another route. The risk the old rule named did not go away; it was traded, knowingly, for a tree that runs.
 
 **So the case it existed for is recorded rather than refused.** When rank 0 approves a brief rank 0 itself asked for, the approval carries `self_approved: true` and the command says so on the line. Carving that case out would have been the old gate back under a narrower name. `decided_by` now names the deciding session instead of asserting `"operator"` — nothing ever read that field, which is exactly how it could have gone on claiming a human decided long after that stopped being true. **Provenance nobody reads is provenance nobody corrects**, and it is worse wrong than absent.
 
@@ -378,34 +378,12 @@ A brief exists **before** its mark: the lead writes it, then the member accepts.
 
 **Nobody waits.** The lane that raised the finding carried on with its queue, and the gate holds no session idle. That is what makes it safe to gate at all.
 
-**Enforcement** `--how` required; the addressed lead only; every rank below 0 refused at `--approve`, with rank 0's own approval recorded `self_approved` and said on the line; `mark` and the queue both exclude a gated or declined brief. It reaches the operator through `harness needs` and the viewer's attention panel, carrying the brief's own text — deciding whether a task is worth a session means reading the task.
+**Enforcement** `--how` required; the addressed lead only; every rank below 0 refused at `--approve`, with rank 0's own approval recorded `self_approved` and said on the line; `mark` and the queue both exclude a gated or declined brief. Rank 0 sees it at orientation and reads it with `harness brief <task>` — deciding whether a task is worth a session means reading the task.
 **Fails when** A lead turns every finding into a gated brief. The queue is the operator's attention and it is finite; declining on the record is a first-class outcome and costs one line.
 
-### T17 — Rank 0 asks, and the answer becomes work
+### T17 — Rank 0 asks the owner (removed; being redesigned)
 
-**Direction** upward, out of the tree, to the operator; the answer returns as a task.
-**Rule** Rank 0 raises a **decision** when it needs a ruling the tree may not make for itself. It carries the question, what turns on it, and — when there is a shortlist — the candidate answers.
-
-**The channel existed and was the wrong shape.** Rank 0's only route out was [[#I11 — Reach beyond the worktree is granted at enrolment]]'s block, whose own help says what it is for — *a path, a command, a permission* — and which renders to the operator as a grant **unconditionally**, in `harness needs` and in the viewer alike. So a question about scope arrived dressed as a permission request, offering a `harness grant` command that made no sense for it. What actually happened instead was worse and is the reason this exists: `biblion2-main` wrote *"Next action is yours: run `claude attach …`"* into its own away-summary, where it was found by reading the transcript by hand. **The most expensive thing rank 0 knew had nowhere to go.**
-
-**One store, two kinds.** A decision is a block record with `kind: "decision"`, in the same directory. `answered()`, `settle()`, `decided_blocks()`, `in_flight()`, `stamp_consequence()`, `unread_block_comments()`, `--task`, `--no-task`, `--resolve` and `harness brief --from-block` all work on it unchanged; only the rendering forks, and the rendering was the defect. A second store would have put [[#T13 — Unblocking is a task]]'s *answered is not closed* in two places, which is the thing `task_state` refuses in one line: every state is read off records that already exist, with no second store to fall out of step.
-
-**Rank 0 only, and a lead that tries is pointed at T12.** A lead with a question asks its lead. The gate refuses a session below rank 0 and passes a bare shell, because the CLI cannot authenticate an operator and does not pretend to ([[#I11 — Reach beyond the worktree is granted at enrolment]]).
-
-**`--turns` is required, and it is the only required prose argument in the CLI.** A block names a thing you cannot reach, which is legible on its own; a question is not. What is waiting on the answer is the one thing the operator cannot work out from the question, and it is how this gets ordered against everything else asking for them. `--options` is **not** required — some questions have no shortlist, and refusing those would push them back into a transcript, which is what this exists to stop — but its absence is said on the line, because an open question costs a paragraph where a shortlist costs a word.
-
-**Answering is a comment, deliberately.** An operator comment already sets `by: "operator"`, which is already what `answered()` tests, which already flips the row into `decided_blocks` and rank 0's queue. Making `--answer` an alias rather than a new field is what keeps [[#T13 — Unblocking is a task]]'s hardest rule working for free: **answered means their word is the LAST word**, so a lane replying afterwards brings the item back. Storing an answer in a field of its own would have quietly dropped that.
-
-**Rank 0 may answer its own question, and it is flagged rather than refused.** `self_answered` is recorded and said on every surface. This is [[#T16 — A finding crosses one rank, and becomes work only with approval]]'s trade, made again for the same reason: refusing would leave the tree waiting on a human who may not be at the keyboard, and a queue that waits on an absent operator is the overnight stall [[#R13 — Everything below rank 0 starts cold]] exists to prevent. Forging `by: "operator"` was the other way to make it pass, and it would have put a false signature in the one record that exists to be trusted.
-
-**`--gates` is the one thing here that can stall a lane, and it says so.** A brief named by `--gates` is refused at `harness mark` beside the approval gate, naming the decision, the operator, and the escape — `--no-task`, which is rank 0 deciding the work needs no answer. Answering does not lift the gate; **closing** does, because that is the moment the answer became work. Nothing else waits: the lanes that were not named carry on.
-
-**Enforcement** `harness decision <name> --ask … --turns … [--options …] [--gates TASK]`; `--answer` records and does not close; `--task` / `--no-task` close, exactly as for a block. It reaches the operator through `harness needs`, the viewer's column and the `notify` hook.
-**Fails when** It is used for something a lead could have answered. That is [[#T12 — Question]], and routing it here asks the operator to adjudicate a conversation they are not in.
-
----
-
-## Invariants
+`harness decision` was removed on 2026-10-05, with its records. It was the first attempt at a channel from the tree to the owner, and it was the wrong shape: the asker wrote the question to justify itself, the owner had no way to reply but a quoted shell argument, nothing closed an item, and nothing told the owner one existed. Three were raised and none was ever answered. The replacement is an intermediary session between rank 0 and the leads on one side and the owner on the other; its scope is in `harness/design/owner-channel.md` in the setup repo. Until it exists, ask the owner in your own session when they are present.
 
 ### I1 — One session per branch
 
@@ -1158,7 +1136,7 @@ that a sweep should be re-run after any model migration or workload shift.
 A misspelt effort is refused when the tree is validated, not when `claude`
 rejects it — by then the session is already spawned and detached.
 
-### R14 — The operator is told, and does not have to look
+### R14 — A stopped session, and the viewer
 
 **The platform could not tell you which session wants you, and now it can — the measurement expired and this note went on quoting it.** Measured 2026-08-31: `claude agents --json` carried `status` (busy/idle) and `state` (working/done) and nothing else, so a session stopped dead on a refused permission was indistinguishable from one that was working. Everything below was built on that.
 
@@ -1172,9 +1150,7 @@ Nothing outside the session can tell those apart. So every surface says **waitin
 
 **It is `stopped` in the record and `waiting` on every surface, never `blocked`.** `harness blocked` is already a record asking the operator to widen a permission, raised deliberately by a session that is still running and often still working. A session the runtime has halted is a different fact about a different thing, and one word over two contracts is a fault this project has already paid for. The runtime's value is read at exactly one boundary.
 
-**Two streams, split by who can act — and this one was got wrong first.** The operator's column is for a **ruling only they can make**. Everything else is **traffic between nodes**: a lane waiting on its lead, a lead asking for unrequested work to be staffed. Rendering that as an item in their queue asks them to adjudicate a conversation they are not in, and the rule against it was already written here and already in the viewer's own code comments. It was broken anyway on 2026-09-08, by this section's first attempt at reporting halted sessions.
-
-The operator said what it looked like from their side: *"it all looks like noise if these are the messages going between nodes."* One approval on biblion2 had inlined **4,133 characters over 58 lines** into a queue item — not an entry, a document.
+**Traffic between nodes is drawn on the nodes, never as an owner's item.** A lane waiting on its lead, a lead asking for unrequested work to be staffed: rendering those as items for the owner asks them to adjudicate a conversation they are not in. The owner said what that looked like: *"it all looks like noise if these are the messages going between nodes."*
 
 So node traffic is drawn **on the node it is directed at, naming the node it came from**, in the muted colour the tree already uses, never the warning colour, because it is not a fault:
 
@@ -1185,37 +1161,15 @@ dev_2   ← dev   UNANSWERED   asked dev and stopped — dev is not running     
 
 One line: direction, kind, the point, the verb. The full text is one click away. **Rich about what it is, short about saying it** — the reverse of the first attempt, which was long about why the category exists and silent about which item this was. The paragraph explaining what a grant *is* was identical on every grant; it is said once, in the viewer's rules panel, and never again per item.
 
-What remains in the column is [[#I11 — Reach beyond the worktree is granted at enrolment]]'s **grant** and a **stale install** — R14's original list, restored. Approvals moved out on the same reasoning plus a second: [[#T16 — A finding crosses one rank, and becomes work only with approval]] gave rank 0 the authority on 2026-09-07, so the operator stopped being the only route long before this stopped looking like one.
-
-**A stopped lane reaches `harness needs` only once it is old.** A block and an approval are raised — some session chose to put them there. A halted session raised nothing and *can* raise nothing, because raising takes a turn and it does not get one. A session waiting on a reply is the ordinary state between turns and is its lead's — told at orientation, drawn on the node. Only one that has sat long enough to be a genuine halt is the operator's, and the fresh ones filled their queue with the tree working normally. Three lines when it does appear: what, how long, what to type.
-
 **Recycling is not the remedy and looks exactly like it.** A replacement starts cold, walks the same path and stops at the same prompt, so the sweep costs a session and changes nothing — while discarding whatever the halted one was waiting to be told. `recycle` and `recycle --cold` now refuse a stopped node and name `claude attach` instead; `--force` still overrides, and says what it is throwing away.
 
-The rest of this section stands: what remains genuinely unpushable is constrained by [[#R4 — No arbiter process]], nothing polls, and **the event notifies at the moment it is recorded**, or not at all.
-
-| surface | reaches the operator when |
-| --- | --- |
-| `~/.claude/harness/notify` | immediately, if they installed one — run with `HARNESS_SUMMARY`, `HARNESS_COUNT`, `HARNESS_JSON` in the environment |
-| `harness gui` | while it is open, on its next poll |
-| `harness needs` | when they ask, from anywhere |
+**The owner queue this section once described is gone (2026-10-05).** `harness needs`, its cache, the `notify` hook and the viewer's "waiting on you" column held path grants, approvals and stalled sessions — none of them the owner's — and three questions nobody answered. Blocks, grants and approvals stay between sessions; the owner channel is being redesigned (`harness/design/owner-channel.md` in the setup repo).
 
 **The statusline used to carry a count and no longer does.** It was wrong in the one way a statusline cannot be: it rendered in **every** session on the machine, enrolled or not, so a block raised in one project shouted at every unrelated shell — and there is nothing to be done about it from where it appears. The statusline still shows tree **position**, which is a fact about the repository you are standing in and stops at its edge. The queue belongs where the commands that clear it are.
 
 **The viewer does not seize the browser.** It prints its URL and opens nothing unless asked with `--open`. It starts often — from `harness gui`, from a restart after an edit, from a second port when the first is taken — and a viewer that takes the screen every time is one that interrupts whatever was on it.
 
-**The harness does not choose the channel.** `notify-send` is wrong over ssh, wrong on a Mac and wrong in WSL, which is three of three on the machines this has run on. The hook is absent by default and the record is written either way; a notifier that fails, hangs or is missing must never take the block record down with it.
-
-**Machine-wide for the operator, this project only for a session.** The reasoning below is about the operator and it still holds — but `whoami` points rank-0 **sessions** at this command too, and a session reading another project's queue is a leak in the one direction the design is otherwise strict about: it can neither act on those rows nor should it know they exist. Reported by the operator, who found one tree's items inside another tree's session. So inside an enrolled repository `harness needs` is that repository's queue and says so; outside one — the operator standing anywhere at all — it is the whole machine; `--all` restores the wide view from anywhere. `needs.json` stays machine-wide, because the notify hook is handed every project.
-
-**Everything a decision needs is in one place, with the command already written.** `harness needs` scans every enrolled project on the machine, deliberately building no `Ctx` — the operator is usually not standing in the repository that wants them, and often not in a repository at all. A command that only works from the right directory is one that does not get run. Each entry prints what is needed, what it is for, **what is still moving without it** (which is how urgency gets judged rather than guessed), and the exact `harness grant` and `harness recycle` lines, `cd`-wrapped and shell-quoted.
-
 Granting closes the block it answers. A queue that keeps naming something already dealt with is a queue nobody reads, so the two records are kept in step rather than left to a member to tidy up after the fact.
-
-**Attention sits beside the tree it belongs to, not above every tree at once.** Each project renders as its own row: the tree on the left, its own waiting items in a column on the right, with a `collapse all` scoped to that column so tidying one project leaves the others as they were. Machine-level items — a stale install — belong to no project and sit above all of them. With one project the difference is cosmetic; with four it is the difference between a queue and a pile, and the point of a queue is that you can tell whose it is at a glance.
-
-**The viewer's panel holds only what no agent in the tree has the authority to fix**: a **grant**, because permission is the operator's and the CLI refuses a lead by rank, and a **stale install**, because only the operator runs `install.sh`. That is the whole test, and it is a narrower one than it first looks. A sign-off is `dev`'s. A node with nothing briefed is its lead's. Both were told at orientation, and neither is a fault — they are the system working. Listing them put four items of somebody else's work-in-progress above the one item that was actually the operator's, and **a queue mostly full of other people's work teaches a reader to stop looking at it**. Tree state belongs in the tree, where the chips already show it. The panel is usually empty, which is what makes a non-empty one mean something.
-
-**Each item carries its own explanation, and that is not decoration.** A queue you have to reason about before you can act on it is a queue that does not get cleared — which is how six orphan records sat for a day. So the entry says what happened, what it costs to leave, and the command that ends it, and the reader is never asked to reconstruct any of the three.
 
 **The page does not redraw while there is something to lose.** A cursor in a comment box, or an unsent draft in one, outranks a fresher tree: the poll fetches, notices, and skips the render, saying so in the header. The identical-payload check does not cover this on its own — a session flipping between busy and idle is a *genuine* change and arrives every few seconds, so the panel would legitimately redraw and legitimately eat a half-typed sentence. Drafts are also held by box identity and restored after any render that does happen, which covers the case where the redraw was not the one you were in.
 
@@ -1224,10 +1178,6 @@ Granting closes the block it answers. A queue that keeps naming something alread
 This replaced an exclude list, and the direction matters. The first attempt repainted everything and then tried to put back what it had destroyed: the open set, the drafts, a pause while the cursor was in a box. That fails the wrong way — forget to exempt something and it is eaten silently, which is what happened twice. An include list fails the *right* way: forget to tag a volatile field and it goes stale on screen, where it is visible. Only a change in the **shape** of the tree rebuilds — a node appearing, an item clearing — and that path restores drafts and expansions by key.
 
 **Copies drift, and nothing announced it three times in one day.** The guard in a project repo, the running viewer, and every installed skill each fell behind their source silently. `install.sh` now stamps `~/.claude/harness/VERSION` with the source path and its commit; `harness doctor` compares them as its first arm, because a stale install makes every arm below it a measurement of the wrong thing; and the viewer raises it as an item owed to the operator.
-
-**A block carries comments too, and they go to rank 0 — not to the lane that raised it.** A block leaves the tree: it is addressed to the operator, and what comes back is usually *reasoning* rather than an instruction — whether a class of document is eligible, whether to re-embed, what a column is for. Routed straight to the lane, that reasoning arrives as exactly the contextual noise a scoped task exists to be free of. So the conversation happens between the operator and rank 0, and its **outcome** reaches the lane rewritten: as a grant, as a [[#T9 — Ruling]], or as a brief revision. Each level rewrites rather than forwards; this is that rule applied to the one channel that starts outside the tree.
-
-The comment goes on the block record rather than into a message, so it outlives the session that raised it and the next occupant of that node inherits it. It does **not** clear the block — granting does, or the node resolving it — because answering a question and widening a permission are different acts, and collapsing them would hand out a permission every time a reply was typed.
 
 **Comments on a brief prompt the lead who writes it, not the lane it is for**, by the same rule: only the party who can fold a comment in is asked to act on it. The lane still sees comments when it reads its brief — it is simply never prompted to act on one, because only the brief instructs.
 
@@ -1251,10 +1201,6 @@ Because the server has no authentication, a page merely *visited* in the same br
 
 **Depth runs down the page, not across it.** Root at the top, siblings side by side beneath their parent, connectors drawn in CSS. The roster is cached for one poll interval, because each read costs 0.55s of process spawn and the page polls every three seconds — without it, every open tab is a `claude` process every three seconds forever.
 
-The one thing it must get right is the same thing `harness needs` must: the entry expands to the exact `grant` and `recycle` lines, ready to copy. Structure comes from `tree.json` rather than the index, so a node the index has not caught up with is **shown as unknown rather than hidden** — a viewer that silently omits a node is worse than no viewer.
-
-`needs.json` beside the project directories is a derived cache, rebuilt on every raise, grant and resolve. It was written for the statusline, which rendered on every prompt and could not walk every project's block directory; that reader is gone, and what remains is the `notify` hook, which is handed the same rows as `HARNESS_JSON`. The per-project block records are the truth; `inbox.jsonl` is the append-only history of both raising and clearing ([[#I6 — The ledger is append-only]]).
-
 ### R15 — Orientation is edge-triggered, and change is what travels
 
 **The cost of telling a session something is not paid once.** A line printed at turn *k* of an *n*-turn conversation is resent on every turn after it, so it costs roughly *n − k* times. Periodic orientation is therefore **quadratic in session length**, and that one fact rules out the obvious design — print the queue every so often — before any other consideration. What is left is the only shape that works: **report a change, never a state.** A session already told about an item does not pay for it again, the bill is *O(changes)* rather than *O(turns)*, and a quiet tree costs nothing at all.
@@ -1268,7 +1214,6 @@ This is [[#R11 — Orientation is a hook in the enrolled repo, not a global one]
 | `UserPromptSubmit` → `harness hook-orient` | the session, every turn | nothing unless something changed |
 | the delta footer after any harness command | the session, while it works | nothing unless something changed |
 | `Stop` → `harness hook-stop` | the session, by **blocking** it | a turn, so it is reserved for work that is owed |
-| `~/.claude/harness/notify` | the operator | zero tokens — it never enters a transcript |
 
 `Stop` cannot do the first job. Exit-0 stdout becomes context for four events — `UserPromptSubmit`, `UserPromptExpansion`, `SessionStart`, `PostModelSwitch` — and goes to the debug log for everything else, `Stop` included. So a `Stop` hook reaches a session only by refusing to let it stop, which is the right instrument for a duty and the wrong one for news.
 

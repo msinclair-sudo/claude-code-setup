@@ -39,25 +39,15 @@ A brief is rewritten in place; `harness note` is the append-only half. Write a s
 
 ## Approving briefs
 
-`harness brief <task> --approve`, or `--decline "why"` (the why is required). You may act on the approvals in `harness needs` for the operator. Decide sparingly; declining costs one line. Approving a brief you asked for records `self_approved`. When one matters, put it to the operator instead.
+`harness brief <task> --approve`, or `--decline "why"` (the why is required). Orientation lists pending approvals; they are yours. Decide sparingly; declining costs one line. Approving a brief you asked for records `self_approved`. When one matters, put it to the owner instead.
 
 ## Priority
 
 `harness queue dev_1 --order doi-index,ingest-2024 --why "…"`. You may order any node's queue. Every reorder needs `--why`. A lead may override you with a reason; read the queue after reordering.
 
-## Asking the operator for a ruling (`T17`)
+## Asking the owner
 
-Only you may. Do not use a block for a question: a block means "I cannot reach X".
-
-```bash
-harness decision embed-model \
-  --ask     "Re-embed the corpus on the new model, or keep both?" \
-  --turns   "dev_1's similarity work and the coverage report" \
-  --options "re-embed | keep both | defer to next cycle" \
-  --gates   similarity-rework
-```
-
-`--turns` (what waits on the answer) is required. Give `--options` when you can. `--gates` stalls only the lanes it names; use it only where doing the work twice is worse than waiting. You may answer your own; it records `self_answered`, so say so in your report. An answer stays open (`T13`) until you name the work it produced: `harness blocked embed-model --task similarity-rework` or `--no-task "why not"`.
+There is no channel to the owner yet (`T17` is being redesigned). Ask in your own session when they are present, and record the answer where it is used: a brief, a fact or the charter. Do not use a block for a question: a block means "I cannot reach X".
 
 ## Blocks: comments and closing them
 
@@ -106,7 +96,6 @@ Drift repair is yours alone; `harness scaffold` refuses below rank 0. Read the d
 A member writes only inside its worktree. Clearing a reach request is yours or the operator's, never a lead's, and never by doing the write for it.
 
 ```bash
-harness needs                               # every project on the machine
 harness blocked --list                      # this project only
 harness grant <node> <path> --reason "..."  # append-only, records who and why
 harness grant --list                        # live and revoked
@@ -114,8 +103,6 @@ harness grant <node> <path> --revoke        # stays on the record
 ```
 
 Grants live in `~/.claude/harness/<slug>/grants.json`, never in `tree.json`. They apply at the next spawn or recycle. Grant the path, record the reason, revoke it when the task closes. A grant does not clear Claude Code's permission classifier: when the owner authorises a class of live write, the route is a project permission rule the owner adds, named in the grant's reason.
-
-Blocks notify once, when recorded: the operator's `~/.claude/harness/notify` hook if present (run with `HARNESS_SUMMARY`, `HARNESS_COUNT`, `HARNESS_JSON`), the statusline badge, and `harness needs`. If they have no notifier, say so once; don't install one.
 
 ## Cleaning up
 

@@ -417,7 +417,7 @@ class WaitChain(unittest.TestCase):
         self.assertTrue(hz.node_activity(self.ctx, "dev_2").startswith("waiting on dev 3h"))
         self.checking(os.getpid())
         self.assertEqual(hz.node_activity(self.ctx, "dev"), "check 7/23 (pytest-all), 3h00")
-        with mock.patch.object(hz, "pid_alive", return_value=False):
+        with mock.patch.object(hz, "check_pid_alive", return_value=False):
             self.assertIn("check died at 7/23", hz.node_activity(self.ctx, "dev"))
 
     def items(self, node):

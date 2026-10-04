@@ -7504,9 +7504,27 @@ def check_activity(ctx, node):
     except Exception:
         return None
     where = f"{r.get('done', 0) + 1}/{r.get('total', '?')} ({r.get('arm')})"
-    if pid_alive(r.get("pid")) is False:
+    if not check_pid_alive(r.get("pid")):
         return f"check died at {where} — output in {r.get('out')}"
     return f"check {where}, {wait_age(r.get('started'))}"
+
+
+def check_pid_alive(pid):
+    """The `check` process itself, not a Claude session: `pid_alive` asks for
+    "claude" in the command line, which a check passes only by its install path."""
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        pass
+    try:
+        cmd = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return True
+    return pid == os.getpid() or b"check" in cmd       # a reused pid is not
 
 
 def node_activity(ctx, node, waits=None):

@@ -215,6 +215,10 @@ harness finding <name> --ruled "<commit or doc ref>"  # answered by a document: 
 
 A brief from a finding is gated on approval, unless rank 0 handed the finding down (that was the approval): `mark` refuses it and `recycle` skips it until approved. You cannot approve it; rank 0 sees it at orientation. Decline what you would not spend a session on. `--needs-approval` puts the same gate on any brief.
 
+## Asking the owner (`T17`)
+
+Only for what the tree can't settle: intent, judgement, something only the owner can do, or risk they must accept. `harness ask <task> --kind intent|judgement|action|risk --question "..."` (the task needs a brief), then `SendMessage` the intermediary "new ask <id>" and carry on. It may question you; answer it. The ruling lands on the task's brief (`harness brief <task>`) and orientation tells you; a rejected or returned ask is said once. Lanes ask you, not the owner.
+
 ## You are also somebody's child
 
 Your own task closes the same way: `harness mark <task> --done`, then your lead signs it off. Read your brief and act; it is an instruction, not a proposal (`T15`). An empty queue is your lead's to fix: say so in your report and stop. Do not ask the operator what to do next, and do not hand finished work to them.

@@ -1026,6 +1026,11 @@ def _whoami(a):
                 print(f"blocked  {nb} open block(s) — harness blocked --list")
         except Exception:
             pass
+    try:
+        for line in ask_notices(ctx, node).values():
+            print(f"owner    {line}")
+    except Exception:
+        pass
     # Orientation has just said all of it, so record it as told. Without this
     # the very next harness command would repeat the lot as "new" — and a
     # notice that arrives twice in a row is one a reader learns to skip, which
@@ -2596,6 +2601,7 @@ def queue_items(ctx, node):
                 f"  — harness mark {nxt}, or brief <part> --from {nxt}")
     except Exception:
         pass
+    out.update(ask_notices(ctx, node))     # T17: rulings, rejections, returns
     if fam is None:
         return out
     # The item's task is the third field of a node row, else the second.
@@ -2604,7 +2610,8 @@ def queue_items(ctx, node):
         return parts[2] if parts[0] in ("sign off", "start", "down", "orphan") else parts[1]
     kept = {k: v for k, v in out.items()
             if k.startswith(("asked:", "comment:", "handed:", "heavy:", "sweep:", "uncovered:",
-                             "orphan:", "down:", "stuck:")) or in_focus(fam, task_of(k))}
+                             "orphan:", "down:", "stuck:", "ruled:", "rejected:", "returned:"))
+            or in_focus(fam, task_of(k))}
     if len(kept) < len(out):
         kept[f"fold:{len(out) - len(kept)}"] = (f"+{len(out) - len(kept)} item(s) "
                                                 f"outside the focus  — harness whoami")
@@ -2667,6 +2674,9 @@ def delta(ctx, node, sid, update=True):
             p.write_text(json.dumps({"told": keep, "at": stamp}) + "\n")
         except Exception:
             pass
+        # Told is the moment a rejected or returned stub has done its job. Here
+        # rather than in queue_items, which status and the GUI read without telling.
+        ask_consume(ctx, new)
     # The ids as well as the lines, so a caller can tell whether what it just
     # printed was a debt without recomputing the queue and getting a different
     # answer than the one it showed.
@@ -6444,6 +6454,15 @@ def unread_brief_comments(ctx, who):
     return out
 
 
+def brief_carry(rec, b):
+    """What a rewrite keeps that the writer did not write: the owner's rulings
+    (T17), and who has read it, which the ruling notices are timed against."""
+    for k in ("rulings", "read"):
+        if (b or {}).get(k):
+            rec[k] = b[k]
+    return rec
+
+
 def cmd_brief(a):
     """The task description: written by the lead, for its children.
 
@@ -6711,6 +6730,7 @@ def cmd_brief(a):
         blk = a.from_block or (b or {}).get("from_block")
         if blk:
             rec["from_block"] = blk
+        brief_carry(rec, b)
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(json.dumps(rec, indent=2) + "\n")
         # Create and replace said the same words, so the line that means "I
@@ -7053,6 +7073,12 @@ def cmd_brief(a):
     print()
     for line in (b.get("text") or "").splitlines() or [""]:
         print(f"  {line}")
+    rs = b.get("rulings") or []
+    if rs:
+        print(f"\n  {len(rs)} ruling(s) by the owner — they bind this task:")
+        for r in rs:
+            print(f"  ruled {str(r.get('ruled_at'))[:10]}  {r.get('question')}")
+            print(f"           → {r.get('answer')}")
     kids = ctx.children(b.get("node") or "")
     derived = sorted(o["task"] for o in all_briefs(ctx).values()
                      if tkey(o.get("from")) == tkey(a.task))
@@ -8737,6 +8763,530 @@ def cmd_archive(a):
               f"  {((v.get('brief') or {}).get('text') or '').strip().splitlines()[0][:60] if (v.get('brief') or {}).get('text') else ''}")
 
 
+# ── T17: the owner channel ───────────────────────────────────────────────────
+#
+# A question only the owner can answer goes through the intermediary, a live
+# session outside every tree that briefs it in a fixed form. The owner signs the
+# ruling; it lands on the task's brief. Design: harness/design/owner-channel.md.
+
+ASK_KINDS = ("intent", "judgement", "action", "risk")
+ASK_OPEN = ("asked", "ready", "drafted")
+INTERMEDIARY = "harness-intermediary"
+# The six sections, in order: heading, key, cap. A cap is chars unless noted.
+ASK_SECTIONS = (("question", "question", 200), ("why yours", "why", 200),
+                ("checked", "checked", 6), ("options", "options", 120),
+                ("recommendation", "recommendation", 200), ("waiting", "waiting", 120))
+ASK_ID_RE = re.compile(r"^[A-Za-z0-9_]+-\d+$")
+
+
+def _now():
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
+def _save(path, rec):
+    """Whole-file replace: the GUI polls these and must never read half of one."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(rec, indent=2) + "\n")
+    os.replace(tmp, path)
+
+
+def ask_projects():
+    """Every enrolled project on this machine: [(state dir, repo path)]."""
+    out = []
+    for pdir in sorted(p for p in HOME_STATE.glob("*")
+                       if p.is_dir() and (p / "binding.json").exists()):
+        try:
+            repo = json.loads((pdir / "binding.json").read_text()).get("repo", "")
+        except Exception:
+            continue
+        out.append((pdir, repo))
+    return out
+
+
+def ask_next_id(state, task):
+    k = tkey(task)
+    # An accepted ask is deleted, so its ruling on the brief holds the id too.
+    ids = [p.stem for p in (Path(state) / "asks").glob(f"{k}-*.json")]
+    try:
+        b = json.loads((Path(state) / "briefs" / f"{k}.json").read_text())
+        ids += [str(r.get("id") or "") for r in b.get("rulings") or []]
+    except Exception:
+        pass
+    ns = [int(i.rsplit("-", 1)[1]) for i in ids
+          if "-" in i and i.rsplit("-", 1)[0] == k and i.rsplit("-", 1)[1].isdigit()]
+    return f"{k}-{max(ns, default=0) + 1}"
+
+
+def ask_open(ctx, task, kind, question, me, sid):
+    """`ask <task>`: rank 0 or a lead opens one; a lane goes through its lead."""
+    if sid and role_of(ctx, me) == "member":
+        lead = ctx.tree["nodes"][me].get("parent")
+        die(REFUSED, f"'{me}' is a lane. A lane asks its lead, and the lead decides "
+                     f"whether it is the\n           owner's: harness waiting \"...\" "
+                     f"--still-moving \"...\", then tell {lead}")
+    if kind not in ASK_KINDS:
+        die(REFUSED, f"--kind must be one of {', '.join(ASK_KINDS)}")
+    q = (question or "").strip()
+    if not q:
+        die(REFUSED, "--question is required: one sentence the owner can answer")
+    if len(q) > 200:
+        die(REFUSED, f"the question is {len(q)} chars; the cap is 200. One sentence the "
+                     f"owner can answer —\n           the intermediary gathers the rest.")
+    _, b = load_brief(ctx, task)
+    if b is None:
+        die(REFUSED, f"no brief for '{task}'. An ask is attached to a task, so the ruling "
+                     f"lands where a\n           lead reads it. Write the brief first: "
+                     f"harness brief {task} --for <node> --write -")
+    who = f"{me} ({'session ' + sid[:8] if sid else 'operator'})"
+    rec = {"id": ask_next_id(ctx.state, task), "task": b.get("task") or task,
+           "node": b.get("node"), "kind": kind, "question": q, "asked_by": who,
+           "asker_node": me, "asked_at": _now(), "state": "asked", "brief": None,
+           "draft": None, "returned_why": None, "merged_into": None,
+           "history": [{"at": _now(), "by": who, "what": "asked"}]}
+    _save(Path(ctx.state) / "asks" / f"{rec['id']}.json", rec)
+    return rec
+
+
+def ask_find(ident, project=None):
+    """An ask anywhere on the machine -> (state dir, repo, path, record)."""
+    if not ASK_ID_RE.match(ident or ""):
+        die(REFUSED, f"'{ident}' is not an ask id (<task>-<n>). harness ask --list")
+    hits = []
+    for pdir, repo in ask_projects():
+        if project and project not in (Path(repo).name, pdir.name):
+            continue
+        f = pdir / "asks" / f"{ident}.json"
+        if f.exists():
+            try:
+                hits.append((pdir, repo, f, json.loads(f.read_text())))
+            except json.JSONDecodeError:
+                die(REFUSED, f"{f} is not valid JSON — refusing to touch it")
+    if not hits:
+        die(REFUSED, f"no ask '{ident}'" + (f" in {project}" if project else
+                     " in any enrolled project") + ". harness ask --list")
+    if len(hits) > 1:
+        die(REFUSED, f"'{ident}' is in {len(hits)} projects: "
+                     f"{', '.join(Path(h[1]).name for h in hits)}.\n"
+                     f"           Say which: harness ask {ident} --project <name> ...")
+    return hits[0]
+
+
+def parse_ask_brief(text):
+    """Six `## ` sections, each under its cap -> (brief, []), or (None, every fault)."""
+    names = {h: k for h, k, _ in ASK_SECTIONS}
+    secs, cur, errs = {}, None, []
+    for line in (text or "").splitlines():
+        m = re.match(r"^##\s+(.+?)\s*$", line)
+        if m:
+            h = m.group(1).strip().lower()
+            if h not in names:
+                errs.append(f"'{m.group(1).strip()}': not a section "
+                            f"(they are {', '.join(h for h, _, _ in ASK_SECTIONS)})")
+                cur = None
+            elif names[h] in secs:
+                errs.append(f"{h}: given twice"); cur = None
+            else:
+                cur = names[h]; secs[cur] = []
+        elif cur:
+            secs[cur].append(line)
+    out = {}
+    for h, k, cap in ASK_SECTIONS:
+        if k not in secs:
+            errs.append(f"{h}: missing"); continue
+        lines = [l.strip() for l in secs[k] if l.strip()]
+        if not lines:
+            errs.append(f"{h}: empty"); continue
+        if k == "checked":
+            if len(lines) > cap:
+                errs.append(f"{h}: {len(lines)} lines, cap {cap}")
+            out[k] = "\n".join(lines)
+        elif k == "options":
+            items = []
+            for l in lines:
+                m = re.match(r"^(?:-|\d+\.)\s+(.*)$", l)
+                if m:
+                    items.append(m.group(1).strip())
+                elif items:
+                    items[-1] += " " + l           # a wrapped item
+                else:
+                    errs.append(f"{h}: '{l[:40]}' is not a list item (- or 1.)")
+            if not 2 <= len(items) <= 5:
+                errs.append(f"{h}: {len(items)} item(s), need 2–5")
+            for i, it in enumerate(items, 1):
+                if len(it) > cap:
+                    errs.append(f"{h} #{i}: {len(it)} chars, cap {cap}")
+            out[k] = items
+        else:
+            v = " ".join(lines)
+            if len(v) > cap:
+                errs.append(f"{h}: {len(v)} chars, cap {cap}")
+            out[k] = v
+    return (None, errs) if errs else (out, [])
+
+
+def _ask_log(rec, by, what):
+    rec.setdefault("history", []).append({"at": _now(), "by": by, "what": what})
+
+
+def ask_set_brief(path, rec, text, by="intermediary"):
+    if rec.get("state") not in ASK_OPEN:
+        die(REFUSED, f"{rec['id']} is {rec.get('state')}; it takes no brief")
+    brief, errs = parse_ask_brief(text)
+    if errs:
+        die(REFUSED, f"brief refused — {len(errs)} fault(s):\n"
+                     + "\n".join(f"             {e}" for e in errs)
+                     + "\n           Sections, in order: ## Question, ## Why yours, "
+                       "## Checked, ## Options,\n           ## Recommendation, ## Waiting")
+    rec["brief"], rec["state"] = brief, "ready"
+    _ask_log(rec, by, "briefed")
+    _save(path, rec)
+    return rec
+
+
+def ask_amend(path, rec, text, by="intermediary"):
+    t = (text or "").strip()
+    if rec.get("state") not in ASK_OPEN:
+        die(REFUSED, f"{rec['id']} is {rec.get('state')}; nothing to amend")
+    if not t or len(t) > 200:
+        die(REFUSED, f"the amended question is {len(t)} chars; it must be 1–200")
+    rec["question"] = t
+    if rec.get("brief"):
+        rec["brief"]["question"] = t
+    _ask_log(rec, by, "amended the question")
+    _save(path, rec)
+    return rec
+
+
+def ask_draft(path, rec, text, by="intermediary"):
+    if rec.get("state") not in ("ready", "drafted"):
+        die(REFUSED, f"{rec['id']} is {rec.get('state')}. Brief it first, so the owner "
+                     f"has the sections\n           to rule against: harness ask "
+                     f"{rec['id']} --brief FILE")
+    if not (text or "").strip():
+        die(REFUSED, "an empty draft rules nothing")
+    rec["draft"], rec["state"] = text.strip(), "drafted"
+    _ask_log(rec, by, "drafted a ruling")
+    _save(path, rec)
+    return rec
+
+
+def ask_return(path, rec, why, by="intermediary"):
+    """Back to the asker. The stub carries no question, so it cannot be ruled on."""
+    if rec.get("state") not in ASK_OPEN:
+        die(REFUSED, f"{rec['id']} is {rec.get('state')}; nothing to return")
+    if not (why or "").strip():
+        die(REFUSED, "say why it is not the owner's — the asker reads it and acts on it")
+    stub = {"id": rec["id"], "task": rec.get("task"), "asker_node": rec.get("asker_node"),
+            "returned_why": why.strip(), "state": "returned", "at": _now()}
+    _save(path, stub)
+    return stub
+
+
+def ask_merge(path, rec, other, by="intermediary"):
+    if other == rec["id"]:
+        die(REFUSED, "an ask cannot be merged into itself")
+    of = path.parent / f"{other}.json"
+    if not of.exists():
+        die(REFUSED, f"no ask '{other}' in the same project. Merging crosses no projects.")
+    o = json.loads(of.read_text())
+    if o.get("state") not in ASK_OPEN or rec.get("state") not in ASK_OPEN:
+        die(REFUSED, "both asks must be open to merge")
+    _ask_log(o, by, f"merged {rec['id']} ({rec.get('asked_by')}): {rec.get('question')}")
+    _save(of, o)
+    path.unlink()
+    return o
+
+
+def ask_accept(pdir, path, rec, text=None, by="operator"):
+    """Sign it: the ruling goes onto the task's brief and the ask is gone."""
+    st = rec.get("state")
+    if not (st == "drafted" or (st == "ready" and (text or "").strip())):
+        die(REFUSED, f"{rec['id']} is {st}. Accept signs a draft ruling — the "
+                     f"intermediary writes one\n           first, or give your own: "
+                     f"harness ask {rec['id']} --accept --text \"...\"")
+    answer = ((text or "").strip() or rec.get("draft") or "").strip()
+    bf = Path(pdir) / "briefs" / f"{tkey(rec.get('task'))}.json"
+    if not bf.exists():
+        die(REFUSED, f"the brief '{rec.get('task')}' is gone, so the ruling has nowhere "
+                     f"to land.\n           Reject this one, and ask again on a live task.")
+    b = json.loads(bf.read_text())
+    # The briefed question is the one the owner ruled on; --amend keeps both in step.
+    r = {"id": rec["id"], "question": (rec.get("brief") or {}).get("question") or rec.get("question"),
+         "answer": answer,
+         "kind": rec.get("kind"), "asked_by": rec.get("asked_by"),
+         "asker_node": rec.get("asker_node"), "ruled_at": _now()}
+    b.setdefault("rulings", []).append(r)
+    _save(bf, b)
+    path.unlink()
+    return r
+
+
+def ask_reject(path, rec):
+    stub = {"id": rec["id"], "task": rec.get("task"), "asker_node": rec.get("asker_node"),
+            "state": "rejected", "at": _now()}
+    _save(path, stub)
+    return stub
+
+
+def ask_list():
+    """Open asks across every project, oldest first, each with project and slug."""
+    out = []
+    for pdir, repo in ask_projects():
+        for f in sorted((pdir / "asks").glob("*.json")):
+            try:
+                r = json.loads(f.read_text())
+            except Exception:
+                continue
+            if r.get("state") in ASK_OPEN:
+                out.append(dict(r, project=Path(repo).name, slug=pdir.name))
+    return sorted(out, key=lambda r: _epoch(r.get("asked_at")) or 0)
+
+
+def ask_notices(ctx, node):
+    """Orientation lines: rulings this node has not read, and its returned or
+    rejected asks. {id: line}."""
+    out = {}
+    try:
+        for stem, b in all_briefs(ctx).items():
+            lead = ctx.tree["nodes"].get(b.get("node"), {}).get("parent") or b.get("node")
+            seen = _epoch((b.get("read") or {}).get(node)) or 0
+            for r in b.get("rulings") or []:
+                if node not in (r.get("asker_node"), lead) or seen >= (_epoch(r.get("ruled_at")) or 0):
+                    continue
+                ans = r.get("answer") or ""
+                out[f"ruled:{stem}:{r.get('id')}"] = (
+                    f"the owner ruled on {b['task']}: {ans[:70]}{'…' if len(ans) > 70 else ''}"
+                    f"  — harness brief {b['task']}")
+    except Exception:
+        pass
+    try:
+        for f in sorted((Path(ctx.state) / "asks").glob("*.json")):
+            r = json.loads(f.read_text())
+            if r.get("asker_node") != node:
+                continue
+            if r.get("state") == "rejected":
+                out[f"rejected:{r['id']}"] = (f"the owner rejected your question on "
+                                              f"{r.get('task')}; don't ask it again")
+            elif r.get("state") == "returned":
+                why = r.get("returned_why") or ""
+                out[f"returned:{r['id']}"] = (f"the intermediary returned your ask on "
+                                              f"{r.get('task')}: {why[:80]}"
+                                              + ("…" if len(why) > 80 else ""))
+    except Exception:
+        pass
+    return out
+
+
+def ask_consume(ctx, ids):
+    """A rejected or returned stub is said once: gone once it has been told."""
+    for k in ids:
+        if k.startswith(("rejected:", "returned:")):
+            try:
+                f = Path(ctx.state) / "asks" / f"{k.split(':', 1)[1]}.json"
+                if json.loads(f.read_text()).get("state") in ("rejected", "returned"):
+                    f.unlink()
+            except Exception:
+                pass
+
+
+def ask_show(pdir, repo, rec):
+    """The ask, then everything the intermediary needs from the task it sits on.
+    It runs outside every repo, so `harness brief` cannot resolve from there."""
+    print(f"{rec['id']}  {Path(repo).name}  {rec.get('kind')}  {rec.get('state')}")
+    print(f"  asked by {rec.get('asked_by')} on {rec.get('task')} "
+          f"({rec.get('node')}'s brief), {_ago(rec.get('asked_at'))}")
+    print(f"  question  {rec.get('question')}")
+    br = rec.get("brief") or {}
+    for h, k, _ in ASK_SECTIONS:
+        if k in br and k != "question":
+            v = br[k]
+            v = "\n".join(f"- {o}" for o in v) if isinstance(v, list) else v
+            print(f"  {h}:")
+            for line in str(v).splitlines():
+                print(f"      {line}")
+    if rec.get("draft"):
+        print(f"  draft     {rec['draft']}")
+    for h in rec.get("history") or []:
+        print(f"  · {str(h.get('at'))[:16]}  {h.get('by')}: {h.get('what')}")
+    bf = Path(pdir) / "briefs" / f"{tkey(rec.get('task'))}.json"
+    try:
+        b = json.loads(bf.read_text())
+    except Exception:
+        print(f"\nno brief at {bf}"); return
+    print(f"\nbrief {b.get('task')}  for {b.get('node')}  revision {b.get('revision')}  "
+          f"by {b.get('written_by')}")
+    ap = b.get("approval") or {}
+    if ap:
+        print(f"  approval  {ap.get('state')}" + (f": {ap['why']}" if ap.get("why") else ""))
+    if b.get("after"):
+        print(f"  after     {', '.join(b['after'])}")
+    for nm in b.get("facts") or []:
+        try:
+            o = latest(json.loads((Path(pdir) / "facts" / f"{tkey(nm)}.json").read_text()))
+            print(f"  fact      {nm} = {o.get('value')}  ({_ago(o.get('at'))} · {o.get('command')})")
+        except Exception:
+            print(f"  fact      {nm} — not readable here")
+    for line in (b.get("text") or "").splitlines():
+        print(f"  {line}")
+    for c in b.get("comments") or []:
+        print(f"  [comment {str(c.get('at'))[:16]}  {c.get('by')}] {c.get('text')}")
+    for r in b.get("rulings") or []:
+        print(f"  ruled {str(r.get('ruled_at'))[:10]}  {r.get('question')}")
+        print(f"           → {r.get('answer')}")
+    md = Path(pdir) / "marks"
+    for f in (sorted(md.glob("*.json")) if md.is_dir() else []):
+        try:
+            m = json.loads(f.read_text())
+        except Exception:
+            continue
+        if m.get("_node") == rec.get("asker_node") and not m.get("_closed_at"):
+            print(f"\n{rec.get('asker_node')} has {m.get('_task') or f.stem} open"
+                  + (f": {m['_note']}" if m.get("_note") else ""))
+
+
+def intermediary_live():
+    """True or False from the roster; None when it cannot be read."""
+    try:
+        return any(r.get("name") == INTERMEDIARY for r in live_rows(agents_json()))
+    except Exception:
+        return None
+
+
+def cmd_ask(a):
+    """T17: a question only the owner can answer, briefed by the intermediary."""
+    verbs = [v for v in ("brief", "amend", "draft", "return_why", "merge", "accept",
+                         "reject", "show") if getattr(a, v) not in (None, False)]
+    if len(verbs) > 1:
+        die(REFUSED, f"one verb at a time: {', '.join('--' + v.split('_')[0] for v in verbs)}")
+    if a.list:
+        rows = ask_list()
+        if a.json:
+            print(json.dumps(rows, indent=2)); return
+        if not rows:
+            print("no open asks on this machine"); return
+        for r in rows:
+            print(f"{r['project']} {r['id']} {r.get('kind')} {r.get('state')} "
+                  f"{r.get('asker_node')} {human_age(max(0, time.time() - (_epoch(r.get('asked_at')) or time.time())))} "
+                  f"{(r.get('question') or '')[:80]}")
+        return
+    if not a.target:
+        die(REFUSED, "harness ask <task> --kind K --question \"...\", or harness ask --list")
+    if not verbs:
+        ctx = Ctx(); ctx.require_enrolled()
+        me, _ = ctx.node()
+        sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+        rec = ask_open(ctx, a.target, a.kind, a.question, me, sid)
+        print(f"asked {rec['id']}  ({rec['kind']}, on {rec['task']})")
+        live = intermediary_live()
+        if live is not False:
+            print(f"  tell it: SendMessage to '{INTERMEDIARY}' — \"new ask {rec['id']}\"")
+        if not live:
+            print(f"  the intermediary is {'not running' if live is False else 'not visible (roster unreadable)'}"
+                  f" — the owner starts it: harness intermediary")
+        print(f"  Carry on with other work. The ruling lands on {rec['task']}'s brief and "
+              f"you are told.")
+        return
+    v = verbs[0]
+    if v in ("brief", "amend", "draft", "return_why", "merge") and \
+            os.environ.get("HARNESS_INTERMEDIARY") != "1":
+        die(REFUSED, f"--{v.split('_')[0]} is the intermediary's, and this is not it "
+                     f"(HARNESS_INTERMEDIARY is unset).\n           The owner starts it: "
+                     f"harness intermediary")
+    if v in ("accept", "reject") and os.environ.get("CLAUDE_CODE_SESSION_ID"):
+        die(REFUSED, "only the owner signs a ruling — the GUI's Owner page, or a shell")
+    pdir, repo, path, rec = ask_find(a.target, a.project)
+    if v == "show":
+        ask_show(pdir, repo, rec); return
+    if v == "brief":
+        src = a.brief
+        if "\n" not in src and not src.lstrip().startswith("#"):
+            if not Path(src).is_file():
+                die(REFUSED, f"no file '{src}'. --brief FILE, or --brief - with a heredoc")
+            src = Path(src).read_text()
+        ask_set_brief(path, rec, src)
+        print(f"briefed {rec['id']} — ready; it is the owner's move. "
+              f"Talk it over, then --draft \"...\"")
+    elif v == "amend":
+        ask_amend(path, rec, a.amend)
+        print(f"amended {rec['id']}: {rec['question']}")
+    elif v == "draft":
+        ask_draft(path, rec, a.draft)
+        print(f"drafted {rec['id']}. The owner signs it in the GUI's Owner page, or:\n"
+              f"  harness ask {rec['id']} --accept")
+    elif v == "return_why":
+        ask_return(path, rec, a.return_why)
+        print(f"returned {rec['id']} to {rec.get('asker_node')}; it is told at its next "
+              f"harness command")
+    elif v == "merge":
+        ask_merge(path, rec, a.merge)
+        print(f"merged {rec['id']} into {a.merge}")
+    elif v == "accept":
+        r = ask_accept(pdir, path, rec, a.text)
+        print(f"ruled {rec['id']} on {rec.get('task')}: {r['answer']}")
+        print(f"  {rec.get('asker_node')} and {rec.get('task')}'s lead are told when they "
+              f"next orient.")
+    elif v == "reject":
+        ask_reject(path, rec)
+        print(f"rejected {rec['id']}; {rec.get('asker_node')} is told once not to ask again")
+
+
+INTERMEDIARY_TOOLS = ("Bash(harness ask:*)", "Bash(harness brief:*)", "Bash(harness fact:*)",
+                      "Bash(harness finding:*)", "Bash(git -C * log:*)", "Bash(git -C * show:*)",
+                      "Bash(git -C * diff:*)", "Bash(git -C * status:*)", "Read", "Grep", "Glob")
+INTERMEDIARY_PROMPT = ("You are the harness intermediary. Load the harness-intermediary "
+                       "skill now and follow it.")
+
+
+def intermediary_cmd(model=None, effort=None):
+    """The intermediary's `claude` line. Every variadic list (--add-dir,
+    --allowedTools, --disallowedTools) is closed by the flag after it.
+    --disallowedTools rather than --tools: whether SendMessage is a built-in
+    name `--tools` accepts is undocumented, and the intermediary cannot work
+    without it."""
+    dirs = [str(HOME_STATE)]
+    for pdir, repo in ask_projects():
+        cand = [repo]
+        try:
+            idx = json.loads((pdir / "index.json").read_text())
+            cand += [sp.get("worktree") for sp in (idx.get("nodes") or {}).values()]
+        except Exception:
+            pass
+        for d in cand:
+            if d and d not in dirs and Path(d).is_dir():
+                dirs.append(d)
+    cmd = ["claude", "-n", INTERMEDIARY, "--add-dir", *dirs,
+           "--allowedTools", *INTERMEDIARY_TOOLS,
+           "--disallowedTools", "Edit", "Write", "NotebookEdit",
+           "--permission-mode", "dontAsk",
+           "--append-system-prompt", INTERMEDIARY_PROMPT]
+    if model:
+        cmd += ["--model", model]
+    if effort:
+        cmd += ["--effort", effort]
+    return cmd
+
+
+def cmd_intermediary(a):
+    """Start the intermediary in this terminal: one per machine, the owner's."""
+    home = HOME_STATE / "intermediary"
+    cmd = intermediary_cmd(a.model, a.effort)
+    if a.print_cmd:
+        print(f"cd {shlex.quote(str(home))} && HARNESS_INTERMEDIARY=1 {shlex.join(cmd)}")
+        return
+    if os.environ.get("CLAUDE_CODE_SESSION_ID"):
+        die(REFUSED, "the owner starts the intermediary from a terminal, not from inside "
+                     "a session:\n           harness intermediary")
+    if intermediary_live():
+        die(REFUSED, f"'{INTERMEDIARY}' is already running — one per machine. "
+                     f"Attach to it: claude agents")
+    home.mkdir(parents=True, exist_ok=True)
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
+    env["HARNESS_INTERMEDIARY"] = "1"
+    os.chdir(home)
+    os.execvpe("claude", cmd, env)
+
+
 def read_dash_from_stdin(a):
     """`--write -` takes the body from stdin instead of from argv.
 
@@ -9075,6 +9625,32 @@ def main():
                     help="submit <json> --task T, apply <T>, or a task to show")
     pa.add_argument("target", nargs="?", help="the JSON (path, or - for stdin) or task")
     pa.add_argument("--task", help="with submit: the task the pairs serve")
+    ak = add("ask", cmd_ask)
+    ak.add_argument("target", nargs="?", metavar="TASK|ID",
+                    help="a task, to open an ask; an ask id for every other verb")
+    ak.add_argument("--kind", choices=list(ASK_KINDS))
+    ak.add_argument("--question", metavar="TEXT", help="one sentence, at most 200 chars")
+    ak.add_argument("--brief", metavar="FILE",
+                    help="intermediary: the six sections as markdown; '-' reads stdin")
+    ak.add_argument("--amend", metavar="TEXT", help="intermediary: rewrite the question")
+    ak.add_argument("--draft", metavar="TEXT", help="intermediary: the draft ruling")
+    ak.add_argument("--return", dest="return_why", metavar="WHY",
+                    help="intermediary: not the owner's; back to the asker")
+    ak.add_argument("--merge", metavar="ID", help="intermediary: fold into another ask")
+    ak.add_argument("--accept", action="store_true", help="owner: sign the draft")
+    ak.add_argument("--text", metavar="TEXT", help="with --accept: the owner's own wording")
+    ak.add_argument("--reject", action="store_true", help="owner: not a question to answer")
+    ak.add_argument("--show", action="store_true",
+                    help="the ask, its task's brief, and the asker's open task")
+    ak.add_argument("--list", action="store_true", help="open asks on this machine")
+    ak.add_argument("--json", action="store_true")
+    ak.add_argument("--project", metavar="NAME",
+                    help="the repo directory name, when an id is in two projects")
+    im = add("intermediary", cmd_intermediary)
+    im.add_argument("--print-cmd", action="store_true",
+                    help="print the command and exit")
+    im.add_argument("--model")
+    im.add_argument("--effort", choices=list(EFFORTS))
     fo = add("focus", cmd_focus)
     fo.add_argument("task", nargs="*",
                     help="tasks, segments or globs (quote them: 'enrich*') the owner put "

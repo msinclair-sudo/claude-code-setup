@@ -47,7 +47,7 @@ A brief is rewritten in place; `harness note` is the append-only half. Write a s
 
 ## Asking the owner
 
-There is no channel to the owner yet (`T17` is being redesigned). Ask in your own session when they are present, and record the answer where it is used: a brief, a fact or the charter. Do not use a block for a question: a block means "I cannot reach X".
+Use `harness ask` (see `harness-downward`), as leads do. When the owner is in your session, asking them directly is fine; record the answer where it is used (a brief, a fact or the charter). Do not use a block for a question: a block means "I cannot reach X".
 
 ## Blocks: comments and closing them
 

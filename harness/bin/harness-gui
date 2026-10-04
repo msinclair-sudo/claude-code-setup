@@ -364,6 +364,30 @@ def _wait_mins(since):
     return int(max(0, time.time() - t) // 60)
 
 
+# Open asks, and the subset that is the owner's move. `asked` is open but still
+# the intermediary's: it has not been briefed yet.
+ASK_OPEN = ("asked", "ready", "drafted")
+ASK_OWNERS = ("ready", "drafted")
+INTERMEDIARY = "harness-intermediary"
+
+
+def intermediary(rows):
+    """The intermediary's session, found by name on the roster.
+
+    `running` is None when the roster could not be read — unknown, which the
+    page must not draw as "not running" and send the owner off to start a
+    second one.
+    """
+    if rows is None:
+        return {"running": None, "context": None, "idle": None}
+    r = next((x for x in rows if x.get("name") == INTERMEDIARY), None)
+    if r is None:
+        return {"running": False, "context": None, "idle": None}
+    a, c = CLI.last_turn(r.get("sessionId") or "")
+    return {"running": True, "status": r.get("status"), "context": c,
+            "idle": (None if r.get("status") == "busy" or a is None else int(a))}
+
+
 def read_state():
     rows, roster_error = roster()
     # A LIST per worktree, not one session. Two sessions in one worktree is the
@@ -520,6 +544,30 @@ def read_state():
                 continue
             if r.get("node") in tree:
                 waits[r["node"]] = r
+        # The owner's channel. An ask is read whole, because the Owner page shows
+        # its briefing, and only while open: an accepted ask lives on as a ruling
+        # on its brief, and a rejected or returned one is nobody's move.
+        asks = []
+        ad = pdir / "asks"
+        for af in (sorted(ad.glob("*.json")) if ad.is_dir() else []):
+            try:
+                r = json.loads(af.read_text())
+            except Exception:
+                continue
+            if r.get("state") in ASK_OPEN:
+                asks.append(dict(r, id=r.get("id") or af.stem,
+                                age=CLI.wait_age(r.get("asked_at"))))
+        asks.sort(key=lambda a: a.get("asked_at") or "")
+        rulings = []
+        for bf in (sorted(bd.glob("*.json")) if bd.is_dir() else []):
+            try:
+                r = json.loads(bf.read_text())
+            except Exception:
+                continue
+            for ru in (r.get("rulings") or []):
+                if isinstance(ru, dict):
+                    rulings.append(dict(ru, task=r.get("task") or bf.stem))
+        rulings.sort(key=lambda x: x.get("ruled_at") or "", reverse=True)
         # Traffic between nodes goes ON THE NODE, beside the one it is directed
         # at, naming where it came from, in the muted colour the tree already
         # uses for it -- never the warning colour, because it is not a fault.
@@ -648,8 +696,16 @@ def read_state():
                          "charter": ch,
                          "nodes": nodes,
                          "orphan_marks": sorted(orphans, key=lambda o: o["task"]),
+                         "asks": asks, "rulings": rulings,
                          "indexed_at": idx.get("generated")})
     return {"generated": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            # Counted when it is the owner's move, never when an ask merely
+            # arrives: the intermediary may still send it back or merge it, and a
+            # count that rises and falls on its own is one the owner learns to
+            # ignore.
+            "owner": {"count": sum(1 for p in projects for a in p["asks"]
+                                   if a.get("state") in ASK_OWNERS),
+                      "intermediary": intermediary(rows)},
             "roster_error": roster_error, "stale_server": stale_server(),
             # The harness CLI and the skills under ~/.claude/skills are copies;
             # when their source has moved, every session reads older
@@ -843,8 +899,57 @@ font-size:10px;line-height:1.6}
 .cact.armed{color:var(--warn);background:var(--warnbg);opacity:1}
 .sub{margin-left:11px;border-left:1px solid var(--line);padding-left:9px}
 .cmsg2{color:var(--warn);font-size:11px;line-height:1.45;margin:5px 0 7px}
+
+/* The Owner page. One warm colour, used only for "this is your move": the
+   count in the header, and the word on a row. Everything else stays muted. */
+#ownerlink{color:var(--dim);font-size:12px;text-decoration:none;
+border-bottom:1px dotted var(--none)}
+#ownerlink:hover{color:var(--ink)}
+#ownerlink.due,.yours{color:#ffd08a}
+#ownerlink.on{border-bottom:1px solid var(--dim)}
+.owner{max-width:980px}
+.ohead{background:var(--panel);border:1px solid var(--line);padding:8px 13px;
+margin-bottom:20px;display:flex;gap:14px;align-items:baseline}
+.ohead b{font-weight:400;color:var(--dim);font-size:11px;letter-spacing:.06em;
+text-transform:uppercase}
+.ohead code{color:var(--busy)}
+.ohead .q{color:var(--dim)}
+.osec{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);
+margin:0 0 7px}
+.oproj{margin-bottom:18px}
+.oproj>h2{font-size:13px;margin:0 0 5px;color:var(--ink)}
+.ask{background:var(--panel);border:1px solid var(--line);margin-bottom:4px}
+.ask.open{border-color:#4a5536}
+.arow{display:flex;gap:10px;align-items:baseline;padding:5px 11px;cursor:pointer}
+.arow:hover{background:#00000030}
+.akind{flex:none;font-size:10px;letter-spacing:.05em;text-transform:uppercase;
+color:var(--wait);border:1px solid #2f6157;border-radius:4px;padding:0 5px;
+min-width:76px;text-align:center}
+.akind.risk{color:var(--warn);border-color:#6b4526}
+.aq{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ameta{flex:none;color:var(--none);font-size:11px}
+.amove{flex:none;font-size:11px;color:var(--dim);min-width:90px;text-align:right}
+.abody{padding:4px 13px 11px 13px;border-top:1px solid var(--line)}
+.abody dl{margin:6px 0 0}
+.abody dt{color:var(--none);font-size:10px;text-transform:uppercase;letter-spacing:.08em}
+.abody dd{margin:1px 0 8px;white-space:pre-wrap;overflow-wrap:anywhere}
+.abody ol{margin:0;padding-left:20px}
+.adraft{width:100%;min-height:70px;background:#0e1109;color:var(--ink);
+border:1px solid var(--line);padding:7px;font:inherit;resize:vertical}
+.adraft[readonly]{color:var(--dim)}
+.adraft:not([readonly]){border-color:var(--warn)}
+.row button:disabled{opacity:.35;cursor:default}
+.row button.rej{background:#2a1a12;color:var(--warn);border-color:#6b4526}
+.amsg{color:var(--warn);font-size:11px}
+.ofilter{background:#0e1109;color:var(--ink);border:1px solid var(--line);
+padding:3px 7px;font:inherit;font-size:12px;width:260px;margin-left:10px;
+text-transform:none;letter-spacing:0}
+.rul{border-left:2px solid var(--line);padding:2px 0 2px 9px;margin:0 0 9px}
+.rul .rh{color:var(--none);font-size:11px}
+.rul .rq{color:var(--dim);white-space:pre-wrap}
+.rul .ra{white-space:pre-wrap}
 </style></head><body>
-<header><h1>harness</h1><span id="age"></span></header>
+<header><h1>harness</h1><a id="ownerlink" href="#owner">owner</a><span id="age"></span></header>
 <main id="root"><div class="empty">loading...</div></main>
 <div id="modal"></div>
 <script>
@@ -1290,6 +1395,17 @@ async function tick() {
   }
   catch (e) { document.getElementById('age').textContent = 'disconnected'; return; }
   document.getElementById('age').textContent = new Date().toLocaleTimeString();
+  // Every tick, before the no-change return: the count and the tab title are
+  // the only notification the owner gets, so they must never be a poll behind.
+  const N = (d.owner && d.owner.count) || 0;
+  document.title = N ? '(' + N + ') harness' : 'harness';
+  const ol = document.getElementById('ownerlink');
+  ol.textContent = N ? 'owner (' + N + ')' : 'owner';
+  ol.className = (N ? 'due' : '') + (ROUTE() === 'owner' ? ' on' : '');
+  ol.title = (N ? N + ' ask(s) waiting on your ruling' : 'nothing waiting on you') +
+             (ROUTE() === 'owner' ? ' — click for the trees' : '');
+  ol.setAttribute('href', ROUTE() === 'owner' ? '#' : '#owner');
+  LASTD = d;
   // First visit: the project description is open, its features shut. That is
   // what this panel looked like before it could fold at all, so nobody arrives
   // to find their charter apparently empty.
@@ -1300,12 +1416,12 @@ async function tick() {
   // `generated` changes every poll and nothing else usually does, so it is
   // excluded from the comparison: redrawing identical content is what loses a
   // text selection mid-copy.
-  const sig = raw.replace(/"generated":"[^"]*",/, '');
+  const sig = ROUTE() + raw.replace(/"generated":"[^"]*",/, '');
   if (sig === LAST) return;
   LAST = sig;
   // Above everything, including the banners: it is the same reference whatever
   // state the trees are in, and one row of it is cheaper than looking it up.
-  let h = cmdbar(d.commands || []);
+  let h = ROUTE() === 'owner' ? '' : cmdbar(d.commands || []);
   if (d.stale_server) {
     h += '<div class="banner"><b>This server is older than the code on disk</b> ' +
          '&mdash; it started at ' + esc(d.started) + ' and the page you are looking ' +
@@ -1322,6 +1438,7 @@ async function tick() {
          esc(d.stale_install) + '<br>Every session is reading older instructions ' +
          'than the source. Run <code>bash install.sh</code> from the source tree.</div>';
   }
+  if (ROUTE() === 'owner') { paint(h + ownerView(d)); return; }
   h += d.projects.map((p, pi) => {
     p.nodes.forEach(n => n._slug = p.slug);
     return '<div class="proj"><h2>' + esc(p.project) + '</h2>' +
@@ -1411,6 +1528,241 @@ function charter(p) {
     '<span class="cedit" data-cslug="' + esc(p.slug) + '" data-cnew="1">+ add</span>' +
     '</h3>' + list + '</div></div>';
 }
+
+// ── the Owner page ─────────────────────────────────────────────────────────
+// The tree page is for watching sessions; this one is for ruling. Only asks the
+// intermediary has briefed are the owner's move, and only the owner's button
+// signs one: the draft is the intermediary's, the signature is not.
+//
+// Which items are open is kept like the charter's folds, out of the DOM, so a
+// poll does not close the briefing you are reading.
+const AKEY = 'harness.askopen';
+const OPENA = new Set(load(AKEY));
+const AMSG = {};          // ask key -> the CLI's last refusal, shown on the item
+let FILTER = '';          // the rulings filter, applied client-side
+let LASTD = null;         // the last state read, so a keystroke can re-filter
+const ROUTE = () => location.hash === '#owner' ? 'owner' : 'tree';
+const akey = (slug, id) => slug + ':' + id;
+
+function dur(s) {
+  if (s == null) return '';
+  const m = Math.floor(s / 60);
+  return m < 60 ? m + 'm' : Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0');
+}
+
+function ownerHead(im) {
+  im = im || {};
+  const body = im.running === null
+    ? '<span class="ln u">unknown &mdash; the session roster could not be read</span>'
+    : im.running
+      ? '<span>running' + (im.status === 'busy' ? ' &middot; busy' : '') +
+        (im.context ? ' &middot; ' + tokf(im.context) + ' context' : '') +
+        (im.idle != null ? ' &middot; idle ' + dur(im.idle) : '') + '</span>'
+      : '<span class="dup">not running</span> <span class="q">&mdash; start it in a ' +
+        'terminal: <code>harness intermediary</code></span>';
+  return '<div class="ohead" data-live="owner:head"><b>intermediary</b>' + body + '</div>';
+}
+
+// A briefing field may arrive as prose or as a list; either reads as lines.
+const lines = v => Array.isArray(v) ? v.map(x => typeof x === 'string' ? x
+                                       : JSON.stringify(x)).join('\n') : String(v ?? '');
+
+function askItem(slug, a) {
+  const k = akey(slug, a.id);
+  const open = OPENA.has(k);
+  const mine = a.state === 'ready' || a.state === 'drafted';
+  const row = '<div class="arow" data-atog="' + esc(k) + '">' +
+    '<span class="akind ' + esc(a.kind || '') + '">' + esc(a.kind || '?') + '</span>' +
+    '<span class="aq" title="' + esc(a.question) + '">' + esc(a.question) + '</span>' +
+    '<span class="ameta">' + esc(a.asker_node || a.asked_by || '?') +
+      (a.age ? ' &middot; ' + esc(a.age) : '') + '</span>' +
+    '<span class="amove' + (mine ? ' yours' : '') + '">' +
+      (mine ? 'yours' : 'being briefed') + '</span></div>';
+  let body = '';
+  if (open) {
+    const b = a.brief || {};
+    const sec = (t, v) => '<dt>' + t + '</dt><dd>' +
+      (v ? esc(v) : '<span class="q">&mdash;</span>') + '</dd>';
+    const opts = Array.isArray(b.options) && b.options.length
+      ? '<ol>' + b.options.map(o => '<li>' + esc(lines(o)) + '</li>').join('') + '</ol>'
+      : '<span class="q">&mdash;</span>';
+    const msg = AMSG[k] ? '<span class="amsg">refused: ' + esc(AMSG[k]) + '</span>' : '';
+    const meta = '<div class="ln q">task ' + esc(a.task || '?') +
+      (a.node ? ' &middot; node ' + esc(a.node) : '') +
+      ' &middot; asked by ' + esc(a.asked_by || '?') + ' &middot; ' + esc(a.state) + '</div>';
+    if (!mine) {
+      body = meta + '<div class="ln q" style="margin-top:6px">being briefed by the ' +
+        'intermediary</div>' +
+        '<div class="row"><button class="rej" data-arej="' + esc(k) + '">Reject</button>' +
+        msg + '</div>';
+    } else {
+      body = meta + '<dl>' +
+        sec('Question', b.question || a.question) +
+        sec('Why yours', b.why) +
+        sec('Checked', lines(b.checked)) +
+        '<dt>Options</dt><dd>' + opts + '</dd>' +
+        sec('Recommendation', b.recommendation) +
+        sec('Waiting', b.waiting) +
+        '<dt>Draft ruling</dt><dd style="white-space:normal">' +
+        '<textarea class="adraft" readonly data-akey="' + esc(k) + '" data-raw="' +
+        esc(a.draft || '') + '" placeholder="no draft yet &mdash; Edit to write your own">' +
+        esc(a.draft || '') + '</textarea></dd></dl>' +
+        '<div class="row"><button data-aacc="' + esc(k) + '"' +
+          (a.draft ? '' : ' disabled') + '>Accept</button>' +
+        '<button data-aedit="' + esc(k) + '">Edit</button>' +
+        '<button class="rej" data-arej="' + esc(k) + '">Reject</button>' + msg + '</div>';
+    }
+    body = '<div class="abody">' + body + '</div>';
+  }
+  return '<div class="ask' + (open ? ' open' : '') + '" data-live="ask:' + esc(k) + '">' +
+    row + body + '</div>';
+}
+
+function rulingsList(d) {
+  const f = FILTER.trim().toLowerCase();
+  const all = [];
+  (d.projects || []).forEach(p => (p.rulings || []).forEach(r =>
+    all.push(Object.assign({ _project: p.project }, r))));
+  all.sort((a, b) => String(b.ruled_at || '').localeCompare(String(a.ruled_at || '')));
+  const hit = f ? all.filter(r => [r._project, r.task, r.kind, r.question, r.answer,
+                                   r.asked_by].join('\n').toLowerCase().includes(f))
+                : all;
+  const rows = hit.map(r =>
+    '<div class="rul"><div class="rh">' +
+      esc(String(r.ruled_at || '').slice(0, 10)) + ' &middot; ' + esc(r._project) +
+      ' &middot; ' + esc(r.task) + ' &middot; ' + esc(r.kind || '') + '</div>' +
+    '<div class="rq">Q: ' + esc(r.question) + '</div>' +
+    '<div class="ra">A: ' + esc(r.answer) + '</div></div>').join('');
+  return rows || '<div class="ln q">' + (all.length ? 'no ruling matches'
+                                                     : 'no rulings yet') + '</div>';
+}
+
+function ownerView(d) {
+  const groups = (d.projects || []).filter(p => (p.asks || []).length).map(p =>
+    '<div class="oproj"><h2>' + esc(p.project) + '</h2>' +
+    p.asks.map(a => askItem(p.slug, a)).join('') + '</div>').join('');
+  return '<div class="owner">' + ownerHead((d.owner || {}).intermediary) +
+    '<h3 class="osec">open asks</h3>' +
+    (groups || '<div class="ln q" style="margin-bottom:18px">nothing open &mdash; ' +
+      'asks reach this page once an asker raises one</div>') +
+    '<h3 class="osec" style="margin-top:26px">rulings' +
+    '<input class="ofilter" placeholder="filter" value="' + esc(FILTER) + '" /></h3>' +
+    '<div data-live="owner:rulings">' + rulingsList(d) + '</div></div>';
+}
+
+// The textarea is the one thing on this page a poll must not touch, so it is
+// held in EDITING from the moment it can hold the owner's words -- unlocked by
+// Edit, or simply focused -- until it is sent, reverted, or left untouched.
+function holdDraft(ta) { EDITING.add('ask:' + ta.dataset.akey); }
+function freeDraft(k) { EDITING.delete('ask:' + k); }
+function syncAccept(ta) {
+  const btn = ta.closest('.abody').querySelector('[data-aacc]');
+  if (btn) btn.disabled = !(ta.dataset.raw || ta.value.trim());
+}
+
+function ruleAsk(k, action, text) {
+  const i = k.indexOf(':');
+  const body = { slug: k.slice(0, i), id: k.slice(i + 1), action: action };
+  if (text) body.text = text;
+  fetch('/api/ask', { method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Harness-Local': '1' },
+    body: JSON.stringify(body) })
+    .then(r => r.json())
+    .then(j => {
+      if (j.ok) {
+        delete AMSG[k]; OPENA.delete(k); save(AKEY, OPENA);
+        freeDraft(k); LAST = ''; tick(); return;
+      }
+      refused(k, j.message || 'refused');
+    })
+    .catch(() => refused(k, 'could not reach the server'));
+}
+
+// A refusal leaves the owner's edited text where it was: it is written into the
+// item in place, and the hold on the draft is kept, so nothing typed is lost to
+// the redraw a refusal would otherwise trigger.
+function refused(k, m) {
+  AMSG[k] = m;
+  const it = document.querySelector('[data-live="ask:' + k + '"]');
+  if (!it || !EDITING.has('ask:' + k)) { LAST = ''; tick(); return; }
+  const row = it.querySelector('.row');
+  let s = row.querySelector('.amsg');
+  if (!s) { s = document.createElement('span'); s.className = 'amsg'; row.appendChild(s); }
+  s.textContent = 'refused: ' + m;
+  const ta = it.querySelector('.adraft');
+  if (ta) syncAccept(ta);
+}
+
+document.addEventListener('click', e => {
+  const tg = e.target.closest('[data-atog]');
+  if (tg) {
+    const k = tg.dataset.atog;
+    // Folding an item away while its draft is unlocked would orphan the hold.
+    if (EDITING.has('ask:' + k)) return;
+    OPENA.has(k) ? OPENA.delete(k) : OPENA.add(k);
+    save(AKEY, OPENA); LAST = ''; tick(); return;
+  }
+  const ed = e.target.closest('[data-aedit]');
+  if (ed) {
+    const ta = ed.closest('.abody').querySelector('.adraft');
+    if (ta.readOnly) {
+      ta.readOnly = false; holdDraft(ta); ed.textContent = 'Revert'; ta.focus();
+    } else {
+      ta.value = ta.dataset.raw || ''; ta.readOnly = true; ed.textContent = 'Edit';
+      freeDraft(ed.dataset.aedit); syncAccept(ta);
+    }
+    return;
+  }
+  const ac = e.target.closest('[data-aacc]');
+  if (ac) {
+    if (ac.disabled) return;
+    const ta = ac.closest('.abody').querySelector('.adraft');
+    const t = ta.value.trim();
+    // The edited text is sent only when it differs: an unchanged accept signs
+    // the intermediary's draft as written, which is what the record should say.
+    ac.disabled = true;
+    ruleAsk(ac.dataset.aacc, 'accept', t && t !== (ta.dataset.raw || '').trim() ? t : '');
+    return;
+  }
+  const rj = e.target.closest('[data-arej]');
+  if (rj) {
+    if (!confirm('Reject this ask? It is removed, and its asker is told you ' +
+                 'rejected it. Nothing else is kept.')) return;
+    ruleAsk(rj.dataset.arej, 'reject', '');
+    return;
+  }
+  const lk = e.target.closest('#ownerlink');
+  if (lk) {
+    e.preventDefault();
+    location.hash = ROUTE() === 'owner' ? '' : 'owner';
+  }
+});
+document.addEventListener('input', e => {
+  if (e.target.classList.contains('adraft')) syncAccept(e.target);
+  if (e.target.classList.contains('ofilter')) {
+    FILTER = e.target.value;
+    // Polls are held while the filter has focus, so it re-filters by hand.
+    const el = document.querySelector('[data-live="owner:rulings"]');
+    if (el && LASTD) el.innerHTML = rulingsList(LASTD);
+  }
+});
+document.addEventListener('focusin', e => {
+  if (e.target.classList.contains('adraft')) holdDraft(e.target);
+  if (e.target.classList.contains('ofilter')) EDITING.add('owner:filter');
+});
+document.addEventListener('focusout', e => {
+  // A read-only draft that was only looked at is not being written; let go.
+  if (e.target.classList.contains('adraft') && e.target.readOnly)
+    freeDraft(e.target.dataset.akey);
+  if (e.target.classList.contains('ofilter')) {
+    EDITING.delete('owner:filter'); LAST = ''; tick();
+  }
+});
+window.addEventListener('hashchange', () => {
+  // Leaving a view abandons whatever was half-typed in it; holding the other
+  // view hostage to it would be worse.
+  EDITING.clear(); closeModal(); LAST = ''; tick();
+});
 
 // Targeted update, not a repaint. The page is built once; after that a poll may
 // only replace elements that carry data-live, and only when their content has
@@ -1580,6 +1932,47 @@ def save_charter(slug, feature, text):
                         ["--write", text])
 
 
+def _ask_cli(slug, args):
+    """Sign or reject an ask — delegated, like every other write.
+
+    The CLI refuses `--accept` from inside a session, as it does `sweep`, so the
+    only signatures are the owner's. The session id is stripped for the same
+    reason a comment's is: a button clicked on this page was clicked by a person,
+    even when the server happened to be started from inside a session.
+    """
+    pdir = _project_dir(slug)
+    if pdir is None:
+        return False, "no such project"
+    try:
+        repo = json.loads((pdir / "binding.json").read_text()).get("repo", "")
+    except Exception:
+        return False, "unreadable binding"
+    exe = Path(__file__).resolve().with_name("harness")
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
+    try:
+        r = subprocess.run([sys.executable, str(exe), "ask"] + args, cwd=repo,
+                           capture_output=True, text=True, timeout=20, env=env)
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"[:300]
+    return r.returncode == 0, (r.stdout or r.stderr).strip()[:300]
+
+
+def rule_ask(slug, ask_id, action, text):
+    """Accept or reject one open ask. Same whitelist as a task: the id must be a
+    file already in that project's asks/, so nothing is joined from input."""
+    pdir = _project_dir(slug)
+    if pdir is None:
+        return False, "no such project"
+    ad = pdir / "asks"
+    if not ask_id or not ad.is_dir() or not any(f.stem == ask_id for f in ad.glob("*.json")):
+        return False, "no such ask"
+    if action == "accept":
+        return _ask_cli(slug, [ask_id, "--accept"] + (["--text", text] if text else []))
+    if action == "reject":
+        return _ask_cli(slug, [ask_id, "--reject"])
+    return False, f"unknown action {action!r}"
+
+
 class H(BaseHTTPRequestHandler):
     def _send(self, body, ctype):
         # A page polling every 3s abandons requests routinely: navigate away, or
@@ -1630,7 +2023,7 @@ class H(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin")
         if origin and not origin.startswith(("http://127.0.0.1:", "http://localhost:")):
             self.send_error(403, "cross-origin"); return
-        if not self.path.startswith(("/api/comment", "/api/charter")):
+        if not self.path.startswith(("/api/comment", "/api/charter", "/api/ask")):
             self.send_error(404); return
         try:
             n = int(self.headers.get("Content-Length") or 0)
@@ -1638,6 +2031,11 @@ class H(BaseHTTPRequestHandler):
         except Exception:
             self.send_error(400, "bad JSON"); return
         text = (body.get("text") or "").strip()
+        if self.path.startswith("/api/ask"):
+            ok, msg = rule_ask(str(body.get("slug") or ""), str(body.get("id") or ""),
+                               (body.get("action") or "").strip(), text)
+            self._send(json.dumps({"ok": ok, "message": msg}), "application/json")
+            return
         if self.path.startswith("/api/charter"):
             # Shaping and writing go down the same route because they are the
             # same object; an action arrives instead of text, never as well as.

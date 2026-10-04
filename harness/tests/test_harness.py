@@ -937,3 +937,172 @@ class Records(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Ask(unittest.TestCase):
+    """T17: asks are opened by leads, briefed by the intermediary, signed by the owner."""
+
+    BRIEF = ("## Question\nShip X or Y?\n## Why yours\nintent: scope is the owner's\n"
+             "## Checked\nbriefs/s1.json\n## Options\n- X: faster\n- Y: safer\n"
+             "## Recommendation\nX (dev)\n## Waiting\nnothing")
+
+
+    def test_id_not_reused_after_accept(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "asks").mkdir(); (d / "briefs").mkdir()
+        (d / "briefs" / "t.json").write_text(json.dumps({"task": "t", "rulings": [{"id": "t-1"}]}))
+        self.assertEqual(hz.ask_next_id(d, "t"), "t-2")
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev"})
+        (self.ctx.dir / "briefs").mkdir()
+        self.bf = self.ctx.dir / "briefs" / "s1.json"
+        self.bf.write_text(json.dumps({"task": "s1", "node": "dev_1", "text": "do it"}))
+        self.err = mock.patch("sys.stderr", new_callable=io.StringIO)
+        self.err.start()
+        self.addCleanup(self.err.stop)
+
+    def open(self, me="dev", sid="s" * 36, task="s1"):
+        return hz.ask_open(self.ctx, task, "intent", "Ship X or Y?", me, sid)
+
+    def path(self, rec):
+        return self.ctx.dir / "asks" / f"{rec['id']}.json"
+
+    def test_lead_opens_member_refused_brief_required(self):
+        r = self.open()
+        self.assertEqual((r["id"], r["state"], r["node"]), ("s1-1", "asked", "dev_1"))
+        self.assertEqual(self.open(me="main")["id"], "s1-2")
+        with self.assertRaises(SystemExit):
+            self.open(me="dev_1")                       # a lane, in a session
+        self.assertEqual(self.open(me="dev_1", sid="")["asked_by"], "dev_1 (operator)")
+        with self.assertRaises(SystemExit):
+            self.open(task="nope")                      # no brief
+        with self.assertRaises(SystemExit):
+            hz.ask_open(self.ctx, "s1", "intent", "x" * 201, "dev", "")
+
+    def test_brief_validation_names_every_section(self):
+        b, errs = hz.parse_ask_brief(self.BRIEF)
+        self.assertEqual(errs, [])
+        self.assertEqual(b["options"], ["X: faster", "Y: safer"])
+        _, errs = hz.parse_ask_brief(self.BRIEF.replace("## Waiting\nnothing", ""))
+        self.assertEqual(errs, ["waiting: missing"])
+        bad = (self.BRIEF.replace("Ship X or Y?", "q" * 250)
+               .replace("- Y: safer", "")
+               .replace("briefs/s1.json", "\n".join("l" * 3 for _ in range(7))))
+        _, errs = hz.parse_ask_brief(bad)
+        self.assertIn("question: 250 chars, cap 200", errs)
+        self.assertIn("checked: 7 lines, cap 6", errs)
+        self.assertIn("options: 1 item(s), need 2–5", errs)
+        _, errs = hz.parse_ask_brief(self.BRIEF.replace("X: faster", "x" * 121))
+        self.assertEqual(errs, ["options #1: 121 chars, cap 120"])
+
+    def test_draft_needs_ready_and_accept_attaches(self):
+        r = self.open()
+        with self.assertRaises(SystemExit):
+            hz.ask_draft(self.path(r), r, "Ship X")
+        with self.assertRaises(SystemExit):
+            hz.ask_accept(self.ctx.dir, self.path(r), r)
+        hz.ask_set_brief(self.path(r), r, self.BRIEF)
+        hz.ask_draft(self.path(r), r, "Ship X")
+        out = hz.ask_accept(self.ctx.dir, self.path(r), r)
+        self.assertFalse(self.path(r).exists())
+        rs = json.loads(self.bf.read_text())["rulings"]
+        self.assertEqual((rs[0]["id"], rs[0]["answer"], rs[0]["asker_node"]),
+                         ("s1-1", "Ship X", "dev"))
+        self.assertEqual(out["question"], "Ship X or Y?")
+
+    def run_cli(self, argv, env):
+        import os
+        with mock.patch.object(hz, "HOME_STATE", self.home), \
+             mock.patch.dict(os.environ, env), \
+             mock.patch("sys.argv", ["harness", *argv]), \
+             redirect_stdout(io.StringIO()) as out:
+            try:
+                hz.main(); code = 0
+            except SystemExit as e:
+                code = e.code
+        return code, out.getvalue()
+
+    def two_projects(self):
+        self.home = Path(tempfile.mkdtemp())
+        for name in ("p1", "p2"):
+            d = self.home / f"-x-{name}"
+            (d / "asks").mkdir(parents=True)
+            (d / "binding.json").write_text(json.dumps({"repo": f"/x/{name}"}))
+            (d / "asks" / "t-1.json").write_text(json.dumps(
+                {"id": "t-1", "task": "t", "state": "ready", "asked_at": OLD,
+                 "question": f"q {name}"}))
+        (self.home / "-x-p2" / "asks" / "u-1.json").write_text(json.dumps(
+            {"id": "u-1", "task": "u", "state": "rejected", "at": OLD}))
+
+    def test_list_json_across_projects_and_accept_refused_in_session(self):
+        self.two_projects()
+        code, out = self.run_cli(["ask", "--list", "--json"], {})
+        rows = json.loads(out)
+        self.assertEqual(code, 0)
+        self.assertEqual(sorted((r["project"], r["slug"]) for r in rows),
+                         [("p1", "-x-p1"), ("p2", "-x-p2")])
+        code, _ = self.run_cli(["ask", "t-1", "--accept"], {"CLAUDE_CODE_SESSION_ID": "s" * 36})
+        self.assertEqual(code, hz.REFUSED)
+        code, _ = self.run_cli(["ask", "t-1", "--draft", "x"], {"HARNESS_INTERMEDIARY": "0"})
+        self.assertEqual(code, hz.REFUSED)
+        import os
+        env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            code, _ = self.run_cli(["ask", "t-1", "--reject"], {})
+        self.assertEqual(code, hz.REFUSED)                          # ambiguous id
+        with mock.patch.dict(os.environ, env, clear=True):
+            code, _ = self.run_cli(["ask", "t-1", "--reject", "--project", "p1"], {})
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads((self.home / "-x-p1" / "asks" / "t-1.json")
+                                    .read_text())["state"], "rejected")
+
+    def items(self, node):
+        with mock.patch.object(hz, "lead_owes", return_value=[]), \
+             mock.patch.object(hz, "rank0_owes", return_value=[]), \
+             mock.patch.object(hz, "open_waits", return_value={}), \
+             mock.patch.object(hz, "focus_family", return_value=None), \
+             mock.patch.object(hz, "unread_brief_comments", return_value={}), \
+             mock.patch.object(hz, "unactioned_briefs", return_value=[]), \
+             mock.patch.object(hz, "open_marks", return_value={}), \
+             mock.patch.object(hz, "queue", return_value=[]):
+            return hz.queue_items(self.ctx, node), hz.delta(self.ctx, node, "sid-" + node)
+
+    def test_reject_is_told_once_to_the_asker(self):
+        r = self.open()
+        hz.ask_reject(self.path(r), r)
+        self.assertNotIn("rejected:s1-1", self.items("main")[0])
+        now, (lines, ids) = self.items("dev")
+        self.assertIn("rejected:s1-1", now)
+        self.assertIn("rejected:s1-1", ids)
+        self.assertFalse(self.path(r).exists())          # told, so gone
+        self.assertNotIn("rejected:s1-1", self.items("dev")[0])
+
+    def test_ruled_reaches_lead_and_asker_until_read(self):
+        r = self.open(me="main")
+        hz.ask_set_brief(self.path(r), r, self.BRIEF)
+        hz.ask_draft(self.path(r), r, "Ship X")
+        hz.ask_accept(self.ctx.dir, self.path(r), r)
+        self.assertIn("ruled:s1:s1-1", self.items("dev")[0])       # the task's lead
+        self.assertIn("ruled:s1:s1-1", self.items("main")[0])      # the asker
+        self.assertNotIn("ruled:s1:s1-1", self.items("dev_1")[0])
+        b = json.loads(self.bf.read_text())
+        b["read"] = {"dev": time.strftime("%Y-%m-%dT%H:%M:%S%z",
+                                          time.localtime(time.time() + 5))}
+        self.bf.write_text(json.dumps(b))
+        self.assertNotIn("ruled:s1:s1-1", self.items("dev")[0])
+
+    def test_rewrite_keeps_rulings_and_read(self):
+        import os
+        self.bf.write_text(json.dumps({"task": "s1", "node": "dev_1", "text": "do it",
+                                       "revision": 1, "rulings": [{"id": "s1-1"}],
+                                       "read": {"dev": OLD}}))
+        self.ctx.me, self.ctx.branch = "dev", "dev"
+        self.ctx.worktree = self.ctx.repo = self.ctx.dir
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "s" * 36}), \
+             mock.patch("sys.argv", ["harness", "brief", "s1", "--write", "redo it"]), \
+             mock.patch("sys.stdout"):
+            hz.main()
+        b = json.loads(self.bf.read_text())
+        self.assertEqual((b["text"], b["rulings"], b["read"]),
+                         ("redo it", [{"id": "s1-1"}], {"dev": OLD}))

@@ -377,9 +377,14 @@ A brief exists **before** its mark: the lead writes it, then the member accepts.
 **Enforcement** `--how` required; the addressed lead only; every rank below 0 refused at `--approve`, with rank 0's own approval recorded `self_approved` and said on the line; `mark` and the queue both exclude a gated or declined brief. Rank 0 sees it at orientation and reads it with `harness brief <task>` — deciding whether a task is worth a session means reading the task.
 **Fails when** A lead turns every finding into a gated brief. The queue is the operator's attention and it is finite; declining on the record is a first-class outcome and costs one line.
 
-### T17 — Rank 0 asks the owner (removed; being redesigned)
+### T17 — Rank 0 and leads ask the owner, through the intermediary
 
-`harness decision` was removed on 2026-10-05, with its records. It was the first attempt at a channel from the tree to the owner, and it was the wrong shape: the asker wrote the question to justify itself, the owner had no way to reply but a quoted shell argument, nothing closed an item, and nothing told the owner one existed. Three were raised and none was ever answered. The replacement is an intermediary session between rank 0 and the leads on one side and the owner on the other; its scope is in `harness/design/owner-channel.md` in the setup repo. Until it exists, ask the owner in your own session when they are present.
+**Direction** upward, out of the tree, to the owner; the ruling returns on the task.
+**Rule** A question only the owner can answer (intent, judgement, something only they can do, risk they must accept) is opened with `harness ask <task>`. The intermediary, one read-only session outside the tree, investigates it, may question the asker, returns what isn't the owner's, and briefs the rest in six capped sections. The owner discusses it with the intermediary in a terminal; the intermediary drafts the ruling; only the owner's **accept** in the GUI writes it to the task's brief (`rulings`), and **reject** removes the question.
+
+**Why this shape.** `harness decision` (removed 2026-10-05) let the asker write the question to justify itself, gave the owner no way to reply but a quoted shell argument, closed nothing and told nobody; three were raised and none was answered. The intermediary writes for the owner, checks the asker's claims against the code, and the accept button is the signature no session can forge: `--accept` and `--reject` refuse inside any session.
+
+**Enforcement** `harness ask` refuses a lane and a task with no brief; the intermediary's verbs need `HARNESS_INTERMEDIARY=1`, which only `harness intermediary` sets; briefs over a cap are refused by section. Design: `harness/design/owner-channel.md` in the setup repo.
 
 ## Invariants
 

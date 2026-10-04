@@ -99,6 +99,14 @@ skills (humanizer, de-densify, sentence-prose, google-devdocs-style) it reads be
 can also read the folders lanes hold live grants on, where the screenshots and diffs it couldn't
 open were.
 
+## Evidence (2026-10-05)
+
+The intermediary attaches files the owner should see: `harness ask <id> --evidence PATH
+--caption "..."`. The CLI copies each into `<state>/asks/evidence/<id>/`, because scratch folders
+get swept and the GUI should never serve an arbitrary path. The Issues tab shows images inline
+(click for full size) and text files (diffs, logs) as links. Evidence is deleted with the ask on
+accept or reject; the ruling is the record.
+
 ## The record and the commands
 
 An ask is a record in `~/.claude/harness/<slug>/asks/<id>.json`. It is always attached to a task:

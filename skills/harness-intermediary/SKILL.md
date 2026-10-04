@@ -97,6 +97,14 @@ What is held back until the ruling, or "nothing". (300)
 `harness ask <id> --brief FILE` (or `-` with the text on stdin). Briefing again replaces the old
 one; do it whenever the owner says it isn't clear.
 
+**Attach the evidence the owner should look at.** A screenshot is often the briefing's best
+paragraph. `harness ask <id> --evidence PATH --caption "what to look at in it"` copies the file
+into the ask, and the Issues tab shows images inline and diffs, logs and text as links. Images:
+png, jpg, gif, webp, svg; text: txt, diff, patch, log, md, json, csv. Up to 12 per ask. Caption
+each one with what it shows and what to notice, and refer to it from the background ("the first
+screenshot shows…"). `--drop-evidence N` removes one. Evidence goes when the ask is accepted or
+rejected; the ruling is what stays.
+
 ## With the owner
 
 The owner talks to you in this terminal. Answer follow-ups from your own reading; if you don't

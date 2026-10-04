@@ -9060,6 +9060,12 @@ ASK_SECTIONS = (("question", "question", 300), ("background", "background", 2000
                 ("options", "options", 500), ("recommendation", "recommendation", 500),
                 ("waiting", "waiting", 300))
 ASK_ID_RE = re.compile(r"^[A-Za-z0-9_]+-\d+$")
+# Evidence the intermediary attaches for the owner to look at: a screenshot, a
+# diff. Copied in, so the owner sees what was briefed even if the source moves.
+EVIDENCE_IMAGE = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg")
+EVIDENCE_TEXT = (".txt", ".diff", ".patch", ".log", ".md", ".json", ".csv")
+EVIDENCE_CAP = {"image": 15 * 2**20, "text": 300 * 2**10}
+EVIDENCE_MAX, EVIDENCE_CAPTION = 12, 300
 
 
 def _now():
@@ -9256,6 +9262,80 @@ def ask_draft(path, rec, text, by="intermediary"):
     return rec
 
 
+def evidence_dir(path, ident):
+    """<state>/asks/evidence/<id>/ — beside the record, never inside a repo."""
+    return path.parent / "evidence" / ident
+
+
+def _evidence_name(n, name):
+    stem, ext = os.path.splitext(name)
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._")[:60] or "file"
+    return f"{n}-{stem}{ext.lower()}"
+
+
+def _bytes(b):
+    return f"{b} B" if b < 1024 else f"{b / 1024:.0f} KB" if b < 2**20 else f"{b / 2**20:.1f} MB"
+
+
+def ask_attach(path, rec, src, caption=None, by="intermediary"):
+    if rec.get("state") not in ASK_OPEN:
+        die(REFUSED, f"{rec['id']} is {rec.get('state')}; it takes no evidence")
+    ev = rec.setdefault("evidence", [])
+    if len(ev) >= EVIDENCE_MAX:
+        die(REFUSED, f"{rec['id']} already has {len(ev)} pieces of evidence, the cap. "
+                     f"Drop one first:\n           harness ask {rec['id']} --drop-evidence N")
+    cap = (caption or "").strip() or None
+    if cap and len(cap) > EVIDENCE_CAPTION:
+        die(REFUSED, f"the caption is {len(cap)} chars; the cap is {EVIDENCE_CAPTION}")
+    f = Path(src).expanduser()
+    if f.is_dir():
+        die(REFUSED, f"'{src}' is a directory. Attach one file at a time.")
+    if not f.is_file():
+        die(REFUSED, f"no file '{src}'")
+    ext = f.suffix.lower()
+    kind = "image" if ext in EVIDENCE_IMAGE else "text" if ext in EVIDENCE_TEXT else None
+    if kind is None:
+        die(REFUSED, f"'{f.name}': {ext or 'no extension'} is not evidence the owner's page "
+                     f"can show.\n           Images: {' '.join(EVIDENCE_IMAGE)}; "
+                     f"text: {' '.join(EVIDENCE_TEXT)}")
+    size = f.stat().st_size
+    if size > EVIDENCE_CAP[kind]:
+        die(REFUSED, f"'{f.name}' is {_bytes(size)}; a {kind} is capped at "
+                     f"{_bytes(EVIDENCE_CAP[kind])}.\n           Crop it, or attach the part "
+                     f"that answers the question.")
+    # A counter, not len+1: a dropped file's name is never reused, so a URL the
+    # owner's page cached for it never shows the wrong thing.
+    n = int(rec.get("evidence_seq") or 0) + 1
+    name = _evidence_name(n, f.name)
+    d = evidence_dir(path, rec["id"])
+    d.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(f, d / name)
+    ev.append({"file": name, "name": f.name, "caption": cap, "from": str(f.resolve()),
+               "kind": kind, "bytes": size, "at": _now()})
+    rec["evidence_seq"] = n
+    _ask_log(rec, by, f"attached {f.name}")
+    _save(path, rec)
+    return ev[-1]
+
+
+def ask_drop_evidence(path, rec, n, by="intermediary"):
+    if rec.get("state") not in ASK_OPEN:
+        die(REFUSED, f"{rec['id']} is {rec.get('state')}; nothing to drop")
+    ev = rec.get("evidence") or []
+    if not 1 <= n <= len(ev):
+        die(REFUSED, f"{rec['id']} has {len(ev)} piece(s) of evidence; there is no {n}. "
+                     f"harness ask {rec['id']} --show")
+    e = ev.pop(n - 1)
+    (evidence_dir(path, rec["id"]) / e["file"]).unlink(missing_ok=True)
+    _ask_log(rec, by, f"dropped evidence {e.get('name')}")
+    _save(path, rec)
+    return e
+
+
+def evidence_clear(path, ident):
+    shutil.rmtree(evidence_dir(path, ident), ignore_errors=True)
+
+
 def ask_return(path, rec, why, by="intermediary"):
     """Back to the asker. The stub carries no question, so it cannot be ruled on."""
     if rec.get("state") not in ASK_OPEN:
@@ -9265,6 +9345,7 @@ def ask_return(path, rec, why, by="intermediary"):
     stub = {"id": rec["id"], "task": rec.get("task"), "asker_node": rec.get("asker_node"),
             "returned_why": why.strip(), "state": "returned", "at": _now()}
     _save(path, stub)
+    evidence_clear(path, rec["id"])
     return stub
 
 
@@ -9278,8 +9359,21 @@ def ask_merge(path, rec, other, by="intermediary"):
     if o.get("state") not in ASK_OPEN or rec.get("state") not in ASK_OPEN:
         die(REFUSED, "both asks must be open to merge")
     _ask_log(o, by, f"merged {rec['id']} ({rec.get('asked_by')}): {rec.get('question')}")
+    # Its evidence goes with it, numbered on from the target's own.
+    src, dst = evidence_dir(path, rec["id"]), evidence_dir(path, other)
+    for e in rec.get("evidence") or []:
+        f = src / e["file"]
+        if not f.is_file():
+            continue
+        n = int(o.get("evidence_seq") or 0) + 1
+        name = _evidence_name(n, e.get("name") or e["file"])
+        dst.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(f), str(dst / name))
+        o.setdefault("evidence", []).append(dict(e, file=name))
+        o["evidence_seq"] = n
     _save(of, o)
     path.unlink()
+    evidence_clear(path, rec["id"])
     return o
 
 
@@ -9304,6 +9398,7 @@ def ask_accept(pdir, path, rec, text=None, by="operator"):
     b.setdefault("rulings", []).append(r)
     _save(bf, b)
     path.unlink()
+    evidence_clear(path, rec["id"])
     return r
 
 
@@ -9311,6 +9406,7 @@ def ask_reject(path, rec):
     stub = {"id": rec["id"], "task": rec.get("task"), "asker_node": rec.get("asker_node"),
             "state": "rejected", "at": _now()}
     _save(path, stub)
+    evidence_clear(path, rec["id"])
     return stub
 
 
@@ -9392,6 +9488,11 @@ def ask_show(pdir, repo, rec):
                 print(f"      {line}")
     if rec.get("draft"):
         print(f"  draft     {rec['draft']}")
+    ed = evidence_dir(Path(pdir) / "asks" / f"{rec['id']}.json", rec["id"])
+    for i, e in enumerate(rec.get("evidence") or [], 1):
+        print(f"  evidence {i}  {e.get('name')}  {e.get('kind')}  {_bytes(int(e.get('bytes') or 0))}"
+              + (f"  — {e['caption']}" if e.get("caption") else ""))
+        print(f"      {ed / e['file']}")
     for h in rec.get("history") or []:
         print(f"  · {str(h.get('at'))[:16]}  {h.get('by')}: {h.get('what')}")
     bf = Path(pdir) / "briefs" / f"{tkey(rec.get('task'))}.json"
@@ -9441,9 +9542,13 @@ def intermediary_live():
 def cmd_ask(a):
     """T17: a question only the owner can answer, briefed by the intermediary."""
     verbs = [v for v in ("brief", "amend", "draft", "return_why", "merge", "accept",
-                         "reject", "show") if getattr(a, v) not in (None, False)]
+                         "reject", "show", "evidence", "drop_evidence")
+             if getattr(a, v) is not None and getattr(a, v) is not False]
+    flag = lambda v: "--" + {"return_why": "return"}.get(v, v).replace("_", "-")
+    if a.caption is not None and not a.evidence:
+        die(REFUSED, "--caption goes with --evidence PATH")
     if len(verbs) > 1:
-        die(REFUSED, f"one verb at a time: {', '.join('--' + v.split('_')[0] for v in verbs)}")
+        die(REFUSED, f"one verb at a time: {', '.join(flag(v) for v in verbs)}")
     if a.list:
         rows = ask_list()
         if a.json:
@@ -9473,9 +9578,9 @@ def cmd_ask(a):
               f"you are told.")
         return
     v = verbs[0]
-    if v in ("brief", "amend", "draft", "return_why", "merge") and \
+    if v in ("brief", "amend", "draft", "return_why", "merge", "evidence", "drop_evidence") and \
             os.environ.get("HARNESS_INTERMEDIARY") != "1":
-        die(REFUSED, f"--{v.split('_')[0]} is the intermediary's, and this is not it "
+        die(REFUSED, f"{flag(v)} is the intermediary's, and this is not it "
                      f"(HARNESS_INTERMEDIARY is unset).\n           The owner starts it: "
                      f"harness intermediary")
     if v in ("accept", "reject") and os.environ.get("CLAUDE_CODE_SESSION_ID"):
@@ -9506,6 +9611,13 @@ def cmd_ask(a):
     elif v == "merge":
         ask_merge(path, rec, a.merge)
         print(f"merged {rec['id']} into {a.merge}")
+    elif v == "evidence":
+        e = ask_attach(path, rec, a.evidence, a.caption)
+        print(f"attached {e['name']} to {rec['id']} as evidence {len(rec['evidence'])} "
+              f"({e['kind']}, {_bytes(e['bytes'])}); the owner sees it under the briefing")
+    elif v == "drop_evidence":
+        e = ask_drop_evidence(path, rec, a.drop_evidence)
+        print(f"dropped {e.get('name')} from {rec['id']}")
     elif v == "accept":
         r = ask_accept(pdir, path, rec, a.text)
         print(f"ruled {rec['id']} on {rec.get('task')}: {r['answer']}")
@@ -9990,6 +10102,11 @@ def main():
     ak.add_argument("--return", dest="return_why", metavar="WHY",
                     help="intermediary: not the owner's; back to the asker")
     ak.add_argument("--merge", metavar="ID", help="intermediary: fold into another ask")
+    ak.add_argument("--evidence", metavar="PATH",
+                    help="intermediary: attach an image or text file for the owner to see")
+    ak.add_argument("--caption", metavar="TEXT", help="with --evidence: what it shows")
+    ak.add_argument("--drop-evidence", type=int, metavar="N",
+                    help="intermediary: remove evidence N (as numbered by --show)")
     ak.add_argument("--accept", action="store_true", help="owner: sign the draft")
     ak.add_argument("--text", metavar="TEXT", help="with --accept: the owner's own wording")
     ak.add_argument("--reject", action="store_true", help="owner: not a question to answer")

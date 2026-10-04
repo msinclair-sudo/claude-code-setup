@@ -1278,3 +1278,126 @@ class Ask(unittest.TestCase):
         b = json.loads(self.bf.read_text())
         self.assertEqual((b["text"], b["rulings"], b["read"]),
                          ("redo it", [{"id": "s1-1"}], {"dev": OLD}))
+
+
+class AskEvidence(unittest.TestCase):
+    """T17: evidence attached to an ask is copied in, served whitelisted, and
+    goes when the ask does."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev"})
+        (self.ctx.dir / "briefs").mkdir()
+        (self.ctx.dir / "briefs" / "s1.json").write_text(
+            json.dumps({"task": "s1", "node": "dev_1", "text": "do it"}))
+        self.err = mock.patch("sys.stderr", new_callable=io.StringIO)
+        self.err.start()
+        self.addCleanup(self.err.stop)
+        self.src = Path(tempfile.mkdtemp())
+        self.png = self.src / "shot one.PNG"
+        self.png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 100)
+        self.diff = self.src / "route.diff"
+        self.diff.write_text("--- a\n+++ b\n")
+
+    def open(self):
+        r = hz.ask_open(self.ctx, "s1", "intent", "Ship X or Y?", "dev", "")
+        return self.ctx.dir / "asks" / f"{r['id']}.json", r
+
+    def test_attach_copies_and_records(self):
+        p, r = self.open()
+        e = hz.ask_attach(p, r, str(self.png), "the overlap")
+        self.assertEqual((e["file"], e["name"], e["kind"], e["bytes"], e["caption"]),
+                         ("1-shot_one.png", "shot one.PNG", "image", 108, "the overlap"))
+        f = self.ctx.dir / "asks" / "evidence" / r["id"] / "1-shot_one.png"
+        self.assertEqual(f.read_bytes(), self.png.read_bytes())
+        self.assertTrue(self.png.exists())                    # copied, not moved
+        hz.ask_attach(p, r, str(self.diff))
+        rec = json.loads(p.read_text())
+        self.assertEqual([x["kind"] for x in rec["evidence"]], ["image", "text"])
+        self.assertIn("attached route.diff", rec["history"][-1]["what"])
+
+    def test_bad_extension_missing_dir_and_caption_refused(self):
+        p, r = self.open()
+        bad = self.src / "x.exe"; bad.write_bytes(b"MZ")
+        for args in ((str(bad),), (str(self.src / "nope.png"),), (str(self.src),),
+                     (str(self.png), "c" * 301)):
+            with self.assertRaises(SystemExit):
+                hz.ask_attach(p, r, *args)
+        self.assertFalse((self.ctx.dir / "asks" / "evidence").exists())
+
+    def test_oversize_refused(self):
+        p, r = self.open()
+        with mock.patch.dict(hz.EVIDENCE_CAP, {"image": 50}):
+            with self.assertRaises(SystemExit):
+                hz.ask_attach(p, r, str(self.png))
+        with mock.patch.object(hz, "EVIDENCE_MAX", 1):
+            hz.ask_attach(p, r, str(self.diff))
+            with self.assertRaises(SystemExit):
+                hz.ask_attach(p, r, str(self.diff))
+
+    def test_drop_removes_file_and_never_reuses_a_name(self):
+        p, r = self.open()
+        hz.ask_attach(p, r, str(self.png)); hz.ask_attach(p, r, str(self.diff))
+        d = self.ctx.dir / "asks" / "evidence" / r["id"]
+        hz.ask_drop_evidence(p, r, 2)
+        self.assertFalse((d / "2-route.diff").exists())
+        with self.assertRaises(SystemExit):
+            hz.ask_drop_evidence(p, r, 2)
+        self.assertEqual(hz.ask_attach(p, r, str(self.diff))["file"], "3-route.diff")
+        self.assertEqual([e["file"] for e in json.loads(p.read_text())["evidence"]],
+                         ["1-shot_one.png", "3-route.diff"])
+
+    def test_accept_reject_return_delete_the_evidence(self):
+        for end in ("accept", "reject", "return"):
+            p, r = self.open()
+            hz.ask_attach(p, r, str(self.png))
+            d = self.ctx.dir / "asks" / "evidence" / r["id"]
+            self.assertTrue(d.is_dir())
+            if end == "accept":
+                hz.ask_set_brief(p, r, Ask.BRIEF)
+                hz.ask_draft(p, r, "Ship X")
+                hz.ask_accept(self.ctx.dir, p, r)
+            elif end == "reject":
+                hz.ask_reject(p, r)
+            else:
+                hz.ask_return(p, r, "a lead's call")
+            self.assertFalse(d.exists(), end)
+
+    def test_merge_moves_evidence_renumbered(self):
+        p1, r1 = self.open()
+        p2, r2 = self.open()
+        hz.ask_attach(p2, r2, str(self.diff))
+        hz.ask_attach(p1, r1, str(self.png), "cap")
+        hz.ask_attach(p1, r1, str(self.diff))
+        o = hz.ask_merge(p1, r1, r2["id"])
+        ev = self.ctx.dir / "asks" / "evidence"
+        self.assertEqual([(e["file"], e["caption"]) for e in o["evidence"]],
+                         [("1-route.diff", None), ("2-shot_one.png", "cap"),
+                          ("3-route.diff", None)])
+        self.assertEqual(sorted(f.name for f in (ev / r2["id"]).iterdir()),
+                         ["1-route.diff", "2-shot_one.png", "3-route.diff"])
+        self.assertFalse((ev / r1["id"]).exists())
+
+    def test_gui_serves_only_whitelisted_files(self):
+        gp = Path(__file__).resolve().parents[1] / "bin" / "harness-gui"
+        ld = importlib.machinery.SourceFileLoader("harness_gui", str(gp))
+        gui = importlib.util.module_from_spec(importlib.util.spec_from_loader("harness_gui", ld))
+        ld.exec_module(gui)
+        home = Path(tempfile.mkdtemp())
+        pdir = home / "-x-p"
+        (pdir / "asks").mkdir(parents=True)
+        (pdir / "binding.json").write_text("{}")
+        (home / "secret.png").write_bytes(b"secret")
+        p = pdir / "asks" / "t-1.json"
+        r = {"id": "t-1", "state": "ready"}
+        hz.ask_attach(p, r, str(self.png)); hz.ask_attach(p, r, str(self.diff))
+        r["evidence"].append(dict(r["evidence"][0], file="../../../secret.png"))
+        hz._save(p, r)
+        with mock.patch.object(gui.CLI, "HOME_STATE", home):
+            self.assertEqual(gui.ask_evidence("-x-p", "t-1", "1"),
+                             (self.png.read_bytes(), "image/png"))
+            self.assertEqual(gui.ask_evidence("-x-p", "t-1", "2", "2-route.diff")[1],
+                             "text/plain; charset=utf-8")
+            for args in (("-x-p", "t-1", "3"), ("-x-p", "t-1", "0"), ("-x-p", "t-1", "x"),
+                         ("-x-p", "t-1", "1", "2-route.diff"), ("..", "t-1", "1"),
+                         ("-x-p", "../t-1", "1"), ("-x-p", "t-2", "1")):
+                self.assertIsNone(gui.ask_evidence(*args), args)

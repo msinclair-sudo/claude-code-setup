@@ -76,16 +76,64 @@ ruling.
   for now. An item counts once it is briefed and it is the owner's move, not when the ask
   arrives, since the intermediary may send it back or merge it.
 
-Proposed briefing sections, each capped: question (one answerable sentence), why it's the
-owner's, what the intermediary checked, the options with each one's consequence, the asker's
-recommendation (attributed; the intermediary does not decide), and what waits on the answer.
+## The briefing (first version; change freely)
+
+Six sections, in this order. The CLI refuses a briefing that is over a cap or missing a section, so
+an essay cannot get through.
+
+| section | holds | cap |
+| --- | --- | --- |
+| question | one sentence the owner can answer | 200 chars |
+| why yours | which of the four kinds, and why the tree can't settle it | 200 chars |
+| checked | what the intermediary read, with paths or record names | 6 lines |
+| options | 2–5 options, each with its consequence | 120 chars each |
+| recommendation | the asker's, credited to the asker; may be "none" | 200 chars |
+| waiting | what is held back until the ruling, or "nothing" | 120 chars |
+
+## The record and the commands
+
+An ask is a record in `~/.claude/harness/<slug>/asks/<id>.json`. It is always attached to a task:
+the ruling has to land where a lead will read it. If no task exists yet, the asker writes the brief
+first.
+
+States: `asked` → `briefing` → `ready` (the owner's move) → `drafted` → removed by **accept** or
+**reject**. `returned` (sent back to the asker) and `merged` (folded into another ask) end it
+early.
+
+| who | command | does |
+| --- | --- | --- |
+| rank 0 or a lead | `harness ask <task> --kind intent\|judgement\|action\|risk --question "..."` | opens an ask and prints the intermediary's address for a `SendMessage` nudge. Lanes are refused. |
+| intermediary | `harness ask <id> --brief FILE` | sets the six sections, checked against the caps; the state becomes `ready` |
+| intermediary | `harness ask <id> --amend "..."` | rewrites the question with what the discussion added |
+| intermediary | `harness ask <id> --draft "..."` | writes the draft ruling; the state becomes `drafted` |
+| intermediary | `harness ask <id> --return "why"` / `--merge <other>` | sends the ask back, or folds it into another |
+| owner (GUI) | `harness ask <id> --accept` / `--reject` | refused from inside any session, as `sweep` is, so only the owner's GUI or shell can sign |
+| anyone | `harness ask --list` | the open asks; the GUI reads the same thing |
+
+**Accept** attaches the (amended) question and the ruling to the task's brief as a `rulings` entry,
+then removes the ask. `harness brief <task>` shows the rulings, and the task's lead gets one
+orientation line when one lands. Rulings travel with the brief, so a swept task keeps them in the
+archive.
+
+**Reject** removes the ask. The asker gets one orientation line saying the owner rejected it, so it
+doesn't ask again. Nothing else is kept.
+
+## The intermediary's session and skill
+
+- `harness intermediary` starts it: `claude` in its own directory under `~/.claude/harness/`, with
+  read access to each enrolled repo, read-only permissions, and its address recorded so
+  `harness ask` can print it. One per machine.
+- Its own skill, `harness-intermediary`, says:
+  - what to read first for an ask: the task's brief, the asker's notes, then the code;
+  - when to send an ask back (the tree can settle it, or it's access, approval or a stalled session);
+  - how to merge duplicates;
+  - how to write the six sections;
+  - how to query the asker;
+  - that it never decides, and never accepts.
+- The owner manages its compaction, as for rank 0.
+- Askers learn `harness ask` from one line each in the root and downward skills.
 
 ## Still to discuss
 
-- The briefing's sections: confirm the proposal above, and the caps.
-- How an asker hands an ask over, and the record the intermediary writes (a `harness` command,
-  so the GUI and the askers read the same record).
-- How a ruling reaches the asker, and where rulings are stored so tasks and facts can cite them.
-- What happens to an item nobody answers.
-- The intermediary's own instructions: what it reads first, how it decides an ask isn't the
-  owner's, and when it compacts.
+- Nothing blocks building the first version. Revisit the caps and sections after the first few
+  real items.

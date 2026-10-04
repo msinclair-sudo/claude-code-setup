@@ -1542,7 +1542,7 @@ const AMSG = {};          // ask key -> the CLI's last refusal, shown on the ite
 let FILTER = '';          // the rulings filter, applied client-side
 let LASTD = null;         // the last state read, so a keystroke can re-filter
 // The pages, in tab order. The first is the default (no hash).
-const TABS = [{route: 'tree', label: 'Trees'}, {route: 'owner', label: 'Owner'}];
+const TABS = [{route: 'tree', label: 'Agents'}, {route: 'owner', label: 'Issues'}];
 const ROUTE = () => {
   const h = location.hash.slice(1);
   return TABS.some(t => t.route === h) ? h : TABS[0].route;

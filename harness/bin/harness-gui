@@ -1615,6 +1615,7 @@ function askItem(slug, a) {
     } else {
       body = meta + '<dl>' +
         sec('Question', b.question || a.question) +
+        sec('Background', b.background) +
         sec('Why yours', b.why) +
         sec('Checked', lines(b.checked)) +
         '<dt>Options</dt><dd>' + opts + '</dd>' +

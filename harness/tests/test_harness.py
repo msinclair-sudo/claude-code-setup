@@ -1113,7 +1113,7 @@ if __name__ == "__main__":
 class Ask(unittest.TestCase):
     """T17: asks are opened by leads, briefed by the intermediary, signed by the owner."""
 
-    BRIEF = ("## Question\nShip X or Y?\n## Why yours\nintent: scope is the owner's\n"
+    BRIEF = ("## Question\nShip X or Y?\n## Background\nX ships the map.\n\nY waits a cycle.\n## Why yours\nintent: scope is the owner's\n"
              "## Checked\nbriefs/s1.json\n## Options\n- X: faster\n- Y: safer\n"
              "## Recommendation\nX (dev)\n## Waiting\nnothing")
 
@@ -1156,15 +1156,16 @@ class Ask(unittest.TestCase):
         self.assertEqual(b["options"], ["X: faster", "Y: safer"])
         _, errs = hz.parse_ask_brief(self.BRIEF.replace("## Waiting\nnothing", ""))
         self.assertEqual(errs, ["waiting: missing"])
-        bad = (self.BRIEF.replace("Ship X or Y?", "q" * 250)
+        self.assertEqual(b["background"], "X ships the map.\n\nY waits a cycle.")
+        bad = (self.BRIEF.replace("Ship X or Y?", "q" * 350)
                .replace("- Y: safer", "")
-               .replace("briefs/s1.json", "\n".join("l" * 3 for _ in range(7))))
+               .replace("briefs/s1.json", "\n".join("l" * 3 for _ in range(13))))
         _, errs = hz.parse_ask_brief(bad)
-        self.assertIn("question: 250 chars, cap 200", errs)
-        self.assertIn("checked: 7 lines, cap 6", errs)
+        self.assertIn("question: 350 chars, cap 300", errs)
+        self.assertIn("checked: 13 lines, cap 12", errs)
         self.assertIn("options: 1 item(s), need 2–5", errs)
-        _, errs = hz.parse_ask_brief(self.BRIEF.replace("X: faster", "x" * 121))
-        self.assertEqual(errs, ["options #1: 121 chars, cap 120"])
+        _, errs = hz.parse_ask_brief(self.BRIEF.replace("X: faster", "x" * 501))
+        self.assertEqual(errs, ["options #1: 501 chars, cap 500"])
 
     def test_draft_needs_ready_and_accept_attaches(self):
         r = self.open()

@@ -76,19 +76,28 @@ ruling.
   for now. An item counts once it is briefed and it is the owner's move, not when the ask
   arrives, since the intermediary may send it back or merge it.
 
-## The briefing (first version; change freely)
+## The briefing (second version, 2026-10-05)
 
-Six sections, in this order. The CLI refuses a briefing that is over a cap or missing a section, so
-an essay cannot get through.
+Seven sections, in this order. The CLI refuses a briefing that is over a cap or missing a section.
 
 | section | holds | cap |
 | --- | --- | --- |
-| question | one sentence the owner can answer | 200 chars |
-| why yours | which of the four kinds, and why the tree can't settle it | 200 chars |
-| checked | what the intermediary read, with paths or record names | 6 lines |
-| options | 2–5 options, each with its consequence | 120 chars each |
-| recommendation | the asker's, credited to the asker; may be "none" | 200 chars |
-| waiting | what is held back until the ruling, or "nothing" | 120 chars |
+| question | one sentence the owner can answer, in plain words | 300 chars |
+| background | what is going on, what the owner would see, how it came up, why it matters; prose | 2000 chars |
+| why yours | which of the four kinds, and why the tree can't settle it | 400 chars |
+| checked | what was read and opened, what was verified, what couldn't be seen | 12 lines |
+| options | 2–5 options: what changes, what it costs and risks, what it rules out | 500 chars each |
+| recommendation | the asker's, credited to the asker; may be "none" | 500 chars |
+| waiting | what is held back until the ruling, or "nothing" | 300 chars |
+
+**Why it changed.** The first real briefing (`hover_mark_above_edges-1`) was accurate and
+unreadable. With six sections at 120–200 characters it had no room to say what was going on, and
+it used the tree's internal labels ("(b)", "the two-layer no-halo test", "7 of 13 sampled papers").
+The fix adds a background section, raises the caps so an option can carry its consequence, and
+gives the intermediary writing guidance: the owner's Voice section in its prompt, and four writing
+skills (humanizer, de-densify, sentence-prose, google-devdocs-style) it reads before briefing. It
+can also read the folders lanes hold live grants on, where the screenshots and diffs it couldn't
+open were.
 
 ## The record and the commands
 
@@ -103,7 +112,7 @@ early.
 | who | command | does |
 | --- | --- | --- |
 | rank 0 or a lead | `harness ask <task> --kind intent\|judgement\|action\|risk --question "..."` | opens an ask and prints the intermediary's address for a `SendMessage` nudge. Lanes are refused. |
-| intermediary | `harness ask <id> --brief FILE` | sets the six sections, checked against the caps; the state becomes `ready` |
+| intermediary | `harness ask <id> --brief FILE` | sets the seven sections, checked against the caps; the state becomes `ready` |
 | intermediary | `harness ask <id> --amend "..."` | rewrites the question with what the discussion added |
 | intermediary | `harness ask <id> --draft "..."` | writes the draft ruling; the state becomes `drafted` |
 | intermediary | `harness ask <id> --return "why"` / `--merge <other>` | sends the ask back, or folds it into another |
@@ -127,7 +136,7 @@ doesn't ask again. Nothing else is kept.
   - what to read first for an ask: the task's brief, the asker's notes, then the code;
   - when to send an ask back (the tree can settle it, or it's access, approval or a stalled session);
   - how to merge duplicates;
-  - how to write the six sections;
+  - how to write the seven sections, for the owner rather than for the tree;
   - how to query the asker;
   - that it never decides, and never accepts.
 - The owner manages its compaction, as for rank 0.

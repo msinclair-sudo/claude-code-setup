@@ -9052,10 +9052,13 @@ def cmd_archive(a):
 ASK_KINDS = ("intent", "judgement", "action", "risk")
 ASK_OPEN = ("asked", "ready", "drafted")
 INTERMEDIARY = "harness-intermediary"
-# The six sections, in order: heading, key, cap. A cap is chars unless noted.
-ASK_SECTIONS = (("question", "question", 200), ("why yours", "why", 200),
-                ("checked", "checked", 6), ("options", "options", 120),
-                ("recommendation", "recommendation", 200), ("waiting", "waiting", 120))
+# The seven sections, in order: heading, key, cap. A cap is chars unless noted.
+# Raised 2026-10-05 after the first real briefing: at 120 chars an option was a
+# label, and with no background the owner could not tell what it was about.
+ASK_SECTIONS = (("question", "question", 300), ("background", "background", 2000),
+                ("why yours", "why", 400), ("checked", "checked", 12),
+                ("options", "options", 500), ("recommendation", "recommendation", 500),
+                ("waiting", "waiting", 300))
 ASK_ID_RE = re.compile(r"^[A-Za-z0-9_]+-\d+$")
 
 
@@ -9153,7 +9156,8 @@ def ask_find(ident, project=None):
 
 
 def parse_ask_brief(text):
-    """Six `## ` sections, each under its cap -> (brief, []), or (None, every fault)."""
+    """The `## ` sections, each under its cap -> (brief, []), or (None, every fault).
+    Prose keeps its paragraphs: lines join with a space, blank lines stay."""
     names = {h: k for h, k, _ in ASK_SECTIONS}
     secs, cur, errs = {}, None, []
     for line in (text or "").splitlines():
@@ -9177,6 +9181,7 @@ def parse_ask_brief(text):
         lines = [l.strip() for l in secs[k] if l.strip()]
         if not lines:
             errs.append(f"{h}: empty"); continue
+        paras = [" ".join(x.split()) for x in "\n".join(l.strip() for l in secs[k]).strip().split("\n\n")]
         if k == "checked":
             if len(lines) > cap:
                 errs.append(f"{h}: {len(lines)} lines, cap {cap}")
@@ -9198,7 +9203,7 @@ def parse_ask_brief(text):
                     errs.append(f"{h} #{i}: {len(it)} chars, cap {cap}")
             out[k] = items
         else:
-            v = " ".join(lines)
+            v = "\n\n".join(x for x in paras if x)
             if len(v) > cap:
                 errs.append(f"{h}: {len(v)} chars, cap {cap}")
             out[k] = v
@@ -9216,8 +9221,8 @@ def ask_set_brief(path, rec, text, by="intermediary"):
     if errs:
         die(REFUSED, f"brief refused — {len(errs)} fault(s):\n"
                      + "\n".join(f"             {e}" for e in errs)
-                     + "\n           Sections, in order: ## Question, ## Why yours, "
-                       "## Checked, ## Options,\n           ## Recommendation, ## Waiting")
+                     + "\n           Sections, in order: "
+                     + ", ".join("## " + h.capitalize() for h, _, _ in ASK_SECTIONS))
     rec["brief"], rec["state"] = brief, "ready"
     _ask_log(rec, by, "briefed")
     _save(path, rec)
@@ -9517,6 +9522,26 @@ def cmd_ask(a):
 # before the subcommand would also match `-c ...`, which can run anything.
 INTERMEDIARY_TOOLS = ("Read", "Grep", "Glob", "Bash", "SendMessage", "ListAgents")
 INTERMEDIARY_GIT = ("log", "show", "diff", "status")
+# Writing skills it reads before briefing; the owner's Voice section is in its prompt.
+INTERMEDIARY_WRITING = ("humanizer", "sentence-prose", "de-densify", "google-devdocs-style")
+
+
+def intermediary_prompt():
+    """Its system prompt: its skill, then the owner's own Voice section from the
+    global CLAUDE.md, so it writes in the register the owner asked for."""
+    home = Path.home() / ".claude"
+    parts = [(home / "skills" / INTERMEDIARY / "SKILL.md").read_text()]
+    try:
+        g = (home / "CLAUDE.md").read_text()
+        m = re.search(r"^## Voice\n(.*?)(?=^## |\Z)", g, re.S | re.M)
+        if m:
+            parts.append("# The owner's voice (from their CLAUDE.md)\n" + m.group(1).strip())
+    except Exception:
+        pass
+    out = HOME_STATE / "intermediary" / "prompt.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n\n".join(parts) + "\n")
+    return out
 
 
 def intermediary_cmd(model=None, effort=None):
@@ -9534,11 +9559,27 @@ def intermediary_cmd(model=None, effort=None):
         for d in cand:
             if d and d not in dirs and Path(d).is_dir():
                 dirs.append(d); repos.append(d)
+    # Read-only on what lanes may write outside the repo: their live grants.
+    for pdir, _ in ask_projects():
+        try:
+            g = json.loads((pdir / "grants.json").read_text())
+        except Exception:
+            continue
+        for rows in (g.get("nodes") or {}).values():
+            for r in rows:
+                d = r.get("path")
+                if d and not r.get("revoked_at") and d not in dirs and Path(d).is_dir():
+                    dirs.append(d)
+    # Its writing skills, read on demand (--restricted loads no user skills).
+    for sk in INTERMEDIARY_WRITING:
+        d = str(Path.home() / ".claude" / "skills" / sk)
+        if Path(d).is_dir() and d not in dirs:
+            dirs.append(d)
     allow = ["Bash(harness ask *)"]
     for d in repos:
         for q in ('"', "'") + (("",) if " " not in d else ()):
             allow += [f"Bash(git -C {q}{d}{q} {g} *)" for g in INTERMEDIARY_GIT]
-    skill = Path.home() / ".claude" / "skills" / INTERMEDIARY / "SKILL.md"
+    skill = intermediary_prompt()
     # --strict-mcp-config: no MCP servers or connectors, which could write outside.
     cmd = ["claude", "-n", INTERMEDIARY, "--restricted", "--strict-mcp-config", "--add-dir", *dirs,
            "--tools", *INTERMEDIARY_TOOLS,
@@ -9943,7 +9984,7 @@ def main():
     ak.add_argument("--kind", choices=list(ASK_KINDS))
     ak.add_argument("--question", metavar="TEXT", help="one sentence, at most 200 chars")
     ak.add_argument("--brief", metavar="FILE",
-                    help="intermediary: the six sections as markdown; '-' reads stdin")
+                    help="intermediary: the seven sections as markdown; '-' reads stdin")
     ak.add_argument("--amend", metavar="TEXT", help="intermediary: rewrite the question")
     ak.add_argument("--draft", metavar="TEXT", help="intermediary: the draft ruling")
     ak.add_argument("--return", dest="return_why", metavar="WHY",

@@ -9549,7 +9549,13 @@ def intermediary_cmd(model=None, effort=None):
         cmd += ["--model", model]
     if effort:
         cmd += ["--effort", effort]
-    return cmd
+    # Last, after a non-variadic flag, so no list swallows it: the first turn.
+    return cmd + [INTERMEDIARY_START]
+
+
+INTERMEDIARY_START = ("You are the harness intermediary; your instructions are in your system "
+                      "prompt. Start now: run `harness ask --list`, and tell the owner in a few "
+                      "lines what is open and whose move each one is, or that nothing is.")
 
 
 def cmd_intermediary(a):

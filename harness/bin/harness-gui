@@ -1935,7 +1935,10 @@ function drawWaits() {
       // often on the same row, and a line into its bottom would cross the card).
       const above = b.bottom <= a.top + 4;
       const x2 = b.left + b.width / 2 - box.left, y2 = (above ? b.bottom : b.top) - box.top;
-      const ym = Math.min(y1, y2) - 22;
+      // The tree's own branch bar runs 22px above a card. A lead above: the bar
+      // over the WAITING card (min() put it 22px above the lead's bottom, inside
+      // the lead's card). A holder on the same row: above the higher of the two.
+      const ym = (above ? y1 : Math.min(y1, y2)) - 22;
       ds.push([m.classList.contains('hto') ? 'held' : '',
                'M' + x1 + ' ' + y1 + 'V' + ym + 'H' + x2 + 'V' + y2]);
     });

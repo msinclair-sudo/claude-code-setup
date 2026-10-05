@@ -40,6 +40,51 @@ It never orchestrates, touches code, decides intent, or writes briefs.
 - `.harness/` and `.claude/`;
 - the manifest: root owns it, so a bloated `blindSpot` is reported, not edited.
 
+## A large corpus: spend where the cost is
+
+It never reads the whole corpus. The 600k tokens are two separate costs:
+
+- **`CLAUDE.md`** (21k tokens) is paid on every session start.
+- **The other 409k words** are paid only when a session reads them, and sessions rarely do. In 154
+  biblion2 transcripts (2026-10-05), `Read` opened `plans/enrich/ENRICH-DESIGN.md` 16 times and no
+  other doc more than twice. `MODEL.md`, `SCHEMA.md` and `DESIGN.md` (110k words between them) were
+  never opened. This undercounts: swept transcripts are archived, and reads through grep or sed
+  don't show up as `Read`.
+
+So the work runs in order of payoff:
+
+1. **Inventory, with no model.** The harness builds a per-file ledger. Each entry records:
+   - words and the heading outline;
+   - last commit;
+   - links in and out;
+   - whether an open record cites the file (`harness cited`);
+   - how often sessions read it, counted from their transcripts;
+   - paths it names that no longer exist;
+   - the tasks it names, and their states.
+
+   The ledger is refreshed from `git diff` since the last pass. This costs no tokens.
+2. **`CLAUDE.md` first.** It is read in full once, about 22k tokens, and decided section by section:
+   keep, move to provenance, or point elsewhere. One or two passes take it to the budget.
+3. **Stale docs, from the inventory.** A file becomes a candidate when it is:
+   - cited by no open record;
+   - linked from no kept doc;
+   - untouched for 14 days;
+   - about tasks that are all closed.
+
+   A pass confirms each candidate from its outline and opening screen, about 1–2k tokens, not the
+   whole file. On biblion2, 39 files (173k words) are uncited, and history such as
+   `design/PHASE-5-LOG.md` (47k words) and the phase briefs is the obvious first batch. A file
+   that describes code that still exists is reference, not history, and stays even when uncited.
+4. **Big reference docs, on demand only.** A doc gets a pass when the inventory shows sessions
+   reading it, or when a doc–code conflict points into it. A pass reads the outline, then one slice
+   of at most about 40k tokens. The ledger records where it stopped.
+5. **Steady state.** Passes read only the sections changed since the ledger's last commit, so a
+   typical pass reads a few thousand tokens.
+
+Each pass is capped at about 80k tokens read. Being a fresh session, it never accumulates context.
+Clarity rewrites go only to docs that are kept and actually read. On biblion2, the first sweep should
+read about 200–250k tokens over five or six passes, and then very little.
+
 ## Doc and code disagreeing
 
 - **The code is right and the doc is stale** (a passing check or a commit shows what the code

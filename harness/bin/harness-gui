@@ -148,7 +148,7 @@ def intermediary(rows, repo):
     """
     name = CLI.intermediary_name(repo)
     out = {"name": name, "running": None, "context": None, "idle": None,
-           "up": None, "status": None, "stopped": False}
+           "up": None, "status": None, "stopped": False, "stop": None}
     if rows is None:
         return out
     r = next((x for x in rows if x.get("name") == name), None)
@@ -156,7 +156,7 @@ def intermediary(rows, repo):
         return dict(out, running=False)
     a, c = CLI.last_turn(r.get("sessionId") or "")
     return dict(out, running=True, status=r.get("status"), context=c,
-                stopped=CLI.is_stopped(r),
+                stopped=CLI.is_stopped(r), stop=CLI.stop_detail(r, rows),
                 idle=(None if r.get("status") == "busy" or a is None else int(a)),
                 # The roster's startedAt is epoch ms, as on a node card.
                 up=(int(time.time() - r["startedAt"] / 1000)
@@ -390,6 +390,9 @@ def read_state():
                              # nobody.
                              [dict({"name": r.get("name"), "status": r.get("status"),
                                     "stopped": CLI.is_stopped(r),
+                                    # Which stop: a permission prompt, or a
+                                    # finished turn waiting on someone.
+                                    "stop": CLI.stop_detail(r, rows),
                                     "id": (r.get("sessionId") or "")[:8],
                                     # Uptime: the roster's startedAt is epoch ms.
                                     "up": (int(time.time() - r["startedAt"] / 1000)
@@ -436,6 +439,25 @@ def read_state():
                 "awaited_by": sorted(n for n, r in waits.items()
                                      if r.get("parent") == name),
             })
+        # A session that finished its turn and is waiting on someone is a wait
+        # the harness never recorded. Draw it as one, on the node it is waiting
+        # on, so it reads like a recorded wait and not like a fault. A recorded
+        # wait wins: it says what was asked.
+        node_of = {r.get("name"): n for n, wt in wt_of.items() for r in by_cwd.get(wt, [])}
+        by_name = {n["name"]: n for n in nodes}
+        for n in nodes:
+            st = next((s["stop"] for s in n["sessions"] or [] if s.get("stop")), None)
+            if n["waiting"] or not st or st["kind"] != "reply":
+                continue
+            on = node_of.get(st["on"], st["on"])
+            idle = next((s.get("idle") for s in n["sessions"] if s.get("stop")), None)
+            n["waiting"] = {"parent": on or "you", "asked": st.get("said") or "",
+                            "inferred": True,
+                            "age": ("" if idle is None else
+                                    f"{int(idle // 60)}m" if idle < 3600 else
+                                    f"{int(idle // 3600)}h{int(idle % 3600 // 60):02d}")}
+            if on in by_name and n["name"] not in by_name[on]["awaited_by"]:
+                by_name[on]["awaited_by"] = sorted(by_name[on]["awaited_by"] + [n["name"]])
         nodes.sort(key=lambda n: (n["rank"], n["name"]))
         pname = Path(repo).name
 
@@ -1105,7 +1127,10 @@ function card(n) {
   // so without this the one card that needs a human is painted the same as the
   // cards that need nobody — which is how a lead sat halted for forty minutes on
   // a board that was open the whole time.
-  const halted = ss.some(s => s.stopped);
+  // Most stops are a finished turn waiting on someone; those are drawn as a
+  // wait, below. Only a permission prompt, or a stop the transcript can't
+  // place, needs the keyboard.
+  const halted = ss.some(s => s.stopped && !(s.stop && s.stop.kind === 'reply'));
   const cls = unknown ? 'unknown'
             : halted ? 'dup'
             : (ss.some(s => s.status === 'busy') ? 'busy' : (ss.length ? 'idle' : ''));
@@ -1113,9 +1138,11 @@ function card(n) {
   if (unknown)            who = '<div class="ln u">occupancy unknown</div>';
   else if (ss.length > 1) who = '<div class="ln dup">' + ss.length +
       ' sessions in one worktree</div>';
-  else if (halted)        who = '<div class="ln dup">' +
-      'STOPPED at a prompt &middot; claude attach ' + esc(ss[0].id) + '</div>' +
-      meter(ss[0]);
+  else if (halted)        who = '<div class="ln dup">' + (ss[0].stop
+      ? 'permission prompt &middot; ' + esc(ss[0].stop.tool) + '</div>' +
+        (ss[0].stop.what ? '<div class="ln q">' + esc(ss[0].stop.what) + '</div>' : '')
+      : 'stopped &mdash; a prompt or a reply</div>') +
+      '<div class="ln q">claude attach ' + esc(ss[0].id) + '</div>' + meter(ss[0]);
   else if (ss.length)     who = '<div class="ln" title="session ' + esc(ss[0].name) + '">' +
       // "idle · idle 5m" said it twice: the age already says idle.
       (ss[0].status === 'idle' && age(ss[0])
@@ -1144,9 +1171,12 @@ function card(n) {
   const w = n.waiting;
   const wait = w
     ? '<span class="wto" hidden data-on="' + esc(w.parent || '') + '"></span>' +
-      '<div class="wt">waiting on <b>' + esc(w.parent || 'its lead') + '</b> &middot; ' +
+      '<div class="wt"' + (w.inferred ? ' title="read off its transcript: it finished ' +
+        'its turn and no harness waiting record says on what"' : '') +
+      '>waiting on <b>' + esc(w.parent || 'its lead') + '</b> &middot; ' +
       esc(w.age || '') + '</div>' +
-      '<div class="wt q">' + esc(w.asked || 'nothing recorded') + '</div>' +
+      '<div class="wt q">' + esc(w.asked || (w.inferred ? 'finished its turn'
+                                                        : 'nothing recorded')) + '</div>' +
       (w.still_moving ? '<div class="wt s">still moving: ' + esc(w.still_moving) +
                         '</div>' : '')
     : '';
@@ -1188,16 +1218,21 @@ function intermCard(p) {
   const im = p.intermediary || {};
   const asks = p.asks || [];
   const yours = asks.filter(a => a.state === 'ready' || a.state === 'drafted').length;
+  // A finished turn is the intermediary waiting on the owner: its normal rest.
+  const reply = im.stopped && im.stop && im.stop.kind === 'reply';
   const cls = im.running === null ? 'unknown'
-            : im.stopped ? 'dup'
+            : im.stopped && !reply ? 'dup'
             : im.running ? (im.status === 'busy' ? 'busy' : 'idle') : '';
   const s = {status: im.status, idle: im.idle, carry: im.context, up: im.up};
   let who;
   if (im.running === null) who = '<div class="ln u">unknown &mdash; the roster could not be read</div>';
   else if (!im.running)    who = '<div class="ln q">not running</div>' +
       '<div class="ln"><code>' + esc(startCmd(p)) + '</code></div>';
-  else if (im.stopped)     who = '<div class="ln dup">STOPPED at a prompt &middot; ' +
-      'claude agents</div>' + meter(s);
+  else if (reply)          who = '<div class="ln">waiting on <b>you</b>' + age(s) +
+      '</div>' + meter(s);
+  else if (im.stopped)     who = '<div class="ln dup">' + (im.stop
+      ? 'permission prompt &middot; ' + esc(im.stop.tool) : 'stopped &mdash; a prompt or a reply') +
+      '</div>' + meter(s);
   else                     who = '<div class="ln" title="session ' + esc(im.name || '') + '">' +
       (im.status === 'idle' && age(s) ? age(s).replace(/^ &middot; /, '')
                                       : esc(im.status || '') + age(s)) + '</div>' + meter(s);

@@ -176,9 +176,9 @@ def is_stopped(row):
 
     The first draft of everything below called both "halted at a prompt" and
     told the operator to attach. That was wrong for the commoner of the two and
-    sent them at the wrong remedy twice. Nothing outside the session can tell
-    the cases apart, so every surface now says WAITING ON YOU and offers both,
-    cheapest first. A queue that confidently prescribes the wrong action is
+    sent them at the wrong remedy twice. The roster can't tell the cases apart;
+    `stop_detail` reads them off the transcript, and where it can't, every
+    surface says WAITING ON YOU and offers both, cheapest first. A queue that confidently prescribes the wrong action is
     worse than one that says it does not know.
 
     Why it is read at all — a measurement taken 2026-08-31 found that the roster
@@ -201,6 +201,91 @@ def is_stopped(row):
 
 def stopped_rows(rows):
     return [r for r in rows if is_stopped(r)]
+
+
+FROM_NAME = re.compile(r'<cross-session-message[^>]*\bfrom-name="([^"]+)"')
+
+
+def stop_detail(row, rows=None, tail=256 * 1024):
+    """Which of the two stops this is, read off the session's own transcript.
+
+    The roster can't tell them apart; the transcript can. A turn that ended
+    (`end_turn`, then the `turn_duration` record) is a session waiting for a
+    reply: `{"kind": "reply", "on": <session name, or "" for the operator>,
+    "said": <its last message's summary>}`. Measured on a live tree 2026-10-05,
+    every stopped session was this one. A tool call with nothing after it is a
+    permission prompt, the one only a keyboard clears: `{"kind": "permission",
+    "tool": ..., "what": ...}`. None when not stopped, or when the tail says
+    neither, so a caller falls back to naming both.
+
+    Who a reply-wait is on: whoever its last `SendMessage` in the final turn
+    went to, else whoever sent the prompt that opened the turn.
+    """
+    if not is_stopped(row):
+        return None
+    t = transcript_for(row.get("sessionId") or "")
+    if t is None:
+        return None
+    try:
+        with open(t, "rb") as fh:
+            fh.seek(0, 2)
+            fh.seek(max(0, fh.tell() - tail))
+            lines = fh.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return None
+    kind, on, said = None, None, ""
+    for line in reversed(lines):
+        try:
+            e = json.loads(line)
+        except Exception:
+            continue                       # the first line of the chunk may be cut
+        typ, m = e.get("type"), e.get("message") or {}
+        c = m.get("content")
+        if typ == "system" and e.get("subtype") in ("turn_duration", "stop_hook_summary"):
+            kind = kind or "reply"
+            continue
+        if typ == "assistant":
+            calls = [x for x in (c if isinstance(c, list) else [])
+                     if isinstance(x, dict) and x.get("type") == "tool_use"]
+            if kind is None:
+                if not calls:
+                    kind = "reply"
+                else:
+                    i = calls[-1].get("input") or {}
+                    return {"kind": "permission", "tool": calls[-1].get("name") or "?",
+                            "what": str(i.get("command") or i.get("file_path")
+                                        or i.get("to") or "")[:120]}
+            for x in reversed(calls):
+                if on is None and x.get("name") == "SendMessage":
+                    i = x.get("input") or {}
+                    on, said = str(i.get("to") or ""), str(i.get("summary") or "")
+            continue
+        if typ == "user":
+            if kind is None:
+                return None                # prompted or mid-turn: neither stop
+            if isinstance(c, list) and any(isinstance(x, dict) and
+                                           x.get("type") == "tool_result" for x in c):
+                continue
+            if on is None:
+                text = c if isinstance(c, str) else " ".join(
+                    x.get("text") or "" for x in c or [] if isinstance(x, dict))
+                hit = FROM_NAME.search(text)
+                if not hit and e.get("isMeta"):
+                    continue               # injected context, not the prompt
+                on = hit.group(1) if hit else ""
+            break
+    if kind != "reply":
+        return None
+    if (on or "").startswith("uds:"):
+        # Sent by socket address. A message that came in on it carries the
+        # name; failing that, the socket is named for its session's pid.
+        hit = re.search(r'from="' + re.escape(on) + r'"[^>]*\bfrom-name="([^"]+)"',
+                        "\n".join(lines))
+        pid = re.search(r"/(\d+)\.sock$", on)
+        by_pid = next((r.get("name") for r in rows or []
+                       if pid and str(r.get("pid")) == pid.group(1)), None)
+        on = hit.group(1) if hit else by_pid or "an exited session"
+    return {"kind": "reply", "on": on or "", "said": said}
 
 
 def self_row(rows):
@@ -742,10 +827,23 @@ def _whoami(a):
         _idx = load_index(ctx)
         _kids = set(_idx["nodes"].get(node, {}).get("children") or [])
         if _kids:
-            for r in stopped_rows(live_rows(agents_json(read_roster(a.roster)))):
-                child = (_idx.get("byWorktree") or {}).get(r.get("cwd", ""))
+            _rows = live_rows(agents_json(read_roster(a.roster)))
+            _bw = _idx.get("byWorktree") or {}
+            for r in stopped_rows(_rows):
+                child = _bw.get(r.get("cwd", ""))
                 if child not in _kids or child in open_waits(ctx):
                     continue        # a recorded wait is listed above (obs 68)
+                st = stop_detail(r, _rows)
+                if st and st["kind"] == "reply":
+                    # A finished turn: a wait nobody recorded. Yours only when
+                    # its last word went to you.
+                    on = next((_bw.get(x.get("cwd", "")) for x in _rows
+                               if x.get("name") == st["on"]), None)
+                    if on == node:
+                        print(f"WAITING  {child} finished its turn and is waiting on "
+                              f"you" + (f": {st['said']}" if st["said"] else "")
+                              + ". Reply, or it sits.")
+                    continue
                 print(f"WAITING  {child} is stopped at a prompt — it reads as idle "
                       f"and is not.")
                 print(f"         Not yours to clear: it wants a reply or a permission "
@@ -1233,8 +1331,12 @@ def cmd_status(a):
         # exactly backwards, since a stale lock is the thing this command exists
         # to surface so it can be forced.
         rows = live_rows(agents_json(read_roster(a.roster)))
+        # A finished turn waiting on a reply is a session at rest, not one
+        # stuck at a prompt: only the latter is WAITING here.
         peers = {r["sessionId"]: {"name": r.get("name") or "?",
-                                 "stopped": is_stopped(r)} for r in rows}
+                                 "stopped": is_stopped(r) and (stop_detail(r, rows)
+                                            or {}).get("kind") != "reply"}
+                 for r in rows}
     except Exception:
         peers, rows = {}, []
     # A claim is not an assignment. A node can be claimed, live, and holding
@@ -2081,10 +2183,13 @@ def cmd_idle(a):
                     continue
                 age, carry = last_turn(r.get("sessionId") or "")
                 held = marks.get(node, [])
+                st = stop_detail(r, rows)
+                reply = bool(st and st["kind"] == "reply")
                 out.append({"project": Path(repo).name, "repo": repo, "node": node,
                             "name": r.get("name"), "age": age, "carry": carry,
                             "held": held, "sid": (r.get("sessionId") or "")[:8],
-                            "stopped": is_stopped(r)})
+                            "stopped": is_stopped(r) and not reply, "stop": st,
+                            "on": (st["on"] or "you") if reply else None})
     if not out:
         print("no idle sessions holding a node"); return
     # Stopped first and unconditionally, whatever their age. Every other row
@@ -2106,11 +2211,17 @@ def cmd_idle(a):
               + f" {human_age(x['age']):>7}"
               + ("   COLD" if is_cold and not x["stopped"] else "")
               + (f"   carrying {tok(x['carry'])}" if x["carry"] else ""))
+        if x["stopped"] and x["stop"]:
+            print(f"  {'':<12} WAITING ON YOU at a permission prompt "
+                  f"({x['stop']['tool']}: {x['stop']['what']}): claude attach {x['sid']}")
+            continue
         if x["stopped"]:
             print(f"  {'':<12} WAITING ON YOU, not resting. Send it a prompt, or attach "
                   f"and answer\n  {'':<12} if it is on a permission prompt: claude attach "
                   f"{x['sid']}")
             continue
+        if x["on"]:
+            print(f"  {'':<12} finished its turn, waiting on {x['on']}")
         if work:
             print(f"  {'':<12} mid-task: {work} — do not recycle, it has not presented")
         elif pres:

@@ -1500,3 +1500,59 @@ class AskEvidence(unittest.TestCase):
                          ("-x-p", "t-1", "1", "2-route.diff"), ("..", "t-1", "1"),
                          ("-x-p", "../t-1", "1"), ("-x-p", "t-2", "1")):
                 self.assertIsNone(gui.ask_evidence(*args), args)
+
+
+class StopKind(unittest.TestCase):
+    """A stopped session is either at a permission prompt or waiting on a reply."""
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp())
+        (self.proj / "p").mkdir()
+        self.p = mock.patch.object(hz, "PROJECTS", self.proj); self.p.start()
+
+    def tearDown(self):
+        self.p.stop()
+
+    def run_(self, *entries, rows=None, state="blocked"):
+        (self.proj / "p" / "s.jsonl").write_text("\n".join(json.dumps(e) for e in entries))
+        return hz.stop_detail({"state": state, "sessionId": "s"}, rows)
+
+    U = staticmethod(lambda c, **k: dict({"type": "user", "message": {"content": c}}, **k))
+    A = staticmethod(lambda *c: {"type": "assistant", "message": {"content": list(c)}})
+    END = {"type": "system", "subtype": "turn_duration"}
+    TXT = {"type": "text", "text": "done"}
+
+    def test_permission_prompt(self):
+        call = {"type": "tool_use", "name": "Bash", "input": {"command": "cd /x && ls"}}
+        self.assertEqual(self.run_(self.U("go"), self.A(self.TXT, call), {"type": "attachment"}),
+                         {"kind": "permission", "tool": "Bash", "what": "cd /x && ls"})
+
+    def test_reply_to_operator(self):
+        self.assertEqual(self.run_(self.U("go"), self.A(self.TXT), self.END),
+                         {"kind": "reply", "on": "", "said": ""})
+
+    def test_reply_to_the_session_that_prompted_it(self):
+        msg = '<cross-session-message from="uds:/r/9.sock" from-name="proj-dev">hi'
+        r = self.run_(self.U("go"), self.A(self.TXT), self.END,
+                      self.U(msg, isMeta=True), self.U("skill text", isMeta=True),
+                      self.A(self.TXT), self.END)
+        self.assertEqual(r["on"], "proj-dev")
+
+    def test_last_message_sent_wins(self):
+        send = {"type": "tool_use", "name": "SendMessage",
+                "input": {"to": "proj-main", "summary": "presented"}}
+        res = self.U([{"type": "tool_result", "content": "ok"}])
+        r = self.run_(self.U("go"), self.A(send), res, self.A(self.TXT), self.END)
+        self.assertEqual((r["on"], r["said"]), ("proj-main", "presented"))
+
+    def test_socket_resolved_by_pid(self):
+        send = {"type": "tool_use", "name": "SendMessage", "input": {"to": "uds:/r/42.sock"}}
+        res = self.U([{"type": "tool_result", "content": "ok"}])
+        e = (self.U("go"), self.A(send), res, self.A(self.TXT), self.END)
+        self.assertEqual(self.run_(*e, rows=[{"pid": 42, "name": "proj-main"}])["on"],
+                         "proj-main")
+        self.assertEqual(self.run_(*e)["on"], "an exited session")
+
+    def test_neither(self):
+        self.assertIsNone(self.run_(self.A(self.TXT), self.END, self.U("again")))
+        self.assertIsNone(self.run_(self.U("go"), self.A(self.TXT), self.END,
+                                    state="working"))

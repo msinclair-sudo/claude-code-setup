@@ -8797,6 +8797,13 @@ def cmd_pairs(a):
         print(f"submitted {len(pairs)} pair(s) for {a.task} — "
               + (f"{dn} reviews it before it applies (harness pairs {a.task})"
                  if rec.get("auto") else f"{dn} applies them: harness pairs apply {a.task}"))
+        if rec.get("auto"):
+            # An idle rank 0 hears nothing until its next turn ends, and a chain
+            # waits on its decision: the documenter tells it now.
+            print(f"  tell it: SendMessage to '{root_session_name(ctx, dn)}' — \"documenter "
+                  f"batch {a.task} awaits your review: {batch_summary(rec)}. "
+                  f"harness pairs {a.task}, then harness pairs apply {a.task} or "
+                  f"--decline 'why'.\"")
         return
     task = a.target if a.verb == "apply" else a.verb
     f = pairs_path(ctx, task or "")
@@ -8836,6 +8843,19 @@ def cmd_pairs(a):
                   f"or decline: harness pairs {task} --decline \"why\"")
         return
     pairs_apply(ctx, node, spec, task, rec, f, auto=a.__dict__.get("auto"))
+
+
+def root_session_name(ctx, dn):
+    """The document node's session name: the live one in its worktree, else the
+    name spawn gives it (<project>-<node>)."""
+    try:
+        wt = (load_index(ctx)["nodes"].get(dn) or {}).get("worktree")
+        hit = next((r.get("name") for r in live_rows(agents_json()) if r.get("cwd") == wt), None)
+        if hit:
+            return hit
+    except Exception:
+        pass
+    return f"{ctx.tree.get('project', ctx.repo.name)}-{dn}"
 
 
 def batch_summary(rec):
@@ -11229,8 +11249,8 @@ def documenter_start(repo, job, why=None):
             f"`harness docs measure`, pick the one improvement it points to"
             + ("" if job == "auto" else f" within '{job}'")
             + f", write the batch to {documenter_batches(HOME_STATE / slug(Path(repo)))}/"
-              "<name>.json and submit it with `harness pairs submit <that path>`, then "
-              "`harness docs note` what you did. The last run's note may name a change it "
+              "<name>.json and submit it with `harness pairs submit <that path>`, send "
+              "rank 0 the SendMessage that submit prints, then `harness docs note` what you did. The last run's note may name a change it "
               "planned and couldn't submit: if so, make that one. "
               "Then stop.")
 

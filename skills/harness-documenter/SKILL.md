@@ -18,7 +18,8 @@ decide intent, and you write only through `harness pairs submit`.
    Grep and Glob; any other shell command (python, cd, pipes) is denied, so don't try one.
 2. Pick one target: the largest gap, or the one your job names. Read only what you need: the
    outline first (`grep -n '^#' <doc>`), then the sections you will change.
-3. Make the change as one batch of pairs.
+3. Make the change as one batch of pairs, then send rank 0 the `SendMessage` that
+   `harness pairs submit` prints. Rank 0 may be idle, and a chain of runs waits on its review.
 4. Finish with `harness docs note "<what you changed, why, and what is next>"`, then stop.
 
 | gap | move |

@@ -2107,3 +2107,31 @@ class ProjectArg(unittest.TestCase):
         ap = argparse.ArgumentParser(); ap.add_argument("--project")
         arg = hz.project_arg(Path("/s/-mnt-a-proj"))
         self.assertEqual(ap.parse_args([arg]).project, "-mnt-a-proj")
+
+
+class DocPing(unittest.TestCase):
+    """A documenter batch tells rank 0 to review it: an idle rank 0 hears nothing else."""
+
+    def test_submit_prints_the_message_to_rank_0(self):
+        ctx = FakeCtx({"main": None, "dev": "main"})
+        ctx.repo = ctx.worktree = Path(tempfile.mkdtemp())
+        ctx.tree["nodes"]["main"].update(kind="doc", branch="main")
+        ctx.tree["project"] = "proj"
+        pairs = '[{"op": "create", "file": "provenance/a.md", "new": "x"}]'
+        out = io.StringIO()
+        with mock.patch.object(hz, "Ctx", return_value=ctx), \
+             mock.patch.object(hz, "git", side_effect=lambda *a, **k: (1, "", "") if a[0] == "show"
+                               else (0, "", "")), \
+             mock.patch.object(hz, "guard_classify", return_value={}), \
+             mock.patch.object(hz, "load_index", return_value={"nodes": {"main": {"worktree": "/w"}}}), \
+             mock.patch.object(hz, "live_rows", lambda r: r), \
+             mock.patch.object(hz, "agents_json", return_value=[{"cwd": "/w", "name": "proj-main"}]), \
+             mock.patch.dict(os.environ, {"HARNESS_DOCUMENTER": "1", "HARNESS_DOCUMENTER_JOB": "stale"}), \
+             redirect_stdout(out):
+            hz.cmd_pairs(mock.Mock(verb="submit", target=pairs, task=None))
+        line = next(l for l in out.getvalue().splitlines() if "SendMessage" in l)
+        self.assertIn("SendMessage to 'proj-main'", line)
+        self.assertIn("awaits your review: create provenance/a.md", line)
+        self.assertNotIn("\\", line)
+        with mock.patch.object(hz, "load_index", side_effect=Exception):
+            self.assertEqual(hz.root_session_name(ctx, "main"), "proj-main")   # the spawn name

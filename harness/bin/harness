@@ -10806,9 +10806,18 @@ def cmd_docs(a):
         # once its closing reply has had time to land.
         sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
         if os.environ.get("HARNESS_DOCUMENTER") == "1" and sid:
-            subprocess.Popen(["sh", "-c", f"sleep {DOC_STOP_AFTER}; claude stop {sid[:8]}"],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                             stdin=subprocess.DEVNULL, start_new_session=True)
+            # Then the next run of a chain, if one is due (`documenter --runs N`).
+            env = {k: v for k, v in os.environ.items()
+                   if k not in ("CLAUDE_CODE_SESSION_ID", "HARNESS_DOCUMENTER",
+                                "HARNESS_DOCUMENTER_JOB")}
+            nxt = " ".join(shlex.quote(x) for x in (sys.executable, str(Path(__file__).resolve()),
+                                                    "documenter", "--project", ctx.state.name,
+                                                    "--next"))
+            with open(docs_dir(ctx) / "chain.log", "a") as log:
+                subprocess.Popen(["sh", "-c", f"sleep {DOC_STOP_AFTER}; claude stop {sid[:8]}; "
+                                              f"exec {nxt}"],
+                                 stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                 env=env, start_new_session=True)
             print(f"this session stops in {DOC_STOP_AFTER}s; end your turn with a short summary")
         return
     if a.verb != "measure":
@@ -11054,30 +11063,97 @@ def documenter_start(repo, job, why=None):
               "Then stop.")
 
 
-def cmd_documenter(a):
-    """Start one documenter run for a project, in the background (T18)."""
-    pdir, repo = intermediary_project(a.project)
-    cmd = documenter_cmd(pdir, repo, a.job, a.model, a.effort, a.why)
-    if a.print_cmd:
-        print(" ".join(shlex.quote(c) for c in cmd)); return
+def docs_queue(pdir, **upd):
+    """How many more runs follow the current one: {remaining, job, by, at}."""
+    f = Path(pdir) / "docs" / "queue.json"
+    try:
+        q = json.loads(f.read_text())
+    except Exception:
+        q = {"remaining": 0, "job": "auto"}
+    if upd:
+        q.update(upd, at=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(q) + "\n")
+    return q
+
+
+def documenter_launch(pdir, repo, job, model=None, effort=None, why=None):
+    """Start one run. (ok, message). A busy run refuses; an idle one has
+    finished (its stop is pending) and is replaced."""
     name = documenter_name(repo)
     try:
         rows = agents_json()
     except Exception as e:
-        die(REFUSED, f"cannot read the session list: {e}")
-    if any(r.get("name") == name for r in live_rows(rows)):
-        die(REFUSED, f"{name} is already running; one run at a time per project")
+        return False, f"cannot read the session list: {e}"
+    mine = [r for r in live_rows(rows) if r.get("name") == name]
+    if any(r.get("status") == "busy" for r in mine):
+        return False, f"{name} is working; one run at a time per project"
     for r in rows:                  # the last run, off the list: a fresh one replaces it
         if r.get("name") == name and r.get("sessionId"):
+            if r in mine:
+                subprocess.run(["claude", "stop", r["sessionId"][:8]], capture_output=True)
             claude_rm(r["sessionId"])
     home = Path(pdir) / "documenter"
     home.mkdir(parents=True, exist_ok=True)
-    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
-    r = subprocess.run(cmd, cwd=str(home), env=env, capture_output=True, text=True)
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("CLAUDE_CODE_SESSION_ID", "HARNESS_DOCUMENTER", "HARNESS_DOCUMENTER_JOB")}
+    r = subprocess.run(documenter_cmd(pdir, repo, job, model, effort, why), cwd=str(home),
+                       env=env, capture_output=True, text=True)
     if r.returncode:
-        die(REFUSED, f"the documenter did not start: {(r.stderr or r.stdout).strip()[:200]}")
-    print(f"started {name} ({a.job}); `harness docs measure` shows what it will see")
+        return False, f"the documenter did not start: {(r.stderr or r.stdout).strip()[:200]}"
+    return True, f"started {name} ({job})"
 
+
+def documenter_pending(pdir):
+    """Batches still waiting to apply: the next run must measure the text they
+    leave, or its pairs go stale."""
+    n = 0
+    for f in (Path(pdir) / "pairs").glob("*.json") if (Path(pdir) / "pairs").is_dir() else []:
+        try:
+            r = json.loads(f.read_text())
+        except Exception:
+            continue
+        n += bool(r.get("auto") and not r.get("applied") and not r.get("refused"))
+    return n
+
+
+def cmd_documenter(a):
+    """Start documenter runs for a project, in the background (T18). `--runs N`
+    chains N runs, each starting once the last one's batches have applied;
+    `--stop` lets the current run finish and starts no more."""
+    pdir, repo = intermediary_project(a.project)
+    if a.print_cmd:
+        print(" ".join(shlex.quote(c) for c in documenter_cmd(pdir, repo, a.job, a.model,
+                                                              a.effort, a.why))); return
+    if a.stop:
+        q = docs_queue(pdir)
+        docs_queue(pdir, remaining=0, by="stop")
+        print(f"no more runs after the current one ({q.get('remaining', 0)} cancelled)")
+        return
+    if a.next:
+        # Launched by a run's closing note, detached: the next run in the chain,
+        # once nothing of the last one is waiting to apply.
+        end = time.time() + 3600
+        while documenter_pending(pdir) and time.time() < end:
+            time.sleep(20)
+        q = docs_queue(pdir)
+        if (q.get("remaining") or 0) <= 0:
+            print("no runs left"); return
+        if documenter_pending(pdir):
+            print("batches still waiting after an hour; not starting the next run"); return
+        docs_queue(pdir, remaining=q["remaining"] - 1)
+        ok, msg = documenter_launch(pdir, repo, q.get("job") or "auto")
+        print(msg if ok else f"refused: {msg}")
+        if not ok:
+            docs_queue(pdir, remaining=q["remaining"])
+        return
+    runs = max(1, min(a.runs or 1, 20))
+    ok, msg = documenter_launch(pdir, repo, a.job, a.model, a.effort, a.why)
+    if not ok:
+        die(REFUSED, msg)
+    docs_queue(pdir, remaining=runs - 1, job=a.job, by="start")
+    print(msg + (f"; {runs - 1} more run(s) follow, each once the last one's batches apply"
+                 if runs > 1 else "") + ". `harness docs measure` shows what it will see")
 
 
 def main():
@@ -11170,6 +11246,9 @@ def main():
     dm.add_argument("--effort", choices=list(EFFORTS))
     dm.add_argument("--why", help=argparse.SUPPRESS)
     dm.add_argument("--print-cmd", action="store_true")
+    dm.add_argument("--runs", type=int, default=1, help="chain this many runs (max 20)")
+    dm.add_argument("--stop", action="store_true", help="no more runs after the current one")
+    dm.add_argument("--next", action="store_true", help=argparse.SUPPRESS)
     rcy = add("recycle", cmd_recycle)
     rcy.add_argument("node", nargs="*", help="nodes to restart with fresh context")
     rcy.add_argument("--children", action="store_true", help="every child of this node")

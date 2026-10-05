@@ -207,6 +207,11 @@ def documenter(rows, pdir, repo, asks):
                        "at": app[-1].get("applied_at"), "claude_md": app[-1].get("claude_md")}
                       if app else None)
     out["asks"] = sum(1 for a in asks if a.get("asker_node") == "documenter")
+    try:
+        q = json.loads((Path(pdir) / "docs" / "queue.json").read_text())
+        out["remaining"] = int(q.get("remaining") or 0)
+    except Exception:
+        out["remaining"] = 0
     return out
 
 
@@ -774,6 +779,10 @@ border:1px solid var(--line);border-radius:3px;letter-spacing:.06em;text-transfo
 .card.interm code{color:var(--busy);overflow-wrap:anywhere}
 .card.doc{margin-top:10px}
 .card.doc b.over{color:var(--warn)}
+.docctl select,.docctl button{background:var(--panel);color:var(--fg,#ddd);border:1px solid var(--line);
+border-radius:5px;font:inherit;font-size:11px;padding:2px 6px}
+.docctl button{cursor:pointer}
+.card.doc .act{cursor:pointer;border-bottom:1px dotted currentColor}
 .card.interm a{color:var(--dim)}
 .card.interm a:hover{color:var(--ink)}
 @media (max-width:960px){.treerow{flex-direction:column}.sidecol{width:100%}}
@@ -1264,6 +1273,27 @@ function card(n) {
 // the CLI's shlex.quote would, since enrolled repos live under paths with spaces.
 const shq = x => /^[\w@%+=:,./-]+$/.test(x) ? x : "'" + String(x).replace(/'/g, "'\"'\"'") + "'";
 const startCmd = p => 'cd ' + shq(p.repo) + ' && harness intermediary';
+// Runs chosen per project, kept here so a poll's repaint doesn't reset the menu.
+const DOCRUNS = {}, DOCMSG = {};
+function documenterDo(slug, action) {
+  DOCMSG[slug] = action === 'start' ? 'starting…' : 'stopping…'; LAST = ''; tick();
+  fetch('/api/documenter', { method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Harness-Local': '1' },
+    body: JSON.stringify({ slug: slug, action: action, runs: DOCRUNS[slug] || 1 }) })
+    .then(r => r.json())
+    .then(j => { DOCMSG[slug] = j.message || (j.ok ? 'done' : 'refused'); LAST = ''; tick(); })
+    .catch(() => { DOCMSG[slug] = 'could not reach the server'; LAST = ''; tick(); });
+}
+document.addEventListener('click', e => {
+  const s = e.target.closest('[data-docstart]'), t = e.target.closest('[data-docstop]');
+  if (s) documenterDo(s.dataset.docstart, 'start');
+  else if (t) documenterDo(t.dataset.docstop, 'stop');
+});
+document.addEventListener('change', e => {
+  const m = e.target.closest('[data-docruns]');
+  if (m) DOCRUNS[m.dataset.docruns] = +m.value;
+});
+
 // The project's documenter (T18): a run per job, so the card says what it did
 // last and what is pending, not whether a session is up.
 function docCard(p) {
@@ -1288,13 +1318,22 @@ function docCard(p) {
   const ak = d.asks ? '<div class="ln"><a href="#issues">' + d.asks + ' open ask' +
       (d.asks > 1 ? 's' : '') + '</a></div>' : '';
   const cls = d.running === null ? 'unknown' : d.running === 'busy' ? 'busy' : '';
+  const n = DOCRUNS[p.slug] || 1;
+  const left = d.remaining ? '<div class="ln">' + d.remaining + ' more run' +
+      (d.remaining > 1 ? 's' : '') + ' to follow &middot; <span class="act" data-docstop="' +
+      esc(p.slug) + '">stop after this one</span></div>' : '';
+  const ctl = d.running === 'busy' ? left
+    : '<div class="ln docctl"><select data-docruns="' + esc(p.slug) + '">' +
+      [1, 2, 3, 5, 10].map(k => '<option value="' + k + '"' + (k === n ? ' selected' : '') + '>' +
+        k + ' run' + (k > 1 ? 's' : '') + '</option>').join('') +
+      '</select> <button data-docstart="' + esc(p.slug) + '">start</button></div>' + left;
+  const msg = DOCMSG[p.slug] ? '<div class="ln q">' + esc(DOCMSG[p.slug]) + '</div>' : '';
   return '<div class="card interm doc ' + cls + '" data-live="doc:' + esc(p.slug) + '">' +
     '<div class="hdr"><span class="dot"></span><span class="nm">' + esc(p.project) +
     '</span><span class="kd">documenter</span></div>' +
     '<div class="ln q">' + (d.running === 'busy' ? 'working' : d.running === 'idle'
       ? 'run finished &middot; its session closes shortly' : 'idle between runs') + '</div>' +
-    meterLine + last + ap + q + rf + ak +
-    '<div class="ln"><code>harness documenter --project ' + esc(p.project) + '</code></div></div>';
+    meterLine + last + ap + q + rf + ak + ctl + msg + '</div>';
 }
 
 function intermCard(p) {
@@ -1982,6 +2021,36 @@ def _ask_cli(slug, args):
     return r.returncode == 0, (r.stdout or r.stderr).strip()[:300]
 
 
+def documenter_action(slug, action, runs=1):
+    """Start runs or stop the chain — delegated to the CLI like every write, with
+    the session id stripped: the button was pressed by a person."""
+    pdir = _project_dir(slug)
+    if pdir is None:
+        return False, "no such project"
+    try:
+        repo = json.loads((pdir / "binding.json").read_text()).get("repo", "")
+    except Exception:
+        return False, "unreadable binding"
+    if action == "start":
+        try:
+            n = max(1, min(int(runs), 20))
+        except (TypeError, ValueError):
+            return False, "runs must be a number"
+        args = ["--runs", str(n)]
+    elif action == "stop":
+        args = ["--stop"]
+    else:
+        return False, "unknown action"
+    exe = Path(__file__).resolve().with_name("harness")
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
+    try:
+        r = subprocess.run([sys.executable, str(exe), "documenter", "--project", pdir.name] + args,
+                           cwd=repo, capture_output=True, text=True, timeout=60, env=env)
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"[:300]
+    return r.returncode == 0, (r.stdout or r.stderr).strip()[:300]
+
+
 def rule_ask(slug, ask_id, action, text):
     """Accept or reject one open ask. Same whitelist as a task: the id must be a
     file already in that project's asks/, so nothing is joined from input."""
@@ -2119,7 +2188,8 @@ class H(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin")
         if origin and not origin.startswith(("http://127.0.0.1:", "http://localhost:")):
             self.send_error(403, "cross-origin"); return
-        if not self.path.startswith(("/api/comment", "/api/charter", "/api/ask")):
+        if not self.path.startswith(("/api/comment", "/api/charter", "/api/ask",
+                                     "/api/documenter")):
             self.send_error(404); return
         try:
             n = int(self.headers.get("Content-Length") or 0)
@@ -2127,6 +2197,11 @@ class H(BaseHTTPRequestHandler):
         except Exception:
             self.send_error(400, "bad JSON"); return
         text = (body.get("text") or "").strip()
+        if self.path.startswith("/api/documenter"):
+            ok, msg = documenter_action(str(body.get("slug") or ""),
+                                        (body.get("action") or "").strip(), body.get("runs", 1))
+            self._send(json.dumps({"ok": ok, "message": msg}), "application/json")
+            return
         if self.path.startswith("/api/ask"):
             ok, msg = rule_ask(str(body.get("slug") or ""), str(body.get("id") or ""),
                                (body.get("action") or "").strip(), text)

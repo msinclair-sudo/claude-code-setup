@@ -1929,3 +1929,71 @@ class DocNoteStops(unittest.TestCase):
             hz.cmd_docs(mock.Mock(verb="note", args=["moved a section"]))
         self.assertIn("claude stop abcdef12", po.call_args.args[0][2])
         self.assertIn("moved a section", (ctx.dir / "docs" / "ledger.jsonl").read_text())
+
+
+class DocChain(unittest.TestCase):
+    """`documenter --runs N`: runs follow one another once the last batches apply."""
+
+    def setUp(self):
+        self.pdir = Path(tempfile.mkdtemp())
+        self.a = lambda **k: mock.Mock(**dict({"project": None, "print_cmd": False, "stop": False,
+                                               "next": False, "runs": 1, "job": "auto",
+                                               "model": None, "effort": None, "why": None}, **k))
+        self.p = [mock.patch.object(hz, "intermediary_project", return_value=(self.pdir, "/r/proj"))]
+        for x in self.p:
+            x.start(); self.addCleanup(x.stop)
+
+    def run_(self, **k):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            hz.cmd_documenter(self.a(**k))
+        return out.getvalue()
+
+    def test_runs_set_the_chain_and_stop_ends_it(self):
+        with mock.patch.object(hz, "documenter_launch", return_value=(True, "started")):
+            self.assertIn("2 more run(s)", self.run_(runs=3))
+        self.assertEqual(hz.docs_queue(self.pdir)["remaining"], 2)
+        self.assertIn("2 cancelled", self.run_(stop=True))
+        self.assertEqual(hz.docs_queue(self.pdir)["remaining"], 0)
+
+    def test_next_waits_for_pending_batches_then_counts_down(self):
+        hz.docs_queue(self.pdir, remaining=2, job="stale")
+        pending = iter([1, 0, 0])
+        with mock.patch.object(hz, "documenter_pending", side_effect=lambda p: next(pending)), \
+             mock.patch.object(hz.time, "sleep") as sl, \
+             mock.patch.object(hz, "documenter_launch", return_value=(True, "started")) as go:
+            self.run_(next=True)
+        self.assertEqual(sl.call_count, 1)                  # waited once for the batch
+        self.assertEqual(go.call_args.args[2], "stale")
+        self.assertEqual(hz.docs_queue(self.pdir)["remaining"], 1)
+        hz.docs_queue(self.pdir, remaining=0)
+        with mock.patch.object(hz, "documenter_launch") as go:
+            self.assertIn("no runs left", self.run_(next=True))
+        go.assert_not_called()
+
+    def test_a_busy_run_refuses_an_idle_one_is_replaced(self):
+        row = lambda st: [{"name": "harness-documenter-proj", "status": st, "sessionId": "s" * 36,
+                           "pid": 1}]
+        with mock.patch.object(hz, "live_rows", lambda r: r), \
+             mock.patch.object(hz, "documenter_cmd", return_value=["claude"]), \
+             mock.patch.object(hz, "claude_rm") as rm, \
+             mock.patch.object(hz.subprocess, "run", return_value=mock.Mock(returncode=0)):
+            with mock.patch.object(hz, "agents_json", return_value=row("busy")):
+                self.assertFalse(hz.documenter_launch(self.pdir, "/r/proj", "auto")[0])
+            with mock.patch.object(hz, "agents_json", return_value=row("idle")):
+                self.assertTrue(hz.documenter_launch(self.pdir, "/r/proj", "auto")[0])
+        rm.assert_called_once()
+
+    def test_gui_action_validates(self):
+        gp = Path(__file__).resolve().parents[1] / "bin" / "harness-gui"
+        ld = importlib.machinery.SourceFileLoader("harness_gui", str(gp))
+        gui = importlib.util.module_from_spec(importlib.util.spec_from_loader("harness_gui", ld))
+        ld.exec_module(gui)
+        (self.pdir / "binding.json").write_text('{"repo": "/r/proj"}')
+        with mock.patch.object(gui, "_project_dir", return_value=self.pdir), \
+             mock.patch.object(gui.subprocess, "run",
+                               return_value=mock.Mock(returncode=0, stdout="started", stderr="")) as r:
+            self.assertEqual(gui.documenter_action("x", "start", 99)[0], True)
+            self.assertIn("20", r.call_args.args[0])                 # capped
+            self.assertEqual(gui.documenter_action("x", "start", "lots"), (False, "runs must be a number"))
+            self.assertEqual(gui.documenter_action("x", "drop", 1), (False, "unknown action"))

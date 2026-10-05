@@ -88,7 +88,7 @@ One rulings file; leads submit, you write, through the same channel as `T5`. Onl
 
 ## The manifest and the guards
 
-You own `.harness/manifest.json`: document and code globs, and checks. Checks run from a queue in a fresh copy of the commit, so anything git does not track and a check needs (a built client, say) is built by `"test_setup": "<command>"`, run in the copy first. A check may declare `"reads_from": "<command>"`, printing one path per line, so holds use the project's own list of what it reads rather than a typed copy (obs 79). A check cannot be registered without stating what it cannot see. A check may carry `"timeout": <seconds>`; a timeout reports `NOT RUN (timed out)`.
+You own `.harness/manifest.json`: document and code globs, and checks. Checks run from a queue in a fresh copy of the commit, not where the worktree was. The harness has no tests and no setup step of its own: anything git doesn't track and a check needs (a built client, say) is built by the check's own command. A test that needs a neighbouring checkout finds it from `$HARNESS_TEST_ORIGIN`, and copies it makes belong under `$HARNESS_TEST_SCRATCH`, which is deleted after the run. A check may declare `"reads_from": "<command>"`, printing one path per line, so holds use the project's own list of what it reads rather than a typed copy (obs 79). A check cannot be registered without stating what it cannot see. A check may carry `"timeout": <seconds>`; a timeout reports `NOT RUN (timed out)`.
 
 The three hooks are POSIX `sh` with an explicit `exit 0`:
 

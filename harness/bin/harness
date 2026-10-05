@@ -4192,7 +4192,6 @@ def print_check_report(rep, base):
         if r.get("held"):
             print(f"  NOT RUN (held: {r['held']})  {r['name']}"); continue
         v = ("NOT RUN (timed out)" if r.get("timedOut") else
-             "NOT RUN (setup failed)" if r.get("setup_failed") else
              "PASS" if r.get("exit") == 0 else "FAIL")
         print(f"  {v}  {r['name']:<18} {r.get('seconds', 0):5.1f}s"
               + ("" if r.get("exit") in (0, None) or r.get("timedOut") else f"   exit {r['exit']}"))
@@ -4201,6 +4200,8 @@ def print_check_report(rep, base):
                 print(f"        {clip(line)}")
     for line in check_summary(rep, base, len(rep.get("checks") or [])):
         print(line)
+    if rep.get("partial"):
+        print(f"  partial: only {', '.join(rep.get('arms') or [])} ran; this is not the full set")
 
 
 def make_check_report(node, sha, rows, failed, base, **extra):
@@ -4227,9 +4228,10 @@ def cmd_check(a):
 
     EVERY check runs, including after one fails, and the result is recorded
     against the exact commit. They run in a copy of the commit, one job at a time
-    per project, first in first out (obs 81, owner 2026-10-05): sessions running
-    checks side by side stalled the machine. `--wait` blocks for the result;
-    otherwise the requester's doorbell rings when it is in.
+    per project (obs 81): integration checks from the priority queue first, then
+    lanes', each first in, first out. `--wait` blocks for the result; otherwise
+    the requester's doorbell rings when it is in. The harness has no tests of its
+    own: the checks are the project's commands, run as given (owner, 2026-10-06).
 
     NOTHING RUNS THIS IMPLICITLY. `manifest.json` is a document that travels to
     every node and `checks[].command` is executed by the queue, which the trust
@@ -4250,23 +4252,27 @@ def cmd_check(a):
         if not rep:
             die(REFUSED, f"no check report for {a.report}")
         print_check_report(rep, load_baseline(ctx)); sys.exit(check_exit(rep))
-    load_checks(ctx)                    # refuses an empty or malformed set now, not in the queue
+    checks = load_checks(ctx)           # refuses an empty or malformed set now, not in the queue
+    arms = None
+    if a.arms:
+        # The caller (its project) chooses the arms; the harness only runs them.
+        arms = sorted({x.strip() for x in a.arms.split(",") if x.strip()})
+        names = [c["name"] for c in checks]
+        bad = [x for x in arms if x not in names]
+        if bad:
+            die(REFUSED, f"no arm {', '.join(bad)} in the manifest (arms: {', '.join(names)})")
+    queue = ("priority" if a.priority else "normal" if a.normal else
+             "priority" if role_of(ctx, node) in ("root", "lead") else "normal")
     sha = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
     rc, dirt, _ = git("status", "--porcelain", "--untracked-files=no", cwd=ctx.worktree)
     if dirt.strip():
         die(REFUSED, f"{len(dirt.splitlines())} uncommitted change(s). The queue runs a copy of "
                      f"the commit, so commit first (a WIP commit is fine), then harness check.")
     sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
-    job, how = testq_submit(ctx, "check", sha, node, sid, again=a.again, timeout=a.timeout)
-    if how == "reused":
-        rep = read_check_report(ctx, node, sha)
-        print(f"{sha[:8]} was already checked ({rep.get('at', '')[:16]}); its report is now "
-              f"{node}'s too. --again runs it afresh.")
-        print_check_report(rep, load_baseline(ctx)); sys.exit(check_exit(rep))
-    ahead = testq_ahead(ctx, job)
-    print(f"{'joined' if how == 'joined' else 'queued'} {job['id']} — check of {sha[:8]}"
-          + (f", {len(ahead)} ahead" if ahead else ", next to run")
-          + (f" ({testq_describe(ahead[0])})" if ahead else ""))
+    job, how = testq_submit(ctx, "check", sha, node, sid, timeout=a.timeout, arms=arms,
+                            queue=queue, origin=str(ctx.worktree))
+    print(f"{how} {job['id']} — {'check' if not arms else 'arms ' + ', '.join(arms)} of "
+          f"{sha[:8]}, {job['queue']} queue" + testq_wait_phrase(ctx, job))
     if not a.wait:
         print("  Your doorbell rings with the result; end your turn, or carry on with "
               "something else.\n  `harness test` shows the queue; `--wait` would have blocked.")
@@ -4346,14 +4352,17 @@ def testq_save(ctx, job):
 
 
 def testq_ahead(ctx, job):
-    """The jobs that run before this one: the running one, then older queued ones."""
-    return [j for j in testq_jobs(ctx, ("running", "queued"))
-            if j["id"] != job["id"] and (j["state"] == "running" or j["at"] < job["at"])]
+    """The jobs that run before this one, in run order (testq_order)."""
+    order = testq_order(testq_jobs(ctx, ("running", "queued")))
+    ids = [j["id"] for j in order]
+    return order[:ids.index(job["id"])] if job["id"] in ids else order
 
 
 def testq_describe(j):
     who = ", ".join(r.get("node") or "?" for r in j.get("requested_by") or [])
-    what = "check" if j.get("kind") == "check" else f"`{(j.get('command') or '')[:40]}`"
+    what = ("check" if j.get("kind") == "check" and not j.get("arms") else
+            f"arms {', '.join(j['arms'])}" if j.get("kind") == "check" else
+            f"`{(j.get('command') or '')[:40]}`")
     if j.get("state") == "running":
         return (f"{who}'s {what}, running" + (f" arm {j.get('done_arms', 0) + 1}/{j.get('total')}"
                                               if j.get("total") else "")
@@ -4361,29 +4370,72 @@ def testq_describe(j):
     return f"{who}'s {what}, queued"
 
 
-def testq_submit(ctx, kind, sha, node, sid, command=None, again=False, timeout=None):
-    """Queue a job, or join one for the same commit, or reuse a finished report.
-    Returns (job, "queued" | "joined" | "reused")."""
+def testq_submit(ctx, kind, sha, node, sid, command=None, timeout=None, arms=None,
+                 queue="normal", origin=None):
+    """Queue a job, or join an identical one (same commit and arms) still queued
+    or running: that is one run, not a guess about a result. A finished report is
+    never reused; whether an old result still holds is the project's to say (obs
+    83: its tests read data git doesn't hold). Returns (job, "queued" | "joined")."""
     req = {"node": node, "session": sid, "at": _now()}
-    if kind == "check" and not again:
+    if kind == "check":
         for j in testq_jobs(ctx, ("queued", "running")):
-            if j.get("kind") == "check" and j.get("sha") == sha:
+            if j.get("kind") == "check" and j.get("sha") == sha and j.get("arms") == arms:
                 if not any(r.get("node") == node for r in j["requested_by"]):
                     j["requested_by"].append(req)
-                    testq_save(ctx, j)
+                if queue == "priority" and j.get("queue") != "priority" and j["state"] == "queued":
+                    j["queue"] = "priority"            # a lead's integration check joins it
+                testq_save(ctx, j)
                 return j, "joined"
-        rep = _read_json(shared_report_path(ctx, sha))
-        if rep:
-            mine = check_report_path(ctx, node, sha)
-            mine.parent.mkdir(parents=True, exist_ok=True)
-            mine.write_text(json.dumps(dict(rep, node=node), indent=2) + "\n")
-            return {"id": None, "sha": sha}, "reused"
     job = {"id": f"{time.strftime('%Y%m%d-%H%M%S')}-{sha[:8]}-{os.getpid() % 1000}",
            "kind": kind, "sha": sha, "command": command, "requested_by": [req],
-           "state": "queued", "at": _now(), "timeout": timeout}
+           "state": "queued", "at": _now(), "timeout": timeout, "arms": arms,
+           "queue": queue, "origin": origin}
     testq_save(ctx, job)
     testq_ensure_runner(ctx)
     return job, "queued"
+
+
+def testq_order(jobs):
+    """Run order: the running job, then priority (integration) jobs, then normal
+    ones, each first in, first out (owner, 2026-10-06; obs 82)."""
+    run = [j for j in jobs if j.get("state") == "running"]
+    q = sorted((j for j in jobs if j.get("state") == "queued"),
+               key=lambda j: (j.get("queue") != "priority", j.get("at") or ""))
+    return run + q
+
+
+def testq_duration(ctx, kind, arms):
+    """The median seconds of the last five finished jobs like this one (same kind
+    and arms, else same kind), or None."""
+    done = [j for j in testq_jobs(ctx, ("done",)) if j.get("kind") == kind
+            and _epoch(j.get("started")) and _epoch(j.get("finished"))]
+    same = [j for j in done if j.get("arms") == arms] or done
+    ds = sorted(_epoch(j["finished"]) - _epoch(j["started"])
+                for j in sorted(same, key=lambda j: j["finished"])[-5:])
+    return ds[len(ds) // 2] if ds else None
+
+
+def testq_wait_estimate(ctx, job):
+    """Seconds until this job finishes, from what runs and waits before it, or
+    None when no job like one of them has finished yet."""
+    total = 0
+    for j in testq_ahead(ctx, job) + [job]:
+        d = testq_duration(ctx, j.get("kind"), j.get("arms"))
+        if d is None:
+            return None
+        if j.get("state") == "running":
+            d = max(0, d - (time.time() - (_epoch(j.get("started")) or time.time())))
+        total += d
+    return total
+
+
+def testq_wait_phrase(ctx, job):
+    ahead = testq_ahead(ctx, job)
+    est = testq_wait_estimate(ctx, job)
+    return ((f", {len(ahead)} ahead" if ahead else ", next to run")
+            + (f" ({testq_describe(ahead[0])})" if ahead else "")
+            + (f"; done in about {human_age(est)}" if est is not None else
+               "; no finished job to estimate from yet"))
 
 
 def testq_ensure_runner(ctx):
@@ -4463,7 +4515,7 @@ def _testd_loop(ctx):
     signal.signal(signal.SIGUSR1, on_cancel)
     idle_since = time.time()
     while True:
-        q = testq_jobs(ctx, ("queued",))
+        q = testq_order(testq_jobs(ctx, ("queued",)))
         if not q:
             if time.time() - idle_since > TESTQ_IDLE:
                 print(f"{_now()} queue empty; runner exits"); return
@@ -4532,19 +4584,16 @@ def testq_run(ctx, job):
         if rc:
             raise RuntimeError(f"git worktree add failed: {(e or o).strip()[:300]}")
         wt = run / wt_name
+        # What the project needs to know about where it runs. The copy is not
+        # where the worktree was (obs 84), and only what is under the run folder
+        # is torn down (obs 86); setup is the project's own (obs 85).
+        (run / "scratch").mkdir(exist_ok=True)
         env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
-        env.update(TMPDIR=str(run / "tmp"), HARNESS_TEST_JOB=job["id"])
-        man = _read_json(Path(ctx.repo) / ".harness" / "manifest.json") or {}
-        setup_ok = True
-        if man.get("test_setup"):
-            print(f"setup: {man['test_setup']}")
-            sc, so, se, st = run_arm(man["test_setup"], wt, 1800, run / "setup.out",
-                                     run / "setup.err", env)
-            setup_ok = sc == 0
-            if not setup_ok:
-                print(f"setup failed (exit {sc}): {(se or so).strip()[-600:]}")
+        env.update(TMPDIR=str(run / "tmp"), HARNESS_TEST_JOB=job["id"],
+                   HARNESS_TEST_SHA=job["sha"], HARNESS_TEST_ORIGIN=job.get("origin") or "",
+                   HARNESS_TEST_SCRATCH=str(run / "scratch"))
         if job["kind"] == "check":
-            rep = testq_check(ctx, job, wt, env, setup_ok)
+            rep = testq_check(ctx, job, wt, env)
         else:
             print(f"$ {job['command']}")
             code, o, e, to = run_arm(job["command"], wt, None, run / "cmd.out",
@@ -4570,10 +4619,12 @@ def testq_run(ctx, job):
     testq_ring(ctx, job, rep, code)
 
 
-def testq_check(ctx, job, wt, env, setup_ok):
+def testq_check(ctx, job, wt, env):
     """A check job's arms, run in the copy; the report goes to the commit and to
     every node that asked for it."""
     checks = load_checks(ctx)
+    if job.get("arms"):
+        checks = [c for c in checks if c["name"] in job["arms"]]
     base = load_baseline(ctx)
     sha = job["sha"]
     shared = shared_report_path(ctx, sha)
@@ -4584,20 +4635,14 @@ def testq_check(ctx, job, wt, env, setup_ok):
         testq_save(ctx, job)
     node = job["requested_by"][0].get("node") or "operator"
     print(f"{len(checks)} check(s) at {sha[:8]} in {wt}")
-    if setup_ok:
-        rows, failed = run_arms(ctx, node, sha, wt, checks, base, job.get("timeout") or 900,
-                                shared, env, progress)
-    else:
-        rows = [{"name": c["name"], "command": c["command"], "blindSpot": c["blindSpot"],
-                 "exit": None, "setup_failed": True, "seconds": 0, "timedOut": False,
-                 "failedFiles": None, "stdout": "", "stderr": "test_setup failed"}
-                for c in checks]
-        failed = len(rows)
+    rows, failed = run_arms(ctx, node, sha, wt, checks, base, job.get("timeout") or 900,
+                            shared, env, progress)
     if _CANCEL[0]:
         print("cancelled: no report is written, so nothing reuses a partial run")
         return None
     rep = make_check_report(node, sha, rows, failed, base,
-                            job=job["id"], requested_by=[r.get("node") for r in job["requested_by"]])
+                            job=job["id"], requested_by=[r.get("node") for r in job["requested_by"]],
+                            arms=job.get("arms"), partial=bool(job.get("arms")))
     shared.parent.mkdir(parents=True, exist_ok=True)
     shared.write_text(json.dumps(rep, indent=2) + "\n")
     # Requesters who joined while it ran are read fresh from the job file.
@@ -4677,17 +4722,19 @@ def cmd_test(a):
         if dirt.strip():
             die(REFUSED, "uncommitted changes: the queue runs a copy of the commit; commit first")
         job, _ = testq_submit(ctx, "cmd", sha, node, os.environ.get("CLAUDE_CODE_SESSION_ID", ""),
-                              command=shlex.join(cmd) if len(cmd) > 1 else cmd[0])
-        ahead = testq_ahead(ctx, job)
-        print(f"queued {job['id']}" + (f", {len(ahead)} ahead" if ahead else ", next to run")
+                              command=shlex.join(cmd) if len(cmd) > 1 else cmd[0],
+                              origin=str(ctx.worktree))
+        print(f"queued {job['id']} (normal queue)" + testq_wait_phrase(ctx, job)
               + ". Your doorbell rings when it ends; its output is kept.")
         return
-    jobs = testq_jobs(ctx, ("running", "queued"))
+    jobs = testq_order(testq_jobs(ctx, ("running", "queued")))
     if not jobs:
         print("the test queue is empty" + ("" if testq_runner_alive(ctx) else "; no runner up"))
     for k, j in enumerate(jobs):
-        print(f"{'▶' if j['state'] == 'running' else k}  {j['id']}  {testq_describe(j)}  "
-              f"(asked {(j.get('at') or '')[11:16]})")
+        est = testq_wait_estimate(ctx, j)
+        print(f"{'▶' if j['state'] == 'running' else k}  {j['id']}  {j.get('queue', 'normal'):<8} "
+              f"{testq_describe(j)}  (asked {(j.get('at') or '')[11:16]}"
+              + (f"; done in about {human_age(est)}" if est is not None else "") + ")")
     done = [j for j in testq_jobs(ctx, ("done", "failed", "cancelled"))][-5:]
     if done:
         print("recent:")
@@ -13069,8 +13116,13 @@ def main():
     ck.add_argument("--why", help="with --set-baseline: one line")
     ck.add_argument("--wait", action="store_true",
                     help="block until the queued run finishes and print its report")
-    ck.add_argument("--again", action="store_true",
-                    help="run afresh even if this commit already has a report")
+    ck.add_argument("--arms", metavar="A,B",
+                    help="run only these arms (names from the manifest); your project says "
+                         "which a change needs. The report is marked partial")
+    ck.add_argument("--priority", action="store_true",
+                    help="the priority queue (the default for leads and rank 0: integration)")
+    ck.add_argument("--normal", action="store_true",
+                    help="the normal queue (the default for lanes)")
     ck.add_argument("--report", metavar="SHA", help="print a finished report for a commit")
     tq = add("test", cmd_test)
     tq.add_argument("command", nargs=argparse.REMAINDER,

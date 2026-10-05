@@ -2472,18 +2472,73 @@ class TestQueue(unittest.TestCase):
                   mock.patch.object(hz, "testq_ensure_runner")):
             m.start(); self.addCleanup(m.stop)
 
-    def test_same_commit_joins_and_a_finished_one_is_reused(self):
+    def run_queue(self):
+        with mock.patch("sys.stdout", io.StringIO()), mock.patch("signal.signal"):
+            hz.testd(self.state, self.repo)
+
+    def test_same_commit_joins_but_a_finished_one_is_never_reused(self):
         j1, how1 = hz.testq_submit(self.ctx, "check", self.sha, "dev_1", "s1")
         j2, how2 = hz.testq_submit(self.ctx, "check", self.sha, "dev", "s2")
         self.assertEqual((how1, how2, j1["id"]), ("queued", "joined", j2["id"]))
         self.assertEqual([r["node"] for r in hz.testq_jobs(self.ctx)[0]["requested_by"]],
                          ["dev_1", "dev"])
-        with mock.patch("sys.stdout", io.StringIO()), mock.patch("signal.signal"):
-            hz.testd(self.state, self.repo)
-        self.assertEqual(hz.testq_submit(self.ctx, "check", self.sha, "qa", "s3")[1], "reused")
-        self.assertTrue(hz.check_report_path(self.ctx, "qa", self.sha).exists())
-        self.assertEqual(hz.testq_submit(self.ctx, "check", self.sha, "qa", "s3",
-                                         again=True)[1], "queued")
+        self.run_queue()
+        self.assertEqual(hz.testq_submit(self.ctx, "check", self.sha, "qa", "s3")[1], "queued")
+        _, how = hz.testq_submit(self.ctx, "check", self.sha, "qa", "s3", arms=["good"])
+        self.assertEqual(how, "queued")                         # another arm set: its own job
+
+    def test_priority_goes_first_and_a_lead_promotes_a_lane_job(self):
+        log = self.state / "order.txt"
+        n1, _ = hz.testq_submit(self.ctx, "cmd", self.sha, "dev_1", "s", command=f"echo n1 >> {log}")
+        time.sleep(1.1)
+        n2, _ = hz.testq_submit(self.ctx, "cmd", self.sha, "dev_2", "s", command=f"echo n2 >> {log}")
+        time.sleep(1.1)
+        p1, _ = hz.testq_submit(self.ctx, "cmd", self.sha, "dev", "s", command=f"echo p1 >> {log}",
+                                queue="priority")
+        self.assertEqual([j["id"] for j in hz.testq_ahead(self.ctx, n1)], [p1["id"]])
+        self.run_queue()
+        self.assertEqual(log.read_text().split(), ["p1", "n1", "n2"])
+        c, _ = hz.testq_submit(self.ctx, "check", self.sha, "dev_1", "s")
+        hz.testq_submit(self.ctx, "check", self.sha, "dev", "s", queue="priority")
+        self.assertEqual(hz._read_json(hz.testq_dir(self.ctx) / f"{c['id']}.json")["queue"],
+                         "priority")
+
+    def test_the_wait_is_estimated_from_finished_jobs(self):
+        now = time.time()
+        stamp = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(t))
+        for k, d in enumerate((60, 120, 90)):
+            hz.testq_save(self.ctx, {"id": f"d{k}", "kind": "check", "sha": "x", "state": "done",
+                                     "arms": None, "requested_by": [], "at": stamp(now - 999),
+                                     "started": stamp(now - 900 + k), "finished": stamp(now - 900 + k + d)})
+        hz.testq_save(self.ctx, {"id": "r", "kind": "check", "sha": "y", "state": "running",
+                                 "arms": None, "requested_by": [], "at": stamp(now - 40),
+                                 "started": stamp(now - 30), "pid": os.getpid()})
+        job = {"id": "new", "kind": "check", "arms": None, "state": "queued", "at": stamp(now)}
+        hz.testq_save(self.ctx, dict(job, requested_by=[]))
+        self.assertAlmostEqual(hz.testq_wait_estimate(self.ctx, job), 150, delta=3)
+
+    def test_arms_run_only_the_named_and_the_report_says_partial(self):
+        hz.testq_submit(self.ctx, "check", self.sha, "dev", "s", arms=["good"])
+        self.run_queue()
+        rep = json.loads(hz.check_report_path(self.ctx, "dev", self.sha).read_text())
+        self.assertEqual(([r["name"] for r in rep["checks"]], rep["partial"], rep["arms"]),
+                         (["good"], True, ["good"]))
+
+    def test_the_project_is_told_where_it_runs_and_no_setup_is_run(self):
+        out = self.state / "env.txt"
+        marker = self.state / "setup-ran"
+        (self.repo / ".harness" / "manifest.json").write_text(json.dumps({
+            "test_setup": f"touch {marker}",
+            "checks": [{"name": "env", "blindSpot": "-", "command":
+                        f"echo $HARNESS_TEST_ORIGIN $HARNESS_TEST_SHA $HARNESS_TEST_SCRATCH > {out}; "
+                        f"touch $HARNESS_TEST_SCRATCH/x"}]}))
+        hz.testq_submit(self.ctx, "check", self.sha, "dev", "s", origin="/wt/dev")
+        self.run_queue()
+        origin, sha, scratch = out.read_text().split()
+        self.assertEqual((origin, sha), ("/wt/dev", self.sha))
+        self.assertTrue(scratch.startswith(str(self.runs)))
+        self.assertFalse(Path(scratch).exists())                # torn down with the run
+        self.assertFalse(marker.exists())                       # setup is the project's
 
     def test_a_run_reports_to_every_requester_rings_and_leaves_nothing(self):
         hz.testq_submit(self.ctx, "check", self.sha, "dev_1", "s1")
@@ -2503,11 +2558,7 @@ class TestQueue(unittest.TestCase):
                          capture_output=True, text=True).stdout
         self.assertEqual(len(wl.strip().splitlines()), 1)              # only the repo itself
 
-    def test_first_in_first_out_and_one_runner(self):
-        a, _ = hz.testq_submit(self.ctx, "cmd", self.sha, "dev", "s", command="echo a")
-        time.sleep(1.1)
-        b, _ = hz.testq_submit(self.ctx, "cmd", self.sha, "dev_1", "s", command="echo b")
-        self.assertEqual([j["id"] for j in hz.testq_ahead(self.ctx, b)], [a["id"]])
+    def test_one_runner(self):
         held = hz._flock(hz.testq_dir(self.ctx) / "runner.lock", block=False)
         try:
             with mock.patch("sys.stdout", io.StringIO()) as out:

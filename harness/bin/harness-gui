@@ -177,7 +177,7 @@ def tests_queue(pdir, repo):
     order, and whether a runner is up."""
     try:
         c = CLI.ProjCtx(pdir, repo)
-        jobs = CLI.testq_jobs(c, ("running", "queued"))
+        jobs = CLI.testq_order(CLI.testq_jobs(c, ("running", "queued")))
         last = (CLI.testq_jobs(c, ("done", "failed", "cancelled")) or [None])[-1]
     except Exception:
         return {"jobs": [], "last": None}
@@ -187,6 +187,8 @@ def tests_queue(pdir, repo):
                     "sha": (j.get("sha") or "")[:8], "command": (j.get("command") or "")[:60],
                     "who": [r.get("node") for r in j.get("requested_by") or []],
                     "arm": j.get("arm"), "done": j.get("done_arms"), "total": j.get("total"),
+                    "arms": j.get("arms"), "queue": j.get("queue") or "normal",
+                    "eta": CLI.testq_wait_estimate(c, j),
                     "since": CLI.wait_age(j.get("started") or j.get("at"))})
     lj = None
     if last:
@@ -904,6 +906,7 @@ border:1px solid var(--line);border-radius:3px;letter-spacing:.06em;text-transfo
 .card.interm code{color:var(--busy);overflow-wrap:anywhere}
 .card.doc{margin-top:10px}
 .card.doc b.over{color:var(--warn)}
+.card .prio{color:var(--warn);font-weight:400}
 .dbar{height:4px;background:#2a2f22;border-radius:2px;margin:2px 0 6px;overflow:hidden}
 .dbar i{display:block;height:100%;background:var(--busy)}
 .dbar i.over{background:var(--warn)}
@@ -1572,16 +1575,20 @@ function testCard(p) {
   const jobs = t.jobs || [];
   const run = jobs.find(j => j.state === 'running');
   const q = jobs.filter(j => j.state === 'queued');
-  const what = j => j.kind === 'check' ? 'check <code>' + esc(j.sha) + '</code>'
-                                        : '<code>' + esc(j.command) + '</code>';
+  const what = j => j.kind === 'check'
+    ? (j.arms ? esc(j.arms.join(', ')) + ' of ' : 'check ') + '<code>' + esc(j.sha) + '</code>'
+    : '<code>' + esc(j.command) + '</code>';
+  const eta = j => j.eta != null ? ' &middot; done in ~' + dur(j.eta) : '';
+  const tag = j => j.queue === 'priority' ? '<b class="prio">priority</b> ' : '';
   const head = run
     ? '<div class="ln">' + esc(run.who.join(', ')) + '&rsquo;s ' + what(run) +
       (run.total ? ' &middot; arm ' + ((run.done || 0) + 1) + '/' + run.total +
         (run.arm ? ' <span class="q">' + esc(run.arm) + '</span>' : '') : '') +
-      ' &middot; ' + esc(run.since || '') + '</div>'
+      ' &middot; ' + esc(run.since || '') + eta(run) + '</div>'
     : '<div class="ln q">nothing running</div>';
-  const list = q.map((j, i) => '<div class="ln q">' + (i + 1) + '. ' + esc(j.who.join(', ')) +
-    ' &middot; ' + what(j) + ' &middot; waiting ' + esc(j.since || '') + '</div>').join('');
+  const list = q.map((j, i) => '<div class="ln q">' + (i + 1) + '. ' + tag(j) +
+    esc(j.who.join(', ')) + ' &middot; ' + what(j) + ' &middot; waiting ' + esc(j.since || '') +
+    eta(j) + '</div>').join('');
   const last = !run && !q.length && t.last ? '<div class="ln q">last: ' + esc(t.last.id) + ' ' +
     esc(t.last.state) + (t.last.at ? ' at ' + esc(t.last.at) : '') + '</div>' : '';
   return '<div class="card interm doc ' + (run ? 'busy' : '') + '" data-live="tests:' +

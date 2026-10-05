@@ -1401,7 +1401,7 @@ function card(n) {
   return '<div class="card ' + cls + coldc + (w ? ' waitc' : '') +
     '" data-live="card:' + esc(n._slug + ':' + n.name) + '">' +
     '<div class="hdr"><span class="dot"></span><span class="nm">' + esc(n.name) +
-    '</span><span class="kd">' + esc((n.role ? n.role + ' · ' : '') + (n.kind || '')) +
+    '</span><span class="kd">' + esc(n.role || '') +
     '</span></div>' +
     '<div class="ln q">' + esc(n.branch || '') + (n.indexed ? '' : ' (not indexed)') + '</div>' +
     who + wait + owes + sigs + task + splitChips(n) + goneChips(n) +

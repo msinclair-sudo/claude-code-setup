@@ -2190,3 +2190,166 @@ class Doorbell(unittest.TestCase):
             with mock.patch.object(hz, "waiters_on", return_value=[("dev", 900, "", "inf:dev:2")]), \
                  mock.patch.object(hz, "last_turn", return_value=(900, 0)):
                 self.assertIsNone(hz.bell_nudge(self.ctx, "main", "sess-main"))   # working
+
+
+class OwnerActions(unittest.TestCase):
+    """Commands rank 0 hands the owner: an action ask with runs, through the
+    intermediary to the Issues tab; Done rings the asker, a question wakes it."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev"})
+        (self.ctx.dir / "briefs").mkdir()
+        (self.ctx.dir / "briefs" / "s1.json").write_text(json.dumps({"task": "s1", "node": "dev_1"}))
+        self.err = mock.patch("sys.stderr", new_callable=io.StringIO)
+        self.err.start()
+        self.addCleanup(self.err.stop)
+
+    def open(self, me="main", sid="s" * 36, task="owner", runs=("pip install x",), kind="action"):
+        return hz.ask_open(self.ctx, task, kind, "Install x?", me, sid, list(runs))
+
+    def path(self, rec):
+        return self.ctx.dir / "asks" / f"{rec['id']}.json"
+
+    def test_rank0_opens_on_owner_without_a_brief(self):
+        r = self.open()
+        self.assertEqual((r["id"], r["task"], r["runs"], r["thread"]),
+                         ("owner-1", "owner", ["pip install x"], []))
+        with self.assertRaises(SystemExit):
+            self.open(me="dev")                              # a lead: its own task
+        self.assertEqual(self.open(me="dev", task="s1")["runs"], ["pip install x"])
+        with self.assertRaises(SystemExit):
+            self.open(runs=())                               # owner carries commands
+        with self.assertRaises(SystemExit):
+            self.open(runs=["x"] * 11)
+        with self.assertRaises(SystemExit):
+            self.open(runs=["x" * 501])
+        with self.assertRaises(SystemExit):
+            self.open(task="s1", kind="intent")              # --run needs action
+
+    def test_done_logs_stubs_rings_and_is_told_once(self):
+        r = self.open()
+        hz.ask_done(self.ctx.dir, self.path(r), r, "ran fine")
+        stub = json.loads(self.path(r).read_text())
+        self.assertEqual((stub["state"], stub["note"]), ("done", "ran fine"))
+        self.assertEqual(hz.owner_done(self.ctx.dir)[0]["runs"], ["pip install x"])
+        rung = list((self.ctx.dir / "doorbell" / "main" / "inbox").glob("*.json"))
+        self.assertEqual(len(rung), 1)
+        msg = json.loads(rung[0].read_text())
+        self.assertEqual(msg["from"], "owner")
+        self.assertIn("pip install x", msg["text"])
+        self.assertIn("ran fine", msg["text"])
+        self.assertIn("done:owner-1", hz.ask_notices(self.ctx, "main"))
+        hz.ask_consume(self.ctx, ["done:owner-1"])
+        self.assertFalse(self.path(r).exists())
+        self.assertEqual(self.open()["id"], "owner-2")       # the log keeps the id
+        with self.assertRaises(SystemExit):
+            hz.ask_done(self.ctx.dir, self.path(r), dict(r, kind="intent"))
+
+    def test_query_and_reply_thread(self):
+        r = self.open()
+        hz.ask_query(self.path(r), r, "is x the pinned one?")
+        self.assertTrue(r["query_open"])
+        self.assertEqual(hz.intermediary_open_work(self.ctx.dir), ["owner-1"])
+        hz.ask_reply(self.path(r), r, "yes, 1.2")
+        saved = json.loads(self.path(r).read_text())
+        self.assertEqual([t["by"] for t in saved["thread"]], ["owner", "intermediary"])
+        self.assertFalse(saved["query_open"])
+        self.assertEqual(saved["state"], "ready")            # looked at
+        self.assertEqual(hz.intermediary_open_work(self.ctx.dir), [])
+
+    def cli(self, argv, env):
+        home = self.ctx.dir.parent
+        with mock.patch.object(hz, "ask_find",
+                               return_value=(self.ctx.dir, "/r/p", self.path(self.rec), self.rec)), \
+             mock.patch.object(hz, "intermediary_wake_detached") as wake, \
+             mock.patch.dict(os.environ, env), \
+             mock.patch("sys.argv", ["harness", "ask", *argv]), \
+             redirect_stdout(io.StringIO()):
+            os.environ.pop("CLAUDE_CODE_SESSION_ID", None) if "CLAUDE_CODE_SESSION_ID" not in env else None
+            try:
+                hz.main(); code = 0
+            except SystemExit as e:
+                code = e.code
+        return code, wake
+
+    def test_owner_verbs_gated_and_query_wakes(self):
+        self.rec = self.open()
+        code, _ = self.cli(["owner-1", "--done"], {"CLAUDE_CODE_SESSION_ID": "s" * 36})
+        self.assertEqual(code, hz.REFUSED)
+        code, _ = self.cli(["owner-1", "--reply", "x"], {"HARNESS_INTERMEDIARY": "0"})
+        self.assertEqual(code, hz.REFUSED)
+        code, wake = self.cli(["owner-1", "--query", "why?"], {})
+        self.assertEqual(code, 0)
+        self.assertIn("why?", wake.call_args[0][1])
+        self.assertIn("--reply", wake.call_args[0][1])
+
+
+class IntermediaryWake(unittest.TestCase):
+    """The intermediary sleeps and is woken: resumed, never copied."""
+
+    def setUp(self):
+        self.pdir = Path(tempfile.mkdtemp())
+        self.err = mock.patch("sys.stderr", new_callable=io.StringIO)
+        self.err.start()
+        self.addCleanup(self.err.stop)
+
+    def wake(self, live, sid, rc=0):
+        calls = []
+        def run(cmd, **kw):
+            calls.append(cmd)
+            return mock.Mock(returncode=rc, stdout="", stderr="")
+        with mock.patch.object(hz, "intermediary_rows", return_value=(live, sid)), \
+             mock.patch.object(hz, "intermediary_cmd", side_effect=lambda *a, **k:
+                               ["claude", "--bg", "FRESH", k.get("start")]), \
+             mock.patch.object(hz.subprocess, "run", side_effect=run):
+            ok, msg = hz.intermediary_wake(self.pdir, "/r/proj", "new ask t-1")
+        return ok, msg, calls
+
+    def test_busy_queues_to_the_inbox(self):
+        ok, msg, calls = self.wake({"status": "busy", "sessionId": "abc" * 12}, "abc" * 12)
+        self.assertEqual(calls, [])
+        self.assertEqual(hz.intermediary_inbox(self.pdir, take=True), ["new ask t-1"])
+
+    def test_idle_is_stopped_then_resumed_without_flags(self):
+        sid = "abcd1234" + "x" * 28
+        ok, _, calls = self.wake({"status": "idle", "sessionId": sid}, sid)
+        self.assertTrue(ok)
+        self.assertEqual(calls[0], ["claude", "stop", "abcd1234"])
+        self.assertEqual(calls[1][:4], ["claude", "--bg", "--resume", sid])
+        self.assertEqual(len(calls[1]), 5)                   # flags would start a copy
+        self.assertIn("new ask t-1", calls[1][4])
+        self.assertIn("harness ask --idle", calls[1][4])
+
+    def test_none_starts_fresh_and_inbox_rides_along(self):
+        hz.intermediary_inbox(self.pdir, "earlier")
+        ok, _, calls = self.wake(None, None)
+        self.assertEqual(calls[0][:3], ["claude", "--bg", "FRESH"])
+        self.assertIn("earlier", calls[0][3])
+        self.assertIn("new ask t-1", calls[0][3])
+        self.assertEqual(hz.intermediary_inbox(self.pdir, take=True), [])
+
+    def test_bg_cmd_carries_identity_in_settings(self):
+        repo = Path(tempfile.mkdtemp())
+        with mock.patch.object(hz, "intermediary_prompt", return_value=self.pdir / "p.md"):
+            cmd = hz.intermediary_cmd(self.pdir, str(repo), bg=True, start="go")
+        self.assertEqual(cmd[:2], ["claude", "--bg"])
+        env = json.loads(cmd[cmd.index("--settings") + 1])["env"]
+        self.assertEqual(env, {"HARNESS_INTERMEDIARY": "1", "HARNESS_PROJECT": self.pdir.name})
+        self.assertEqual(cmd[-1], "go")
+
+    def test_idle_prints_inbox_else_settles(self):
+        hz.intermediary_inbox(self.pdir, "owner asks on t-1")
+        with mock.patch.object(hz.subprocess, "Popen") as po, \
+             redirect_stdout(io.StringIO()) as out:
+            hz.ask_idle(self.pdir)
+        self.assertIn("owner asks on t-1", out.getvalue())
+        po.assert_not_called()
+        (self.pdir / "asks").mkdir()
+        (self.pdir / "asks" / "t-2.json").write_text(json.dumps({"id": "t-2", "state": "asked"}))
+        with mock.patch.object(hz.subprocess, "Popen") as po, redirect_stdout(io.StringIO()):
+            hz.ask_idle(self.pdir)
+        po.assert_not_called()                               # open work keeps it up
+        (self.pdir / "asks" / "t-2.json").write_text(json.dumps({"id": "t-2", "state": "ready"}))
+        with mock.patch.object(hz.subprocess, "Popen") as po, redirect_stdout(io.StringIO()):
+            hz.ask_idle(self.pdir)
+        self.assertIn("--settle", po.call_args[0][0][2])

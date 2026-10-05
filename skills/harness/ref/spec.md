@@ -384,7 +384,9 @@ A brief exists **before** its mark: the lead writes it, then the member accepts.
 
 **Why this shape.** `harness decision` (removed 2026-10-05) let the asker write the question to justify itself, gave the owner no way to reply but a quoted shell argument, closed nothing and told nobody; three were raised and none was answered. The intermediary writes for the owner, checks the asker's claims against the code, and the accept button is the signature no session can forge: `--accept` and `--reject` refuse inside any session.
 
-**Enforcement** `harness ask` refuses a lane and a task with no brief; the intermediary's verbs need `HARNESS_INTERMEDIARY=1`, which only `harness intermediary` sets; briefs over a cap are refused by section. Design: `harness/design/owner-channel.md` in the setup repo.
+**Commands for the owner.** Rank 0 hands the owner commands as an action ask on its standing task `owner`, with `--run "cmd"` per command. They show in the Issues tab at once; the owner clicks **Done** (the asker's doorbell rings) or asks about them (`--query`, answered by the intermediary's `--reply`). The intermediary sleeps between wakes: a new ask or an owner question resumes it, and `harness ask --idle` ends every wake.
+
+**Enforcement** `harness ask` refuses a lane, a task with no brief (except `owner`, rank 0's only), and `--run` off an action ask; the intermediary's verbs (and `--reply`, `--idle`) need `HARNESS_INTERMEDIARY=1`, which only `harness intermediary` sets; `--accept`, `--reject`, `--done` and `--query` refuse inside any session; briefs over a cap are refused by section. Design: `harness/design/owner-channel.md` in the setup repo.
 
 ### T18 — The documenter keeps the documents
 

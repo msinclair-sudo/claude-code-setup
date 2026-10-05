@@ -149,8 +149,32 @@ doesn't ask again. Nothing else is kept.
   - how to write the seven sections, for the owner rather than for the tree;
   - how to query the asker;
   - that it never decides, and never accepts.
-- The owner manages its compaction, as for rank 0.
 - Askers learn `harness ask` from one line each in the root and downward skills.
+
+## Commands for the owner, and waking on demand (2026-10-05)
+
+The owner's ask: "if main wants to provide me with something it needs to go through the
+intermediary … these actions won't need me to respond, I just need to click a button that confirms
+the action was completed. OR I can directly type something to request further information."
+
+- **Action asks with commands.** `harness ask owner --kind action --question "…" --run "cmd"`
+  (up to 10 commands, 500 chars each). `owner` is rank 0's standing task: no brief needed, and no
+  one else may use it. A lead's action ask on its own task may carry `--run` too.
+- **Shown at once.** The Issues tab shows each command with a Copy button, **Done** (with an
+  optional note), **Won't do** (reject), and a box to ask the intermediary about it. The commands
+  are the point, so they don't wait for a briefing; the intermediary adds two or three lines on
+  what they do with `--reply`.
+- **Done** logs the action to `owner/done.jsonl`, leaves a stub the asker is told of once, and
+  rings the asker's doorbell (`harness ring`), which wakes an idle rank 0 with no model in between.
+- **A question** (`ask <id> --query`, owner only) goes into the ask's `thread` and wakes the
+  intermediary. It answers with `--reply`, after asking the asker by `SendMessage` if it must.
+- **The intermediary sleeps.** It now runs in the background. A new ask or an owner question wakes
+  it. A stopped session is resumed with `claude --bg --resume <id> "<why>"` (no other flags: a
+  background session keeps its saved options, and any flag starts a copy; measured 2026-10-05). It
+  keeps its context across wakes. A busy one gets the reason through `intermediary/inbox.jsonl`.
+  Every wake ends with `harness ask --idle`. That hands over the inbox, or, with nothing `asked`
+  and no question open, stops the session 90s later. `harness intermediary` wakes it by hand, and
+  `--fg` runs it in a terminal as before.
 
 ## Still to discuss
 

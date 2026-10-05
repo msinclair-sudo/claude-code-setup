@@ -51,6 +51,15 @@ Make a condition structural, not a note: a note does not stop a close or a check
 
 Use `harness ask` (see `harness-downward`), as leads do. When the owner is in your session, asking them directly is fine; record the answer where it is used (a brief, a fact or the charter). Do not use a block for a question: a block means "I cannot reach X".
 
+**Commands the owner must run** (a login, an install, a permission rule, anything outside your reach) go out as one action ask on your standing task `owner`, never as chat text the owner has to find:
+
+```bash
+harness ask owner --kind action --question "Install the pinned x before the import runs?" \
+  --run "pip install x==1.2" --run "harness grant ..."
+```
+
+The intermediary is woken for it and the commands show in the owner's Issues tab at once. Carry on, or end your turn: when the owner clicks **Done** your doorbell rings with their note; if they ask about it first, the intermediary may `SendMessage` you for the answer.
+
 ## Blocks: comments and closing them
 
 Operator comments on any block come to you, not the lane. `whoami` reports unread ones.

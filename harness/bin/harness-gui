@@ -630,7 +630,7 @@ def read_state():
             # count that rises and falls on its own is one the owner learns to
             # ignore.
             "owner": {"count": sum(1 for p in projects for a in p["asks"]
-                                   if a.get("state") in ASK_OWNERS)},
+                                   if a.get("state") in ASK_OWNERS or a.get("runs"))},
             "roster_error": roster_error, "stale_server": stale_server(),
             # The harness CLI and the skills under ~/.claude/skills are copies;
             # when their source has moved, every session reads older
@@ -890,6 +890,16 @@ min-width:76px;text-align:center}
 .adraft{width:100%;min-height:70px;background:#0e1109;color:var(--ink);
 border:1px solid var(--line);padding:7px;font:inherit;resize:vertical}
 .adraft[readonly]{color:var(--dim)}
+.arun{display:flex;gap:8px;align-items:flex-start;margin:4px 0}
+.arun button.cp{margin-top:0;padding:5px 10px}
+.arun pre{flex:1;margin:0;padding:6px 9px;background:#0e1109;border:1px solid var(--line);
+  white-space:pre-wrap;word-break:break-all;color:var(--ink)}
+.athr{margin:5px 0;padding-left:8px;border-left:2px solid var(--line);white-space:pre-wrap}
+.athr.im{border-left-color:var(--busy)}
+.athr b{font-weight:400;color:var(--dim);font-size:11px}
+.anote{flex:1;background:#0e1109;color:var(--ink);border:1px solid var(--line);padding:4px 7px}
+.aquery{flex:1;min-height:44px;background:#0e1109;color:var(--ink);border:1px solid var(--line);
+  padding:4px 7px;font:inherit}
 .adraft:not([readonly]){border-color:var(--warn)}
 .row button:disabled{opacity:.35;cursor:default}
 .row button.rej{background:#2a1a12;color:var(--warn);border-color:#6b4526}
@@ -1374,10 +1384,6 @@ function card(n) {
 // The project's intermediary, as a card off to the side of its tree. Not a
 // tree node: nothing in the tree reports to it, and drawing it under the root
 // would say otherwise.
-// The start command as the owner will paste it: the repo path quoted the way
-// the CLI's shlex.quote would, since enrolled repos live under paths with spaces.
-const shq = x => /^[\w@%+=:,./-]+$/.test(x) ? x : "'" + String(x).replace(/'/g, "'\"'\"'") + "'";
-const startCmd = p => 'cd ' + shq(p.repo) + ' && harness intermediary';
 // Runs chosen per project, kept here so a poll's repaint doesn't reset the menu.
 const DOCRUNS = {}, DOCMSG = {};
 function documenterDo(slug, action) {
@@ -1448,7 +1454,7 @@ function docCard(p) {
 function intermCard(p) {
   const im = p.intermediary || {};
   const asks = p.asks || [];
-  const yours = asks.filter(a => a.state === 'ready' || a.state === 'drafted').length;
+  const yours = asks.filter(a => a.runs || a.state === 'ready' || a.state === 'drafted').length;
   // A finished turn is the intermediary waiting on the owner: its normal rest.
   const reply = im.stopped && im.stop && im.stop.kind === 'reply';
   const cls = im.running === null ? 'unknown'
@@ -1457,8 +1463,8 @@ function intermCard(p) {
   const s = {status: im.status, idle: im.idle, carry: im.context, up: im.up};
   let who;
   if (im.running === null) who = '<div class="ln u">unknown &mdash; the roster could not be read</div>';
-  else if (!im.running)    who = '<div class="ln q">not running</div>' +
-      '<div class="ln"><code>' + esc(startCmd(p)) + '</code></div>';
+  else if (!im.running)    who = '<div class="ln q">asleep &mdash; wakes when an ask or ' +
+      'your question needs it</div>';
   else if (reply)          who = '<div class="ln">waiting on <b>you</b>' + age(s) +
       '</div>' + meter(s);
   else if (im.stopped)     who = '<div class="ln dup">' + (im.stop
@@ -1683,8 +1689,8 @@ function ownerHead(p) {
       ? '<span>running' + (im.status === 'busy' ? ' &middot; busy' : '') +
         (im.context ? ' &middot; ' + tokf(im.context) + ' context' : '') +
         (im.idle != null ? ' &middot; idle ' + dur(im.idle) : '') + '</span>'
-      : '<span class="dup">not running</span> <span class="q">&mdash; start it in a ' +
-        'terminal: <code>' + esc(startCmd(p)) + '</code></span>';
+      : '<span>asleep</span> <span class="q">&mdash; it wakes when an ask ' +
+        'or your question needs it</span>';
   return '<div class="ohead" data-live="owner:head:' + esc(p.slug) + '"><b>intermediary</b>' +
     body + '</div>';
 }
@@ -1696,7 +1702,10 @@ const lines = v => Array.isArray(v) ? v.map(x => typeof x === 'string' ? x
 function askItem(slug, a) {
   const k = akey(slug, a.id);
   const open = OPENA.has(k);
-  const mine = a.state === 'ready' || a.state === 'drafted';
+  const runs = Array.isArray(a.runs) && a.runs.length ? a.runs : null;
+  const mine = runs || a.state === 'ready' || a.state === 'drafted';
+  const move = runs ? (a.query_open ? 'intermediary looking' : 'yours to run')
+                    : (mine ? 'yours' : 'being briefed');
   const row = '<div class="arow" data-atog="' + esc(k) + '">' +
     '<span class="akind ' + esc(a.kind || '') + '">' + esc(a.kind || '?') + '</span>' +
     '<span class="aq" title="' + esc(a.question) + '">' + esc(a.question) + '</span>' +
@@ -1704,8 +1713,7 @@ function askItem(slug, a) {
       (a.age ? ' &middot; ' + esc(a.age) : '') +
       ((a.evidence || []).length ? ' &middot; <span class="aev">' + a.evidence.length +
         ' evidence</span>' : '') + '</span>' +
-    '<span class="amove' + (mine ? ' yours' : '') + '">' +
-      (mine ? 'yours' : 'being briefed') + '</span></div>';
+    '<span class="amove' + (mine ? ' yours' : '') + '">' + move + '</span></div>';
   let body = '';
   if (open) {
     const b = a.brief || {};
@@ -1732,7 +1740,23 @@ function askItem(slug, a) {
     const meta = '<div class="ln q">task ' + esc(a.task || '?') +
       (a.node ? ' &middot; node ' + esc(a.node) : '') +
       ' &middot; asked by ' + esc(a.asked_by || '?') + ' &middot; ' + esc(a.state) + '</div>';
-    if (!mine) {
+    if (runs) {
+      // Commands to run: copy, run, click Done. Or ask the intermediary first.
+      const cmds = runs.map((c, i) => '<div class="arun"><pre>' + esc(c) + '</pre>' +
+        '<button class="cp" data-acopy="' + esc(c) + '">Copy</button></div>').join('');
+      const thread = (a.thread || []).map(t => '<div class="athr ' +
+        (t.by === 'owner' ? 'me' : 'im') + '"><b>' + (t.by === 'owner' ? 'you' : esc(t.by)) +
+        '</b> ' + esc(t.text) + '</div>').join('');
+      body = meta + cmds + (evs ? '<div style="margin-top:6px">' + evs + '</div>' : '') + thread +
+        (a.query_open ? '<div class="ln q">the intermediary is looking into it&hellip;</div>' : '') +
+        '<div class="row"><input class="anote" data-akey="' + esc(k) + '" ' +
+          'placeholder="note for the asker (optional)">' +
+        '<button data-adone="' + esc(k) + '">Done</button>' +
+        '<button class="rej" data-arej="' + esc(k) + '">Won&rsquo;t do</button>' + msg + '</div>' +
+        '<div class="row"><textarea class="aquery" data-akey="' + esc(k) + '" ' +
+          'placeholder="ask about this &mdash; the intermediary finds out and answers here">' +
+          '</textarea><button data-aquery="' + esc(k) + '">Ask</button></div>';
+    } else if (!mine) {
       body = meta + '<div class="ln q" style="margin-top:6px">being briefed by the ' +
         'intermediary</div>' +
         '<div class="row"><button class="rej" data-arej="' + esc(k) + '">Reject</button>' +
@@ -1817,7 +1841,8 @@ function ruleAsk(k, action, text) {
     .then(r => r.json())
     .then(j => {
       if (j.ok) {
-        delete AMSG[k]; OPENA.delete(k); save(AKEY, OPENA);
+        delete AMSG[k];
+        if (action !== 'query') { OPENA.delete(k); save(AKEY, OPENA); }
         freeDraft(k); LAST = ''; tick(); return;
       }
       refused(k, j.message || 'refused');
@@ -1871,6 +1896,32 @@ document.addEventListener('click', e => {
     ruleAsk(ac.dataset.aacc, 'accept', t && t !== (ta.dataset.raw || '').trim() ? t : '');
     return;
   }
+  const cp = e.target.closest('[data-acopy]');
+  if (cp) {
+    const ok = () => { cp.textContent = 'Copied'; setTimeout(() => cp.textContent = 'Copy', 1500); };
+    if (navigator.clipboard) navigator.clipboard.writeText(cp.dataset.acopy).then(ok, () => {});
+    else {
+      const r = document.createRange(); r.selectNodeContents(cp.previousElementSibling);
+      getSelection().removeAllRanges(); getSelection().addRange(r);
+    }
+    return;
+  }
+  const dn = e.target.closest('[data-adone]');
+  if (dn) {
+    const n = dn.closest('.abody').querySelector('.anote');
+    dn.disabled = true;
+    ruleAsk(dn.dataset.adone, 'done', n ? n.value.trim() : '');
+    return;
+  }
+  const qy = e.target.closest('[data-aquery]');
+  if (qy) {
+    const ta = qy.closest('.abody').querySelector('.aquery');
+    const t = ta ? ta.value.trim() : '';
+    if (!t) { ta && ta.focus(); return; }
+    qy.disabled = true;
+    ruleAsk(qy.dataset.aquery, 'query', t);
+    return;
+  }
   const rj = e.target.closest('[data-arej]');
   if (rj) {
     if (!confirm('Reject this ask? It is removed, and its asker is told you ' +
@@ -1890,12 +1941,19 @@ document.addEventListener('input', e => {
 });
 document.addEventListener('focusin', e => {
   if (e.target.classList.contains('adraft')) holdDraft(e.target);
+  if (e.target.matches('.anote, .aquery')) holdDraft(e.target);
   if (e.target.classList.contains('ofilter')) EDITING.add('owner:filter');
 });
 document.addEventListener('focusout', e => {
   // A read-only draft that was only looked at is not being written; let go.
   if (e.target.classList.contains('adraft') && e.target.readOnly)
     freeDraft(e.target.dataset.akey);
+  // A note or question half-written is held; an empty one is let go.
+  if (e.target.matches('.anote, .aquery')) {
+    const b = e.target.closest('.abody');
+    if (b && ![...b.querySelectorAll('.anote, .aquery')].some(x => x.value.trim()))
+      freeDraft(e.target.dataset.akey);
+  }
   if (e.target.classList.contains('ofilter')) {
     EDITING.delete('owner:filter'); LAST = ''; tick();
   }
@@ -2180,6 +2238,12 @@ def rule_ask(slug, ask_id, action, text):
         return _ask_cli(slug, [ask_id, "--accept"] + (["--text", text] if text else []))
     if action == "reject":
         return _ask_cli(slug, [ask_id, "--reject"])
+    if action == "done":
+        return _ask_cli(slug, [ask_id, "--done"] + (["--text", text] if text else []))
+    if action == "query":
+        if not (text or "").strip():
+            return False, "say what you want to know"
+        return _ask_cli(slug, [ask_id, "--query", text])
     return False, f"unknown action {action!r}"
 
 

@@ -1,6 +1,6 @@
 ---
 name: harness-intermediary
-description: The harness intermediary — the one session between the tree (rank 0 and leads) and the owner. Investigates each question put to the owner, briefs it in a fixed form, talks it over with the owner, and drafts the ruling the owner signs in the GUI. Load only when started by `harness intermediary`.
+description: The harness intermediary — the one session between the tree (rank 0 and leads) and the owner. Investigates each question put to the owner, briefs it in a fixed form, talks it over with the owner, and drafts the ruling the owner signs in the GUI. Load only when started or woken by `harness intermediary`.
 ---
 
 # Intermediary
@@ -24,7 +24,36 @@ harness ask --list                      # your project's open asks
 harness ask <id> --show                 # the ask, its task's brief and comments, the facts it cites
 ```
 
-An asker nudges you with `SendMessage` ("new ask <id>"). At start, and on every nudge, read the list.
+You run in the background and sleep when nothing is open. The harness wakes you, resuming this
+session, with the reason as your next prompt: a new ask, or the owner's question about one. An
+asker may also nudge you with `SendMessage` ("new ask <id>") while you are up. On every wake, read
+the list, handle what the prompt names, and **end with `harness ask --idle`**. It hands you anything
+that arrived while you worked; when nothing is left it puts you to sleep a little later. While an
+ask is `asked` or the owner's question is unanswered you stay up, so a reply you are waiting on from
+an asker reaches you.
+
+## Commands for the owner to run
+
+Rank 0 hands the owner commands as an action ask with `runs` (`harness ask owner --kind action
+--question "…" --run "cmd"`). The owner sees them in the Issues tab at once, with a Copy button
+each, **Done**, **Won't do**, and a box to ask you about them. You do not brief these in seven
+sections. Instead:
+
+1. Read the commands against the asker's question and what you can see of the repo. Check, by
+   reading only, that each does what the question says; never run one.
+2. Say what they do in two or three plain lines, and anything the owner should expect (a prompt,
+   a long wait, a restart): `harness ask <id> --reply "..."`. That shows under the commands and
+   marks the ask looked at. If a command looks wrong or risky, say so there and `SendMessage` the
+   asker.
+
+When the owner clicks Done, the asker is rung directly; you are not involved.
+
+## The owner's questions
+
+The owner can type a question under any open ask in the Issues tab. You are woken with it. Answer
+from the record, the repo and git; if those can't answer it, `SendMessage` the asker, wait for the
+reply, then answer: `harness ask <id> --reply "..."`. Write the reply for the owner, in their
+voice, short. It appears under the ask.
 
 ## Dig before you write
 
@@ -108,7 +137,7 @@ rejected; the ruling is what stays.
 
 ## With the owner
 
-The owner talks to you in this terminal. Answer follow-ups from your own reading; if you don't
+The owner may also attach to you (`claude attach`) and talk here. Answer follow-ups from your own reading; if you don't
 know, say so and go and find out. Offer to dig further when a question shows the briefing was thin,
 then re-brief. If the discussion shows the question itself was incomplete,
 `harness ask <id> --amend "..."`. When you and the owner agree on the answer:
@@ -121,9 +150,9 @@ settled belongs in the amended question or in the ruling itself.
 
 ## Your context
 
-You are one session across every ask in your project. The owner compacts or restarts you; before a long
-investigation, say so if you are already heavy. After a restart, `harness ask --list` is all the
-state you need.
+You are one session across every ask in your project, resumed on every wake, so you keep what you
+read last time. Before a long investigation, say so if you are already heavy. After a fresh start,
+`harness ask --list` is all the state you need.
 
 On demand: the spec's `T17`, `~/.claude/skills/harness/ref/spec.md`, and the design note
 `harness/design/owner-channel.md` in the setup repo.

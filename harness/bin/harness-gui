@@ -246,8 +246,6 @@ def documenter(rows, pdir, repo, asks, root=None):
             batches.append(r)
     batches.sort(key=lambda r: r.get("at") or "")
     out["review"] = [r["task"] for r in batches if not r.get("applied") and not r.get("refused")]
-    out["counts"] = {"applied": sum(1 for r in batches if r.get("applied")),
-                     "declined": sum(1 for r in batches if r.get("refused"))}
     # Only the latest batch's outcome: an old decline is history, not news.
     if batches:
         b = batches[-1]
@@ -1524,9 +1522,6 @@ function docCard(p) {
     last = '<div class="ln" title="' + esc(lt.why || '') + '">last batch declined: <span class="q">' +
       esc(String(lt.why || '').replace(/^declined by \w+: /, '').slice(0, 90)) + '</span></div>';
   else if (lt) last = '';
-  const c = d.counts || {};
-  const tally = (c.applied || c.declined) ? '<div class="ln q">' + (c.applied || 0) + ' applied &middot; ' +
-    (c.declined || 0) + ' declined</div>' : '';
   const ak = d.asks ? '<div class="ln"><a href="#issues">' + d.asks + ' open item' +
       (d.asks > 1 ? 's' : '') + '</a></div>' : '';
   const n = DOCRUNS[p.slug] || 1;
@@ -1543,7 +1538,7 @@ function docCard(p) {
   return '<div class="card interm doc ' + cls + '" data-live="doc:' + esc(p.slug) + '">' +
     '<div class="hdr"><span class="dot"></span><span class="nm">' + esc(p.project) +
     '</span><span class="kd">documenter</span></div>' +
-    '<div class="ln">' + status + '</div>' + budget + last + tally + ak + ctl + msg + '</div>';
+    '<div class="ln">' + status + '</div>' + budget + last + ak + ctl + msg + '</div>';
 }
 
 function intermCard(p) {

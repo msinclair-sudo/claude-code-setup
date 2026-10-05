@@ -2042,3 +2042,16 @@ class Held(unittest.TestCase):
         self.assertEqual(b["held"], [])                   # mid-task: working, not held
         self.assertEqual(c["held"], [{"task": "tc", "until": "00:05Z (in 3h)"}])
         self.assertEqual(d["held"], [])                   # nothing queued
+
+
+class SessionModel(unittest.TestCase):
+    def test_last_real_model(self):
+        d = Path(tempfile.mkdtemp())
+        f = d / "s.jsonl"
+        f.write_text("\n".join(json.dumps(e) for e in (
+            {"type": "assistant", "message": {"model": "claude-sonnet-5-5", "content": []}},
+            {"type": "assistant", "message": {"model": "claude-opus-5-5", "content": []}},
+            {"type": "assistant", "message": {"model": "<synthetic>", "content": []}},
+            {"type": "user", "message": {"content": "x"}})) + "\n")
+        self.assertEqual(hz.session_model("s", f), "claude-opus-5-5")
+        self.assertIsNone(hz.session_model("", None))

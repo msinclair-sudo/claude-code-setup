@@ -483,6 +483,7 @@ def read_state():
                                     # finished turn waiting on someone.
                                     "stop": CLI.stop_detail(r, rows),
                                     "id": (r.get("sessionId") or "")[:8],
+                                    "model": CLI.session_model(r.get("sessionId") or ""),
                                     # Uptime: the roster's startedAt is epoch ms.
                                     "up": (int(time.time() - r["startedAt"] / 1000)
                                            if isinstance(r.get("startedAt"), (int, float))
@@ -570,7 +571,10 @@ def read_state():
                          for m in nodes if m["waiting"] and n["name"] in m["waiting"]["chain"]
                          and m["waiting"]["chain"].index(n["name"]) >= 1]   # direct: awaited_by
         try:
-            mark_held(cli_ctx(pdir, repo, tree), nodes)
+            cctx = cli_ctx(pdir, repo, tree)
+            mark_held(cctx, nodes)
+            for n in nodes:
+                n["assigned"] = list(CLI.assignment_for(cctx, n["name"]))
         except Exception:
             pass
         nodes.sort(key=lambda n: (n["rank"], n["name"]))
@@ -723,6 +727,7 @@ overflow-wrap:anywhere}
 .card.waitc{border-color:#2f6157;background:#101f1c}
 /* Held: gated by the lead on another node's task or a clock. Its own colour,
    violet, because it is neither a wait nor a fault. */
+.ln.md{color:var(--ink);font-size:11px;letter-spacing:.02em}
 .card.heldc{border-color:#4d4782;background:#16152a}
 .hd{color:var(--held);font-size:11px;margin-top:4px;line-height:1.45;overflow-wrap:anywhere}
 .hd.o{border-top:1px dotted #4d4782;padding-top:3px}
@@ -1248,6 +1253,22 @@ function meter(s) {
   return bits.length ? '<div class="ln mt">' + bits.join(' &middot; ') + '</div>' : '';
 }
 
+// 'claude-opus-5-5[1m]' -> 'opus 5.5'; 'claude-haiku-4-5-20251001' -> 'haiku 4.5'.
+function modelName(m) {
+  if (!m) return '';
+  const x = String(m).replace(/\[.*\]$/, '').replace(/^claude-/, '').replace(/-\d{8}$/, '');
+  const k = x.match(/^([a-z]+)-(\d+)-(\d+)$/);
+  return k ? k[1] + ' ' + k[2] + '.' + k[3] : x;
+}
+// What runs the node: the live session's model, else the assignment, dimmed.
+function modelLine(n, s) {
+  const a = n.assigned || [];
+  const eff = a[1] ? ' &middot; ' + esc(a[1]) : '';
+  if (s && s.model) return '<div class="ln md" title="assigned ' + esc((a[0] || '?') + ' ' +
+      (a[1] || '')) + '">' + esc(modelName(s.model)) + eff + '</div>';
+  return a[0] ? '<div class="ln q">assigned ' + esc(a[0]) + eff + '</div>' : '';
+}
+
 function card(n) {
   const unknown = n.sessions === null;
   const ss = n.sessions || [];
@@ -1266,18 +1287,19 @@ function card(n) {
   if (unknown)            who = '<div class="ln u">occupancy unknown</div>';
   else if (ss.length > 1) who = '<div class="ln dup">' + ss.length +
       ' sessions in one worktree</div>';
-  else if (halted)        who = '<div class="ln dup">' + (ss[0].stop
+  else if (halted)        who = modelLine(n, ss[0]) + '<div class="ln dup">' + (ss[0].stop
       ? 'permission prompt &middot; ' + esc(ss[0].stop.tool) + '</div>' +
         (ss[0].stop.what ? '<div class="ln q">' + esc(ss[0].stop.what) + '</div>' : '')
       : 'stopped &mdash; a prompt or a reply</div>') +
       '<div class="ln q">claude attach ' + esc(ss[0].id) + '</div>' + meter(ss[0]);
-  else if (ss.length)     who = '<div class="ln" title="session ' + esc(ss[0].name) + '">' +
+  else if (ss.length)     who = modelLine(n, ss[0]) +
+      '<div class="ln" title="session ' + esc(ss[0].name) + '">' +
       // "idle · idle 5m" said it twice: the age already says idle.
       (ss[0].status === 'idle' && age(ss[0])
         ? age(ss[0]).replace(/^ &middot; /, '') : esc(ss[0].status) + age(ss[0])) +
       '</div>' + meter(ss[0]);
-  else if (n.claimed)     who = '<div class="ln dup">claimed, no session</div>';
-  else                    who = '<div class="ln q">no session</div>';
+  else if (n.claimed)     who = '<div class="ln dup">claimed, no session</div>' + modelLine(n);
+  else                    who = '<div class="ln q">no session</div>' + modelLine(n);
   // "unassigned" read as "nothing is there", which is the opposite of what it
   // means: the session is working, the HARNESS just has no record of on what.
   const task = n.tasks.length ? '<div class="ln">' + n.tasks.map(x =>

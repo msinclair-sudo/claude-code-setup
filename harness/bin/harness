@@ -3100,6 +3100,19 @@ def cmd_hook_stop(a):
         # never block again.
         if reset_step(ctx, node, launch_only=again) or again:
             return
+        # A session without a doorbell can't be woken while idle: remind it,
+        # once per session, at the first turn end that finds it unarmed.
+        sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+        if sid and not bell_armed(ctx, node, sid):
+            mark = bell_dir(ctx, node) / "reminded"
+            if (mark.read_text().strip() if mark.exists() else "") != sid:
+                mark.write_text(sid)
+                print(json.dumps({"hookSpecificOutput": {
+                    "hookEventName": "Stop", "decision": "block", "reason":
+                    "Arm your doorbell so the harness can wake you when idle: run "
+                    "`harness doorbell` with run_in_background. When it finishes, run "
+                    "`harness doorbell --read`, act on it, and arm it again."}}))
+                return
         # Downward first: what this node owes the rank below. It applies to rank
         # 0 as much as anyone — main is dev's lead — which is why every row is
         # aged past a threshold, so a design conversation is not interrupted over
@@ -11360,6 +11373,198 @@ def cmd_documenter(a):
                  if runs > 1 else "") + ". `harness docs measure` shows what it will see")
 
 
+# ── the doorbell: waking an idle session without a resume ────────────────────
+#
+# Nothing outside a session can message it, and a resume re-reads its whole
+# context. So each node session keeps `harness doorbell` running in the
+# background. It sleeps; it exits when something needs the session (a `ring`, or
+# a node that has waited on this idle one too long), and Claude Code wakes a
+# session when its background command exits (measured 2026-10-05: an idle
+# background session took a turn 19s after its shell ended). The session reads
+# why with `harness doorbell --read`, acts, and arms it again.
+
+DOORBELL_TICK = 10              # seconds between inbox checks
+NUDGE_AFTER = 300               # a wait, and the waited-on node's quiet, before a nudge
+
+
+def bell_dir(ctx, node):
+    d = ctx.state / "doorbell" / node
+    (d / "inbox").mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def bell_armed(ctx, node, sid=None):
+    """The armed doorbell's record, if its process is alive (and, with `sid`,
+    if it belongs to that session)."""
+    try:
+        a = json.loads((bell_dir(ctx, node) / "armed.json").read_text())
+    except Exception:
+        return None
+    if sid and a.get("session") != sid:
+        return None
+    try:
+        os.kill(int(a.get("pid")), 0)
+        if "doorbell" not in Path(f"/proc/{a['pid']}/cmdline").read_text(errors="replace"):
+            return None
+    except Exception:
+        return None
+    return a
+
+
+def cached_roster(ctx, max_age=30):
+    """The live roster, shared between doorbells so seven sessions polling do
+    not each pay for `claude agents` every minute."""
+    f = ctx.state / "doorbell" / "roster.json"
+    try:
+        if time.time() - f.stat().st_mtime < max_age:
+            return json.loads(f.read_text())
+    except Exception:
+        pass
+    rows = live_rows(agents_json())
+    try:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(rows))
+    except OSError:
+        pass
+    return rows
+
+
+def waiters_on(ctx, node, rows):
+    """Nodes waiting on `node`, recorded or read off their transcripts:
+    [(waiter, seconds waited, what it said, key)]."""
+    idx = load_index(ctx)
+    bw = idx.get("byWorktree") or {}
+    out = []
+    for w, r in open_waits(ctx).items():
+        if r.get("parent") == node:
+            since = _epoch(r.get("since"))
+            out.append((w, time.time() - since if since else 0, r.get("asked") or "",
+                        f"rec:{w}:{r.get('since')}"))
+    for r in stopped_rows(rows):
+        w = bw.get(r.get("cwd", ""))
+        if not w or w in open_waits(ctx):
+            continue
+        st = stop_detail(r, rows)
+        if not st or st["kind"] != "reply":
+            continue
+        on = ((idx.get("nodes") or {}).get(w) or {}).get("parent") if st["on"] == LAUNCHED else \
+            next((bw.get(x.get("cwd", "")) for x in rows if x.get("name") == st["on"]), None)
+        if on != node:
+            continue
+        age, _ = last_turn(r.get("sessionId") or "")
+        out.append((w, age or 0, st.get("said") or "", f"inf:{w}:{int(time.time() - (age or 0)) // 60}"))
+    return out
+
+
+def bell_nudge(ctx, node, sid):
+    """A message when this node's own session is idle and someone has waited on
+    it past NUDGE_AFTER, once per wait. None otherwise."""
+    rows = cached_roster(ctx)
+    me = next((r for r in rows if r.get("sessionId") == sid), None)
+    if not me or me.get("status") == "busy":
+        return None
+    quiet, _ = last_turn(sid)
+    if (quiet or 0) < NUDGE_AFTER:
+        return None
+    tf = bell_dir(ctx, node) / "told.json"
+    try:
+        told = set(json.loads(tf.read_text()))
+    except Exception:
+        told = set()
+    due = [w for w in waiters_on(ctx, node, rows) if w[1] >= NUDGE_AFTER and w[3] not in told]
+    if not due:
+        return None
+    tf.write_text(json.dumps(sorted(told | {w[3] for w in due})))
+    names = {bw: r.get("name") for r in rows
+             for bw in [(load_index(ctx).get("byWorktree") or {}).get(r.get("cwd", ""))] if bw}
+    return "\n".join(
+        f"{w} has been waiting on you for {int(age // 60)}m"
+        + (f": {said[:160]}" if said else "")
+        + f". Answer it (SendMessage to '{names.get(w, w)}'), or record why it waits."
+        for w, age, said, _ in due)
+
+
+def cmd_doorbell(a):
+    """`harness doorbell`: run it in the background (run_in_background). It exits
+    when this session is needed; `--read` says why. Arm it again after."""
+    ctx = Ctx(); ctx.require_enrolled()
+    node, _ = ctx.node()
+    d = bell_dir(ctx, node)
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if a.read:
+        f = d / "last.json"
+        if not f.exists():
+            print("nothing has rung"); return
+        for m in json.loads(f.read_text()):
+            print(f"{m.get('at', '')[:16]}  from {m.get('from') or '?'}: {m.get('text')}")
+        f.unlink()
+        print("\nArm it again: harness doorbell  (run_in_background)")
+        return
+    if a.status:
+        arm = bell_armed(ctx, node)
+        print(f"armed by session {arm['session'][:8]} since {arm['at'][:16]}" if arm
+              else "not armed — harness doorbell, with run_in_background")
+        return
+    if not sid:
+        die(REFUSED, "the doorbell belongs to a session: run it from one, in the background")
+    (d / "armed.json").write_text(json.dumps({"pid": os.getpid(), "session": sid,
+                                              "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}))
+    last_nudge = 0
+    while True:
+        try:
+            if json.loads((d / "armed.json").read_text()).get("pid") != os.getpid():
+                print("replaced by a newer doorbell"); return
+        except Exception:
+            return
+        msgs = []
+        for f in sorted((d / "inbox").glob("*.json")):
+            try:
+                msgs.append(json.loads(f.read_text()))
+            except Exception:
+                pass
+            f.unlink(missing_ok=True)
+        if not msgs and time.time() - last_nudge > 60:
+            last_nudge = time.time()
+            try:
+                text = bell_nudge(ctx, node, sid)
+            except Exception:
+                text = None
+            if text:
+                msgs.append({"from": "harness", "text": text,
+                             "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")})
+        if msgs:
+            f = d / "last.json"
+            old = json.loads(f.read_text()) if f.exists() else []
+            f.write_text(json.dumps(old + msgs))
+            (d / "armed.json").unlink(missing_ok=True)
+            print(f"rang: {len(msgs)} message(s). Read them: harness doorbell --read")
+            return
+        time.sleep(DOORBELL_TICK)
+
+
+def cmd_ring(a):
+    """`harness ring <node> "..."`: wake a node's session through its doorbell."""
+    ctx = Ctx(); ctx.require_enrolled()
+    if a.node not in ctx.tree["nodes"]:
+        die(REFUSED, f"'{a.node}' is not a node")
+    text = " ".join(a.text).strip()
+    if not text:
+        die(REFUSED, 'say why: harness ring <node> "..."')
+    me = None
+    try:
+        me, _ = ctx.node()
+    except SystemExit:
+        pass
+    me = me or ("documenter" if os.environ.get("HARNESS_DOCUMENTER") == "1" else "operator")
+    d = bell_dir(ctx, a.node)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    (d / "inbox" / f"{stamp}-{os.getpid()}.json").write_text(json.dumps(
+        {"from": me, "text": text, "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}))
+    print(f"rang {a.node}" if bell_armed(ctx, a.node) else
+          f"{a.node}'s doorbell is not armed; it reads this when it next arms one")
+
+
+
 def main():
     # `gui` is handed off before argparse sees anything. The viewer has its own
     # flags and argparse.REMAINDER does not reliably pass a leading `--flag`
@@ -11453,6 +11658,12 @@ def main():
     dm.add_argument("--runs", type=int, default=1, help="chain this many runs (max 20)")
     dm.add_argument("--stop", action="store_true", help="no more runs after the current one")
     dm.add_argument("--next", action="store_true", help=argparse.SUPPRESS)
+    db = add("doorbell", cmd_doorbell)
+    db.add_argument("--read", action="store_true", help="what rang it, then arm it again")
+    db.add_argument("--status", action="store_true")
+    rg = add("ring", cmd_ring)
+    rg.add_argument("node")
+    rg.add_argument("text", nargs="+")
     rcy = add("recycle", cmd_recycle)
     rcy.add_argument("node", nargs="*", help="nodes to restart with fresh context")
     rcy.add_argument("--children", action="store_true", help="every child of this node")

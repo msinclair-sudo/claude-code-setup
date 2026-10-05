@@ -28,6 +28,10 @@ top lead  → harness + harness-downward + harness-root
 
 `harness focus [task|'glob*'...|--clear]` holds the owner's priority; nags outside it fold into one line. Nags appear only at orientation (session start and each prompt), not after every command.
 
+## Your doorbell
+
+Nothing outside a session can message it, so keep `harness doorbell` running in the background (`run_in_background`) from the moment you claim. It exits when you are needed: someone ran `harness ring <node> "..."`, or a node has waited on you, idle, for five minutes. When it finishes, run `harness doorbell --read`, act on what it says, and arm it again. To wake another node, `harness ring <node> "..."`.
+
 ## Prose goes in on stdin, not in quotes
 
 The shell eats backticks and `$()` before the CLI runs, silently. Any long argument may be `-` (one per command), read from a quoted heredoc:

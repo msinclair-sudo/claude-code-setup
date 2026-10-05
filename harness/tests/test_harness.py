@@ -2135,3 +2135,58 @@ class DocPing(unittest.TestCase):
         self.assertNotIn("\\", line)
         with mock.patch.object(hz, "load_index", side_effect=Exception):
             self.assertEqual(hz.root_session_name(ctx, "main"), "proj-main")   # the spawn name
+
+
+class Doorbell(unittest.TestCase):
+    """Waking an idle session: its background `harness doorbell` exits."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main"})
+        self.ctx.me = "main"
+        self.env = mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "sess-main"})
+        self.env.start(); self.addCleanup(self.env.stop)
+        self.c = mock.patch.object(hz, "Ctx", return_value=self.ctx)
+        self.c.start(); self.addCleanup(self.c.stop)
+
+    def out(self, f, a):
+        o = io.StringIO()
+        with redirect_stdout(o):
+            f(a)
+        return o.getvalue()
+
+    def test_ring_wakes_and_read_says_why(self):
+        self.ctx.me = "dev"
+        self.out(hz.cmd_ring, mock.Mock(node="main", text=["dev", "needs", "a", "ruling"]))
+        self.ctx.me = "main"
+        with mock.patch.object(hz, "bell_nudge", return_value=None):
+            o = self.out(hz.cmd_doorbell, mock.Mock(read=False, status=False))
+        self.assertIn("rang: 1 message", o)
+        self.assertFalse((hz.bell_dir(self.ctx, "main") / "armed.json").exists())
+        o = self.out(hz.cmd_doorbell, mock.Mock(read=True, status=False))
+        self.assertIn("from dev: dev needs a ruling", o)
+        self.assertIn("nothing has rung", self.out(hz.cmd_doorbell, mock.Mock(read=True, status=False)))
+
+    def test_a_newer_doorbell_replaces_the_old(self):
+        d = hz.bell_dir(self.ctx, "main")
+        def sleep(_):
+            (d / "armed.json").write_text(json.dumps({"pid": -1}))
+        with mock.patch.object(hz, "bell_nudge", return_value=None), \
+             mock.patch.object(hz.time, "sleep", side_effect=sleep):
+            self.assertIn("replaced", self.out(hz.cmd_doorbell, mock.Mock(read=False, status=False)))
+
+    def test_nudge_once_per_wait_and_only_when_idle(self):
+        rows = [{"sessionId": "sess-main", "status": "idle", "cwd": "/m"}]
+        w = [("dev", 900, "carry rebuilt", "inf:dev:1")]
+        with mock.patch.object(hz, "cached_roster", return_value=rows), \
+             mock.patch.object(hz, "waiters_on", return_value=w), \
+             mock.patch.object(hz, "load_index", return_value={"byWorktree": {}}):
+            with mock.patch.object(hz, "last_turn", return_value=(60, 0)):
+                self.assertIsNone(hz.bell_nudge(self.ctx, "main", "sess-main"))   # just spoke
+            with mock.patch.object(hz, "last_turn", return_value=(900, 0)):
+                self.assertIn("dev has been waiting on you for 15m: carry rebuilt",
+                              hz.bell_nudge(self.ctx, "main", "sess-main"))
+                self.assertIsNone(hz.bell_nudge(self.ctx, "main", "sess-main"))   # told once
+            rows[0]["status"] = "busy"
+            with mock.patch.object(hz, "waiters_on", return_value=[("dev", 900, "", "inf:dev:2")]), \
+                 mock.patch.object(hz, "last_turn", return_value=(900, 0)):
+                self.assertIsNone(hz.bell_nudge(self.ctx, "main", "sess-main"))   # working

@@ -28,8 +28,8 @@ You run in the background and sleep when nothing is open. The harness wakes you,
 session, with the reason as your next prompt: a new ask, or the owner's question about one. An
 asker may also nudge you with `SendMessage` ("new ask <id>") while you are up. On every wake, read
 the list, handle what the prompt names, and **end with `harness ask --idle`**. It hands you anything
-that arrived while you worked; when nothing is left it puts you to sleep a little later. While an
-ask is `asked` or the owner's question is unanswered you stay up, so a reply you are waiting on from
+that arrived while you worked; when nothing is left you are put to sleep after ten quiet minutes. While an
+ask is `asked`, or the owner's question or chat message is unanswered, you stay up, so a reply you are waiting on from
 an asker reaches you.
 
 ## Commands for the owner to run
@@ -47,6 +47,14 @@ sections. Instead:
    asker.
 
 When the owner clicks Done, the asker is rung directly; you are not involved.
+
+## The owner's chat
+
+The owner talks to you from a chat box in the GUI's Issues tab, not from a terminal: they can't see
+what you print. A message arrives as your prompt ("The owner says, in the GUI's chat box: …").
+Answer with `harness ask --tell "..."`; that is the only way your words reach them. Investigate
+first if you need to, then answer. Keep it short and in their voice. Several `--tell`s are fine for a
+long answer. You stay up while their message is unanswered.
 
 ## The owner's questions
 

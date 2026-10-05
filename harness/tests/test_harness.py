@@ -2359,3 +2359,32 @@ class IntermediaryWake(unittest.TestCase):
         with mock.patch.object(hz.subprocess, "Popen") as po, redirect_stdout(io.StringIO()):
             hz.ask_idle(self.pdir)
         self.assertIn("--settle", po.call_args[0][0][2])
+
+
+class IntermediaryChat(unittest.TestCase):
+    """The owner's chat box: queued, it wakes the intermediary, answered by --tell."""
+
+    def setUp(self):
+        self.pdir = Path(tempfile.mkdtemp())
+
+    def test_pending_until_told_and_it_keeps_it_up(self):
+        self.assertFalse(hz.chat_pending(self.pdir))
+        hz.intermediary_chat(self.pdir, "owner", "what is open?")
+        self.assertTrue(hz.chat_pending(self.pdir))
+        self.assertEqual(hz.intermediary_open_work(self.pdir), ["the owner's chat message"])
+        hz.intermediary_chat(self.pdir, "intermediary", "nothing")
+        self.assertFalse(hz.chat_pending(self.pdir))
+        self.assertEqual([m["by"] for m in hz.intermediary_chat(self.pdir)],
+                         ["owner", "intermediary"])
+
+    def test_settle_waits_out_a_recent_turn(self):
+        live = {"status": "idle", "sessionId": "abcd1234" + "x" * 28}
+        turns = iter([(30, 0), (700, 0)])
+        with mock.patch.object(hz, "intermediary_rows", return_value=(live, live["sessionId"])), \
+             mock.patch.object(hz, "last_turn", side_effect=lambda sid: next(turns)), \
+             mock.patch.object(hz.time, "sleep") as sl, \
+             mock.patch.object(hz.subprocess, "run") as run, \
+             redirect_stdout(io.StringIO()):
+            hz.intermediary_settle(self.pdir, "/r/proj")
+        sl.assert_called_once_with(hz.INTERMEDIARY_QUIET - 30 + 5)
+        self.assertEqual(run.call_args[0][0], ["claude", "stop", "abcd1234"])

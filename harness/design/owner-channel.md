@@ -177,6 +177,12 @@ the action was completed. OR I can directly type something to request further in
   `--fg` runs it in a terminal as before. The GUI's intermediary card and Issues header carry a
   **Start** button that does the same; once it is up they show `claude attach <id>` with Copy, so
   the owner can open it at once.
+- **A chat box** (2026-10-05). The owner's words: "the intermediary just exited on its own. I can't
+  talk to it if it closes like that." Under the intermediary's line in the Issues tab, a message
+  (`harness intermediary --say`) is queued in `intermediary/chat.jsonl` and wakes it. It answers with
+  `harness ask --tell`, and the answer shows in the box. An unanswered message keeps it up, and it
+  now sleeps only after ten quiet minutes, not 90s after its last `--idle`, which had closed it
+  under an attached owner.
 
 ## Still to discuss
 

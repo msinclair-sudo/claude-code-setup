@@ -622,6 +622,7 @@ def read_state():
                          "orphan_marks": sorted(orphans, key=lambda o: o["task"]),
                          "asks": asks, "rulings": rulings,
                          "intermediary": intermediary(rows, repo),
+                         "chat": CLI.intermediary_chat(pdir)[-40:],
                          "documenter": documenter(rows, pdir, repo, asks),
                          "indexed_at": idx.get("generated")})
     return {"generated": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -858,6 +859,10 @@ border-radius:5px;font:inherit;font-size:11px;padding:2px 6px}
 .docctl button{cursor:pointer}
 .docctl button:disabled{opacity:.4;cursor:default}
 .imctl code{color:var(--busy);user-select:all}
+.ichat{border:1px solid var(--line);border-top:none;padding:6px 13px 8px;margin-bottom:10px}
+.ichat [data-live]{max-height:320px;overflow-y:auto}
+.ichatin{flex:1;min-height:40px;background:#0e1109;color:var(--ink);border:1px solid var(--line);
+  padding:4px 7px;font:inherit}
 .ohead .imctl{display:inline-flex;gap:6px;align-items:center;margin-left:12px}
 .card.doc .act{cursor:pointer;border-bottom:1px dotted currentColor}
 .card.interm a{color:var(--dim)}
@@ -1842,11 +1847,56 @@ function rulingsList(d) {
                                                      : 'no rulings yet') + '</div>';
 }
 
+// The owner's chat with the intermediary. It may be asleep: a message is queued
+// and wakes it, and its answer lands here, so nothing depends on a terminal.
+function chatBox(p) {
+  const msgs = (p.chat || []).map(m => '<div class="athr ' + (m.by === 'owner' ? 'me' : 'im') +
+    '"><b>' + (m.by === 'owner' ? 'you' : 'intermediary') + ' &middot; ' +
+    esc(String(m.at || '').slice(11, 16)) + '</b> ' + esc(m.text) + '</div>').join('');
+  const last = (p.chat || []).slice(-1)[0];
+  const wait = last && last.by === 'owner'
+    ? '<div class="ln q">queued &mdash; the intermediary answers here</div>' : '';
+  const msg = IMMSG['say:' + p.slug] ? '<div class="amsg">refused: ' +
+    esc(IMMSG['say:' + p.slug]) + '</div>' : '';
+  return '<div class="ichat"><div data-live="chat:' + esc(p.slug) + '">' + msgs + wait + msg +
+    '</div><div class="row"><textarea class="ichatin" data-islug="' + esc(p.slug) + '" ' +
+    'placeholder="message the intermediary &mdash; it wakes for it if asleep"></textarea>' +
+    '<button data-isay="' + esc(p.slug) + '">Send</button></div></div>';
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-isay]');
+  if (!b) return;
+  const slug = b.dataset.isay;
+  const ta = b.closest('.ichat').querySelector('.ichatin');
+  const t = ta.value.trim();
+  if (!t) { ta.focus(); return; }
+  b.disabled = true;
+  fetch('/api/intermediary', { method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Harness-Local': '1' },
+    body: JSON.stringify({ slug: slug, action: 'say', text: t }) })
+    .then(r => r.json())
+    .then(j => {
+      b.disabled = false;
+      if (j.ok) { ta.value = ''; delete IMMSG['say:' + slug]; EDITING.delete('chat:' + slug); }
+      else IMMSG['say:' + slug] = j.message || 'refused';
+      LAST = ''; tick();
+    })
+    .catch(() => { b.disabled = false; IMMSG['say:' + slug] = 'could not reach the server';
+                   LAST = ''; tick(); });
+});
+document.addEventListener('focusin', e => {
+  if (e.target.classList.contains('ichatin')) EDITING.add('chat:' + e.target.dataset.islug);
+});
+document.addEventListener('focusout', e => {
+  if (e.target.classList.contains('ichatin') && !e.target.value.trim())
+    EDITING.delete('chat:' + e.target.dataset.islug);
+});
+
 function ownerView(d) {
   // Every project gets its intermediary's line, asks or not: the line is how
   // the owner learns which one to start before anything is waiting on it.
   const groups = (d.projects || []).map(p =>
-    '<div class="oproj"><h2>' + esc(p.project) + '</h2>' + ownerHead(p) +
+    '<div class="oproj"><h2>' + esc(p.project) + '</h2>' + ownerHead(p) + chatBox(p) +
     (p.asks || []).map(a => askItem(p.slug, a)).join('') + '</div>').join('');
   const none = !(d.projects || []).some(p => (p.asks || []).length);
   return '<div class="owner">' +
@@ -2267,9 +2317,10 @@ def documenter_action(slug, action, runs=1):
     return r.returncode == 0, (r.stdout or r.stderr).strip()[:300]
 
 
-def intermediary_action(slug):
-    """The Start button: wake the project's intermediary in the background,
-    through the CLI with the session id stripped (a person pressed it)."""
+def intermediary_action(slug, action="start", text=""):
+    """The Start button, or a chat message: wake the project's intermediary in
+    the background, or queue the owner's words for it and wake it. Through the
+    CLI with the session id stripped (a person pressed it)."""
     pdir = _project_dir(slug)
     if pdir is None:
         return False, "no such project"
@@ -2280,7 +2331,15 @@ def intermediary_action(slug):
     exe = Path(__file__).resolve().with_name("harness")
     env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
     try:
-        r = subprocess.run([sys.executable, str(exe), "intermediary", f"--project={pdir.name}"],
+        extra = []
+        if action == "say":
+            if not (text or "").strip():
+                return False, "say something"
+            extra = ["--say", text]
+        elif action != "start":
+            return False, "unknown action"
+        r = subprocess.run([sys.executable, str(exe), "intermediary", f"--project={pdir.name}"]
+                           + extra,
                            cwd=repo, capture_output=True, text=True, timeout=60, env=env)
     except Exception as e:
         return False, f"{type(e).__name__}: {e}"[:300]
@@ -2445,7 +2504,8 @@ class H(BaseHTTPRequestHandler):
             self._send(json.dumps({"ok": ok, "message": msg}), "application/json")
             return
         if self.path.startswith("/api/intermediary"):
-            ok, msg = intermediary_action(str(body.get("slug") or ""))
+            ok, msg = intermediary_action(str(body.get("slug") or ""),
+                                          (body.get("action") or "start").strip(), text)
             self._send(json.dumps({"ok": ok, "message": msg}), "application/json")
             return
         if self.path.startswith("/api/ask"):

@@ -10531,6 +10531,17 @@ def cmd_ask(a):
         die(REFUSED, f"one verb at a time: {', '.join(flag(v) for v in verbs)}")
     if a.run and verbs:
         die(REFUSED, "--run goes with opening an ask: harness ask <task> --kind action --run ...")
+    if a.tell is not None:
+        if os.environ.get("HARNESS_INTERMEDIARY") != "1":
+            die(REFUSED, "--tell is the intermediary's")
+        b = ask_bound()
+        if not b:
+            die(REFUSED, "--tell needs HARNESS_PROJECT: the intermediary's own project")
+        text = a.tell.strip()
+        if not text or len(text) > CHAT_CAP:
+            die(REFUSED, f"--tell takes 1–{CHAT_CAP} chars")
+        intermediary_chat(b[0], "intermediary", text)
+        print("told; the owner sees it in the chat box"); return
     if a.idle:
         if os.environ.get("HARNESS_INTERMEDIARY") != "1":
             die(REFUSED, "--idle is the intermediary's")
@@ -10779,7 +10790,36 @@ def intermediary_start(repo):
 # a copy instead (measured 2026-10-05). A busy one finds the reason in its inbox
 # when it runs `harness ask --idle`, its last step on every wake.
 
-INTERMEDIARY_SETTLE = 90        # seconds from `ask --idle` to stopping, if still idle
+INTERMEDIARY_SETTLE = 90        # seconds from `ask --idle` to the first check
+INTERMEDIARY_QUIET = 600        # and how long it must have been quiet to be stopped
+CHAT_CAP = 4000                 # chars in one chat message, either way
+
+
+def intermediary_chat(pdir, by=None, text=None):
+    """The owner's chat with the intermediary, from the GUI: append one message
+    with `by` and `text`, or read them all, oldest first."""
+    f = Path(pdir) / "intermediary" / "chat.jsonl"
+    if by:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        with open(f, "a") as fh:
+            fh.write(json.dumps({"by": by, "at": _now(), "text": text}) + "\n")
+        return []
+    out = []
+    try:
+        for line in f.read_text().splitlines():
+            try:
+                out.append(json.loads(line))
+            except ValueError:
+                pass
+    except OSError:
+        pass
+    return out
+
+
+def chat_pending(pdir):
+    """Has the owner said something the intermediary hasn't answered?"""
+    msgs = intermediary_chat(pdir)
+    return bool(msgs) and msgs[-1].get("by") == "owner"
 
 
 def intermediary_inbox(pdir, why=None, take=False):
@@ -10903,6 +10943,8 @@ def intermediary_open_work(pdir):
             continue
         if r.get("state") == "asked" or r.get("query_open"):
             out.append(r.get("id"))
+    if chat_pending(pdir):
+        out.append("the owner's chat message")
     return out
 
 
@@ -10928,8 +10970,8 @@ def ask_idle(pdir):
         subprocess.Popen(["sh", "-c", f"sleep {INTERMEDIARY_SETTLE}; exec {nxt}"],
                          stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                          env=env, start_new_session=True)
-    print(f"nothing open. This session sleeps in {INTERMEDIARY_SETTLE}s and is woken when "
-          f"something arrives; end your turn with a short summary.")
+    print(f"nothing open. This session sleeps after {INTERMEDIARY_QUIET // 60} quiet minutes "
+          f"and is woken when something arrives; end your turn.")
 
 
 def intermediary_settle(pdir, repo):
@@ -10947,9 +10989,16 @@ def intermediary_settle(pdir, repo):
         live, _ = intermediary_rows(repo)
     except Exception as e:
         print(f"roster unreadable: {e}"); return
-    if live and live.get("status") != "busy":
-        subprocess.run(["claude", "stop", live["sessionId"][:8]], capture_output=True)
-        print(f"stopped {intermediary_name(repo)}; it wakes on demand")
+    if not live or live.get("status") == "busy":
+        return              # gone, or working: it runs `ask --idle` again
+    # Quiet long enough? The owner may be attached and talking to it, and a
+    # stop 90s after its last `--idle` closed it under them (2026-10-05).
+    quiet, _ = last_turn(live["sessionId"])
+    if quiet is not None and quiet < INTERMEDIARY_QUIET:
+        time.sleep(INTERMEDIARY_QUIET - quiet + 5)
+        return intermediary_settle(pdir, repo)
+    subprocess.run(["claude", "stop", live["sessionId"][:8]], capture_output=True)
+    print(f"stopped {intermediary_name(repo)}; it wakes on demand")
 
 
 def cmd_intermediary(a):
@@ -10962,6 +11011,20 @@ def cmd_intermediary(a):
         sys.exit(0 if ok else 1)
     if a.settle:
         intermediary_settle(pdir, repo); return
+    if a.say is not None:
+        if os.environ.get("CLAUDE_CODE_SESSION_ID"):
+            die(REFUSED, "--say is the owner's: the GUI's chat box, or a shell")
+        text = a.say.strip()
+        if not text:
+            die(REFUSED, 'say something: harness intermediary --say "..."')
+        if len(text) > CHAT_CAP:
+            die(REFUSED, f"{len(text)} chars; the cap is {CHAT_CAP}")
+        intermediary_chat(pdir, "owner", text)
+        intermediary_wake_detached(pdir, (
+            f"The owner says, in the GUI's chat box: {text}\n\nThey can't see your terminal. "
+            f"Answer with `harness ask --tell \"...\"`; it shows in their chat box. If you need "
+            f"to find something out first, do, then answer."))
+        print("sent; the answer shows in the chat box"); return
     if not a.fg and not a.print_cmd:
         if os.environ.get("CLAUDE_CODE_SESSION_ID"):
             die(REFUSED, "the intermediary wakes itself when an ask needs it; from a "
@@ -12279,6 +12342,8 @@ def main():
                     help="owner: ask the intermediary about this ask")
     ak.add_argument("--reply", metavar="TEXT",
                     help="intermediary: answer the owner under the ask")
+    ak.add_argument("--tell", metavar="TEXT",
+                    help="intermediary: answer the owner in the GUI's chat box")
     ak.add_argument("--idle", action="store_true",
                     help="intermediary: its last step on every wake")
     ak.add_argument("--brief", metavar="FILE",
@@ -12318,6 +12383,8 @@ def main():
                     help="run it in this terminal instead of the background")
     im.add_argument("--wake", metavar="WHY", help=argparse.SUPPRESS)
     im.add_argument("--settle", action="store_true", help=argparse.SUPPRESS)
+    im.add_argument("--say", metavar="TEXT",
+                    help="owner: a message for the intermediary (queued; it is woken for it)")
     fo = add("focus", cmd_focus)
     fo.add_argument("task", nargs="*",
                     help="tasks, segments or globs (quote them: 'enrich*') the owner put "

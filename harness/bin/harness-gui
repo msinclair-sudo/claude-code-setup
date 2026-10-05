@@ -171,7 +171,11 @@ def documenter(rows, pdir, repo, asks):
     out = {"name": name, "running": None, "words": None, "budget": None, "last": None,
            "queued": 0, "refused": None, "applied": None, "asks": 0}
     if rows is not None:
-        out["running"] = any(r.get("name") == name for r in rows)
+        # A finished run's session stays up, idle, until the harness stops it:
+        # "running" said work was going on when it had ended.
+        mine = [r for r in rows if r.get("name") == name]
+        out["running"] = ("busy" if any(r.get("status") == "busy" for r in mine)
+                          else "idle" if mine else False)
     try:
         out["words"] = len((Path(repo) / "CLAUDE.md").read_text(errors="replace").split())
     except OSError:
@@ -1283,11 +1287,12 @@ function docCard(p) {
       esc(d.refused.task) + ': ' + esc(d.refused.why.slice(0, 80)) + '</div>' : '';
   const ak = d.asks ? '<div class="ln"><a href="#issues">' + d.asks + ' open ask' +
       (d.asks > 1 ? 's' : '') + '</a></div>' : '';
-  const cls = d.running === null ? 'unknown' : d.running ? 'busy' : '';
+  const cls = d.running === null ? 'unknown' : d.running === 'busy' ? 'busy' : '';
   return '<div class="card interm doc ' + cls + '" data-live="doc:' + esc(p.slug) + '">' +
     '<div class="hdr"><span class="dot"></span><span class="nm">' + esc(p.project) +
     '</span><span class="kd">documenter</span></div>' +
-    '<div class="ln q">' + (d.running ? 'running' : 'idle between runs') + '</div>' +
+    '<div class="ln q">' + (d.running === 'busy' ? 'working' : d.running === 'idle'
+      ? 'run finished &middot; its session closes shortly' : 'idle between runs') + '</div>' +
     meterLine + last + ap + q + rf + ak +
     '<div class="ln"><code>harness documenter --project ' + esc(p.project) + '</code></div></div>';
 }

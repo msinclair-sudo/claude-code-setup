@@ -1911,3 +1911,19 @@ class DocRuns(unittest.TestCase):
             hz.ask_accept(self.ctx.dir, p, rec)
         r = json.loads((self.ctx.dir / "docs" / "rulings.json").read_text())
         self.assertEqual((r[0]["question"], r[0]["answer"]), ("Which is right?", "the code"))
+
+
+class DocNoteStops(unittest.TestCase):
+    """A run's closing note stops its session, so a finished run doesn't read as running."""
+
+    def test_note_schedules_the_stop(self):
+        ctx = FakeCtx({"main": None})
+        ctx.repo = Path("/r")
+        env = {"HARNESS_DOCUMENTER": "1", "CLAUDE_CODE_SESSION_ID": "abcdef12-0000"}
+        with mock.patch.object(hz, "Ctx", return_value=ctx), \
+             mock.patch.dict(os.environ, env), \
+             mock.patch.object(hz.subprocess, "Popen") as po, \
+             redirect_stdout(io.StringIO()):
+            hz.cmd_docs(mock.Mock(verb="note", args=["moved a section"]))
+        self.assertIn("claude stop abcdef12", po.call_args.args[0][2])
+        self.assertIn("moved a section", (ctx.dir / "docs" / "ledger.jsonl").read_text())

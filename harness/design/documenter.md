@@ -40,50 +40,60 @@ It never orchestrates, touches code, decides intent, or writes briefs.
 - `.harness/` and `.claude/`;
 - the manifest: root owns it, so a bloated `blindSpot` is reported, not edited.
 
-## A large corpus: spend where the cost is
+## Each run: measure, pick one improvement, make it
 
-It never reads the whole corpus. The 600k tokens are two separate costs:
+It doesn't try to fix the corpus at once, and it never reads it whole. Every run starts by
+measuring, picks the one improvement the measurements point to, makes it carefully, and leaves the
+numbers for the next run to compare against.
 
-- **`CLAUDE.md`** (21k tokens) is paid on every session start.
-- **The other 409k words** are paid only when a session reads them, and sessions rarely do. In 154
-  biblion2 transcripts (2026-10-05), `Read` opened `plans/enrich/ENRICH-DESIGN.md` 16 times and no
-  other doc more than twice. `MODEL.md`, `SCHEMA.md` and `DESIGN.md` (110k words between them) were
-  never opened. This undercounts: swept transcripts are archived, and reads through grep or sed
-  don't show up as `Read`.
+### What it measures
 
-So the work runs in order of payoff:
+The harness takes the measurements, mostly with no model, and stores a snapshot per run:
 
-1. **Inventory, with no model.** The harness builds a per-file ledger. Each entry records:
-   - words and the heading outline;
-   - last commit;
-   - links in and out;
-   - whether an open record cites the file (`harness cited`);
-   - how often sessions read it, counted from their transcripts;
-   - paths it names that no longer exist;
-   - the tasks it names, and their states.
+- **Per doc:** its length in words; how often it is written to (commits since the last run); and
+  how often it is read (sessions that opened it, counted from transcripts, archived ones included).
+- **Pointers:** the links into each doc (from `CLAUDE.md`, other docs and briefs) and the links out
+  of it.
+- **Reach, per code area:** of the sessions that edited files in an area, how many read the doc
+  that governs it. A low read count is ambiguous: either the doc isn't needed, or sessions that
+  should read it don't.
 
-   The ledger is refreshed from `git diff` since the last pass. This costs no tokens.
-2. **`CLAUDE.md` first.** It is read in full once, about 22k tokens, and decided section by section:
-   keep, move to provenance, or point elsewhere. One or two passes take it to the budget.
-3. **Stale docs, from the inventory.** A file becomes a candidate when it is:
-   - cited by no open record;
-   - linked from no kept doc;
-   - untouched for 14 days;
-   - about tasks that are all closed.
+  Measured roughly on biblion2 (2026-10-05):
+  - 3 of 4 sessions that edited `schema/` read `schema/SCHEMA.md`;
+  - 3 of 6 that edited `loader/` read `spine/MODEL.md`.
 
-   A pass confirms each candidate from its outline and opening screen, about 1–2k tokens, not the
-   whole file. On biblion2, 39 files (173k words) are uncited, and history such as
-   `design/PHASE-5-LOG.md` (47k words) and the phase briefs is the obvious first batch. A file
-   that describes code that still exists is reference, not history, and stays even when uncited.
-4. **Big reference docs, on demand only.** A doc gets a pass when the inventory shows sessions
-   reading it, or when a doc–code conflict points into it. A pass reads the outline, then one slice
-   of at most about 40k tokens. The ledger records where it stopped.
-5. **Steady state.** Passes read only the sections changed since the ledger's last commit, so a
-   typical pass reads a few thousand tokens.
+  A worker changing the schema without having read the schema doc is a documentation failure: the
+  doc was too hard to find or too big to read.
+- **The area map:** which doc governs which code area. Nothing records this today. The documenter
+  builds it and keeps it, and `CLAUDE.md`'s pointer lines are its readable form ("working in
+  `schema/`? read `schema/SCHEMA.md` first").
+- **`CLAUDE.md`:** its length against the 2,500-word budget, and its pointers.
 
-Each pass is capped at about 80k tokens read. Being a fresh session, it never accumulates context.
-Clarity rewrites go only to docs that are kept and actually read. On biblion2, the first sweep should
-read about 200–250k tokens over five or six passes, and then very little.
+### What it picks
+
+It picks the largest gap the numbers show. One target per run:
+
+| gap | its usual move |
+| --- | --- |
+| `CLAUDE.md` over budget | Move sections out to the doc that owns them, and leave pointers. |
+| Low reach: a governing doc that editors don't read | Add or sharpen the pointer. Or split the doc so its part can be read on its own: a 33k-word doc gets skipped. |
+| Written often, read rarely | Consolidate it into the doc that is read. |
+| The same content in several docs | Consolidate to one, and point the others at it. |
+| History in a reference doc | Move it to provenance. |
+| A stale doc (uncited, unlinked, about closed tasks) | Delete it; git history keeps it. |
+
+Trimming and consolidating are its main work, but it can't remove what someone needs.
+
+**Critical content** is rules and invariants, commands, paths, rulings and decisions, and anything
+an open record, a check or the manifest refers to. That content is never deleted outright. It moves,
+either into the doc that owns it or to provenance, with a pointer left behind. The harness checks
+that moved text arrives verbatim before it applies a batch. Text is deleted only when it is a
+duplicate kept elsewhere or history nothing needs, and the evidence goes in the ledger.
+
+**The next run checks the last one.** If a doc's reach drops after a change, or a session goes
+looking for something that was moved, that change is flagged first.
+
+Each run is capped at about 80k tokens read. Being a fresh session, it never accumulates context.
 
 ## Doc and code disagreeing
 
@@ -143,3 +153,5 @@ A side card beside the intermediary's shows:
 - Model and effort per job. Clarity likely needs the strongest model; the stale-doc job probably
   doesn't.
 - Whether to bring the harness's own docs (`michaels_setup`) into scope later.
+- Whether orientation should name the governing doc from the area map when a lane's task touches
+  that area. This fixes reach directly, instead of relying on someone reading `CLAUDE.md` closely.

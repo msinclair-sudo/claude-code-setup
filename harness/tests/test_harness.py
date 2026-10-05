@@ -1981,6 +1981,8 @@ class DocChain(unittest.TestCase):
                                return_value=mock.Mock(returncode=0, stdout="started", stderr="")) as r:
             self.assertEqual(gui.documenter_action("x", "start", 99)[0], True)
             self.assertIn("20", r.call_args.args[0])                 # capped
+            # A state slug starts with "-": a bare "--project <slug>" read it as a flag.
+            self.assertIn(f"--project={self.pdir.name}", r.call_args.args[0])
             self.assertEqual(gui.documenter_action("x", "start", "lots"), (False, "runs must be a number"))
             self.assertEqual(gui.documenter_action("x", "drop", 1), (False, "unknown action"))
 
@@ -2097,3 +2099,11 @@ class DocReview(unittest.TestCase):
              mock.patch.object(hz, "cited", return_value={}):
             snap = hz.docs_measure(self.ctx)
         self.assertEqual((snap["moved"][0]["read"], snap["moved"][0]["sessions"]), (1, 2))
+
+
+class ProjectArg(unittest.TestCase):
+    def test_a_dash_led_slug_parses(self):
+        import argparse
+        ap = argparse.ArgumentParser(); ap.add_argument("--project")
+        arg = hz.project_arg(Path("/s/-mnt-a-proj"))
+        self.assertEqual(ap.parse_args([arg]).project, "-mnt-a-proj")

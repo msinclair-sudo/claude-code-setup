@@ -2157,7 +2157,7 @@ def documenter_action(slug, action, runs=1):
     exe = Path(__file__).resolve().with_name("harness")
     env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
     try:
-        r = subprocess.run([sys.executable, str(exe), "documenter", "--project", pdir.name] + args,
+        r = subprocess.run([sys.executable, str(exe), "documenter", f"--project={pdir.name}"] + args,
                            cwd=repo, capture_output=True, text=True, timeout=60, env=env)
     except Exception as e:
         return False, f"{type(e).__name__}: {e}"[:300]

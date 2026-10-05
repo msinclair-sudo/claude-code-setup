@@ -10991,7 +10991,7 @@ def cmd_docs(a):
                    if k not in ("CLAUDE_CODE_SESSION_ID", "HARNESS_DOCUMENTER",
                                 "HARNESS_DOCUMENTER_JOB")}
             nxt = " ".join(shlex.quote(x) for x in (sys.executable, str(Path(__file__).resolve()),
-                                                    "documenter", "--project", ctx.state.name,
+                                                    "documenter", project_arg(ctx.state),
                                                     "--next"))
             with open(docs_dir(ctx) / "chain.log", "a") as log:
                 subprocess.Popen(["sh", "-c", f"sleep {DOC_STOP_AFTER}; claude stop {sid[:8]}; "
@@ -11094,7 +11094,7 @@ def docs_chain_next(ctx):
     detached, when runs remain and nothing else waits on review."""
     try:
         if (docs_queue(ctx.state).get("remaining") or 0) > 0 and not docs_pending(ctx):
-            _detached(ctx, ["documenter", "--project", ctx.state.name, "--next"],
+            _detached(ctx, ["documenter", project_arg(ctx.state), "--next"],
                       docs_dir(ctx) / "chain.log", ctx.repo)
     except Exception:
         pass
@@ -11247,6 +11247,13 @@ def docs_queue(pdir, **upd):
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(json.dumps(q) + "\n")
     return q
+
+
+def project_arg(pdir):
+    """`--project=<slug>`: a state slug starts with "-" (the repo path with its
+    slashes as dashes), so `--project <slug>` reads it as a flag (2026-10-05:
+    the GUI's start button and every chained run failed on this)."""
+    return f"--project={Path(pdir).name}"
 
 
 def documenter_launch(pdir, repo, job, model=None, effort=None, why=None):

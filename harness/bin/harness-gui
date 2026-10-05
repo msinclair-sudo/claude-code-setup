@@ -2025,15 +2025,20 @@ function drawWaits() {
         t.querySelector('[data-live="card:' + slug + ':' + m.dataset.on + '"]');
       if (!lead) return;
       const a = c.getBoundingClientRect(), b = lead.getBoundingClientRect();
-      const x1 = a.left + a.width / 2 - box.left, y1 = a.top - box.top;
-      // Up to a lead's bottom edge; across to a sibling's top edge (a holder is
-      // often on the same row, and a line into its bottom would cross the card).
-      const above = b.bottom <= a.top + 4;
-      const x2 = b.left + b.width / 2 - box.left, y2 = (above ? b.bottom : b.top) - box.top;
-      // The tree's own branch bar runs 22px above a card. A lead above: the bar
-      // over the WAITING card (min() put it 22px above the lead's bottom, inside
-      // the lead's card). A holder on the same row: above the higher of the two.
-      const ym = (above ? y1 : Math.min(y1, y2)) - 22;
+      // Three shapes, by where the waited-on card sits. Each runs along the
+      // tree's own branch bar, 22px above the lower row, and never through a card.
+      //   above (its lead):   waiting card's top -> bar -> lead's bottom
+      //   below (its child):  waiting card's bottom -> bar over the child -> child's top
+      //   same row (sibling): both tops, bar above the higher of the two
+      const x1 = a.left + a.width / 2 - box.left, x2 = b.left + b.width / 2 - box.left;
+      let y1, y2, ym;
+      if (b.bottom <= a.top + 4) {
+        y1 = a.top - box.top; y2 = b.bottom - box.top; ym = y1 - 22;
+      } else if (b.top >= a.bottom - 4) {
+        y1 = a.bottom - box.top; y2 = b.top - box.top; ym = y2 - 22;
+      } else {
+        y1 = a.top - box.top; y2 = b.top - box.top; ym = Math.min(y1, y2) - 22;
+      }
       ds.push([m.classList.contains('hto') ? 'held' : '',
                'M' + x1 + ' ' + y1 + 'V' + ym + 'H' + x2 + 'V' + y2]);
     });

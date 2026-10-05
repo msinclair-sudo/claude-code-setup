@@ -155,7 +155,7 @@ def intermediary(rows, repo):
     if r is None:
         return dict(out, running=False)
     a, c = CLI.last_turn(r.get("sessionId") or "")
-    return dict(out, running=True, status=r.get("status"), context=c,
+    return dict(out, running=True, status=r.get("status"), context=c, sid=r.get("sessionId"),
                 stopped=CLI.is_stopped(r), stop=CLI.stop_detail(r, rows),
                 idle=(None if r.get("status") == "busy" or a is None else int(a)),
                 # The roster's startedAt is epoch ms, as on a node card.
@@ -856,6 +856,9 @@ border:1px solid var(--line);border-radius:3px;letter-spacing:.06em;text-transfo
 .docctl select,.docctl button{background:var(--panel);color:var(--fg,#ddd);border:1px solid var(--line);
 border-radius:5px;font:inherit;font-size:11px;padding:2px 6px}
 .docctl button{cursor:pointer}
+.docctl button:disabled{opacity:.4;cursor:default}
+.imctl code{color:var(--busy);user-select:all}
+.ohead .imctl{display:inline-flex;gap:6px;align-items:center;margin-left:12px}
 .card.doc .act{cursor:pointer;border-bottom:1px dotted currentColor}
 .card.interm a{color:var(--dim)}
 .card.interm a:hover{color:var(--ink)}
@@ -1405,6 +1408,40 @@ document.addEventListener('change', e => {
   if (m) DOCRUNS[m.dataset.docruns] = +m.value;
 });
 
+// The intermediary's start button and attach line: Start wakes it in the
+// background, and once it is up the line is the command to open it here.
+const IMMSG = {};
+function imControls(p) {
+  const im = p.intermediary || {};
+  const msg = IMMSG[p.slug] ? ' <span class="q">' + esc(IMMSG[p.slug]) + '</span>' : '';
+  if (im.running && im.sid) {
+    const c = 'claude attach ' + im.sid.slice(0, 8);
+    return '<div class="ln docctl imctl"><code>' + esc(c) + '</code> <button data-acopy="' +
+      esc(c) + '">Copy</button></div>';
+  }
+  if (im.running === false)
+    return '<div class="ln docctl imctl"><button data-imstart="' + esc(p.slug) + '">Start</button>' +
+      msg + '</div>';
+  return '';
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-imstart]');
+  if (!b) return;
+  const slug = b.dataset.imstart;
+  IMMSG[slug] = 'starting…'; b.disabled = true; LAST = ''; tick();
+  fetch('/api/intermediary', { method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Harness-Local': '1' },
+    body: JSON.stringify({ slug: slug }) })
+    .then(r => r.json())
+    .then(j => {
+      // The roster lists it a moment after it starts; say so until it does.
+      IMMSG[slug] = j.ok ? 'started; the attach command appears here' : (j.message || 'refused');
+      if (j.ok) setTimeout(() => { delete IMMSG[slug]; LAST = ''; tick(); }, 8000);
+      LAST = ''; tick();
+    })
+    .catch(() => { IMMSG[slug] = 'could not reach the server'; LAST = ''; tick(); });
+});
+
 // The project's documenter (T18): a run per job, so the card says what it did
 // last and what is pending, not whether a session is up.
 function docCard(p) {
@@ -1481,7 +1518,7 @@ function intermCard(p) {
   return '<div class="card interm ' + cls + '" data-live="interm:' + esc(p.slug) + '">' +
     '<div class="hdr"><span class="dot"></span><span class="nm">' + esc(p.project) +
     '</span><span class="kd">intermediary</span></div>' +
-    '<div class="ln q">' + esc(im.name || '') + '</div>' + who + ask + '</div>';
+    '<div class="ln q">' + esc(im.name || '') + '</div>' + who + imControls(p) + ask + '</div>';
 }
 
 function tree(nodes, side) {
@@ -1692,7 +1729,7 @@ function ownerHead(p) {
       : '<span>asleep</span> <span class="q">&mdash; it wakes when an ask ' +
         'or your question needs it</span>';
   return '<div class="ohead" data-live="owner:head:' + esc(p.slug) + '"><b>intermediary</b>' +
-    body + '</div>';
+    body + imControls(p) + '</div>';
 }
 
 // A briefing field may arrive as prose or as a list; either reads as lines.
@@ -2225,6 +2262,26 @@ def documenter_action(slug, action, runs=1):
     return r.returncode == 0, (r.stdout or r.stderr).strip()[:300]
 
 
+def intermediary_action(slug):
+    """The Start button: wake the project's intermediary in the background,
+    through the CLI with the session id stripped (a person pressed it)."""
+    pdir = _project_dir(slug)
+    if pdir is None:
+        return False, "no such project"
+    try:
+        repo = json.loads((pdir / "binding.json").read_text()).get("repo", "")
+    except Exception:
+        return False, "unreadable binding"
+    exe = Path(__file__).resolve().with_name("harness")
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
+    try:
+        r = subprocess.run([sys.executable, str(exe), "intermediary", f"--project={pdir.name}"],
+                           cwd=repo, capture_output=True, text=True, timeout=60, env=env)
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"[:300]
+    return r.returncode == 0, (r.stdout or r.stderr).strip()[:300]
+
+
 def rule_ask(slug, ask_id, action, text):
     """Accept or reject one open ask. Same whitelist as a task: the id must be a
     file already in that project's asks/, so nothing is joined from input."""
@@ -2369,7 +2426,7 @@ class H(BaseHTTPRequestHandler):
         if origin and not origin.startswith(("http://127.0.0.1:", "http://localhost:")):
             self.send_error(403, "cross-origin"); return
         if not self.path.startswith(("/api/comment", "/api/charter", "/api/ask",
-                                     "/api/documenter")):
+                                     "/api/documenter", "/api/intermediary")):
             self.send_error(404); return
         try:
             n = int(self.headers.get("Content-Length") or 0)
@@ -2380,6 +2437,10 @@ class H(BaseHTTPRequestHandler):
         if self.path.startswith("/api/documenter"):
             ok, msg = documenter_action(str(body.get("slug") or ""),
                                         (body.get("action") or "").strip(), body.get("runs", 1))
+            self._send(json.dumps({"ok": ok, "message": msg}), "application/json")
+            return
+        if self.path.startswith("/api/intermediary"):
+            ok, msg = intermediary_action(str(body.get("slug") or ""))
             self._send(json.dumps({"ok": ok, "message": msg}), "application/json")
             return
         if self.path.startswith("/api/ask"):

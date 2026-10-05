@@ -174,7 +174,9 @@ the action was completed. OR I can directly type something to request further in
   keeps its context across wakes. A busy one gets the reason through `intermediary/inbox.jsonl`.
   Every wake ends with `harness ask --idle`. That hands over the inbox, or, with nothing `asked`
   and no question open, stops the session 90s later. `harness intermediary` wakes it by hand, and
-  `--fg` runs it in a terminal as before.
+  `--fg` runs it in a terminal as before. The GUI's intermediary card and Issues header carry a
+  **Start** button that does the same; once it is up they show `claude attach <id>` with Copy, so
+  the owner can open it at once.
 
 ## Still to discuss
 

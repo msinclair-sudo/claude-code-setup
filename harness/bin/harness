@@ -10858,7 +10858,7 @@ def intermediary_wake(pdir, repo, why):
             r = subprocess.run(["claude", "--bg", "--resume", sid, prompt], cwd=str(home),
                                env=env, capture_output=True, text=True)
             if not r.returncode:
-                return True, f"woke {intermediary_name(repo)}"
+                return True, f"woke {intermediary_name(repo)}{_attach_hint(r.stdout, sid)}"
         start = intermediary_start(repo) + "\n\n" + prompt
         r = subprocess.run(intermediary_cmd(pdir, repo, bg=True, start=start), cwd=str(home),
                            env=env, capture_output=True, text=True)
@@ -10866,9 +10866,16 @@ def intermediary_wake(pdir, repo, why):
             for w in whys:
                 intermediary_inbox(pdir, w)
             return False, f"the intermediary did not start: {(r.stderr or r.stdout).strip()[:200]}"
-        return True, f"started {intermediary_name(repo)}"
+        return True, f"started {intermediary_name(repo)}{_attach_hint(r.stdout)}"
     finally:
         lock.unlink(missing_ok=True)
+
+
+def _attach_hint(out, sid=None):
+    """` — claude attach <id>`, from what `claude --bg` printed (or the id resumed)."""
+    m = re.search(r"backgrounded\W+(?:\x1b\[[0-9;]*m)?([0-9a-f]{8})", out or "")
+    i = m.group(1) if m else (sid or "")[:8]
+    return f" — open it: claude attach {i}" if i else ""
 
 
 def intermediary_wake_detached(pdir, why):
@@ -10961,8 +10968,7 @@ def cmd_intermediary(a):
                          "session, just open the ask")
         ok, msg = intermediary_wake(pdir, repo, "The owner started you. Run `harness ask "
                                     "--list` and handle what is yours.")
-        print(msg + (f". Talk to it: claude attach (find {intermediary_name(repo)} in "
-                     f"claude agents)" if ok else ""))
+        print(msg)
         sys.exit(0 if ok else 1)
     cmd = intermediary_cmd(pdir, repo, a.model, a.effort)
     if a.print_cmd:

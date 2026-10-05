@@ -1280,6 +1280,105 @@ class Ask(unittest.TestCase):
                          ("redo it", [{"id": "s1-1"}], {"dev": OLD}))
 
 
+class Intermediary(unittest.TestCase):
+    """T17: one intermediary per project, its reach that project only."""
+
+    def setUp(self):
+        self.err = mock.patch("sys.stderr", new_callable=io.StringIO)
+        self.stderr = self.err.start()
+        self.addCleanup(self.err.stop)
+        self.home = Path(tempfile.mkdtemp())
+        self.root = Path(tempfile.mkdtemp())
+        self.pd = {}
+        for name in ("alpha", "beta"):
+            repo, wt, grant = (self.root / name, self.root / f"{name}-dev",
+                               self.root / f"{name}-data")
+            for d in (repo, wt, grant):
+                d.mkdir()
+            pdir = self.home / hz.slug(repo)
+            (pdir / "asks").mkdir(parents=True)
+            (pdir / "binding.json").write_text(json.dumps({"repo": str(repo)}))
+            (pdir / "index.json").write_text(json.dumps(
+                {"nodes": {"dev": {"worktree": str(wt)}}}))
+            (pdir / "grants.json").write_text(json.dumps(
+                {"nodes": {"dev": [{"path": str(grant)}]}}))
+            (pdir / "asks" / "t-1.json").write_text(json.dumps(
+                {"id": "t-1", "task": "t", "state": "ready", "asked_at": OLD}))
+            self.pd[name] = (pdir, repo)
+        (self.pd["beta"][0] / "asks" / "u-1.json").write_text(json.dumps(
+            {"id": "u-1", "task": "u", "state": "ready", "asked_at": OLD}))
+        for m in (mock.patch.object(hz, "HOME_STATE", self.home),
+                  mock.patch.object(hz, "intermediary_prompt",
+                                    side_effect=lambda pd: Path(pd) / "intermediary" / "prompt.md")):
+            m.start()
+            self.addCleanup(m.stop)
+
+    def test_name_is_per_project(self):
+        self.assertEqual(hz.intermediary_name("/x/y/biblion2"), "harness-intermediary-biblion2")
+        self.assertEqual(hz.intermediary_name(Path("/x/y/biblion2/")),
+                         "harness-intermediary-biblion2")
+
+    def test_cmd_reaches_its_project_only(self):
+        pdir, repo = self.pd["alpha"]
+        cmd = hz.intermediary_cmd(pdir, str(repo))
+        line = " ".join(cmd)
+        dirs = cmd[cmd.index("--add-dir") + 1:cmd.index("--tools")]
+        self.assertEqual(cmd[cmd.index("-n") + 1], "harness-intermediary-alpha")
+        self.assertEqual(dirs[:4], [str(pdir), str(repo), str(self.root / "alpha-dev"),
+                                    str(self.root / "alpha-data")])
+        self.assertNotIn(str(self.home), dirs)                 # not every project's state
+        self.assertNotIn("beta", line)
+        self.assertIn(f"Bash(git -C {repo} log *)", cmd)
+        self.assertNotIn(f"Bash(git -C {self.root / 'alpha-data'} log *)", cmd)  # grant: read only
+        self.assertIn("intermediary for alpha", cmd[-1])
+
+    def test_project_resolves_by_name_or_slug_and_refuses_otherwise(self):
+        pdir, repo = self.pd["beta"]
+        self.assertEqual(hz.intermediary_project("beta"), (pdir, str(repo)))
+        self.assertEqual(hz.intermediary_project(pdir.name), (pdir, str(repo)))
+        with self.assertRaises(SystemExit):
+            hz.intermediary_project("gamma")
+        with mock.patch.object(hz, "git", return_value=(128, "", "not a git repo")):
+            with self.assertRaises(SystemExit):
+                hz.intermediary_project()
+        with mock.patch.object(hz, "git", return_value=(0, str(repo / ".git"), "")):
+            self.assertEqual(hz.intermediary_project(), (pdir, str(repo)))
+
+    def test_bound_intermediary_finds_and_lists_its_project_only(self):
+        a, b = self.pd["alpha"][0], self.pd["beta"][0]
+        with mock.patch.dict(os.environ, {"HARNESS_PROJECT": a.name}):
+            self.assertEqual(hz.ask_find("t-1")[0], a)            # no longer ambiguous
+            with self.assertRaises(SystemExit):
+                hz.ask_find("u-1")                                # beta's
+            self.assertIn("not in alpha", self.stderr.getvalue())
+            self.assertEqual({r["project"] for r in hz.ask_list()}, {"alpha"})
+            self.assertEqual({r["project"] for r in hz.ask_list(True)}, {"alpha", "beta"})
+        with mock.patch.dict(os.environ, {"HARNESS_PROJECT": "-nowhere"}):
+            with self.assertRaises(SystemExit):
+                hz.ask_list()
+        env = {k: v for k, v in os.environ.items() if k != "HARNESS_PROJECT"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            self.assertEqual(hz.ask_find("u-1")[0], b)
+            with self.assertRaises(SystemExit):
+                hz.ask_find("t-1")                                # in both
+
+    def test_gui_reports_each_projects_own(self):
+        gp = Path(__file__).resolve().parents[1] / "bin" / "harness-gui"
+        ld = importlib.machinery.SourceFileLoader("harness_gui", str(gp))
+        gui = importlib.util.module_from_spec(importlib.util.spec_from_loader("harness_gui", ld))
+        ld.exec_module(gui)
+        self.assertIsNone(gui.intermediary(None, "/x/alpha")["running"])
+        rows = [{"name": "harness-intermediary-alpha", "status": "idle", "sessionId": "s",
+                 "startedAt": (time.time() - 600) * 1000}]
+        with mock.patch.object(gui.CLI, "last_turn", return_value=(120, 5000)), \
+             mock.patch.object(gui.CLI, "is_stopped", return_value=False):
+            a = gui.intermediary(rows, "/x/alpha")
+            self.assertEqual((a["name"], a["running"], a["idle"], a["context"]),
+                             ("harness-intermediary-alpha", True, 120, 5000))
+            self.assertTrue(595 <= a["up"] <= 605)
+            self.assertFalse(gui.intermediary(rows, "/x/beta")["running"])
+
+
 class AskEvidence(unittest.TestCase):
     """T17: evidence attached to an ask is copied in, served whitelisted, and
     goes when the ask does."""

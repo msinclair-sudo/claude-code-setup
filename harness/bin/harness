@@ -9045,13 +9045,14 @@ def cmd_archive(a):
 
 # ── T17: the owner channel ───────────────────────────────────────────────────
 #
-# A question only the owner can answer goes through the intermediary, a live
-# session outside every tree that briefs it in a fixed form. The owner signs the
-# ruling; it lands on the task's brief. Design: harness/design/owner-channel.md.
+# A question only the owner can answer goes through its project's intermediary,
+# a live session outside the tree that briefs it in a fixed form. One per
+# project, never one per machine: it reads that project only. The owner signs
+# the ruling; it lands on the task's brief. Design: harness/design/owner-channel.md.
 
 ASK_KINDS = ("intent", "judgement", "action", "risk")
 ASK_OPEN = ("asked", "ready", "drafted")
-INTERMEDIARY = "harness-intermediary"
+INTERMEDIARY = "harness-intermediary"          # its skill; a session's name adds the project
 # The seven sections, in order: heading, key, cap. A cap is chars unless noted.
 # Raised 2026-10-05 after the first real briefing: at 120 chars an option was a
 # label, and with no background the owner could not tell what it was about.
@@ -9091,6 +9092,24 @@ def ask_projects():
             continue
         out.append((pdir, repo))
     return out
+
+
+def intermediary_name(repo):
+    """The roster name of a project's intermediary: one per project."""
+    return f"{INTERMEDIARY}-{Path(repo).name}"
+
+
+def ask_bound():
+    """The project an intermediary is bound to — HARNESS_PROJECT, a state slug —
+    as (state dir, repo); None when unset. Set but naming nothing refuses: an
+    intermediary that silently widened to the whole machine is the bug this stops."""
+    s = os.environ.get("HARNESS_PROJECT")
+    if not s:
+        return None
+    for pdir, repo in ask_projects():
+        if pdir.name == s:
+            return pdir, repo
+    die(REFUSED, f"HARNESS_PROJECT={s} names no enrolled project on this machine")
 
 
 def ask_next_id(state, task):
@@ -9138,11 +9157,15 @@ def ask_open(ctx, task, kind, question, me, sid):
 
 
 def ask_find(ident, project=None):
-    """An ask anywhere on the machine -> (state dir, repo, path, record)."""
+    """An ask anywhere on the machine -> (state dir, repo, path, record). An
+    intermediary (HARNESS_PROJECT set) finds only its own project's."""
     if not ASK_ID_RE.match(ident or ""):
         die(REFUSED, f"'{ident}' is not an ask id (<task>-<n>). harness ask --list")
+    bound = ask_bound()
     hits = []
     for pdir, repo in ask_projects():
+        if bound and pdir != bound[0]:
+            continue
         if project and project not in (Path(repo).name, pdir.name):
             continue
         f = pdir / "asks" / f"{ident}.json"
@@ -9151,6 +9174,9 @@ def ask_find(ident, project=None):
                 hits.append((pdir, repo, f, json.loads(f.read_text())))
             except json.JSONDecodeError:
                 die(REFUSED, f"{f} is not valid JSON — refusing to touch it")
+    if not hits and bound:
+        die(REFUSED, f"'{ident}' is not in {Path(bound[1]).name}; this intermediary acts "
+                     f"on {Path(bound[1]).name}'s asks only. harness ask --list")
     if not hits:
         die(REFUSED, f"no ask '{ident}'" + (f" in {project}" if project else
                      " in any enrolled project") + ". harness ask --list")
@@ -9410,10 +9436,14 @@ def ask_reject(path, rec):
     return stub
 
 
-def ask_list():
-    """Open asks across every project, oldest first, each with project and slug."""
+def ask_list(every=False):
+    """Open asks, oldest first, each with project and slug: across every project,
+    or only the bound one when HARNESS_PROJECT is set and `every` is not."""
+    bound = None if every else ask_bound()
     out = []
     for pdir, repo in ask_projects():
+        if bound and pdir != bound[0]:
+            continue
         for f in sorted((pdir / "asks").glob("*.json")):
             try:
                 r = json.loads(f.read_text())
@@ -9531,10 +9561,12 @@ def ask_show(pdir, repo, rec):
                   + (f": {m['_note']}" if m.get("_note") else ""))
 
 
-def intermediary_live():
-    """True or False from the roster; None when it cannot be read."""
+def intermediary_live(repo):
+    """Is this project's intermediary running? True or False from the roster;
+    None when it cannot be read."""
+    name = intermediary_name(repo)
     try:
-        return any(r.get("name") == INTERMEDIARY for r in live_rows(agents_json()))
+        return any(r.get("name") == name for r in live_rows(agents_json()))
     except Exception:
         return None
 
@@ -9550,11 +9582,13 @@ def cmd_ask(a):
     if len(verbs) > 1:
         die(REFUSED, f"one verb at a time: {', '.join(flag(v) for v in verbs)}")
     if a.list:
-        rows = ask_list()
+        rows = ask_list(a.all)
         if a.json:
             print(json.dumps(rows, indent=2)); return
         if not rows:
-            print("no open asks on this machine"); return
+            bound = None if a.all else ask_bound()
+            print(f"no open asks in {Path(bound[1]).name}" if bound
+                  else "no open asks on this machine"); return
         for r in rows:
             print(f"{r['project']} {r['id']} {r.get('kind')} {r.get('state')} "
                   f"{r.get('asker_node')} {human_age(max(0, time.time() - (_epoch(r.get('asked_at')) or time.time())))} "
@@ -9568,12 +9602,12 @@ def cmd_ask(a):
         sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
         rec = ask_open(ctx, a.target, a.kind, a.question, me, sid)
         print(f"asked {rec['id']}  ({rec['kind']}, on {rec['task']})")
-        live = intermediary_live()
+        live, name = intermediary_live(ctx.repo), intermediary_name(ctx.repo)
         if live is not False:
-            print(f"  tell it: SendMessage to '{INTERMEDIARY}' — \"new ask {rec['id']}\"")
+            print(f"  tell it: SendMessage to '{name}' — \"new ask {rec['id']}\"")
         if not live:
-            print(f"  the intermediary is {'not running' if live is False else 'not visible (roster unreadable)'}"
-                  f" — the owner starts it: harness intermediary")
+            print(f"  {name} is {'not running' if live is False else 'not visible (roster unreadable)'}"
+                  f" — the owner starts it: (cd {shlex.quote(str(ctx.repo))} && harness intermediary)")
         print(f"  Carry on with other work. The ruling lands on {rec['task']}'s brief and "
               f"you are told.")
         return
@@ -9638,9 +9672,10 @@ INTERMEDIARY_GIT = ("log", "show", "diff", "status")
 INTERMEDIARY_WRITING = ("humanizer", "sentence-prose", "de-densify", "google-devdocs-style")
 
 
-def intermediary_prompt():
+def intermediary_prompt(pdir):
     """Its system prompt: its skill, then the owner's own Voice section from the
-    global CLAUDE.md, so it writes in the register the owner asked for."""
+    global CLAUDE.md, so it writes in the register the owner asked for. Written
+    into the project's state, beside the session it starts."""
     home = Path.home() / ".claude"
     parts = [(home / "skills" / INTERMEDIARY / "SKILL.md").read_text()]
     try:
@@ -9650,38 +9685,65 @@ def intermediary_prompt():
             parts.append("# The owner's voice (from their CLAUDE.md)\n" + m.group(1).strip())
     except Exception:
         pass
-    out = HOME_STATE / "intermediary" / "prompt.md"
+    out = Path(pdir) / "intermediary" / "prompt.md"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n\n".join(parts) + "\n")
     return out
 
 
-def intermediary_cmd(model=None, effort=None):
-    """The intermediary's `claude` line. Every variadic list (--add-dir,
-    --tools, --allowedTools) is closed by the flag after it. Its skill is
-    passed as a system-prompt file: --restricted does not load user skills."""
-    dirs, repos = [str(HOME_STATE)], []
-    for pdir, repo in ask_projects():
-        cand = [repo]
-        try:
-            idx = json.loads((pdir / "index.json").read_text())
-            cand += [sp.get("worktree") for sp in (idx.get("nodes") or {}).values()]
-        except Exception:
-            pass
-        for d in cand:
-            if d and d not in dirs and Path(d).is_dir():
-                dirs.append(d); repos.append(d)
+def intermediary_project(name=None):
+    """The project an intermediary is started for -> (state dir, repo): --project
+    (the repo's directory name or its state slug), else the enrolled repo holding
+    the current directory. Neither refuses: guessing would start one on the
+    wrong project's questions."""
+    projs = ask_projects()
+    known = ", ".join(Path(r).name for _, r in projs) or "none"
+    if name:
+        hits = [(p, r) for p, r in projs if name in (Path(r).name, p.name)]
+        if len(hits) == 1:
+            return hits[0]
+        if not hits:
+            die(REFUSED, f"no enrolled project '{name}' on this machine (enrolled: {known})")
+        die(REFUSED, f"'{name}' names {len(hits)} projects; give the state slug: "
+                     f"{', '.join(p.name for p, _ in hits)}")
+    rc, common, _ = git("rev-parse", "--path-format=absolute", "--git-common-dir")
+    if not rc:
+        s_ = slug(Path(common).parent)
+        for p, r in projs:
+            if p.name == s_:
+                return p, r
+    die(REFUSED, f"which project? This directory is not in an enrolled repo. Run it from "
+                 f"inside one,\n           or name it: harness intermediary --project <name> "
+                 f"(enrolled: {known})")
+
+
+def intermediary_cmd(pdir, repo, model=None, effort=None):
+    """One project's intermediary `claude` line. Its reach is that project: its
+    state, its repo and worktrees, its live grants — never another project's.
+    Every variadic list (--add-dir, --tools, --allowedTools) is closed by the
+    flag after it. Its skill is passed as a system-prompt file: --restricted
+    does not load user skills."""
+    pdir = Path(pdir)
+    dirs, repos = [str(pdir)], []
+    cand = [repo]
+    try:
+        idx = json.loads((pdir / "index.json").read_text())
+        cand += [sp.get("worktree") for sp in (idx.get("nodes") or {}).values()]
+    except Exception:
+        pass
+    for d in cand:
+        if d and d not in dirs and Path(d).is_dir():
+            dirs.append(d); repos.append(d)
     # Read-only on what lanes may write outside the repo: their live grants.
-    for pdir, _ in ask_projects():
-        try:
-            g = json.loads((pdir / "grants.json").read_text())
-        except Exception:
-            continue
-        for rows in (g.get("nodes") or {}).values():
-            for r in rows:
-                d = r.get("path")
-                if d and not r.get("revoked_at") and d not in dirs and Path(d).is_dir():
-                    dirs.append(d)
+    try:
+        g = json.loads((pdir / "grants.json").read_text())
+    except Exception:
+        g = {}
+    for rows in (g.get("nodes") or {}).values():
+        for r in rows:
+            d = r.get("path")
+            if d and not r.get("revoked_at") and d not in dirs and Path(d).is_dir():
+                dirs.append(d)
     # Its writing skills, read on demand (--restricted loads no user skills).
     for sk in INTERMEDIARY_WRITING:
         d = str(Path.home() / ".claude" / "skills" / sk)
@@ -9691,9 +9753,10 @@ def intermediary_cmd(model=None, effort=None):
     for d in repos:
         for q in ('"', "'") + (("",) if " " not in d else ()):
             allow += [f"Bash(git -C {q}{d}{q} {g} *)" for g in INTERMEDIARY_GIT]
-    skill = intermediary_prompt()
+    skill = intermediary_prompt(pdir)
     # --strict-mcp-config: no MCP servers or connectors, which could write outside.
-    cmd = ["claude", "-n", INTERMEDIARY, "--restricted", "--strict-mcp-config", "--add-dir", *dirs,
+    cmd = ["claude", "-n", intermediary_name(repo), "--restricted", "--strict-mcp-config",
+           "--add-dir", *dirs,
            "--tools", *INTERMEDIARY_TOOLS,
            "--allowedTools", *allow,
            "--permission-mode", "dontAsk",
@@ -9703,30 +9766,36 @@ def intermediary_cmd(model=None, effort=None):
     if effort:
         cmd += ["--effort", effort]
     # Last, after a non-variadic flag, so no list swallows it: the first turn.
-    return cmd + [INTERMEDIARY_START]
+    return cmd + [intermediary_start(repo)]
 
 
-INTERMEDIARY_START = ("You are the harness intermediary; your instructions are in your system "
-                      "prompt. Start now: run `harness ask --list`, and tell the owner in a few "
-                      "lines what is open and whose move each one is, or that nothing is.")
+def intermediary_start(repo):
+    """The opening prompt, naming the project it answers for."""
+    return (f"You are the harness intermediary for {Path(repo).name}; your instructions are "
+            f"in your system prompt. Start now: run `harness ask --list`, and tell the owner "
+            f"in a few lines what is open in {Path(repo).name} and whose move each one is, "
+            f"or that nothing is.")
 
 
 def cmd_intermediary(a):
-    """Start the intermediary in this terminal: one per machine, the owner's."""
-    home = HOME_STATE / "intermediary"
-    cmd = intermediary_cmd(a.model, a.effort)
+    """Start a project's intermediary in this terminal: one per project, the owner's."""
+    pdir, repo = intermediary_project(a.project)
+    home = pdir / "intermediary"
+    cmd = intermediary_cmd(pdir, repo, a.model, a.effort)
     if a.print_cmd:
-        print(f"cd {shlex.quote(str(home))} && HARNESS_INTERMEDIARY=1 {shlex.join(cmd)}")
+        print(f"cd {shlex.quote(str(home))} && HARNESS_INTERMEDIARY=1 "
+              f"HARNESS_PROJECT={shlex.quote(pdir.name)} {shlex.join(cmd)}")
         return
     if os.environ.get("CLAUDE_CODE_SESSION_ID"):
         die(REFUSED, "the owner starts the intermediary from a terminal, not from inside "
-                     "a session:\n           harness intermediary")
-    if intermediary_live():
-        die(REFUSED, f"'{INTERMEDIARY}' is already running — one per machine. "
+                     f"a session:\n           (cd {shlex.quote(str(repo))} && harness intermediary)")
+    if intermediary_live(repo):
+        die(REFUSED, f"'{intermediary_name(repo)}' is already running — one per project. "
                      f"Attach to it: claude agents")
     home.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
     env["HARNESS_INTERMEDIARY"] = "1"
+    env["HARNESS_PROJECT"] = pdir.name
     os.chdir(home)
     os.execvpe("claude", cmd, env)
 
@@ -10112,11 +10181,17 @@ def main():
     ak.add_argument("--reject", action="store_true", help="owner: not a question to answer")
     ak.add_argument("--show", action="store_true",
                     help="the ask, its task's brief, and the asker's open task")
-    ak.add_argument("--list", action="store_true", help="open asks on this machine")
+    ak.add_argument("--list", action="store_true",
+                    help="open asks on this machine; an intermediary sees its project's")
+    ak.add_argument("--all", action="store_true",
+                    help="with --list: every project, even inside an intermediary")
     ak.add_argument("--json", action="store_true")
     ak.add_argument("--project", metavar="NAME",
                     help="the repo directory name, when an id is in two projects")
     im = add("intermediary", cmd_intermediary)
+    im.add_argument("--project", metavar="NAME",
+                    help="the repo directory name or state slug; default: the enrolled "
+                         "repo you are in")
     im.add_argument("--print-cmd", action="store_true",
                     help="print the command and exit")
     im.add_argument("--model")

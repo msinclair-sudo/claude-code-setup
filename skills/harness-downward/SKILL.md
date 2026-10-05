@@ -217,7 +217,7 @@ A brief from a finding is gated on approval, unless rank 0 handed the finding do
 
 ## Asking the owner (`T17`)
 
-Only for what the tree can't settle: intent, judgement, something only the owner can do, or risk they must accept. `harness ask <task> --kind intent|judgement|action|risk --question "..."` (the task needs a brief), then `SendMessage` the intermediary "new ask <id>" and carry on. It may question you; answer it. The ruling lands on the task's brief (`harness brief <task>`) and orientation tells you; a rejected or returned ask is said once. Lanes ask you, not the owner.
+Only for what the tree can't settle: intent, judgement, something only the owner can do, or risk they must accept. `harness ask <task> --kind intent|judgement|action|risk --question "..."` (the task needs a brief), then `SendMessage` the project's intermediary (`harness ask` names it) "new ask <id>" and carry on. It may question you; answer it. The ruling lands on the task's brief (`harness brief <task>`) and orientation tells you; a rejected or returned ask is said once. Lanes ask you, not the owner.
 
 ## You are also somebody's child
 

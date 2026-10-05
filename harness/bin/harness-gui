@@ -136,24 +136,31 @@ def _wait_mins(since):
 # the intermediary's: it has not been briefed yet.
 ASK_OPEN = ("asked", "ready", "drafted")
 ASK_OWNERS = ("ready", "drafted")
-INTERMEDIARY = "harness-intermediary"
 
 
-def intermediary(rows):
-    """The intermediary's session, found by name on the roster.
+def intermediary(rows, repo):
+    """A project's intermediary session, found by its name on the roster. One
+    per project, so each project's panel says whether ITS one is up.
 
     `running` is None when the roster could not be read — unknown, which the
     page must not draw as "not running" and send the owner off to start a
     second one.
     """
+    name = CLI.intermediary_name(repo)
+    out = {"name": name, "running": None, "context": None, "idle": None,
+           "up": None, "status": None, "stopped": False}
     if rows is None:
-        return {"running": None, "context": None, "idle": None}
-    r = next((x for x in rows if x.get("name") == INTERMEDIARY), None)
+        return out
+    r = next((x for x in rows if x.get("name") == name), None)
     if r is None:
-        return {"running": False, "context": None, "idle": None}
+        return dict(out, running=False)
     a, c = CLI.last_turn(r.get("sessionId") or "")
-    return {"running": True, "status": r.get("status"), "context": c,
-            "idle": (None if r.get("status") == "busy" or a is None else int(a))}
+    return dict(out, running=True, status=r.get("status"), context=c,
+                stopped=CLI.is_stopped(r),
+                idle=(None if r.get("status") == "busy" or a is None else int(a)),
+                # The roster's startedAt is epoch ms, as on a node card.
+                up=(int(time.time() - r["startedAt"] / 1000)
+                    if isinstance(r.get("startedAt"), (int, float)) else None))
 
 
 def read_state():
@@ -473,6 +480,7 @@ def read_state():
                          "nodes": nodes,
                          "orphan_marks": sorted(orphans, key=lambda o: o["task"]),
                          "asks": asks, "rulings": rulings,
+                         "intermediary": intermediary(rows, repo),
                          "indexed_at": idx.get("generated")})
     return {"generated": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             # Counted when it is the owner's move, never when an ask merely
@@ -480,8 +488,7 @@ def read_state():
             # count that rises and falls on its own is one the owner learns to
             # ignore.
             "owner": {"count": sum(1 for p in projects for a in p["asks"]
-                                   if a.get("state") in ASK_OWNERS),
-                      "intermediary": intermediary(rows)},
+                                   if a.get("state") in ASK_OWNERS)},
             "roster_error": roster_error, "stale_server": stale_server(),
             # The harness CLI and the skills under ~/.claude/skills are copies;
             # when their source has moved, every session reads older
@@ -678,12 +685,26 @@ border:1px solid var(--line);border-radius:3px;letter-spacing:.06em;text-transfo
 #tabs a.due,.yours{color:#ffd08a}
 #tabs a.due{border-color:#ffd08a66}
 .owner{max-width:980px}
-.ohead{background:var(--panel);border:1px solid var(--line);padding:8px 13px;
-margin-bottom:20px;display:flex;gap:14px;align-items:baseline}
+/* A project's intermediary: beside its tree, never in it. It is not a node --
+   it answers to the owner, not to a lead -- so it is drawn like a card and
+   visibly not one: dashed, and off to the side. */
+.treerow{display:flex;gap:16px;align-items:flex-start}
+.treerow>.scroll{flex:1;min-width:0}
+.sidecol{width:240px;flex:none}
+.card.interm{display:block;max-width:none;border-style:dashed;border-color:#4a5536}
+.card.interm.busy{border-color:#4a6b30}
+.card.interm.dup{border-color:var(--warn)}
+.card.interm code{color:var(--busy);overflow-wrap:anywhere}
+.card.interm a{color:var(--dim)}
+.card.interm a:hover{color:var(--ink)}
+@media (max-width:960px){.treerow{flex-direction:column}.sidecol{width:100%}}
+.ohead{background:var(--panel);border:1px solid var(--line);padding:6px 13px;
+margin-bottom:8px;display:flex;gap:14px;align-items:baseline}
 .ohead b{font-weight:400;color:var(--dim);font-size:11px;letter-spacing:.06em;
 text-transform:uppercase}
 .ohead code{color:var(--busy)}
 .ohead .q{color:var(--dim)}
+.ohead .dup{white-space:nowrap}
 .osec{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);
 margin:0 0 7px}
 .oproj{margin-bottom:18px}
@@ -1148,7 +1169,42 @@ function card(n) {
     '</div>';
 }
 
-function tree(nodes) {
+// The project's intermediary, as a card off to the side of its tree. Not a
+// tree node: nothing in the tree reports to it, and drawing it under the root
+// would say otherwise.
+// The start command as the owner will paste it: the repo path quoted the way
+// the CLI's shlex.quote would, since enrolled repos live under paths with spaces.
+const shq = x => /^[\w@%+=:,./-]+$/.test(x) ? x : "'" + String(x).replace(/'/g, "'\"'\"'") + "'";
+const startCmd = p => 'cd ' + shq(p.repo) + ' && harness intermediary';
+function intermCard(p) {
+  const im = p.intermediary || {};
+  const asks = p.asks || [];
+  const yours = asks.filter(a => a.state === 'ready' || a.state === 'drafted').length;
+  const cls = im.running === null ? 'unknown'
+            : im.stopped ? 'dup'
+            : im.running ? (im.status === 'busy' ? 'busy' : 'idle') : '';
+  const s = {status: im.status, idle: im.idle, carry: im.context, up: im.up};
+  let who;
+  if (im.running === null) who = '<div class="ln u">unknown &mdash; the roster could not be read</div>';
+  else if (!im.running)    who = '<div class="ln q">not running</div>' +
+      '<div class="ln"><code>' + esc(startCmd(p)) + '</code></div>';
+  else if (im.stopped)     who = '<div class="ln dup">STOPPED at a prompt &middot; ' +
+      'claude agents</div>' + meter(s);
+  else                     who = '<div class="ln" title="session ' + esc(im.name || '') + '">' +
+      (im.status === 'idle' && age(s) ? age(s).replace(/^ &middot; /, '')
+                                      : esc(im.status || '') + age(s)) + '</div>' + meter(s);
+  const n = asks.length;
+  const ask = '<div class="ln"><a href="#issues">' +
+    (n ? n + ' open ask' + (n === 1 ? '' : 's') + ' &middot; ' +
+         '<span class="' + (yours ? 'yours' : '') + '">' + yours + ' yours</span>'
+       : 'no open asks') + '</a></div>';
+  return '<div class="card interm ' + cls + '" data-live="interm:' + esc(p.slug) + '">' +
+    '<div class="hdr"><span class="dot"></span><span class="nm">' + esc(p.project) +
+    '</span><span class="kd">intermediary</span></div>' +
+    '<div class="ln q">' + esc(im.name || '') + '</div>' + who + ask + '</div>';
+}
+
+function tree(nodes, side) {
   const by = {}, kids = {}, roots = [];
   nodes.forEach(n => by[n.name] = n);
   nodes.slice().sort((a, b) => a.name.localeCompare(b.name)).forEach(n => {
@@ -1157,8 +1213,9 @@ function tree(nodes) {
   });
   const li = n => '<li>' + card(n) +
     (kids[n.name] ? '<ul>' + kids[n.name].map(li).join('') + '</ul>' : '') + '</li>';
-  return '<div class="scroll"><div class="tree"><ul>' +
-         roots.map(li).join('') + '</ul></div></div>';
+  return '<div class="treerow"><div class="scroll"><div class="tree"><ul>' +
+         roots.map(li).join('') + '</ul></div></div>' +
+         (side ? '<div class="sidecol">' + side + '</div>' : '') + '</div>';
 }
 
 async function tick() {
@@ -1224,7 +1281,7 @@ async function tick() {
                    : ' <span class="q">names no node</span>') +
           (o.at ? ' <span class="q">&middot; ' + esc(o.at) + '</span>' : '') +
           '</li>').join('') + '</ul>' : '') +
-      tree(p.nodes) + '</div></div></div>';
+      tree(p.nodes, intermCard(p)) + '</div></div></div>';
   }).join('');
   if (!d.projects.length) h += '<div class="empty">no enrolled projects on this machine</div>';
   paint(h);
@@ -1336,8 +1393,8 @@ function dur(s) {
   return m < 60 ? m + 'm' : Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0');
 }
 
-function ownerHead(im) {
-  im = im || {};
+function ownerHead(p) {
+  const im = p.intermediary || {};
   const body = im.running === null
     ? '<span class="ln u">unknown &mdash; the session roster could not be read</span>'
     : im.running
@@ -1345,8 +1402,9 @@ function ownerHead(im) {
         (im.context ? ' &middot; ' + tokf(im.context) + ' context' : '') +
         (im.idle != null ? ' &middot; idle ' + dur(im.idle) : '') + '</span>'
       : '<span class="dup">not running</span> <span class="q">&mdash; start it in a ' +
-        'terminal: <code>harness intermediary</code></span>';
-  return '<div class="ohead" data-live="owner:head"><b>intermediary</b>' + body + '</div>';
+        'terminal: <code>' + esc(startCmd(p)) + '</code></span>';
+  return '<div class="ohead" data-live="owner:head:' + esc(p.slug) + '"><b>intermediary</b>' +
+    body + '</div>';
 }
 
 // A briefing field may arrive as prose or as a list; either reads as lines.
@@ -1442,13 +1500,16 @@ function rulingsList(d) {
 }
 
 function ownerView(d) {
-  const groups = (d.projects || []).filter(p => (p.asks || []).length).map(p =>
-    '<div class="oproj"><h2>' + esc(p.project) + '</h2>' +
-    p.asks.map(a => askItem(p.slug, a)).join('') + '</div>').join('');
-  return '<div class="owner">' + ownerHead((d.owner || {}).intermediary) +
-    '<h3 class="osec">open asks</h3>' +
-    (groups || '<div class="ln q" style="margin-bottom:18px">nothing open &mdash; ' +
-      'asks reach this page once an asker raises one</div>') +
+  // Every project gets its intermediary's line, asks or not: the line is how
+  // the owner learns which one to start before anything is waiting on it.
+  const groups = (d.projects || []).map(p =>
+    '<div class="oproj"><h2>' + esc(p.project) + '</h2>' + ownerHead(p) +
+    (p.asks || []).map(a => askItem(p.slug, a)).join('') + '</div>').join('');
+  const none = !(d.projects || []).some(p => (p.asks || []).length);
+  return '<div class="owner">' +
+    '<h3 class="osec">open asks</h3>' + groups +
+    (none ? '<div class="ln q" style="margin-bottom:18px">nothing open &mdash; ' +
+      'asks reach this page once an asker raises one</div>' : '') +
     '<h3 class="osec" style="margin-top:26px">rulings' +
     '<input class="ofilter" placeholder="filter" value="' + esc(FILTER) + '" /></h3>' +
     '<div data-live="owner:rulings">' + rulingsList(d) + '</div></div>';

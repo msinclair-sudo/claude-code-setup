@@ -137,9 +137,11 @@ doesn't ask again. Nothing else is kept.
 
 ## The intermediary's session and skill
 
-- `harness intermediary` starts it: `claude` in its own directory under `~/.claude/harness/`, with
-  read access to each enrolled repo, read-only permissions, and its address recorded so
-  `harness ask` can print it. One per machine.
+- `harness intermediary` starts it, run in the project's repo (or with `--project NAME`): `claude`
+  in that project's state directory, named `harness-intermediary-<project>`, with read access to
+  that project only (repo, worktrees, state, live-grant folders) and read-only permissions.
+  **One per project** (changed 2026-10-05 from one per machine): each sees only its own asks, and
+  the Agents tab shows it beside that project's tree.
 - Its own skill, `harness-intermediary`, says:
   - what to read first for an ask: the task's brief, the asker's notes, then the code;
   - when to send an ask back (the tree can settle it, or it's access, approval or a stalled session);

@@ -829,6 +829,9 @@ cursor:pointer;border-bottom:1px dotted var(--none)}
 .ln{color:var(--dim);font-size:11px;margin-top:3px;line-height:1.5;
 overflow-wrap:anywhere}
 .ln.q{color:var(--none);font-style:italic}
+/* Context and uptime: the numbers a reader scans for, so not muted. */
+.ln.mt{color:var(--ink);font-size:12px}
+.ln.mt b{color:#cfe8a8;font-weight:600}
 .ln.u{color:var(--unk)}
 .dup{color:var(--warn)}
 
@@ -1330,9 +1333,9 @@ function hm(sec) {
 }
 function meter(s) {
   const bits = [];
-  if (s.carry) bits.push('context ' + tokf(s.carry));
-  if (s.up != null) bits.push('up ' + hm(s.up));
-  return bits.length ? '<div class="ln q">' + bits.join(' &middot; ') + '</div>' : '';
+  if (s.carry) bits.push('context <b>' + tokf(s.carry) + '</b>');
+  if (s.up != null) bits.push('up <b>' + hm(s.up) + '</b>');
+  return bits.length ? '<div class="ln mt">' + bits.join(' &middot; ') + '</div>' : '';
 }
 
 function card(n) {
@@ -1350,11 +1353,14 @@ function card(n) {
   if (unknown)            who = '<div class="ln u">occupancy unknown</div>';
   else if (ss.length > 1) who = '<div class="ln dup">' + ss.length +
       ' sessions in one worktree</div>';
-  else if (halted)        who = '<div class="ln dup">' + esc(ss[0].name) +
-      ' &middot; STOPPED at a prompt &middot; claude attach ' + esc(ss[0].id) + '</div>' +
+  else if (halted)        who = '<div class="ln dup">' +
+      'STOPPED at a prompt &middot; claude attach ' + esc(ss[0].id) + '</div>' +
       meter(ss[0]);
-  else if (ss.length)     who = '<div class="ln">' + esc(ss[0].name) + ' &middot; ' +
-      esc(ss[0].status) + age(ss[0]) + '</div>' + meter(ss[0]);
+  else if (ss.length)     who = '<div class="ln" title="session ' + esc(ss[0].name) + '">' +
+      // "idle · idle 5m" said it twice: the age already says idle.
+      (ss[0].status === 'idle' && age(ss[0])
+        ? age(ss[0]).replace(/^ &middot; /, '') : esc(ss[0].status) + age(ss[0])) +
+      '</div>' + meter(ss[0]);
   else if (n.claimed)     who = '<div class="ln dup">claimed, no session</div>';
   else                    who = '<div class="ln q">no session</div>';
   // "unassigned" read as "nothing is there", which is the opposite of what it
@@ -1403,7 +1409,9 @@ function card(n) {
     '<div class="hdr"><span class="dot"></span><span class="nm">' + esc(n.name) +
     '</span><span class="kd">' + esc(n.role || '') +
     '</span></div>' +
-    '<div class="ln q">' + esc(n.branch || '') + (n.indexed ? '' : ' (not indexed)') + '</div>' +
+    (n.branch && n.branch !== n.name || !n.indexed
+      ? '<div class="ln q">' + (n.branch && n.branch !== n.name ? 'branch ' + esc(n.branch) : '') +
+        (n.indexed ? '' : ' (not indexed)') + '</div>' : '') +
     who + wait + owes + sigs + task + splitChips(n) + goneChips(n) +
     '</div>';
 }

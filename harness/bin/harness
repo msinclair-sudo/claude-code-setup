@@ -6447,6 +6447,77 @@ def couple_chain(ctx, task):
         out.append(nxt)
 
 
+def launch_wake(ctx, task, at):
+    """A time gate's alarm (obs 70): a detached `harness wake` that sleeps until
+    the gate and then starts the task's node if nothing else will. Detached and
+    without a session id, like a reset's launch, so it outlives the turn and acts
+    as the operator would from the repository root. Nothing wakes an idle session
+    otherwise: a lead went idle "until the reset" and rank 0 had to set a cron
+    in its own session to message it."""
+    log = ctx.state_file("wakes", tkey(task), ".log")
+    log.parent.mkdir(parents=True, exist_ok=True)
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
+    with open(log, "a") as fh:
+        subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "wake", task,
+                          "--at", str(at)], cwd=str(ctx.repo), env=env, stdout=fh,
+                         stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                         start_new_session=True)
+
+
+def wake_plan(ctx, task, at, rows):
+    """What the alarm does once its time has come: (action, why). Action is
+    "start" (recycle the node into its queue) or None. It never recycles a live
+    lead, a busy session or one mid-task: those reach the task at their next
+    close, which already reads the clock."""
+    b = load_brief(ctx, task)[1]
+    if not b or superseded(b):
+        return None, "no live brief"
+    if b.get("not_before") != at:
+        return None, "the gate was moved or cleared; its own alarm handles it"
+    st = task_state(ctx, task)
+    if st != "briefed":
+        return None, f"it is {st}"
+    still = waits_on(ctx, b)
+    if still:
+        return None, "still waits: " + "; ".join(still)
+    node = b.get("node")
+    if node not in ctx.tree["nodes"]:
+        return None, f"'{node}' is not a node"
+    wt = (load_index(ctx)["nodes"].get(node) or {}).get("worktree")
+    here = [r for r in rows if r.get("cwd") == wt]
+    if not here:
+        return "start", f"{node} has no session"
+    if role_of(ctx, node) != "member":
+        return None, f"{node} is a live lead; it starts {task} at its next close"
+    if any(r.get("status") == "busy" for r in here):
+        return None, f"{node} is busy; it reaches {task} at its next close"
+    if any(r.get("_node") == node and not r.get("_presented_at")
+           for r in open_marks(ctx).values()):
+        return None, f"{node} has an open task; {task} follows it"
+    return "start", f"{node} is idle with nothing open"
+
+
+def cmd_wake(a):
+    """The alarm behind `brief --not-before` (obs 70). Internal: launched by it."""
+    ctx = Ctx(); ctx.require_enrolled()
+    at = float(a.at)
+    while time.time() < at:
+        time.sleep(min(60, max(1, at - time.time())))
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    try:
+        rows = live_rows(agents_json())
+    except Exception as e:
+        print(f"{stamp} {a.task}: roster unreadable ({e}); not started"); return
+    act, why = wake_plan(ctx, a.task, at, rows)
+    print(f"{stamp} {a.task}: {why}" + ("; starting it" if act else ""))
+    if act:
+        node = load_brief(ctx, a.task)[1]["node"]
+        subprocess.run([sys.executable, str(Path(__file__).resolve()), "recycle", node,
+                        "--when-idle"], cwd=str(ctx.repo))
+        append_inbox({"event": "woken", "task": a.task, "node": node,
+                      "repo": str(ctx.repo), "at": stamp})
+
+
 def task_node(ctx, task):
     """Which node a task belongs to, from its mark or its brief."""
     mf = ctx.state_file("marks", task, ".json")
@@ -7069,6 +7140,8 @@ def cmd_brief(a):
         brief_carry(rec, b)
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(json.dumps(rec, indent=2) + "\n")
+        if a.not_before and (rec.get("not_before") or 0) > time.time():
+            launch_wake(ctx, a.task, rec["not_before"])
         # Create and replace said the same words, so the line that means "I
         # destroyed one" was indistinguishable from the line that means "I made
         # you one" — and the one warning that did print, "the previous text is
@@ -7230,6 +7303,10 @@ def cmd_brief(a):
                       + ", ".join(f"{x['ref']} ({x['sha'][:8]})" for x in reqs)
                       + ". Commit freely before then.")
         f.write_text(json.dumps(b, indent=2) + "\n")
+        if a.not_before and (b.get("not_before") or 0) > time.time():
+            launch_wake(ctx, a.task, b["not_before"])
+            print(f"  At that time {b.get('node')} is started into it if it is free; "
+                  f"busy or mid-task, it takes it at its next close.")
         return
 
     if a.close_after:
@@ -10318,6 +10395,9 @@ def main():
     ig.add_argument("--dry-run", action="store_true")
     ig.add_argument("--roster", metavar="FILE",
                     help="a `claude agents --json` capture, for testing")
+    wk = add("wake", cmd_wake)
+    wk.add_argument("task")
+    wk.add_argument("--at", required=True, help=argparse.SUPPRESS)
     rcy = add("recycle", cmd_recycle)
     rcy.add_argument("node", nargs="*", help="nodes to restart with fresh context")
     rcy.add_argument("--children", action="store_true", help="every child of this node")

@@ -1668,3 +1668,46 @@ class EndedSessions(unittest.TestCase):
             self.assertEqual(hz.ended_count(ctx), 2)
             with mock.patch.object(hz, "job_refs", side_effect=AssertionError):
                 self.assertEqual(hz.ended_count(ctx), 2)          # cached
+
+
+class Wake(unittest.TestCase):
+    """obs 70: a time gate starts its node when the time comes, if nothing else will."""
+    AT = 1000.0
+
+    def plan(self, rows=(), brief=None, state="briefed", waits=(), role="member", marks=None):
+        ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev"})
+        b = dict({"task": "run", "node": "dev_1", "not_before": self.AT}, **(brief or {}))
+        with mock.patch.object(hz, "load_brief", return_value=(None, b)), \
+             mock.patch.object(hz, "task_state", return_value=state), \
+             mock.patch.object(hz, "waits_on", return_value=list(waits)), \
+             mock.patch.object(hz, "role_of", return_value=role), \
+             mock.patch.object(hz, "open_marks", return_value=marks or {}), \
+             mock.patch.object(hz, "load_index",
+                               return_value={"nodes": {"dev_1": {"worktree": "/w1"}}}):
+            return hz.wake_plan(ctx, "run", self.AT, list(rows))
+
+    def test_starts_a_free_or_idle_lane(self):
+        self.assertEqual(self.plan()[0], "start")
+        self.assertEqual(self.plan([{"cwd": "/w1", "status": "idle"}])[0], "start")
+
+    def test_leaves_what_will_reach_it_anyway(self):
+        idle = [{"cwd": "/w1", "status": "idle"}]
+        self.assertIsNone(self.plan([{"cwd": "/w1", "status": "busy"}])[0])
+        self.assertIsNone(self.plan(idle, marks={"x": {"_node": "dev_1"}})[0])
+        self.assertIsNone(self.plan(idle, role="lead")[0])          # never a live lead
+        self.assertIsNone(self.plan(state="open")[0])                # already started
+        self.assertIsNone(self.plan(waits=["after x (open on dev)"])[0])
+        self.assertIn("moved", self.plan(brief={"not_before": self.AT + 60})[1])
+
+    def test_alarm_recycles_the_node_once_due(self):
+        ctx = FakeCtx({"main": None, "dev_1": "main"})
+        ctx.repo = Path("/r")
+        with mock.patch.object(hz, "Ctx", return_value=ctx), \
+             mock.patch.object(hz, "agents_json", return_value=[]), \
+             mock.patch.object(hz, "wake_plan", return_value=("start", "free")), \
+             mock.patch.object(hz, "load_brief", return_value=(None, {"node": "dev_1"})), \
+             mock.patch.object(hz, "append_inbox"), \
+             mock.patch.object(hz.subprocess, "run") as run, \
+             redirect_stdout(io.StringIO()):
+            hz.cmd_wake(mock.Mock(task="run", at=str(time.time() - 1)))
+        self.assertEqual(run.call_args.args[0][-3:], ["recycle", "dev_1", "--when-idle"])

@@ -138,37 +138,38 @@ ASK_OPEN = ("asked", "ready", "drafted")
 ASK_OWNERS = ("ready", "drafted")
 
 
-def intermediary(rows, repo, wt_of=None):
-    """A project's intermediary session, found by its name on the roster. One
-    per project, so each project's panel says whether ITS one is up.
+def intermediary(rows, repo, asks=None, pdir=None):
+    """A project's item sessions: one intermediary per open ask, found by name
+    on the roster. Each open ask gets `session` (working, idle, queued or
+    asleep); the summary counts the running ones against the cap.
 
-    `running` is None when the roster could not be read — unknown, which the
-    page must not draw as "not running" and send the owner off to start a
-    second one.
+    `running` is None when the roster could not be read — unknown, not none.
     """
-    name = CLI.intermediary_name(repo)
-    out = {"name": name, "running": None, "context": None, "idle": None,
-           "up": None, "status": None, "stopped": False, "stop": None}
+    out = {"running": None, "cap": CLI.ITEM_CAP, "items": []}
+    for a in asks or []:
+        a["session"] = {"state": "unknown"}
     if rows is None:
         return out
-    r = next((x for x in rows if x.get("name") == name), None)
-    if r is None:
-        return dict(out, running=False)
-    a, c = CLI.last_turn(r.get("sessionId") or "")
-    stopped, stop = CLI.is_stopped(r), CLI.stop_detail(r, rows)
-    # Waiting on a reply from a node it messaged: that node, found by the
-    # worktree its session runs in, so the page can draw the line to it.
-    on = None
-    if stopped and (stop or {}).get("kind") == "reply":
-        t = next((x for x in rows if x.get("name") == stop.get("on")), None)
-        if t:
-            on = next((n for n, w in (wt_of or {}).items() if w and w == t.get("cwd")), None)
-    return dict(out, running=True, status=r.get("status"), context=c, sid=r.get("sessionId"),
-                stopped=stopped, stop=stop, waits_on=on,
-                idle=(None if r.get("status") == "busy" or a is None else int(a)),
-                # The roster's startedAt is epoch ms, as on a node card.
-                up=(int(time.time() - r["startedAt"] / 1000)
-                    if isinstance(r.get("startedAt"), (int, float)) else None))
+    pre = CLI.intermediary_name(repo) + "-"
+    live = {}
+    for r in rows:
+        n = r.get("name") or ""
+        if n.startswith(pre) and r.get("sessionId"):
+            live[n[len(pre):]] = r
+    for a in asks or []:
+        r = live.get(a["id"])
+        if r:
+            t, c = CLI.last_turn(r["sessionId"])
+            a["session"] = {"state": "working" if r.get("status") == "busy" else "idle",
+                            "sid": r["sessionId"], "context": c,
+                            "idle": None if r.get("status") == "busy" or t is None else int(t)}
+        elif pdir and (CLI.item_home(pdir, a["id"]) / "inbox.jsonl").exists():
+            a["session"] = {"state": "queued"}
+        else:
+            a["session"] = {"state": "asleep"}
+    out["running"] = len(live)
+    out["items"] = sorted(live)
+    return out
 
 
 def mark_held(cctx, nodes):
@@ -629,8 +630,7 @@ def read_state():
                          "nodes": nodes,
                          "orphan_marks": sorted(orphans, key=lambda o: o["task"]),
                          "asks": asks, "rulings": rulings,
-                         "intermediary": intermediary(rows, repo, wt_of),
-                         "chat": CLI.intermediary_chat(pdir)[-40:],
+                         "intermediary": intermediary(rows, repo, asks, pdir),
                          "documenter": documenter(rows, pdir, repo, asks),
                          "indexed_at": idx.get("generated")})
     return {"generated": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -915,9 +915,11 @@ border:1px solid var(--line);padding:7px;font:inherit;resize:vertical}
   white-space:pre-wrap;word-break:break-all;color:var(--ink)}
 .athr{margin:5px 0;padding-left:8px;border-left:2px solid var(--line);white-space:pre-wrap}
 .athr.im{border-left-color:var(--busy)}
+.athr.nd{border-left-color:var(--wait)}
+.isess{margin:2px 0 6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .athr b{font-weight:400;color:var(--dim);font-size:11px}
 .anote{flex:1;background:#0e1109;color:var(--ink);border:1px solid var(--line);padding:4px 7px}
-.aquery{flex:1;min-height:44px;background:#0e1109;color:var(--ink);border:1px solid var(--line);
+.achat{flex:1;min-height:44px;background:#0e1109;color:var(--ink);border:1px solid var(--line);
   padding:4px 7px;font:inherit}
 .adraft:not([readonly]){border-color:var(--warn)}
 .row button:disabled{opacity:.35;cursor:default}
@@ -1427,35 +1429,39 @@ document.addEventListener('change', e => {
 // The intermediary's start button and attach line: Start wakes it in the
 // background, and once it is up the line is the command to open it here.
 const IMMSG = {};
-function imControls(p) {
-  const im = p.intermediary || {};
-  const msg = IMMSG[p.slug] ? ' <span class="q">' + esc(IMMSG[p.slug]) + '</span>' : '';
-  if (im.running && im.sid) {
-    const c = 'claude attach ' + im.sid.slice(0, 8);
-    return '<div class="ln docctl imctl"><code>' + esc(c) + '</code> <button data-acopy="' +
-      esc(c) + '">Copy</button></div>';
-  }
-  if (im.running === false)
-    return '<div class="ln docctl imctl"><button data-imstart="' + esc(p.slug) + '">Start</button>' +
-      msg + '</div>';
-  return '';
+function itemSession(slug, a) {
+  const s = a.session || {};
+  const k = akey(slug, a.id);
+  const msg = IMMSG[k] ? ' <span class="q">' + esc(IMMSG[k]) + '</span>' : '';
+  const st = s.state === 'working' ? 'working'
+    : s.state === 'idle' ? 'idle' + (s.idle != null ? ' ' + dur(s.idle) : '')
+    : s.state === 'queued' ? 'queued to start'
+    : s.state === 'asleep' ? 'asleep &mdash; a message wakes it' : 'unknown';
+  const wait = a.waiting_on ? ' &middot; waiting on <b>' + esc(a.waiting_on) + '</b>' : '';
+  const ctl = s.sid
+    ? '<code>' + esc('claude attach ' + s.sid.slice(0, 8)) + '</code> <button data-acopy="' +
+      esc('claude attach ' + s.sid.slice(0, 8)) + '">Copy</button>'
+    : (s.state === 'asleep' || s.state === 'queued')
+      ? '<button data-istart="' + esc(k) + '">Start</button>' : '';
+  return '<div class="ln docctl imctl isess"><span class="q">intermediary</span> ' + st +
+    (s.context ? ' &middot; ' + tokf(s.context) : '') + wait + ' ' + ctl + msg + '</div>';
 }
 document.addEventListener('click', e => {
-  const b = e.target.closest('[data-imstart]');
+  const b = e.target.closest('[data-istart]');
   if (!b) return;
-  const slug = b.dataset.imstart;
-  IMMSG[slug] = 'starting…'; b.disabled = true; LAST = ''; tick();
+  const k = b.dataset.istart, i = k.indexOf(':');
+  IMMSG[k] = 'starting…'; b.disabled = true;
   fetch('/api/intermediary', { method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Harness-Local': '1' },
-    body: JSON.stringify({ slug: slug }) })
+    body: JSON.stringify({ slug: k.slice(0, i), id: k.slice(i + 1), action: 'start' }) })
     .then(r => r.json())
     .then(j => {
       // The roster lists it a moment after it starts; say so until it does.
-      IMMSG[slug] = j.ok ? 'started; the attach command appears here' : (j.message || 'refused');
-      if (j.ok) setTimeout(() => { delete IMMSG[slug]; LAST = ''; tick(); }, 8000);
+      IMMSG[k] = j.ok ? 'started; the attach command appears here' : (j.message || 'refused');
+      if (j.ok) setTimeout(() => { delete IMMSG[k]; LAST = ''; tick(); }, 8000);
       LAST = ''; tick();
     })
-    .catch(() => { IMMSG[slug] = 'could not reach the server'; LAST = ''; tick(); });
+    .catch(() => { IMMSG[k] = 'could not reach the server'; LAST = ''; tick(); });
 });
 
 // The project's documenter (T18): a run per job, so the card says what it did
@@ -1505,39 +1511,36 @@ function docCard(p) {
 }
 
 function intermCard(p) {
+  // One intermediary per open item. The card lists the items whose session is
+  // up, and each item waiting on a node marks it, so drawWaits can run a
+  // dotted line from that row to the node's card.
   const im = p.intermediary || {};
   const asks = p.asks || [];
   const yours = asks.filter(a => a.runs || a.state === 'ready' || a.state === 'drafted').length;
-  // A finished turn is the intermediary waiting on the owner: its normal rest.
-  const reply = im.stopped && im.stop && im.stop.kind === 'reply';
+  const up = asks.filter(a => a.session && a.session.sid);
   const cls = im.running === null ? 'unknown'
-            : im.stopped && !reply ? 'dup'
-            : im.running ? (im.status === 'busy' ? 'busy' : 'idle') : '';
-  const s = {status: im.status, idle: im.idle, carry: im.context, up: im.up};
-  let who;
-  if (im.running === null) who = '<div class="ln u">unknown &mdash; the roster could not be read</div>';
-  else if (!im.running)    who = '<div class="ln q">asleep &mdash; wakes when an ask or ' +
-      'your question needs it</div>';
-  else if (reply && im.waits_on) who = '<div class="ln">messaged <span class="ito" data-on="' +
-      esc(im.waits_on) + '"><b>' + esc(im.waits_on) + '</b></span>, waiting on its reply' + age(s) +
-      '</div>' + meter(s);
-  else if (reply)          who = '<div class="ln">waiting on <b>you</b>' + age(s) +
-      '</div>' + meter(s);
-  else if (im.stopped)     who = '<div class="ln dup">' + (im.stop
-      ? 'permission prompt &middot; ' + esc(im.stop.tool) : 'stopped &mdash; a prompt or a reply') +
-      '</div>' + meter(s);
-  else                     who = '<div class="ln" title="session ' + esc(im.name || '') + '">' +
-      (im.status === 'idle' && age(s) ? age(s).replace(/^ &middot; /, '')
-                                      : esc(im.status || '') + age(s)) + '</div>' + meter(s);
+            : up.some(a => a.session.state === 'working') ? 'busy' : up.length ? 'idle' : '';
+  const row = a => '<div class="ln">' + esc(a.id) + ' &middot; ' +
+    (a.session.state === 'working' ? 'working' : 'idle') +
+    (a.waiting_on ? ' &middot; asked <span class="ito" data-on="' + esc(a.waiting_on) + '"><b>' +
+      esc(a.waiting_on) + '</b></span>' : '') + '</div>';
+  // An item waiting on a node draws its line even while its session sleeps.
+  const asleep = asks.filter(a => a.waiting_on && !(a.session && a.session.sid));
+  const who = im.running === null
+    ? '<div class="ln u">unknown &mdash; the roster could not be read</div>'
+    : '<div class="ln q">' + im.running + ' of ' + im.cap + ' item sessions running</div>' +
+      up.map(row).join('') +
+      asleep.map(a => '<div class="ln q">' + esc(a.id) + ' &middot; asleep, asked ' +
+        '<span class="ito" data-on="' + esc(a.waiting_on) + '"><b>' + esc(a.waiting_on) +
+        '</b></span></div>').join('');
   const n = asks.length;
   const ask = '<div class="ln"><a href="#issues">' +
-    (n ? n + ' open ask' + (n === 1 ? '' : 's') + ' &middot; ' +
+    (n ? n + ' open item' + (n === 1 ? '' : 's') + ' &middot; ' +
          '<span class="' + (yours ? 'yours' : '') + '">' + yours + ' yours</span>'
-       : 'no open asks') + '</a></div>';
+       : 'no open items') + '</a></div>';
   return '<div class="card interm ' + cls + '" data-live="interm:' + esc(p.slug) + '">' +
     '<div class="hdr"><span class="dot"></span><span class="nm">' + esc(p.project) +
-    '</span><span class="kd">intermediary</span></div>' +
-    '<div class="ln q">' + esc(im.name || '') + '</div>' + who + imControls(p) + ask + '</div>';
+    '</span><span class="kd">intermediary</span></div>' + who + ask + '</div>';
 }
 
 function tree(nodes, side) {
@@ -1744,27 +1747,42 @@ function ownerHead(p) {
   const im = p.intermediary || {};
   const body = im.running === null
     ? '<span class="ln u">unknown &mdash; the session roster could not be read</span>'
-    : im.running
-      ? '<span>running' + (im.status === 'busy' ? ' &middot; busy' : '') +
-        (im.context ? ' &middot; ' + tokf(im.context) + ' context' : '') +
-        (im.idle != null ? ' &middot; idle ' + dur(im.idle) : '') + '</span>'
-      : '<span>asleep</span> <span class="q">&mdash; it wakes when an ask ' +
-        'or your question needs it</span>';
+    : '<span>' + im.running + ' of ' + im.cap + ' item sessions running</span> ' +
+      '<span class="q">&mdash; one per open item; each sleeps after an hour quiet and wakes ' +
+      'for a message</span>';
   return '<div class="ohead" data-live="owner:head:' + esc(p.slug) + '"><b>intermediary</b>' +
-    body + imControls(p) + '</div>';
+    body + '</div>';
 }
 
 // A briefing field may arrive as prose or as a list; either reads as lines.
 const lines = v => Array.isArray(v) ? v.map(x => typeof x === 'string' ? x
                                        : JSON.stringify(x)).join('\n') : String(v ?? '');
 
+// Everything said about an item, by anyone, and the box to add to it.
+function threadOf(a) {
+  return (a.thread || []).map(t => {
+    const who = t.by === 'owner' ? 'you' : esc(t.by);
+    const to = t.to ? ' &rarr; ' + esc(t.to) : '';
+    return '<div class="athr ' + (t.by === 'owner' ? 'me' : t.by === 'intermediary' ? 'im' : 'nd') +
+      '"><b>' + who + to + ' &middot; ' + esc(String(t.at || '').slice(11, 16)) + '</b> ' +
+      esc(t.text) + '</div>';
+  }).join('');
+}
+function chatRow(k) {
+  return '<div class="row"><textarea class="achat" data-akey="' + esc(k) + '" ' +
+    'placeholder="message this item&rsquo;s intermediary &mdash; it wakes for it">' +
+    '</textarea><button data-amsg="' + esc(k) + '">Send</button></div>';
+}
+
 function askItem(slug, a) {
   const k = akey(slug, a.id);
   const open = OPENA.has(k);
   const runs = Array.isArray(a.runs) && a.runs.length ? a.runs : null;
   const mine = runs || a.state === 'ready' || a.state === 'drafted';
-  const move = runs ? (a.query_open ? 'intermediary looking' : 'yours to run')
-                    : (mine ? 'yours' : 'being briefed');
+  const note = a.kind === 'note';
+  const move = a.query_open ? 'intermediary looking'
+    : a.waiting_on ? 'asking ' + a.waiting_on
+    : note ? 'conversation' : runs ? 'yours to run' : (mine ? 'yours' : 'being briefed');
   const row = '<div class="arow" data-atog="' + esc(k) + '">' +
     '<span class="akind ' + esc(a.kind || '') + '">' + esc(a.kind || '?') + '</span>' +
     '<span class="aq" title="' + esc(a.question) + '">' + esc(a.question) + '</span>' +
@@ -1803,18 +1821,13 @@ function askItem(slug, a) {
       // Commands to run: copy, run, click Done. Or ask the intermediary first.
       const cmds = runs.map((c, i) => '<div class="arun"><pre>' + esc(c) + '</pre>' +
         '<button class="cp" data-acopy="' + esc(c) + '">Copy</button></div>').join('');
-      const thread = (a.thread || []).map(t => '<div class="athr ' +
-        (t.by === 'owner' ? 'me' : 'im') + '"><b>' + (t.by === 'owner' ? 'you' : esc(t.by)) +
-        '</b> ' + esc(t.text) + '</div>').join('');
-      body = meta + cmds + (evs ? '<div style="margin-top:6px">' + evs + '</div>' : '') + thread +
-        (a.query_open ? '<div class="ln q">the intermediary is looking into it&hellip;</div>' : '') +
+      body = meta + cmds + (evs ? '<div style="margin-top:6px">' + evs + '</div>' : '') +
         '<div class="row"><input class="anote" data-akey="' + esc(k) + '" ' +
           'placeholder="note for the asker (optional)">' +
         '<button data-adone="' + esc(k) + '">Done</button>' +
-        '<button class="rej" data-arej="' + esc(k) + '">Won&rsquo;t do</button>' + msg + '</div>' +
-        '<div class="row"><textarea class="aquery" data-akey="' + esc(k) + '" ' +
-          'placeholder="ask about this &mdash; the intermediary finds out and answers here">' +
-          '</textarea><button data-aquery="' + esc(k) + '">Ask</button></div>';
+        '<button class="rej" data-arej="' + esc(k) + '">Won&rsquo;t do</button>' + msg + '</div>';
+    } else if (note) {
+      body = '<div class="row"><button data-adone="' + esc(k) + '">Close</button>' + msg + '</div>';
     } else if (!mine) {
       body = meta + '<div class="ln q" style="margin-top:6px">being briefed by the ' +
         'intermediary</div>' +
@@ -1839,7 +1852,11 @@ function askItem(slug, a) {
         '<button data-aedit="' + esc(k) + '">Edit</button>' +
         '<button class="rej" data-arej="' + esc(k) + '">Reject</button>' + msg + '</div>';
     }
-    body = '<div class="abody">' + body + '</div>';
+    // Every item: its session, everything said about it, and a box to add to it.
+    body = '<div class="abody">' + itemSession(slug, a) + body +
+      '<div data-live="thread:' + esc(k) + '">' + threadOf(a) +
+      (a.query_open ? '<div class="ln q">the intermediary is looking into it&hellip;</div>' : '') +
+      '</div>' + chatRow(k) + '</div>';
   }
   return '<div class="ask' + (open ? ' open' : '') + '" data-live="ask:' + esc(k) + '">' +
     row + body + '</div>';
@@ -1864,41 +1881,34 @@ function rulingsList(d) {
                                                      : 'no rulings yet') + '</div>';
 }
 
-// The owner's chat with the intermediary. It may be asleep: a message is queued
-// and wakes it, and its answer lands here, so nothing depends on a terminal.
-function chatBox(p) {
-  const msgs = (p.chat || []).map(m => '<div class="athr ' + (m.by === 'owner' ? 'me' : 'im') +
-    '"><b>' + (m.by === 'owner' ? 'you' : 'intermediary') + ' &middot; ' +
-    esc(String(m.at || '').slice(11, 16)) + '</b> ' + esc(m.text) + '</div>').join('');
-  const last = (p.chat || []).slice(-1)[0];
-  const wait = last && last.by === 'owner'
-    ? '<div class="ln q">queued &mdash; the intermediary answers here</div>' : '';
-  const msg = IMMSG['say:' + p.slug] ? '<div class="amsg">refused: ' +
-    esc(IMMSG['say:' + p.slug]) + '</div>' : '';
-  return '<div class="ichat"><div data-live="chat:' + esc(p.slug) + '">' + msgs + wait + msg +
-    '</div><div class="row"><textarea class="ichatin" data-islug="' + esc(p.slug) + '" ' +
-    'placeholder="message the intermediary &mdash; it wakes for it if asleep"></textarea>' +
-    '<button data-isay="' + esc(p.slug) + '">Send</button></div></div>';
+// A conversation the owner starts: a note item, with its own session.
+function newNote(p) {
+  const m = IMMSG['note:' + p.slug] ? '<div class="amsg">refused: ' +
+    esc(IMMSG['note:' + p.slug]) + '</div>' : '';
+  return '<div class="ichat"><div data-live="note:' + esc(p.slug) + '">' + m + '</div>' +
+    '<div class="row"><textarea class="ichatin" data-islug="' + esc(p.slug) + '" ' +
+    'placeholder="start a conversation &mdash; it opens an item with its own intermediary">' +
+    '</textarea><button data-inote="' + esc(p.slug) + '">Start</button></div></div>';
 }
 document.addEventListener('click', e => {
-  const b = e.target.closest('[data-isay]');
+  const b = e.target.closest('[data-inote]');
   if (!b) return;
-  const slug = b.dataset.isay;
+  const slug = b.dataset.inote;
   const ta = b.closest('.ichat').querySelector('.ichatin');
   const t = ta.value.trim();
   if (!t) { ta.focus(); return; }
   b.disabled = true;
   fetch('/api/intermediary', { method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Harness-Local': '1' },
-    body: JSON.stringify({ slug: slug, action: 'say', text: t }) })
+    body: JSON.stringify({ slug: slug, action: 'note', text: t }) })
     .then(r => r.json())
     .then(j => {
       b.disabled = false;
-      if (j.ok) { ta.value = ''; delete IMMSG['say:' + slug]; EDITING.delete('chat:' + slug); }
-      else IMMSG['say:' + slug] = j.message || 'refused';
+      if (j.ok) { ta.value = ''; delete IMMSG['note:' + slug]; EDITING.delete('chat:' + slug); }
+      else IMMSG['note:' + slug] = j.message || 'refused';
       LAST = ''; tick();
     })
-    .catch(() => { b.disabled = false; IMMSG['say:' + slug] = 'could not reach the server';
+    .catch(() => { b.disabled = false; IMMSG['note:' + slug] = 'could not reach the server';
                    LAST = ''; tick(); });
 });
 document.addEventListener('focusin', e => {
@@ -1913,7 +1923,7 @@ function ownerView(d) {
   // Every project gets its intermediary's line, asks or not: the line is how
   // the owner learns which one to start before anything is waiting on it.
   const groups = (d.projects || []).map(p =>
-    '<div class="oproj"><h2>' + esc(p.project) + '</h2>' + ownerHead(p) + chatBox(p) +
+    '<div class="oproj"><h2>' + esc(p.project) + '</h2>' + ownerHead(p) + newNote(p) +
     (p.asks || []).map(a => askItem(p.slug, a)).join('') + '</div>').join('');
   const none = !(d.projects || []).some(p => (p.asks || []).length);
   return '<div class="owner">' +
@@ -1946,7 +1956,7 @@ function ruleAsk(k, action, text) {
     .then(j => {
       if (j.ok) {
         delete AMSG[k];
-        if (action !== 'query') { OPENA.delete(k); save(AKEY, OPENA); }
+        if (action !== 'msg') { OPENA.delete(k); save(AKEY, OPENA); }
         freeDraft(k); LAST = ''; tick(); return;
       }
       refused(k, j.message || 'refused');
@@ -2017,13 +2027,13 @@ document.addEventListener('click', e => {
     ruleAsk(dn.dataset.adone, 'done', n ? n.value.trim() : '');
     return;
   }
-  const qy = e.target.closest('[data-aquery]');
+  const qy = e.target.closest('[data-amsg]');
   if (qy) {
-    const ta = qy.closest('.abody').querySelector('.aquery');
+    const ta = qy.closest('.row').querySelector('.achat');
     const t = ta ? ta.value.trim() : '';
     if (!t) { ta && ta.focus(); return; }
     qy.disabled = true;
-    ruleAsk(qy.dataset.aquery, 'query', t);
+    ruleAsk(qy.dataset.amsg, 'msg', t);
     return;
   }
   const rj = e.target.closest('[data-arej]');
@@ -2045,7 +2055,7 @@ document.addEventListener('input', e => {
 });
 document.addEventListener('focusin', e => {
   if (e.target.classList.contains('adraft')) holdDraft(e.target);
-  if (e.target.matches('.anote, .aquery')) holdDraft(e.target);
+  if (e.target.matches('.anote, .achat')) holdDraft(e.target);
   if (e.target.classList.contains('ofilter')) EDITING.add('owner:filter');
 });
 document.addEventListener('focusout', e => {
@@ -2053,9 +2063,9 @@ document.addEventListener('focusout', e => {
   if (e.target.classList.contains('adraft') && e.target.readOnly)
     freeDraft(e.target.dataset.akey);
   // A note or question half-written is held; an empty one is let go.
-  if (e.target.matches('.anote, .aquery')) {
+  if (e.target.matches('.anote, .achat')) {
     const b = e.target.closest('.abody');
-    if (b && ![...b.querySelectorAll('.anote, .aquery')].some(x => x.value.trim()))
+    if (b && ![...b.querySelectorAll('.anote, .achat')].some(x => x.value.trim()))
       freeDraft(e.target.dataset.akey);
   }
   if (e.target.classList.contains('ofilter')) {
@@ -2118,7 +2128,8 @@ function drawWaits() {
       const n = t.querySelector('[data-live="card:' + slug + ':' + m.dataset.on + '"]');
       if (!n) return;
       const a = c.getBoundingClientRect(), b = n.getBoundingClientRect();
-      const x1 = a.right - box.left, y1 = a.top + 18 - box.top, gx = x1 + 13;
+      const mr = m.getBoundingClientRect();
+      const x1 = a.right - box.left, y1 = mr.top + mr.height / 2 - box.top, gx = x1 + 13;
       const x2 = b.left + b.width / 2 - box.left, y2 = b.top - box.top;
       ds.push(['msg', 'M' + x1 + ' ' + y1 + 'H' + gx + 'V' + (y2 - 11) + 'H' + x2 + 'V' + y2]);
     });
@@ -2347,13 +2358,22 @@ def documenter_action(slug, action, runs=1):
     return r.returncode == 0, (r.stdout or r.stderr).strip()[:300]
 
 
-def intermediary_action(slug, action="start", text=""):
-    """The Start button, or a chat message: wake the project's intermediary in
-    the background, or queue the owner's words for it and wake it. Through the
-    CLI with the session id stripped (a person pressed it)."""
+def intermediary_action(slug, action="start", text="", ask_id=""):
+    """Start (or wake) an ask's intermediary session, or open a conversation (a
+    note ask) with the owner's first message. Through the CLI with the session
+    id stripped: a person pressed it."""
     pdir = _project_dir(slug)
     if pdir is None:
         return False, "no such project"
+    if action == "note":
+        if not (text or "").strip():
+            return False, "say something"
+        return _ask_cli(slug, [CLI.OWNER_TASK, "--kind", "note", "--question", text])
+    if action != "start":
+        return False, "unknown action"
+    ad = pdir / "asks"
+    if not ask_id or not ad.is_dir() or not any(f.stem == ask_id for f in ad.glob("*.json")):
+        return False, "no such ask"
     try:
         repo = json.loads((pdir / "binding.json").read_text()).get("repo", "")
     except Exception:
@@ -2361,15 +2381,8 @@ def intermediary_action(slug, action="start", text=""):
     exe = Path(__file__).resolve().with_name("harness")
     env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
     try:
-        extra = []
-        if action == "say":
-            if not (text or "").strip():
-                return False, "say something"
-            extra = ["--say", text]
-        elif action != "start":
-            return False, "unknown action"
-        r = subprocess.run([sys.executable, str(exe), "intermediary", f"--project={pdir.name}"]
-                           + extra,
+        r = subprocess.run([sys.executable, str(exe), "intermediary", f"--project={pdir.name}",
+                            "--ask", ask_id],
                            cwd=repo, capture_output=True, text=True, timeout=60, env=env)
     except Exception as e:
         return False, f"{type(e).__name__}: {e}"[:300]
@@ -2391,10 +2404,10 @@ def rule_ask(slug, ask_id, action, text):
         return _ask_cli(slug, [ask_id, "--reject"])
     if action == "done":
         return _ask_cli(slug, [ask_id, "--done"] + (["--text", text] if text else []))
-    if action == "query":
+    if action in ("msg", "query"):
         if not (text or "").strip():
-            return False, "say what you want to know"
-        return _ask_cli(slug, [ask_id, "--query", text])
+            return False, "say something"
+        return _ask_cli(slug, [ask_id, "--msg", text])
     return False, f"unknown action {action!r}"
 
 
@@ -2535,7 +2548,8 @@ class H(BaseHTTPRequestHandler):
             return
         if self.path.startswith("/api/intermediary"):
             ok, msg = intermediary_action(str(body.get("slug") or ""),
-                                          (body.get("action") or "start").strip(), text)
+                                          (body.get("action") or "start").strip(), text,
+                                          str(body.get("id") or ""))
             self._send(json.dumps({"ok": ok, "message": msg}), "application/json")
             return
         if self.path.startswith("/api/ask"):

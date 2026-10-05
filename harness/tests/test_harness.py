@@ -1430,15 +1430,17 @@ class Intermediary(unittest.TestCase):
         gui = importlib.util.module_from_spec(importlib.util.spec_from_loader("harness_gui", ld))
         ld.exec_module(gui)
         self.assertIsNone(gui.intermediary(None, "/x/alpha")["running"])
-        rows = [{"name": "harness-intermediary-alpha", "status": "idle", "sessionId": "s",
-                 "startedAt": (time.time() - 600) * 1000}]
-        with mock.patch.object(gui.CLI, "last_turn", return_value=(120, 5000)), \
-             mock.patch.object(gui.CLI, "is_stopped", return_value=False):
-            a = gui.intermediary(rows, "/x/alpha")
-            self.assertEqual((a["name"], a["running"], a["idle"], a["context"]),
-                             ("harness-intermediary-alpha", True, 120, 5000))
-            self.assertTrue(595 <= a["up"] <= 605)
-            self.assertFalse(gui.intermediary(rows, "/x/beta")["running"])
+        rows = [{"name": "harness-intermediary-alpha-t-1", "status": "idle", "sessionId": "s" * 36}]
+        asks = [{"id": "t-1"}, {"id": "t-2"}]
+        pdir = Path(tempfile.mkdtemp())
+        (pdir / "intermediary" / "t-2").mkdir(parents=True)
+        (pdir / "intermediary" / "t-2" / "inbox.jsonl").write_text("{}\n")
+        with mock.patch.object(gui.CLI, "last_turn", return_value=(120, 5000)):
+            a = gui.intermediary(rows, "/x/alpha", asks, pdir)
+        self.assertEqual((a["running"], a["items"]), (1, ["t-1"]))
+        self.assertEqual((asks[0]["session"]["state"], asks[0]["session"]["idle"],
+                          asks[1]["session"]["state"]), ("idle", 120, "queued"))
+        self.assertEqual(gui.intermediary(rows, "/x/beta", [])["running"], 0)
 
 
 class AskEvidence(unittest.TestCase):
@@ -2245,146 +2247,200 @@ class OwnerActions(unittest.TestCase):
         with self.assertRaises(SystemExit):
             hz.ask_done(self.ctx.dir, self.path(r), dict(r, kind="intent"))
 
-    def test_query_and_reply_thread(self):
+    def test_msg_and_reply_thread(self):
         r = self.open()
-        hz.ask_query(self.path(r), r, "is x the pinned one?")
+        hz.ask_msg(self.path(r), r, "owner", "is x the pinned one?")
         self.assertTrue(r["query_open"])
-        self.assertEqual(hz.intermediary_open_work(self.ctx.dir), ["owner-1"])
         hz.ask_reply(self.path(r), r, "yes, 1.2")
         saved = json.loads(self.path(r).read_text())
         self.assertEqual([t["by"] for t in saved["thread"]], ["owner", "intermediary"])
         self.assertFalse(saved["query_open"])
         self.assertEqual(saved["state"], "ready")            # looked at
-        self.assertEqual(hz.intermediary_open_work(self.ctx.dir), [])
 
-    def cli(self, argv, env):
-        home = self.ctx.dir.parent
-        with mock.patch.object(hz, "ask_find",
-                               return_value=(self.ctx.dir, "/r/p", self.path(self.rec), self.rec)), \
-             mock.patch.object(hz, "intermediary_wake_detached") as wake, \
-             mock.patch.dict(os.environ, env), \
-             mock.patch("sys.argv", ["harness", "ask", *argv]), \
-             redirect_stdout(io.StringIO()):
-            os.environ.pop("CLAUDE_CODE_SESSION_ID", None) if "CLAUDE_CODE_SESSION_ID" not in env else None
-            try:
-                hz.main(); code = 0
-            except SystemExit as e:
-                code = e.code
-        return code, wake
-
-    def test_owner_verbs_gated_and_query_wakes(self):
-        self.rec = self.open()
-        code, _ = self.cli(["owner-1", "--done"], {"CLAUDE_CODE_SESSION_ID": "s" * 36})
-        self.assertEqual(code, hz.REFUSED)
-        code, _ = self.cli(["owner-1", "--reply", "x"], {"HARNESS_INTERMEDIARY": "0"})
-        self.assertEqual(code, hz.REFUSED)
-        code, wake = self.cli(["owner-1", "--query", "why?"], {})
-        self.assertEqual(code, 0)
-        self.assertIn("why?", wake.call_args[0][1])
-        self.assertIn("--reply", wake.call_args[0][1])
+    def test_note_is_the_owners_alone(self):
+        with self.assertRaises(SystemExit):
+            hz.ask_open(self.ctx, "owner", "note", "hi", "main", "s" * 36)
+        r = hz.ask_open(self.ctx, "owner", "note", "hi", "owner", "")
+        self.assertEqual((r["kind"], r["asker_node"]), ("note", "owner"))
+        hz.ask_done(self.ctx.dir, self.path(r), r)           # Close: nobody to ring
+        self.assertFalse((self.ctx.dir / "doorbell" / "owner").exists())
 
 
-class IntermediaryWake(unittest.TestCase):
-    """The intermediary sleeps and is woken: resumed, never copied."""
+class ItemSessions(unittest.TestCase):
+    """One intermediary session per open ask: resumed, never copied; capped."""
 
     def setUp(self):
         self.pdir = Path(tempfile.mkdtemp())
+        (self.pdir / "asks").mkdir()
+        for i, kind in ((1, "action"), (2, "intent")):
+            (self.pdir / "asks" / f"t-{i}.json").write_text(json.dumps(
+                {"id": f"t-{i}", "kind": kind, "state": "asked", "question": "q"}))
         self.err = mock.patch("sys.stderr", new_callable=io.StringIO)
         self.err.start()
         self.addCleanup(self.err.stop)
 
-    def wake(self, live, sid, rc=0):
+    def row(self, ask, status="idle", sid=None, kind="background", t=1):
+        return {"name": f"harness-intermediary-proj-{ask}", "sessionId": sid or ask * 12,
+                "status": status, "kind": kind, "startedAt": t, "pid": 1}
+
+    def wake(self, rows, ask="t-1", why="hello", rc=0):
         calls = []
         def run(cmd, **kw):
             calls.append(cmd)
             return mock.Mock(returncode=rc, stdout="", stderr="")
-        with mock.patch.object(hz, "intermediary_rows", return_value=(live, sid)), \
+        with mock.patch.object(hz, "roster_all", return_value=rows), \
+             mock.patch.object(hz, "live_rows", side_effect=lambda rs: [r for r in rs if r.get("pid")]), \
              mock.patch.object(hz, "intermediary_cmd", side_effect=lambda *a, **k:
-                               ["claude", "--bg", "FRESH", k.get("start")]), \
+                               ["claude", "--bg", "FRESH", a[2], k.get("ask_id"), k.get("start")]), \
              mock.patch.object(hz.subprocess, "run", side_effect=run):
-            ok, msg = hz.intermediary_wake(self.pdir, "/r/proj", "new ask t-1")
+            ok, msg = hz.item_wake(self.pdir, "/r/proj", ask, why)
         return ok, msg, calls
 
-    def test_busy_queues_to_the_inbox(self):
-        ok, msg, calls = self.wake({"status": "busy", "sessionId": "abc" * 12}, "abc" * 12)
-        self.assertEqual(calls, [])
-        self.assertEqual(hz.intermediary_inbox(self.pdir, take=True), ["new ask t-1"])
+    def test_names_are_per_ask(self):
+        self.assertEqual(hz.item_name("/x/proj", "owner-3"), "harness-intermediary-proj-owner-3")
+        rows = [self.row("t-1", sid="a" * 36, t=1), dict(self.row("t-1", sid="b" * 36, t=2), pid=None)]
+        with mock.patch.object(hz, "live_rows", side_effect=lambda rs: [r for r in rs if r.get("pid")]):
+            live, sid = hz.item_sessions("/x/proj", rows)["t-1"]
+        self.assertEqual((live["sessionId"], sid), ("a" * 36, "b" * 36))   # newest id wins
+
+    def test_busy_or_terminal_queues(self):
+        for r in (self.row("t-1", "busy"), self.row("t-1", kind="interactive")):
+            ok, _, calls = self.wake([r])
+            self.assertEqual(calls, [])
+            self.assertEqual(hz.item_inbox(self.pdir, "t-1", take=True), ["hello"])
 
     def test_idle_is_stopped_then_resumed_without_flags(self):
         sid = "abcd1234" + "x" * 28
-        ok, _, calls = self.wake({"status": "idle", "sessionId": sid}, sid)
-        self.assertTrue(ok)
+        ok, _, calls = self.wake([self.row("t-1", sid=sid)])
         self.assertEqual(calls[0], ["claude", "stop", "abcd1234"])
         self.assertEqual(calls[1][:4], ["claude", "--bg", "--resume", sid])
         self.assertEqual(len(calls[1]), 5)                   # flags would start a copy
-        self.assertIn("new ask t-1", calls[1][4])
         self.assertIn("harness ask --idle", calls[1][4])
 
-    def test_a_terminal_session_is_never_stopped(self):
-        ok, _, calls = self.wake({"status": "idle", "kind": "interactive", "sessionId": "a" * 36},
-                                 "a" * 36)
+    def test_fresh_start_takes_the_model_for_its_kind(self):
+        ok, _, calls = self.wake([], ask="t-2")
+        self.assertEqual(calls[0][:5], ["claude", "--bg", "FRESH", "opus", "t-2"])
+        ok, _, calls = self.wake([], ask="t-1")
+        self.assertEqual(calls[0][3], "sonnet")
+
+    def test_cap_queues_the_fourth(self):
+        rows = [self.row(f"x-{i}") for i in range(3)]
+        ok, msg, calls = self.wake(rows)
+        self.assertTrue(msg.startswith("queued"))
         self.assertEqual(calls, [])
-        self.assertEqual(hz.intermediary_inbox(self.pdir, take=True), ["new ask t-1"])
+        self.assertEqual(hz.item_inbox(self.pdir, "t-1", take=True), ["hello"])
 
-    def test_none_starts_fresh_and_inbox_rides_along(self):
-        hz.intermediary_inbox(self.pdir, "earlier")
-        ok, _, calls = self.wake(None, None)
-        self.assertEqual(calls[0][:3], ["claude", "--bg", "FRESH"])
-        self.assertIn("earlier", calls[0][3])
-        self.assertIn("new ask t-1", calls[0][3])
-        self.assertEqual(hz.intermediary_inbox(self.pdir, take=True), [])
+    def test_closed_ask_is_not_woken(self):
+        ok, _, calls = self.wake([], ask="t-9")
+        self.assertFalse(ok)
 
-    def test_bg_cmd_carries_identity_in_settings(self):
+    def test_bg_cmd_carries_its_ask(self):
         repo = Path(tempfile.mkdtemp())
         with mock.patch.object(hz, "intermediary_prompt", return_value=self.pdir / "p.md"):
-            cmd = hz.intermediary_cmd(self.pdir, str(repo), bg=True, start="go")
-        self.assertEqual(cmd[:2], ["claude", "--bg"])
+            cmd = hz.intermediary_cmd(self.pdir, str(repo), "sonnet", "medium", bg=True,
+                                      start="go", ask_id="t-1")
         env = json.loads(cmd[cmd.index("--settings") + 1])["env"]
-        self.assertEqual(env, {"HARNESS_INTERMEDIARY": "1", "HARNESS_PROJECT": self.pdir.name})
+        self.assertEqual(env["HARNESS_ASK"], "t-1")
+        self.assertEqual(cmd[cmd.index("-n") + 1], f"harness-intermediary-{repo.name}-t-1")
+        tools = cmd[cmd.index("--tools") + 1:cmd.index("--allowedTools")]
+        self.assertNotIn("SendMessage", tools)               # lost on a sleeping session
         self.assertEqual(cmd[-1], "go")
 
-    def test_idle_prints_inbox_else_settles(self):
-        hz.intermediary_inbox(self.pdir, "owner asks on t-1")
-        with mock.patch.object(hz.subprocess, "Popen") as po, \
-             redirect_stdout(io.StringIO()) as out:
-            hz.ask_idle(self.pdir)
-        self.assertIn("owner asks on t-1", out.getvalue())
-        po.assert_not_called()
-        (self.pdir / "asks").mkdir()
-        (self.pdir / "asks" / "t-2.json").write_text(json.dumps({"id": "t-2", "state": "asked"}))
-        with mock.patch.object(hz.subprocess, "Popen") as po, redirect_stdout(io.StringIO()):
-            hz.ask_idle(self.pdir)
-        po.assert_not_called()                               # open work keeps it up
-        (self.pdir / "asks" / "t-2.json").write_text(json.dumps({"id": "t-2", "state": "ready"}))
-        with mock.patch.object(hz.subprocess, "Popen") as po, redirect_stdout(io.StringIO()):
-            hz.ask_idle(self.pdir)
-        self.assertIn("--settle", po.call_args[0][0][2])
+    def test_idle_prints_inbox_else_schedules_settle(self):
+        hz.item_inbox(self.pdir, "t-1", "owner asks")
+        with mock.patch.object(hz, "_intermediary_bg") as bg, redirect_stdout(io.StringIO()) as out:
+            hz.ask_idle(self.pdir, "t-1")
+        self.assertIn("owner asks", out.getvalue())
+        bg.assert_not_called()
+        with mock.patch.object(hz, "_intermediary_bg") as bg, redirect_stdout(io.StringIO()):
+            hz.ask_idle(self.pdir, "t-1")
+        self.assertEqual(bg.call_args[0][1], ["--ask", "t-1", "--settle"])
 
-
-class IntermediaryChat(unittest.TestCase):
-    """The owner's chat box: queued, it wakes the intermediary, answered by --tell."""
-
-    def setUp(self):
-        self.pdir = Path(tempfile.mkdtemp())
-
-    def test_pending_until_told_and_it_keeps_it_up(self):
-        self.assertFalse(hz.chat_pending(self.pdir))
-        hz.intermediary_chat(self.pdir, "owner", "what is open?")
-        self.assertTrue(hz.chat_pending(self.pdir))
-        self.assertEqual(hz.intermediary_open_work(self.pdir), ["the owner's chat message"])
-        hz.intermediary_chat(self.pdir, "intermediary", "nothing")
-        self.assertFalse(hz.chat_pending(self.pdir))
-        self.assertEqual([m["by"] for m in hz.intermediary_chat(self.pdir)],
-                         ["owner", "intermediary"])
-
-    def test_settle_waits_out_a_recent_turn(self):
-        live = {"status": "idle", "sessionId": "abcd1234" + "x" * 28}
-        turns = iter([(30, 0), (700, 0)])
-        with mock.patch.object(hz, "intermediary_rows", return_value=(live, live["sessionId"])), \
+    def test_settle_waits_out_the_cache_window(self):
+        live = self.row("t-1", sid="abcd1234" + "x" * 28)
+        turns = iter([(30, 0), (hz.INTERMEDIARY_QUIET + 1, 0)])
+        with mock.patch.object(hz, "roster_all", return_value=[live]), \
+             mock.patch.object(hz, "live_rows", side_effect=lambda rs: rs), \
              mock.patch.object(hz, "last_turn", side_effect=lambda sid: next(turns)), \
              mock.patch.object(hz.time, "sleep") as sl, \
+             mock.patch.object(hz, "items_next"), \
              mock.patch.object(hz.subprocess, "run") as run, \
              redirect_stdout(io.StringIO()):
-            hz.intermediary_settle(self.pdir, "/r/proj")
+            hz.item_settle(self.pdir, "/r/proj", "t-1")
         sl.assert_called_once_with(hz.INTERMEDIARY_QUIET - 30 + 5)
         self.assertEqual(run.call_args[0][0], ["claude", "stop", "abcd1234"])
+        self.assertGreaterEqual(hz.INTERMEDIARY_QUIET, 50 * 60)
+
+
+class ItemMessages(unittest.TestCase):
+    """Messages are addressed to an ask, logged in its thread, and wake its session."""
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp())
+        (self.repo / ".harness").mkdir()
+        (self.repo / ".harness" / "tree.json").write_text(json.dumps(
+            {"nodes": {"main": {}, "dev": {"parent": "main"}}}))
+        self.pdir = Path(tempfile.mkdtemp())
+        (self.pdir / "asks").mkdir()
+        self.path = self.pdir / "asks" / "t-1.json"
+        self.rec = {"id": "t-1", "kind": "intent", "state": "ready", "question": "Ship X?",
+                    "asker_node": "main", "thread": []}
+        self.path.write_text(json.dumps(self.rec))
+        self.err = mock.patch("sys.stderr", new_callable=io.StringIO)
+        self.err.start()
+        self.addCleanup(self.err.stop)
+
+    def test_to_rings_the_node_and_its_msg_clears_the_wait(self):
+        hz.ask_to(self.pdir, self.repo, self.path, self.rec, "dev", "which test failed?")
+        self.assertEqual(self.rec["waiting_on"], "dev")
+        rung = list((self.pdir / "doorbell" / "dev" / "inbox").glob("*.json"))
+        self.assertIn("harness ask t-1 --msg", json.loads(rung[0].read_text())["text"])
+        with self.assertRaises(SystemExit):
+            hz.ask_to(self.pdir, self.repo, self.path, self.rec, "nobody", "x")
+        hz.ask_msg(self.path, self.rec, "dev", "the import one")
+        saved = json.loads(self.path.read_text())
+        self.assertIsNone(saved["waiting_on"])
+        self.assertEqual([t["by"] for t in saved["thread"]], ["intermediary", "dev"])
+        self.assertFalse(saved.get("query_open"))
+        hz.ask_msg(self.path, self.rec, "owner", "why?")
+        self.assertTrue(json.loads(self.path.read_text())["query_open"])
+
+    def test_the_waited_on_node_is_told_at_orientation(self):
+        ctx = FakeCtx({"main": None, "dev": "main"})
+        (ctx.dir / "asks").mkdir()
+        rec = dict(self.rec, waiting_on="dev",
+                   thread=[{"by": "intermediary", "to": "dev", "text": "which test?"}])
+        (ctx.dir / "asks" / "t-1.json").write_text(json.dumps(rec))
+        n = hz.ask_notices(ctx, "dev")
+        self.assertIn("imask:t-1:1", n)
+        self.assertIn("which test?", n["imask:t-1:1"])
+
+    def cli(self, argv, env):
+        with mock.patch.object(hz, "ask_find",
+                               return_value=(self.pdir, str(self.repo), self.path, self.rec)), \
+             mock.patch.object(hz, "item_wake_detached") as wake, \
+             mock.patch.object(hz, "item_close_detached") as close, \
+             mock.patch.dict(os.environ, env), \
+             mock.patch("sys.argv", ["harness", "ask", *argv]), \
+             redirect_stdout(io.StringIO()):
+            for k in ("CLAUDE_CODE_SESSION_ID", "HARNESS_ASK", "HARNESS_INTERMEDIARY"):
+                if k not in env:
+                    os.environ.pop(k, None)
+            try:
+                hz.main(); code = 0
+            except SystemExit as e:
+                code = e.code
+        return code, wake, close
+
+    def test_scoping_and_closing(self):
+        im = {"HARNESS_INTERMEDIARY": "1", "HARNESS_ASK": "t-2"}
+        code, _, _ = self.cli(["t-1", "--reply", "x"], im)           # not its ask
+        self.assertEqual(code, hz.REFUSED)
+        code, _, _ = self.cli(["t-1", "--msg", "x"], dict(im, HARNESS_ASK="t-1"))
+        self.assertEqual(code, hz.REFUSED)                            # its own: --reply
+        code, wake, _ = self.cli(["t-1", "--msg", "is X the map?"], {})
+        self.assertEqual(code, 0)
+        self.assertIn("--reply", wake.call_args[0][2])
+        code, _, close = self.cli(["t-1", "--reject"], {})
+        self.assertEqual(code, 0)
+        close.assert_called_once()

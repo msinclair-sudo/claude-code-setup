@@ -79,8 +79,8 @@ New files (a `create`, or a move's `to`) must be paths the manifest classes as d
 
 - **The doc is stale and the code is plainly right** (a passing check, a commit): fix the doc.
 - **You can't tell which is the bug** (the doc states an intent the code doesn't meet): ask
-  `harness ask docs --kind intent --question "..."`, then `SendMessage` the project's intermediary
-  "new ask <id>". Leave that section alone and carry on. The ruling appears in a later
+  `harness ask docs --kind intent --question "..."`; its intermediary session is started for it.
+  Leave that section alone and carry on. The ruling appears in a later
   `docs measure`.
 - **Something rank 0 owns is wrong** (a brief, the manifest, a `blindSpot` that reads as an essay):
   say so in your `docs note`. Never edit it.

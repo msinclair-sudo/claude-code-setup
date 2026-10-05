@@ -2918,7 +2918,7 @@ def queue_items(ctx, node):
     kept = {k: v for k, v in out.items()
             if k.startswith(("asked:", "comment:", "handed:", "heavy:", "sweep:", "uncovered:",
                              "orphan:", "down:", "stuck:", "ruled:", "rejected:", "returned:",
-                             "docs:", "review:", "done:"))
+                             "docs:", "review:", "done:", "imask:"))
             or in_focus(fam, task_of(k))}
     if len(kept) < len(out):
         kept[f"fold:{len(out) - len(kept)}"] = (f"+{len(out) - len(kept)} item(s) "
@@ -9870,7 +9870,7 @@ def cmd_archive(a):
 # project, never one per machine: it reads that project only. The owner signs
 # the ruling; it lands on the task's brief. Design: harness/design/owner-channel.md.
 
-ASK_KINDS = ("intent", "judgement", "action", "risk")
+ASK_KINDS = ("intent", "judgement", "action", "risk", "note")   # note: the owner's own
 ASK_OPEN = ("asked", "ready", "drafted")
 INTERMEDIARY = "harness-intermediary"          # its skill; a session's name adds the project
 # The seven sections, in order: heading, key, cap. A cap is chars unless noted.
@@ -9978,7 +9978,10 @@ def ask_open(ctx, task, kind, question, me, sid, runs=None):
     runs = [r.strip() for r in runs or [] if r.strip()]
     if runs and kind != "action":
         die(REFUSED, "--run is for --kind action: commands the owner runs")
-    if owner and not runs:
+    if kind == "note" and (sid or not owner):
+        die(REFUSED, f"a note is the owner's conversation, on '{OWNER_TASK}': harness ask "
+                     f"{OWNER_TASK} --kind note --question \"...\" from a shell or the GUI")
+    if owner and not runs and kind != "note":
         die(REFUSED, f"'{OWNER_TASK}' carries commands: --kind action --run \"cmd\" "
                      f"(repeat --run for each)")
     if len(runs) > ASK_RUNS_MAX:
@@ -10319,7 +10322,7 @@ def owner_done(pdir):
 def ask_done(pdir, path, rec, note=None):
     """The owner ran an action ask's commands. Logged, left as a stub the asker
     is told of once, and rung through the asker's doorbell now."""
-    if rec.get("kind") != "action" or rec.get("state") not in ASK_OPEN:
+    if rec.get("kind") not in ("action", "note") or rec.get("state") not in ASK_OPEN:
         die(REFUSED, f"{rec['id']} is a {rec.get('kind')} ask, {rec.get('state')}. Done is for "
                      f"an open action ask;\n           a question is answered with --accept.")
     note = (note or "").strip()
@@ -10334,7 +10337,7 @@ def ask_done(pdir, path, rec, note=None):
                  "state": "done", "at": _now(), "runs": d["runs"], "note": note})
     evidence_clear(path, rec["id"])
     node = rec.get("asker_node")
-    if node and node not in ("documenter", "operator"):
+    if node and node not in ("documenter", "operator", "owner"):
         cmds = "; ".join(d["runs"])
         ring_inbox(pdir, node, "owner",
                    f"the owner ran {rec['id']} ({rec.get('question')})"
@@ -10343,17 +10346,48 @@ def ask_done(pdir, path, rec, note=None):
     return d
 
 
-def ask_query(path, rec, text):
-    """The owner asks about an ask; the intermediary is woken to answer."""
+def ask_msg(path, rec, by, text):
+    """A message into an ask's thread, from the owner or a node; the item's
+    intermediary is woken for it. The owner's leaves a question open."""
     text = (text or "").strip()
     if not text:
-        die(REFUSED, 'say what you want to know: --query "..."')
+        die(REFUSED, 'the message is empty: --msg "..."')
+    if len(text) > CHAT_CAP:
+        die(REFUSED, f"the message is {len(text)} chars; the cap is {CHAT_CAP}")
     if rec.get("state") not in ASK_OPEN:
-        die(REFUSED, f"{rec['id']} is {rec.get('state')}; nothing to ask about")
-    rec.setdefault("thread", []).append({"by": "owner", "at": _now(), "text": text[:2000]})
-    rec["query_open"] = True
-    _ask_log(rec, "operator", "queried")
+        die(REFUSED, f"{rec['id']} is {rec.get('state')}; it is closed")
+    rec.setdefault("thread", []).append({"by": by, "at": _now(), "text": text})
+    if by == "owner":
+        rec["query_open"] = True
+    if rec.get("waiting_on") == by:
+        rec["waiting_on"] = None
+    _ask_log(rec, by, "messaged")
     _save(path, rec)
+
+
+def ask_to(pdir, repo, path, rec, node, text):
+    """The intermediary asks a node about its item: logged in the thread, and
+    the node's doorbell rings. Its `--msg` back wakes the item's session."""
+    text = (text or "").strip()
+    if not text:
+        die(REFUSED, 'say what you need: --to <node> --text "..."')
+    if len(text) > CHAT_CAP:
+        die(REFUSED, f"{len(text)} chars; the cap is {CHAT_CAP}")
+    try:
+        nodes = json.loads((Path(repo) / ".harness" / "tree.json").read_text()).get("nodes", {})
+    except Exception:
+        nodes = {}
+    if node not in nodes:
+        die(REFUSED, f"'{node}' is not a node of {Path(repo).name} "
+                     f"({', '.join(sorted(nodes)) or 'tree unreadable'})")
+    rec.setdefault("thread", []).append({"by": "intermediary", "to": node, "at": _now(),
+                                         "text": text})
+    rec["waiting_on"] = node
+    _ask_log(rec, "intermediary", f"asked {node}")
+    _save(path, rec)
+    ring_inbox(pdir, node, f"intermediary ({rec['id']})",
+               f"The intermediary on ask {rec['id']} ({rec.get('question')}) asks you: {text}\n"
+               f"Answer: harness ask {rec['id']} --msg \"...\"")
 
 
 def ask_reply(path, rec, text, by="intermediary"):
@@ -10410,11 +10444,16 @@ def ask_notices(ctx, node):
     try:
         for f in sorted((Path(ctx.state) / "asks").glob("*.json")):
             r = json.loads(f.read_text())
-            if r.get("asker_node") != node:
+            if r.get("asker_node") != node and r.get("waiting_on") != node:
                 continue
             if r.get("state") == "rejected":
                 out[f"rejected:{r['id']}"] = (f"the owner rejected your question on "
                                               f"{r.get('task')}; don't ask it again")
+            elif r.get("state") in ASK_OPEN and r.get("waiting_on") == node:
+                q = next((t for t in reversed(r.get("thread") or []) if t.get("to") == node), {})
+                out[f"imask:{r['id']}:{len(r.get('thread') or [])}"] = (
+                    f"the intermediary on {r['id']} asks you: {(q.get('text') or '')[:90]}"
+                    f"  — harness ask {r['id']} --msg \"...\"")
             elif r.get("state") == "done":
                 note = r.get("note") or ""
                 out[f"done:{r['id']}"] = (f"the owner ran {r['id']}"
@@ -10520,9 +10559,14 @@ def intermediary_live(repo):
 
 
 def cmd_ask(a):
-    """T17: a question only the owner can answer, briefed by the intermediary."""
+    """T17: a question only the owner can answer, briefed by the intermediary —
+    one intermediary session per ask, and every message about the ask in its
+    thread."""
+    if a.query is not None:             # the old name for an owner's message
+        a.msg, a.query = a.query, None
     verbs = [v for v in ("brief", "amend", "draft", "return_why", "merge", "accept",
-                         "reject", "show", "evidence", "drop_evidence", "done", "query", "reply")
+                         "reject", "show", "evidence", "drop_evidence", "done", "msg", "to",
+                         "reply")
              if getattr(a, v) is not None and getattr(a, v) is not False]
     flag = lambda v: "--" + {"return_why": "return"}.get(v, v).replace("_", "-")
     if a.caption is not None and not a.evidence:
@@ -10531,24 +10575,14 @@ def cmd_ask(a):
         die(REFUSED, f"one verb at a time: {', '.join(flag(v) for v in verbs)}")
     if a.run and verbs:
         die(REFUSED, "--run goes with opening an ask: harness ask <task> --kind action --run ...")
-    if a.tell is not None:
-        if os.environ.get("HARNESS_INTERMEDIARY") != "1":
-            die(REFUSED, "--tell is the intermediary's")
-        b = ask_bound()
-        if not b:
-            die(REFUSED, "--tell needs HARNESS_PROJECT: the intermediary's own project")
-        text = a.tell.strip()
-        if not text or len(text) > CHAT_CAP:
-            die(REFUSED, f"--tell takes 1–{CHAT_CAP} chars")
-        intermediary_chat(b[0], "intermediary", text)
-        print("told; the owner sees it in the chat box"); return
+    mine = os.environ.get("HARNESS_ASK")      # an item session's own ask
     if a.idle:
-        if os.environ.get("HARNESS_INTERMEDIARY") != "1":
-            die(REFUSED, "--idle is the intermediary's")
+        if os.environ.get("HARNESS_INTERMEDIARY") != "1" or not mine:
+            die(REFUSED, "--idle is an item session's (HARNESS_ASK unset)")
         b = ask_bound()
         if not b:
             die(REFUSED, "--idle needs HARNESS_PROJECT: the intermediary's own project")
-        ask_idle(b[0]); return
+        ask_idle(b[0], mine); return
     if a.list:
         rows = ask_list(a.all)
         if a.json:
@@ -10564,45 +10598,51 @@ def cmd_ask(a):
         return
     if not a.target:
         die(REFUSED, "harness ask <task> --kind K --question \"...\", or harness ask --list")
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     if not verbs:
         ctx = Ctx(); ctx.require_enrolled()
         me, _ = ctx.node()
         if os.environ.get("HARNESS_DOCUMENTER") == "1":
             me = "documenter"           # not a node: its asks sit on the standing task `docs`
-        sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+        text = (a.question or "").strip()
+        if a.kind == "note":
+            # The owner starts a conversation: the first message is the thread's.
+            if sid:
+                die(REFUSED, "a note is the owner's: the GUI's conversation box, or a shell")
+            me = "owner"
+            a.question = text if len(text) <= 200 else text[:190].rsplit(" ", 1)[0] + " …"
         rec = ask_open(ctx, a.target, a.kind, a.question, me, sid, a.run)
+        path = Path(ctx.state) / "asks" / f"{rec['id']}.json"
+        if a.kind == "note":
+            ask_msg(path, rec, "owner", text)
         print(f"asked {rec['id']}  ({rec['kind']}, on {rec['task']})")
-        name = intermediary_name(ctx.repo)
-        try:
-            live, _ = intermediary_rows(ctx.repo)
-        except Exception:
-            live = None
-        asker = me if me in ("documenter", "operator") else root_session_name(ctx, me)
-        why = (f"New ask {rec['id']} from {asker}"
-               + (f": {len(rec['runs'])} command(s) for the owner to run" if rec.get("runs") else "")
-               + f". harness ask {rec['id']} --show, and handle it as your instructions say.")
-        if live and live.get("status") == "busy":
-            print(f"  tell it: SendMessage to '{name}' — \"new ask {rec['id']}\"")
-        else:
-            intermediary_wake_detached(ctx.state, why)
-            print(f"  {name} is being woken for it.")
+        asker = me if me in ("documenter", "operator", "owner") else root_session_name(ctx, me)
+        item_wake_detached(ctx.state, rec["id"], (
+            f"New ask {rec['id']} from {asker}"
+            + (f": {len(rec['runs'])} command(s) for the owner to run" if rec.get("runs") else "")
+            + (f". The owner says: {text}" if a.kind == "note" else "") + "."))
+        print(f"  Its intermediary session ({item_name(ctx.repo, rec['id'])}) is being started.")
         if rec.get("runs"):
             print("  The commands show in the owner's Issues tab now. When the owner clicks "
                   "Done you are\n  rung (harness doorbell); carry on with other work meanwhile.")
-        else:
+        elif a.kind != "note":
             print(f"  Carry on with other work. The ruling lands on {rec['task']}'s brief and "
-                  f"you are told.")
+                  f"you are told. To add\n  to it later: harness ask {rec['id']} --msg \"...\"")
         return
     v = verbs[0]
-    if v in ("brief", "amend", "draft", "return_why", "merge", "evidence", "drop_evidence",
-             "reply") and \
-            os.environ.get("HARNESS_INTERMEDIARY") != "1":
+    im_verbs = ("brief", "amend", "draft", "return_why", "merge", "evidence", "drop_evidence",
+                "reply", "to")
+    if v in im_verbs and os.environ.get("HARNESS_INTERMEDIARY") != "1":
         die(REFUSED, f"{flag(v)} is the intermediary's, and this is not it "
-                     f"(HARNESS_INTERMEDIARY is unset).\n           The owner starts it: "
-                     f"harness intermediary")
-    if v in ("accept", "reject", "done", "query") and os.environ.get("CLAUDE_CODE_SESSION_ID"):
-        die(REFUSED, "only the owner signs a ruling, marks an action done or asks about "
-                     "one — the GUI's Issues tab, or a shell")
+                     f"(HARNESS_INTERMEDIARY is unset).")
+    if v in im_verbs and mine and a.target != mine:
+        die(REFUSED, f"you serve {mine}; {a.target} has its own session. To tell it "
+                     f"something: harness ask {a.target} --msg \"...\"")
+    if v == "msg" and os.environ.get("HARNESS_INTERMEDIARY") == "1" and a.target == mine:
+        die(REFUSED, "that is your own ask: --reply to the owner, --to <node> to a node")
+    if v in ("accept", "reject", "done") and sid:
+        die(REFUSED, "only the owner signs a ruling or marks an action done — the GUI's "
+                     "Issues tab, or a shell")
     pdir, repo, path, rec = ask_find(a.target, a.project)
     if v == "show":
         ask_show(pdir, repo, rec); return
@@ -10624,11 +10664,15 @@ def cmd_ask(a):
               f"  harness ask {rec['id']} --accept")
     elif v == "return_why":
         ask_return(path, rec, a.return_why)
+        item_close_detached(pdir, rec["id"])
         print(f"returned {rec['id']} to {rec.get('asker_node')}; it is told at its next "
-              f"harness command")
+              f"harness command. This session is closed shortly; end your turn.")
     elif v == "merge":
         ask_merge(path, rec, a.merge)
-        print(f"merged {rec['id']} into {a.merge}")
+        item_wake_detached(pdir, a.merge, f"{rec['id']} was merged into {a.merge}; read its "
+                                          f"thread there: harness ask {a.merge} --show")
+        item_close_detached(pdir, rec["id"])
+        print(f"merged {rec['id']} into {a.merge}. This session is closed shortly; end your turn.")
     elif v == "evidence":
         e = ask_attach(path, rec, a.evidence, a.caption)
         print(f"attached {e['name']} to {rec['id']} as evidence {len(rec['evidence'])} "
@@ -10638,23 +10682,40 @@ def cmd_ask(a):
         print(f"dropped {e.get('name')} from {rec['id']}")
     elif v == "accept":
         r = ask_accept(pdir, path, rec, a.text)
+        item_close_detached(pdir, rec["id"])
         print(f"ruled {rec['id']} on {rec.get('task')}: {r['answer']}")
         print(f"  {rec.get('asker_node')} and {rec.get('task')}'s lead are told when they "
               f"next orient.")
     elif v == "reject":
         ask_reject(path, rec)
+        item_close_detached(pdir, rec["id"])
         print(f"rejected {rec['id']}; {rec.get('asker_node')} is told once not to ask again")
     elif v == "done":
         ask_done(pdir, path, rec, a.text)
+        item_close_detached(pdir, rec["id"])
         print(f"done {rec['id']}; {rec.get('asker_node')} is rung, and told when it next orients")
-    elif v == "query":
-        ask_query(path, rec, a.query)
-        intermediary_wake_detached(pdir, (
-            f"The owner asks on {rec['id']} ({rec.get('question')}): {a.query.strip()}\n"
-            f"Answer with `harness ask {rec['id']} --reply \"...\"`; it shows under the ask in "
-            f"the owner's Issues tab. If the record, the repo and git can't answer it, "
-            f"SendMessage the asker ({rec.get('asked_by')}) first."))
-        print(f"asked the intermediary about {rec['id']}; its answer shows under the ask")
+    elif v == "msg":
+        by = "owner"
+        if os.environ.get("HARNESS_DOCUMENTER") == "1":
+            by = "documenter"
+        elif sid:
+            try:
+                by, _ = Ctx().node()
+            except SystemExit:
+                by = f"session {sid[:8]}"
+        ask_msg(path, rec, by, a.msg)
+        how = ("Answer the owner with `harness ask {i} --reply \"...\"`; it shows under the ask."
+               if by == "owner" else
+               "Answer it with `harness ask {i} --to " + by + " \"...\"` if it needs one.")
+        item_wake_detached(pdir, rec["id"], f"{by} says on {rec['id']}: {a.msg.strip()}\n"
+                                            + how.format(i=rec["id"]))
+        print(f"sent to {rec['id']}'s intermediary; "
+              + ("its answer shows under the ask" if by == "owner" else
+                 "an answer rings your doorbell"))
+    elif v == "to":
+        ask_to(pdir, repo, path, rec, a.to, a.text)
+        print(f"sent to {a.to} (its doorbell rang); its answer wakes you. End your turn "
+              f"with `harness ask --idle` if there is nothing else to do.")
     elif v == "reply":
         ask_reply(path, rec, a.reply)
         print(f"replied on {rec['id']}; the owner sees it under the ask")
@@ -10715,7 +10776,7 @@ def intermediary_project(name=None):
                  f"(enrolled: {known})")
 
 
-def intermediary_cmd(pdir, repo, model=None, effort=None, bg=False, start=None):
+def intermediary_cmd(pdir, repo, model=None, effort=None, bg=False, start=None, ask_id=None):
     """One project's intermediary `claude` line. Its reach is that project: its
     state, its repo and worktrees, its live grants — never another project's.
     Every variadic list (--add-dir, --tools, --allowedTools) is closed by the
@@ -10753,15 +10814,18 @@ def intermediary_cmd(pdir, repo, model=None, effort=None, bg=False, start=None):
             allow += [f"Bash(git -C {q}{d}{q} {g} *)" for g in INTERMEDIARY_GIT]
     skill = intermediary_prompt(pdir)
     # --strict-mcp-config: no MCP servers or connectors, which could write outside.
-    cmd = ["claude", "-n", intermediary_name(repo), "--restricted", "--strict-mcp-config"]
+    name = item_name(repo, ask_id) if ask_id else intermediary_name(repo)
+    cmd = ["claude", "-n", name, "--restricted", "--strict-mcp-config"]
     if bg:
         # A background session does not inherit the launcher's environment
         # (measured 2026-10-05), so its identity goes in through --settings.
         cmd[1:1] = ["--bg"]
-        cmd += ["--settings", json.dumps({"env": {"HARNESS_INTERMEDIARY": "1",
-                                                  "HARNESS_PROJECT": pdir.name}})]
+        env = {"HARNESS_INTERMEDIARY": "1", "HARNESS_PROJECT": pdir.name}
+        if ask_id:
+            env["HARNESS_ASK"] = ask_id
+        cmd += ["--settings", json.dumps({"env": env})]
     cmd += ["--add-dir", *dirs,
-           "--tools", *INTERMEDIARY_TOOLS,
+           "--tools", *(ITEM_TOOLS if ask_id else INTERMEDIARY_TOOLS),
            "--allowedTools", *allow,
            "--permission-mode", "dontAsk",
            "--append-system-prompt-file", str(skill)]
@@ -10781,51 +10845,45 @@ def intermediary_start(repo):
             f"or that nothing is.")
 
 
-# ── waking the intermediary ──────────────────────────────────────────────────
+# ── item sessions: one intermediary per open ask ─────────────────────────────
 #
-# It runs in the background and sleeps when nothing is open. A new ask, or the
-# owner's question in the GUI, wakes it: a stopped session is resumed with the
-# reason as its next prompt, so it keeps what it knew. `claude --bg --resume`
-# with no flags continues the session under its saved options; any flag starts
-# a copy instead (measured 2026-10-05). A busy one finds the reason in its inbox
-# when it runs `harness ask --idle`, its last step on every wake.
+# A decision is about one item, and closes with it, so each open ask gets its
+# own intermediary session, named for it, and the session is removed when the
+# ask closes. Its context stays the size of one item. A session sleeps after
+# INTERMEDIARY_QUIET (inside the one-hour prompt cache, so a wake before then
+# re-reads nothing cold) and is resumed when a message for its item arrives.
+# `claude --bg --resume` with no flags continues a session under its saved
+# options; any flag starts a copy instead (measured 2026-10-05).
+#
+# Messages are addressed to an ask id, never a session name: `ask <id> --msg`
+# into the item from anyone, `--reply` out to the owner, `--to <node>` out to a
+# node (its doorbell rings). All of it lands in the ask's thread, so a session
+# lost or replaced is rebuilt from the record alone.
 
+ITEM_CAP = 3                    # item sessions running at once; the rest queue
 INTERMEDIARY_SETTLE = 90        # seconds from `ask --idle` to the first check
-INTERMEDIARY_QUIET = 600        # and how long it must have been quiet to be stopped
-CHAT_CAP = 4000                 # chars in one chat message, either way
+INTERMEDIARY_QUIET = 55 * 60    # quiet this long and it sleeps: inside the 1h cache
+CHAT_CAP = 4000                 # chars in one message, either way
+# No SendMessage: a message to a sleeping session is lost. It talks through
+# `harness ask`, which logs, rings and wakes.
+ITEM_TOOLS = ("Read", "Grep", "Glob", "Bash")
+ITEM_MODEL = {"action": ("sonnet", "medium"), "note": ("sonnet", "medium"),
+              "intent": ("opus", "high"), "judgement": ("opus", "high"),
+              "risk": ("opus", "high")}
 
 
-def intermediary_chat(pdir, by=None, text=None):
-    """The owner's chat with the intermediary, from the GUI: append one message
-    with `by` and `text`, or read them all, oldest first."""
-    f = Path(pdir) / "intermediary" / "chat.jsonl"
-    if by:
-        f.parent.mkdir(parents=True, exist_ok=True)
-        with open(f, "a") as fh:
-            fh.write(json.dumps({"by": by, "at": _now(), "text": text}) + "\n")
-        return []
-    out = []
-    try:
-        for line in f.read_text().splitlines():
-            try:
-                out.append(json.loads(line))
-            except ValueError:
-                pass
-    except OSError:
-        pass
-    return out
+def item_name(repo, ask_id):
+    return f"{intermediary_name(repo)}-{ask_id}"
 
 
-def chat_pending(pdir):
-    """Has the owner said something the intermediary hasn't answered?"""
-    msgs = intermediary_chat(pdir)
-    return bool(msgs) and msgs[-1].get("by") == "owner"
+def item_home(pdir, ask_id):
+    return Path(pdir) / "intermediary" / ask_id
 
 
-def intermediary_inbox(pdir, why=None, take=False):
-    """Append a reason to the intermediary's inbox; with take, empty it and
-    return what was there."""
-    f = Path(pdir) / "intermediary" / "inbox.jsonl"
+def item_inbox(pdir, ask_id, why=None, take=False):
+    """Append a reason to an item session's inbox; with take, empty it and
+    return what was there. A queued item is one with an inbox and no session."""
+    f = item_home(pdir, ask_id) / "inbox.jsonl"
     if why:
         f.parent.mkdir(parents=True, exist_ok=True)
         with open(f, "a") as fh:
@@ -10847,66 +10905,103 @@ def intermediary_inbox(pdir, why=None, take=False):
     return out
 
 
-def intermediary_rows(repo):
-    """(its live row or None, its newest session id or None), from the roster
-    with ended sessions. Raises when the roster cannot be read."""
-    name = intermediary_name(repo)
+def roster_all():
+    """`claude agents --json --all`, raising when it cannot be read."""
     r = subprocess.run(["claude", "agents", "--json", "--all"], capture_output=True,
                        text=True, timeout=20)
     if r.returncode:
         raise RuntimeError(r.stderr.strip()[:120] or "claude agents failed")
-    rows = [x for x in json.loads(r.stdout) if x.get("name") == name and x.get("sessionId")]
-    live = next(iter(live_rows(rows)), None)
-    newest = max(rows, key=lambda x: str(x.get("startedAt") or ""), default=None)
-    return live, (newest or {}).get("sessionId")
+    return json.loads(r.stdout)
 
 
-def intermediary_wake(pdir, repo, why):
-    """Get `why` in front of the project's intermediary: (ok, message)."""
+def item_sessions(repo, rows):
+    """{ask id: (live row or None, newest session id)} for this project's item
+    sessions on the roster."""
+    pre = intermediary_name(repo) + "-"
+    live = {r.get("sessionId") for r in live_rows(rows)}
+    when = lambda r: r.get("startedAt") if isinstance(r.get("startedAt"), (int, float)) else 0
+    out = {}
+    for r in sorted(rows, key=when):            # oldest first: the newest wins
+        n = r.get("name") or ""
+        if not n.startswith(pre) or not r.get("sessionId"):
+            continue
+        k = n[len(pre):]
+        lr = out.get(k, (None, None))[0]
+        out[k] = (r if r["sessionId"] in live else lr, r["sessionId"])
+    return out
+
+
+def item_start(repo, rec):
+    return (f"You are the harness intermediary for ask {rec['id']} in {Path(repo).name}, and "
+            f"for that ask only; your instructions are in your system prompt. Start: "
+            f"`harness ask {rec['id']} --show`.")
+
+
+def _open_ask(pdir, ask_id):
+    try:
+        rec = json.loads((Path(pdir) / "asks" / f"{ask_id}.json").read_text())
+    except Exception:
+        return None
+    return rec if rec.get("state") in ASK_OPEN else None
+
+
+def item_wake(pdir, repo, ask_id, why=None):
+    """Get `why` (and anything queued) in front of the ask's session: resume it,
+    start it, or queue it when ITEM_CAP sessions are running. (ok, message)."""
     pdir = Path(pdir)
-    home = pdir / "intermediary"
+    rec = _open_ask(pdir, ask_id)
+    if rec is None:
+        return False, f"{ask_id} is not open"
+    home = item_home(pdir, ask_id)
     home.mkdir(parents=True, exist_ok=True)
+    name = item_name(repo, ask_id)
     lock = home / "waking"
     try:
         if time.time() - lock.stat().st_mtime < 60:
-            intermediary_inbox(pdir, why)
+            item_inbox(pdir, ask_id, why)
             return True, "it is being woken already; queued for it"
     except OSError:
         pass
     try:
-        live, sid = intermediary_rows(repo)
+        rows = roster_all()
     except Exception as e:
-        intermediary_inbox(pdir, why)
+        item_inbox(pdir, ask_id, why)
         return False, f"cannot read the session list ({e}); queued for it"
-    if live and live.get("status") == "busy":
-        intermediary_inbox(pdir, why)
-        return True, f"{intermediary_name(repo)} is working; queued for its next stop"
-    if live and live.get("kind") not in (None, "background"):
-        # The owner's own terminal session (`--fg`): never stopped under them.
-        intermediary_inbox(pdir, why)
-        return True, (f"{intermediary_name(repo)} is open in a terminal; queued — it reads it at "
-                      f"`harness ask --idle`")
+    live, sid = item_sessions(repo, rows).get(ask_id, (None, None))
+    if live and (live.get("status") == "busy" or live.get("kind") not in (None, "background")):
+        # Working, or open in the owner's terminal: never stopped under them.
+        item_inbox(pdir, ask_id, why)
+        return True, f"{name} is busy; queued for its next stop"
+    running = sum(1 for k, (lr, _) in item_sessions(repo, live_rows(rows)).items()
+                  if lr and k != ask_id)
+    if not live and running >= ITEM_CAP:
+        item_inbox(pdir, ask_id, why)
+        return True, f"queued: {running} item sessions are running (cap {ITEM_CAP})"
     lock.write_text(_now())
     try:
-        whys = intermediary_inbox(pdir, take=True) + [why]
-        prompt = ("\n\n".join(whys) + "\n\nWhen this is handled, run `harness ask --idle`.")
+        whys = item_inbox(pdir, ask_id, take=True) + ([why] if why else [])
+        prompt = ("\n\n".join(whys) or "Read your ask and handle it.") + \
+                 "\n\nWhen this is handled, run `harness ask --idle`."
         env = {k: v for k, v in os.environ.items()
-               if k not in ("CLAUDE_CODE_SESSION_ID", "HARNESS_INTERMEDIARY", "HARNESS_PROJECT")}
+               if k not in ("CLAUDE_CODE_SESSION_ID", "HARNESS_INTERMEDIARY", "HARNESS_PROJECT",
+                            "HARNESS_ASK")}
         if live:
             subprocess.run(["claude", "stop", live["sessionId"][:8]], capture_output=True)
         if sid:
             r = subprocess.run(["claude", "--bg", "--resume", sid, prompt], cwd=str(home),
                                env=env, capture_output=True, text=True)
             if not r.returncode:
-                return True, f"woke {intermediary_name(repo)}{_attach_hint(r.stdout, sid)}"
-        start = intermediary_start(repo) + "\n\n" + prompt
-        r = subprocess.run(intermediary_cmd(pdir, repo, bg=True, start=start), cwd=str(home),
-                           env=env, capture_output=True, text=True)
+                return True, f"woke {name}{_attach_hint(r.stdout, sid)}"
+        model, effort = ITEM_MODEL.get(rec.get("kind"), ("opus", "high"))
+        start = item_start(repo, rec) + "\n\n" + prompt
+        r = subprocess.run(intermediary_cmd(pdir, repo, model, effort, bg=True, start=start,
+                                            ask_id=ask_id),
+                           cwd=str(home), env=env, capture_output=True, text=True)
         if r.returncode:
             for w in whys:
-                intermediary_inbox(pdir, w)
-            return False, f"the intermediary did not start: {(r.stderr or r.stdout).strip()[:200]}"
-        return True, f"started {intermediary_name(repo)}{_attach_hint(r.stdout)}"
+                item_inbox(pdir, ask_id, w)
+            return False, f"{name} did not start: {(r.stderr or r.stdout).strip()[:200]}"
+        return True, f"started {name}{_attach_hint(r.stdout)}"
     finally:
         lock.unlink(missing_ok=True)
 
@@ -10918,138 +11013,124 @@ def _attach_hint(out, sid=None):
     return f" — open it: claude attach {i}" if i else ""
 
 
-def intermediary_wake_detached(pdir, why):
-    """Wake it without waiting: a session's Bash call, or the GUI, returns now."""
+def _intermediary_bg(pdir, args, delay=0):
+    """Run `harness intermediary --project=<slug> ARGS` detached: a session's Bash
+    call, or the GUI, returns now. With delay, after that many seconds."""
     log = Path(pdir) / "intermediary" / "wake.log"
     log.parent.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items()
            if k not in ("CLAUDE_CODE_SESSION_ID", "HARNESS_INTERMEDIARY", "HARNESS_PROJECT",
-                        "HARNESS_DOCUMENTER")}
+                        "HARNESS_ASK", "HARNESS_DOCUMENTER")}
+    cmd = shlex.join([sys.executable, str(Path(__file__).resolve()), "intermediary",
+                      project_arg(pdir), *args])
     with open(log, "a") as fh:
-        subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "intermediary",
-                          project_arg(pdir), "--wake", why], cwd=str(log.parent), env=env,
-                         stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                         start_new_session=True)
+        subprocess.Popen(["sh", "-c", (f"sleep {delay}; " if delay else "") + f"exec {cmd}"],
+                         cwd=str(log.parent), env=env, stdout=fh, stderr=subprocess.STDOUT,
+                         stdin=subprocess.DEVNULL, start_new_session=True)
 
 
-def intermediary_open_work(pdir):
-    """What keeps the intermediary up: asks not yet looked at, and owner
-    questions not yet answered."""
-    out = []
-    for f in sorted((Path(pdir) / "asks").glob("*.json")):
-        try:
-            r = json.loads(f.read_text())
-        except Exception:
-            continue
-        if r.get("state") == "asked" or r.get("query_open"):
-            out.append(r.get("id"))
-    if chat_pending(pdir):
-        out.append("the owner's chat message")
-    return out
+def item_wake_detached(pdir, ask_id, why):
+    _intermediary_bg(pdir, ["--ask", ask_id, "--wake", why])
 
 
-def ask_idle(pdir):
-    """`ask --idle`: the intermediary's last step on every wake."""
-    whys = intermediary_inbox(pdir, take=True)
+def item_close_detached(pdir, ask_id):
+    """The ask closed: remove its session once the current turn has ended (the
+    closing verb may be the intermediary's own)."""
+    _intermediary_bg(pdir, ["--close", ask_id], delay=20)
+
+
+def item_close(pdir, repo, ask_id):
+    """Stop and remove an item's sessions and its folder, then start a queued one."""
+    try:
+        rows = roster_all()
+    except Exception as e:
+        print(f"roster unreadable: {e}"); return
+    name = item_name(repo, ask_id)
+    live = {r.get("sessionId") for r in live_rows(rows)}
+    for r in rows:
+        if r.get("name") == name and r.get("sessionId"):
+            if r["sessionId"] in live:
+                subprocess.run(["claude", "stop", r["sessionId"][:8]], capture_output=True)
+            claude_rm(r["sessionId"])
+    shutil.rmtree(item_home(pdir, ask_id), ignore_errors=True)
+    print(f"closed {name}")
+    items_next(pdir, repo)
+
+
+def items_next(pdir, repo):
+    """Start queued items while fewer than ITEM_CAP sessions run."""
+    d = Path(pdir) / "intermediary"
+    for f in sorted(d.glob("*/inbox.jsonl"), key=lambda p: p.stat().st_mtime) if d.is_dir() else []:
+        ok, msg = item_wake(pdir, repo, f.parent.name)
+        print(msg)
+        if msg.startswith("queued"):
+            break
+
+
+def ask_idle(pdir, ask_id):
+    """`ask --idle`: an item session's last step on every wake."""
+    whys = item_inbox(pdir, ask_id, take=True)
     if whys:
         print("Before you stop — this came in while you worked:\n")
         for w in whys:
             print(f"- {w}")
         print("\nHandle it, then run `harness ask --idle` again.")
         return
-    work = intermediary_open_work(pdir)
-    if work:
-        print(f"still open: {', '.join(work)}. You stay up for them; end your turn.")
-        return
-    env = {k: v for k, v in os.environ.items()
-           if k not in ("CLAUDE_CODE_SESSION_ID", "HARNESS_INTERMEDIARY", "HARNESS_PROJECT")}
-    nxt = shlex.join([sys.executable, str(Path(__file__).resolve()), "intermediary",
-                      project_arg(pdir), "--settle"])
-    log = Path(pdir) / "intermediary" / "wake.log"
-    with open(log, "a") as fh:
-        subprocess.Popen(["sh", "-c", f"sleep {INTERMEDIARY_SETTLE}; exec {nxt}"],
-                         stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                         env=env, start_new_session=True)
-    print(f"nothing open. This session sleeps after {INTERMEDIARY_QUIET // 60} quiet minutes "
-          f"and is woken when something arrives; end your turn.")
+    _intermediary_bg(pdir, ["--ask", ask_id, "--settle"], delay=INTERMEDIARY_SETTLE)
+    print(f"done for now. This session sleeps after {INTERMEDIARY_QUIET // 60} quiet minutes "
+          f"and is woken when a message for {ask_id} arrives; end your turn.")
 
 
-def intermediary_settle(pdir, repo):
+def item_settle(pdir, repo, ask_id):
     """After `ask --idle`'s delay: wake it for anything that arrived, else stop
-    it if it is still idle with nothing open. Its session id is kept for the
-    next wake."""
-    whys = intermediary_inbox(pdir, take=True)
+    it once it has been quiet INTERMEDIARY_QUIET, then start a queued item."""
+    whys = item_inbox(pdir, ask_id, take=True)
     if whys:
         for w in whys[:-1]:
-            intermediary_inbox(pdir, w)
-        print(intermediary_wake(pdir, repo, whys[-1])[1]); return
-    if intermediary_open_work(pdir):
-        print("open work; left up"); return
+            item_inbox(pdir, ask_id, w)
+        print(item_wake(pdir, repo, ask_id, whys[-1])[1]); return
     try:
-        live, _ = intermediary_rows(repo)
+        live, _ = item_sessions(repo, live_rows(roster_all())).get(ask_id, (None, None))
     except Exception as e:
         print(f"roster unreadable: {e}"); return
-    if not live or live.get("status") == "busy":
-        return              # gone, or working: it runs `ask --idle` again
-    # Quiet long enough? The owner may be attached and talking to it, and a
-    # stop 90s after its last `--idle` closed it under them (2026-10-05).
+    if not live or live.get("status") == "busy" or live.get("kind") not in (None, "background"):
+        return              # gone, working (it runs `ask --idle` again), or the owner's
     quiet, _ = last_turn(live["sessionId"])
     if quiet is not None and quiet < INTERMEDIARY_QUIET:
         time.sleep(INTERMEDIARY_QUIET - quiet + 5)
-        return intermediary_settle(pdir, repo)
+        return item_settle(pdir, repo, ask_id)
     subprocess.run(["claude", "stop", live["sessionId"][:8]], capture_output=True)
-    print(f"stopped {intermediary_name(repo)}; it wakes on demand")
+    print(f"{item_name(repo, ask_id)} sleeps; a message for {ask_id} wakes it")
+    items_next(pdir, repo)
 
 
 def cmd_intermediary(a):
-    """Start a project's intermediary in this terminal: one per project, the owner's."""
+    """The intermediary is one session per open ask. With --ask, wake that ask's
+    session (the GUI's Start button); its attach command is printed."""
     pdir, repo = intermediary_project(a.project)
-    home = pdir / "intermediary"
-    if a.wake:
-        ok, msg = intermediary_wake(pdir, repo, a.wake)
-        print(msg)
-        sys.exit(0 if ok else 1)
+    if a.close:
+        item_close(pdir, repo, a.close); return
+    if a.next:
+        items_next(pdir, repo); return
+    if not a.ask:
+        open_ = [r["id"] for r in ask_list() if r.get("slug") == pdir.name] if not ask_bound() \
+            else [r["id"] for r in ask_list()]
+        die(REFUSED, "the intermediary is one session per open ask: harness intermediary "
+                     "--ask <id>" + (f" (open: {', '.join(open_)})" if open_ else
+                                     " (nothing is open)"))
     if a.settle:
-        intermediary_settle(pdir, repo); return
-    if a.say is not None:
-        if os.environ.get("CLAUDE_CODE_SESSION_ID"):
-            die(REFUSED, "--say is the owner's: the GUI's chat box, or a shell")
-        text = a.say.strip()
-        if not text:
-            die(REFUSED, 'say something: harness intermediary --say "..."')
-        if len(text) > CHAT_CAP:
-            die(REFUSED, f"{len(text)} chars; the cap is {CHAT_CAP}")
-        intermediary_chat(pdir, "owner", text)
-        intermediary_wake_detached(pdir, (
-            f"The owner says, in the GUI's chat box: {text}\n\nThey can't see your terminal. "
-            f"Answer with `harness ask --tell \"...\"`; it shows in their chat box. If you need "
-            f"to find something out first, do, then answer."))
-        print("sent; the answer shows in the chat box"); return
-    if not a.fg and not a.print_cmd:
-        if os.environ.get("CLAUDE_CODE_SESSION_ID"):
-            die(REFUSED, "the intermediary wakes itself when an ask needs it; from a "
-                         "session, just open the ask")
-        ok, msg = intermediary_wake(pdir, repo, "The owner started you. Run `harness ask "
-                                    "--list` and handle what is yours.")
-        print(msg)
-        sys.exit(0 if ok else 1)
-    cmd = intermediary_cmd(pdir, repo, a.model, a.effort)
+        item_settle(pdir, repo, a.ask); return
     if a.print_cmd:
-        print(f"cd {shlex.quote(str(home))} && HARNESS_INTERMEDIARY=1 "
-              f"HARNESS_PROJECT={shlex.quote(pdir.name)} {shlex.join(cmd)}")
+        rec = _open_ask(pdir, a.ask) or {"id": a.ask}
+        m, e = ITEM_MODEL.get(rec.get("kind"), ("opus", "high"))
+        print(shlex.join(intermediary_cmd(pdir, repo, a.model or m, a.effort or e, bg=True,
+                                          start=item_start(repo, rec), ask_id=a.ask)))
         return
-    if os.environ.get("CLAUDE_CODE_SESSION_ID"):
-        die(REFUSED, "the owner starts the intermediary from a terminal, not from inside "
-                     f"a session:\n           (cd {shlex.quote(str(repo))} && harness intermediary)")
-    if intermediary_live(repo):
-        die(REFUSED, f"'{intermediary_name(repo)}' is already running — one per project. "
-                     f"Attach to it: claude agents")
-    home.mkdir(parents=True, exist_ok=True)
-    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
-    env["HARNESS_INTERMEDIARY"] = "1"
-    env["HARNESS_PROJECT"] = pdir.name
-    os.chdir(home)
-    os.execvpe("claude", cmd, env)
+    ok, msg = item_wake(pdir, repo, a.ask, a.wake or (
+        "The owner opened you to talk about this ask in a terminal. Read it, then say in a "
+        "few lines where it stands."))
+    print(msg)
+    sys.exit(0 if ok else 1)
 
 
 def read_dash_from_stdin(a):
@@ -12338,12 +12419,13 @@ def main():
                     help="with --kind action: a command for the owner to run (repeat)")
     ak.add_argument("--done", action="store_true",
                     help="owner: the action's commands are run; --text adds a note")
-    ak.add_argument("--query", metavar="TEXT",
-                    help="owner: ask the intermediary about this ask")
+    ak.add_argument("--msg", metavar="TEXT",
+                    help="anyone: a message to this ask's intermediary (it is woken for it)")
+    ak.add_argument("--query", metavar="TEXT", help=argparse.SUPPRESS)
+    ak.add_argument("--to", metavar="NODE",
+                    help="intermediary: ask a node about this item, with --text")
     ak.add_argument("--reply", metavar="TEXT",
                     help="intermediary: answer the owner under the ask")
-    ak.add_argument("--tell", metavar="TEXT",
-                    help="intermediary: answer the owner in the GUI's chat box")
     ak.add_argument("--idle", action="store_true",
                     help="intermediary: its last step on every wake")
     ak.add_argument("--brief", metavar="FILE",
@@ -12360,7 +12442,8 @@ def main():
                     help="intermediary: remove evidence N (as numbered by --show)")
     ak.add_argument("--accept", action="store_true", help="owner: sign the draft")
     ak.add_argument("--text", metavar="TEXT",
-                    help="with --accept: the owner's own wording; with --done: a note")
+                    help="with --accept: the owner's own wording; with --done: a note; "
+                         "with --to: the message")
     ak.add_argument("--reject", action="store_true", help="owner: not a question to answer")
     ak.add_argument("--show", action="store_true",
                     help="the ask, its task's brief, and the asker's open task")
@@ -12379,12 +12462,11 @@ def main():
                     help="print the command and exit")
     im.add_argument("--model")
     im.add_argument("--effort", choices=list(EFFORTS))
-    im.add_argument("--fg", action="store_true",
-                    help="run it in this terminal instead of the background")
+    im.add_argument("--ask", metavar="ID", help="the ask whose session to wake or start")
     im.add_argument("--wake", metavar="WHY", help=argparse.SUPPRESS)
     im.add_argument("--settle", action="store_true", help=argparse.SUPPRESS)
-    im.add_argument("--say", metavar="TEXT",
-                    help="owner: a message for the intermediary (queued; it is woken for it)")
+    im.add_argument("--close", metavar="ID", help=argparse.SUPPRESS)
+    im.add_argument("--next", action="store_true", help=argparse.SUPPRESS)
     fo = add("focus", cmd_focus)
     fo.add_argument("task", nargs="*",
                     help="tasks, segments or globs (quote them: 'enrich*') the owner put "

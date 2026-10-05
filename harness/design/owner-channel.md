@@ -188,3 +188,33 @@ the action was completed. OR I can directly type something to request further in
 
 - Nothing blocks building the first version. Revisit the caps and sections after the first few
   real items.
+
+## One intermediary per item (2026-10-05)
+
+The owner, when the project-wide intermediary's context grew large: "we can take the worker
+approach, and have it recycle often. Most of the decision making is regarding single items. Once
+something is accepted, it closes off. Each item in Issues has its own session attached to it."
+Then: sleep inside the warm cache window, a chat box beside each item, a cap of 3, and different
+models by need.
+
+- **A session per open ask**, `harness-intermediary-<project>-<id>`, in
+  `intermediary/<id>/`, started when the ask opens and removed (`claude stop`, `claude rm`) when it
+  closes: accepted, rejected, done, returned or merged. It is bound to its ask by `HARNESS_ASK`; its
+  intermediary verbs refuse any other id.
+- **Cap 3.** A fourth waits with its reason in `intermediary/<id>/inbox.jsonl` (the GUI shows it
+  queued). When a session sleeps or closes, the oldest queued item starts.
+- **Models:** Sonnet (medium) for action items and notes; Opus (high) for intent, judgement and risk.
+- **Sleep after 55 quiet minutes**, inside the one-hour prompt cache, so a wake before then is warm.
+  A message resumes the session (`claude --bg --resume <id>`, no flags).
+- **Messaging is by ask id**, never by session name, so it survives either end being asleep:
+  - `harness ask <id> --msg "..."`: from the owner (the chat box under each item) or any node. It
+    lands in the thread and wakes the item's session.
+  - `--reply`: the intermediary to the owner, under the item.
+  - `--to <node> --text "..."`: the intermediary to a node. It lands in the thread, sets
+    `waiting_on`, and rings the node's doorbell; orientation also says so. The node's `--msg`
+    clears the wait. The Agents card draws a dotted line from the item to that node.
+  - The intermediary has no `SendMessage`; a message to a sleeping session is lost.
+- **Conversations:** the project's box opens a `note` item on `owner`, with the owner's first message
+  in its thread. It closes with Close.
+- The project-wide chat box and `harness intermediary --say` are gone. `harness intermediary --ask
+  <id>` wakes or starts one item's session (the GUI's Start button) and prints its attach command.

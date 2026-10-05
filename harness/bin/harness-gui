@@ -18,7 +18,7 @@ The default port is 8791 and it walks upward if that is taken. 8787 is RStudio
 Server's, 8888 is Jupyter's, and a viewer that refuses to start because someone
 else's long-running service got there first is a viewer nobody opens.
 """
-import argparse, importlib.util, json, os, subprocess, sys, threading, time, uuid, webbrowser
+import argparse, importlib.util, json, os, subprocess, sys, threading, time, webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.machinery import SourceFileLoader
 from urllib.parse import parse_qs, urlparse
@@ -122,238 +122,6 @@ def install_drift():
                 f"{src.name} is now at {r.stdout.strip()[:8]}")
     except Exception:
         return None
-
-
-# ── the slash-command dictionary ───────────────────────────────────────────
-# What to type, and when — the one thing on this page that is not read out of a
-# tree. It answers the question the tree cannot: you are looking at a node that
-# is cold, or misnamed, or holding work it should have presented, and the next
-# move is something you type into a session rather than a harness verb.
-#
-# It is a FILE, not a constant. The defaults below seed it once and are never
-# merged into an existing list again, because deleting an entry here is
-# absolute — no tombstone, no retired flag, no record — and a merge on the next
-# release would quietly put back exactly the entries someone removed on
-# purpose. The cost is that new defaults do not reach a list you have already
-# edited; `reset` is the deliberate way to take them.
-COMMANDS_FILE = CLI.HOME_STATE / "commands.json"
-
-# Bumped when the shipped list changes shape enough that an older seeded copy is
-# worse than the new one. A file already at this version is left alone, so a
-# hand-edited list survives every release until the number moves — and when it
-# does, the old copy is replaced rather than merged, because merging is how a
-# list you curated grows back the entries you took out of it.
-COMMANDS_VERSION = 2
-
-# Machine-level, like the viewer itself: what to type does not vary by project,
-# and a copy per tree is four lists to curate and four to disagree.
-DEFAULT_COMMANDS = [
- {"name": "harness",
-  "note": "Position is derived, never declared. These four are skills; whoami "
-          "names which of them this session should load, and loading the "
-          "others is reading somebody else's instructions.",
-  "items": [
-   {"cmd": "/harness",
-    "what": "Resolve this session's node, claim it, prove the guards.",
-    "when": "First thing in an enrolled worktree, and any time you have lost "
-            "track of which node you are. It runs whoami, claim and doctor, "
-            "then names the role skills to load. Exit 3 is not enrolled — one "
-            "line and stop. Exit 5 is a misnamed session: /rename it, never "
-            "rename the node."},
-   {"cmd": "/harness-upward",
-    "what": "Act toward your parent: catch up, propose, ask, escalate, present, release.",
-    "when": "Every leaf and every mid-lead. Load it because whoami named it, "
-            "not because the work looks upward-ish."},
-   {"cmd": "/harness-downward",
-    "what": "Act toward your children: brief, review, integrate by fast-forward, mediate.",
-    "when": "Leads only. This is where a task gets its recorded intent, and "
-            "where a child's work becomes the parent's by fast-forward."},
-   {"cmd": "/harness-root",
-    "what": "Rank-0 duties: rulings, the manifest, the guards, the scope registry.",
-    "when": "Only the top lead. It is the single node that writes documents; "
-            "everything else sends a request up and waits."}]},
-
- {"name": "identity",
-  "note": "A session's name is what the harness matches against the branch. "
-          "Get it wrong and two sessions can end up holding one node, which is "
-          "the whole failure the lock exists to prevent.",
-  "items": [
-   {"cmd": "/rename",
-    "what": "Rename the current conversation.",
-    "when": "The fix when whoami exits 5. The name must be <project>-<node>; "
-            "the node name comes from the committed tree, so the session is "
-            "the thing that moves."},
-   {"cmd": "/model",
-    "what": "Set the model for this session.",
-    "when": "whoami prints the pair this node was meant to run as under 'run "
-            "as'. A leaf running a lead's model is not wrong, only expensive."},
-   {"cmd": "/effort",
-    "what": "Set the effort level.",
-    "when": "The effort curve is steep for coding and shallow for reading, "
-            "which is why a leaf and a lead are given different defaults."},
-   {"cmd": "/status",
-    "what": "Version, model, account, connectivity, tool status.",
-    "when": "The quickest check that a node is actually running as what the "
-            "tree says it should be."}]},
-
- {"name": "context",
-  "note": "Idle is free. Resuming is not: past the cache lifetime the next "
-          "turn re-reads the whole conversation at full rate, so a cold node "
-          "carrying 340k is a bill waiting for you to say hello to it.",
-  "items": [
-   {"cmd": "/context",
-    "what": "Visualise current context usage as a coloured grid.",
-    "when": "Before accepting a size band. If the grid is already full the "
-            "honest answer is a recycle, not an L."},
-   {"cmd": "/compact",
-    "what": "Free up context by summarising the conversation so far.",
-    "when": "Mid-task, when the work is not finished but the window is. A "
-            "finished task wants a recycle instead — a clean node is cheaper "
-            "than a summarised one."},
-   {"cmd": "/autocompact",
-    "what": "Set how full context gets before auto-summarising.",
-    "when": "Worth raising on a lead, which accumulates reports and conflicts "
-            "and wants them intact."},
-   {"cmd": "/usage",
-    "what": "Session cost, plan usage, activity stats.",
-    "when": "What this page's 'COLD — N to re-read' warning looks like in money."},
-   {"cmd": "/clear",
-    "what": "Start a new session with empty context; the old one stays resumable.",
-    "when": "How a node is recycled. Release the claim first — a lock outlives "
-            "the conversation that took it, and a cleared session still holds "
-            "the node until harness release says otherwise."},
-   {"cmd": "/resume",
-    "what": "Resume a previous conversation.",
-    "when": "Reading back what a node did after it was cleared, without "
-            "claiming anything."}]},
-
- {"name": "running",
-  "note": "Spawned nodes are background sessions. A subagent is not a node and "
-          "cannot become one: no session id, no lock, no row in the ledger.",
-  "items": [
-   {"cmd": "/tasks",
-    "what": "View and manage everything running in the background.",
-    "when": "Where harness spawn's sessions actually live."},
-   {"cmd": "/list-agents",
-    "what": "List subagents, teammates and other sessions you can message.",
-    "when": "The same roster the CLI reads to decide who holds a node. A node "
-            "claimed by a session that is absent here is a stale claim, and "
-            "the only case where claim --force is allowed."},
-   {"cmd": "/background",
-    "what": "Send this session to the background and free the terminal.",
-    "when": "Anything long enough that watching it is the expensive part."},
-   {"cmd": "/stop",
-    "what": "Stop this background session; transcript and worktree are kept.",
-    "when": "Stopping is not releasing. Run harness release first, or the node "
-            "stays held by a session that is gone."},
-   {"cmd": "/subtask",
-    "what": "Send a subagent off with your full context; its result comes back here.",
-    "when": "A bounded lookup, and nothing more. You may use its answer; what "
-            "you cannot do is give it a node, a claim, or a transaction."},
-   {"cmd": "/fork",
-    "what": "Spawn a background agent that inherits the full conversation.",
-    "when": "Same rule as /subtask. A cheap second reading of a brief without "
-            "spending this node's window on it."},
-   {"cmd": "/loop",
-    "what": "Run a prompt or slash command on an interval; omit the interval to self-pace.",
-    "when": "Watching an integration land, or a lead checking whether anything "
-            "has been presented, without a human in the polling seat."},
-   {"cmd": "/schedule",
-    "what": "Create and manage scheduled remote agents.",
-    "when": "Work that should happen whether or not this machine is awake."}]},
-
- {"name": "integrating",
-  "note": "A lead reads before it fast-forwards. Reviewing after the merge is "
-          "reviewing something you already own.",
-  "items": [
-   {"cmd": "/code-review",
-    "what": "Review the diff, a PR, or a branch for correctness and cleanups.",
-    "when": "The read that unblocks integration. 'ultra' runs a deeper "
-            "multi-agent pass in the cloud; --fix applies findings here."},
-   {"cmd": "/security-review",
-    "what": "Security review of the pending changes on this branch.",
-    "when": "Any lane that touched auth, a guard hook, or anything that widens "
-            "what a worktree may write."},
-   {"cmd": "/plan",
-    "what": "Enable plan mode, or view this session's plan.",
-    "when": "Proposing the approach before writing is a transaction, not a "
-            "courtesy. This is the surface for it."},
-   {"cmd": "/rewind",
-    "what": "Step the conversation, the files, or both back to an earlier point.",
-    "when": "Cheaper than a revert while the wrong turn is still inside one "
-            "worktree and has not been presented."}]},
-
- {"name": "settings",
-  "note": "The harness's real guards are git hooks under core.hooksPath, and "
-          "harness doctor is what proves them, by demanding a refusal. These "
-          "are the Claude-side settings around them.",
-  "items": [
-   {"cmd": "/hooks",
-    "what": "View hook configuration for tool events.",
-    "when": "Where scaffold's orientation hook shows up. It is not the guard — "
-            "it is what tells a session where it is."},
-   {"cmd": "/permissions",
-    "what": "Manage allow and deny tool rules.",
-    "when": "A lane that keeps stopping for the same prompt is losing more to "
-            "the prompt than the rule was ever protecting."},
-   {"cmd": "/skills",
-    "what": "List available skills.",
-    "when": "Checking that the four harness skills are actually installed."},
-   {"cmd": "/reload-skills",
-    "what": "Pick up skills added or changed on disk during this session.",
-    "when": "After re-running install.sh. Without it every open session keeps "
-            "reading the instructions it loaded at startup, silently."},
-   {"cmd": "/memory",
-    "what": "Edit CLAUDE.md files and memory settings.",
-    "when": "A standing instruction for the repo. A brief is for one task; "
-            "this is for every session in it."},
-   {"cmd": "/mcp",
-    "what": "Manage MCP servers.",
-    "when": "A server that failed to connect is a missing capability that "
-            "looks exactly like a missing feature."}]},
-]
-
-def _ids(groups):
-    """Give every entry a stable id.
-
-    The page addresses an entry by id and never by position, because a position
-    is a fact about the list at the moment it was drawn, and the whole point of
-    this panel is that the list moves.
-    """
-    changed = False
-    for g in groups:
-        if not g.get("id"):
-            g["id"] = uuid.uuid4().hex[:8]; changed = True
-        for it in g.get("items") or []:
-            if not it.get("id"):
-                it["id"] = uuid.uuid4().hex[:8]; changed = True
-    return groups, changed
-
-
-def write_commands(groups):
-    COMMANDS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = COMMANDS_FILE.with_name(COMMANDS_FILE.name + ".tmp")
-    tmp.write_text(json.dumps({"version": COMMANDS_VERSION, "groups": groups},
-                              indent=2) + "\n")
-    tmp.replace(COMMANDS_FILE)
-
-
-def read_commands():
-    """The file if there is a current one, the defaults if there is not."""
-    try:
-        if COMMANDS_FILE.exists():
-            raw = json.loads(COMMANDS_FILE.read_text())
-            g = raw.get("groups")
-            if isinstance(g, list) and raw.get("version") == COMMANDS_VERSION:
-                g, changed = _ids(g)
-                if changed:
-                    write_commands(g)
-                return g
-    except Exception:
-        pass
-    g, _ = _ids(json.loads(json.dumps(DEFAULT_COMMANDS)))
-    write_commands(g)
-    return g
 
 
 def _wait_mins(since):
@@ -720,7 +488,7 @@ def read_state():
             # instructions than were written, and nothing else reports it.
             "stale_install": install_drift() or "",
             "started": time.strftime("%H:%M:%S", time.localtime(STARTED)),
-            "projects": projects, "commands": read_commands()}
+            "projects": projects}
 
 
 PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
@@ -879,20 +647,6 @@ border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit;resize:v
 border-radius:7px;padding:5px 13px;font:inherit;cursor:pointer}
 .row button:hover{background:#2c3b20}
 
-/* One box across the top, before any project. What to type does not vary by
-   tree, so it is neither per-project nor a column stealing width from one: as
-   few rows as it can pack into, with the detail on hover. */
-.cmdbar{background:var(--panel);border:1px solid var(--line);padding:7px 11px;
-margin-bottom:20px;display:flex;flex-wrap:wrap;align-items:baseline;
-gap:3px 16px;line-height:1.9}
-.cmdbar>h3{font-size:10px;letter-spacing:.09em;text-transform:uppercase;
-color:var(--none);margin:0 9px 0 0;flex:none}
-.cbgrp{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 7px}
-.cbgrp>b{color:var(--dim);font-weight:400;font-size:10px;letter-spacing:.05em;
-text-transform:uppercase}
-.cbcmd{color:var(--busy);cursor:help;border-bottom:1px dotted transparent}
-.cbcmd:hover{color:#b6e37f;border-bottom-color:#4a6b30}
-
 /* The charter is an outline: features carry an order the operator set and may
    sit under one another. Same controls as the tree it describes. */
 .chead{display:flex;align-items:baseline;gap:5px;cursor:pointer;padding:1px 0}
@@ -994,28 +748,6 @@ const load = k => { try { return JSON.parse(localStorage.getItem(k) || '[]'); }
                     catch (e) { return []; } };
 const save = (k, s) => { try { localStorage.setItem(k, JSON.stringify([...s])); }
                          catch (e) {} };
-
-// ── the command bar ────────────────────────────────────────────────────────
-// What to type, packed into as few rows as it will go, with the detail on
-// hover. It is a reference, not a workspace: the outline controls live on the
-// charter, which is the thing that actually changes.
-//
-// The list is still ~/.claude/harness/commands.json and still hand-editable.
-// Delete the file to get the defaults back.
-function cmdbar(groups) {
-  if (!groups.length) return '';
-  const flat = g => (g.cmd ? [g] : []).concat(g.items || []);
-  return '<div class="cmdbar"><h3>slash commands</h3>' +
-    groups.map(g =>
-      '<span class="cbgrp"><b title="' + esc(g.note || '') + '">' +
-      esc(g.name || '') + '</b>' +
-      flat(g).map(it =>
-        '<span class="cbcmd" title="' +
-        esc((it.what || '') + (it.when ? '\n\n' + it.when : '')) + '">' +
-        esc(it.cmd || it.name || '') + '</span>').join('') +
-      '</span>').join('') +
-    '</div>';
-}
 
 // ── the charter outline ────────────────────────────────────────────────────
 // Collapse state by feature key, the one destructive click waiting for its
@@ -1458,7 +1190,7 @@ async function tick() {
   LAST = sig;
   // Above everything, including the banners: it is the same reference whatever
   // state the trees are in, and one row of it is cheaper than looking it up.
-  let h = ROUTE() === 'issues' ? '' : cmdbar(d.commands || []);
+  let h = '';
   if (d.stale_server) {
     h += '<div class="banner"><b>This server is older than the code on disk</b> ' +
          '&mdash; it started at ' + esc(d.started) + ' and the page you are looking ' +

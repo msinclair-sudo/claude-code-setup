@@ -830,9 +830,11 @@ class Sweep(unittest.TestCase):
         w("facts/r9.json", {"name": "r9", "observations": [
             {"value": "3", "command": f"ls {self.jobs / self.B[:8] / 'tmp'}", "by": "dev_1 (session x)"}]})
         (d / "seen" / "dead-session.json").write_text("{}")
+        self.rm = mock.MagicMock(return_value=(True, ""))
         self.p = [mock.patch.object(hz, "PROJECTS", self.proj),
                   mock.patch.object(hz, "JOBS", self.jobs),
-                  mock.patch.object(hz, "live_sessions", return_value=[])]
+                  mock.patch.object(hz, "live_sessions", return_value=[]),
+                  mock.patch.object(hz, "claude_rm", self.rm)]
         for x in self.p:
             x.start(); self.addCleanup(x.stop)
 
@@ -872,6 +874,9 @@ class Sweep(unittest.TestCase):
         self.assertEqual(hz.ledger(self.ctx)[0]["why"], "s1 shipped")
         self.assertEqual(e["counts"]["kept"], 1)
         self.assertEqual(hz.completed_units(self.ctx), [])              # not offered again
+        # Off the session list: A, not B, whose job folder a fact cites.
+        self.assertEqual([c.args[0] for c in self.rm.call_args_list], [self.A])
+        self.assertEqual(e["sessions_removed"], [self.A[:8]])
 
 
 class Findings(unittest.TestCase):
@@ -1049,7 +1054,7 @@ class Stale(unittest.TestCase):
         """obs 65: the stale nag pointed at `sweep`, which only lists units."""
         rows = [r for r in hz.rank0_owes(self.ctx, "main") if r[0] == "sweep"]
         self.assertEqual([r[1:3] for r in rows], [("stale", "2 stale record(s)")])
-        a = mock.Mock(stale=False, unit=None, all=True)
+        a = mock.Mock(stale=False, sessions=False, unit=None, all=True)
         out = io.StringIO()
         with mock.patch.object(hz, "Ctx", return_value=self.ctx), redirect_stdout(out):
             hz.cmd_sweep(a)
@@ -1556,3 +1561,53 @@ class StopKind(unittest.TestCase):
         self.assertIsNone(self.run_(self.A(self.TXT), self.END, self.U("again")))
         self.assertIsNone(self.run_(self.U("go"), self.A(self.TXT), self.END,
                                     state="working"))
+
+
+class EndedSessions(unittest.TestCase):
+    """`sweep --sessions`: which ended sessions are this project's to remove."""
+
+    def test_selection(self):
+        base = Path(tempfile.mkdtemp())
+        repo, wt = base / "proj", base / "proj-dev_1"
+        repo.mkdir(); wt.mkdir()
+        ctx = FakeCtx({"main": None})
+        ctx.repo = repo
+        row = lambda sid, name, cwd, **k: dict({"sessionId": sid, "name": name,
+                                                "cwd": str(cwd)}, **k)
+        rows = [row("live", "proj-dev_1", wt, pid=1),
+                row("ended", "proj-dev_1", wt),
+                row("cited", "proj-dev_1", wt),
+                row("trimmed", "proj-panel", base / "proj-panel"),     # worktree gone
+                row("owners", "my own session", wt),                  # not spawn's name
+                row("elsewhere", "proj-x", base),                     # not a node's
+                row("me", "proj-main", repo)]
+        with mock.patch.object(hz, "live_rows", lambda rs: [r for r in rs if r.get("pid")]), \
+             mock.patch.object(hz, "load_index", return_value={"byWorktree": {str(wt): "dev_1"}}), \
+             mock.patch.object(hz, "job_dirs", return_value={"cited": base / "j"}), \
+             mock.patch.object(hz, "job_refs", return_value={base / "j": {"all": "facts/x",
+                                                                          "files": {}}}), \
+             mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "me"}):
+            got = {r["sessionId"]: why for r, why in hz.ended_sessions(ctx, rows)}
+        self.assertEqual(got, {"ended": None, "cited": "facts/x", "trimmed": None})
+
+    def test_orientation_count_reads_job_folders(self):
+        jobs = Path(tempfile.mkdtemp())
+        ctx = FakeCtx({"main": None})
+        ctx.repo = Path("/r")
+        other = tempfile.mkdtemp()                       # exists: not a trimmed node
+        for i, (cwd, st, nm) in enumerate([("/r-dev", "done", "r-dev"),
+                                           ("/r-dev", "stopped", "r-dev"),
+                                           ("/r-dev", "stopped", "r-dev"),     # cited
+                                           ("/r-dev", "working", "r-dev"),
+                                           ("/r-dev", "done", "mine"),
+                                           (other, "done", "r-x")]):
+            (jobs / str(i)).mkdir()
+            (jobs / str(i) / "state.json").write_text(
+                json.dumps({"cwd": cwd, "state": st, "name": nm}))
+        with mock.patch.object(hz, "JOBS", jobs), \
+             mock.patch.object(hz, "job_refs", return_value={jobs / "2": {}}), \
+             mock.patch.object(hz, "load_index", return_value={"byWorktree": {"/r-dev": "dev"}}), \
+             mock.patch.object(hz, "ENDED_NAG", 1):
+            self.assertEqual(hz.ended_count(ctx), 2)
+            with mock.patch.object(hz, "job_refs", side_effect=AssertionError):
+                self.assertEqual(hz.ended_count(ctx), 2)          # cached

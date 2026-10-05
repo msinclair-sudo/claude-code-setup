@@ -27,6 +27,7 @@ TEMPLATES = Path.home() / ".claude" / "harness" / "templates"
 PROJECTS = Path.home() / ".claude" / "projects"
 SESSIONS = Path.home() / ".claude" / "sessions"
 JOBS = Path.home() / ".claude" / "jobs"
+ENDED_NAG = 20          # ended sessions on the list before rank 0 is told
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 SLUG_RE = re.compile(r"^[A-Za-z0-9-]+$")
 
@@ -2586,6 +2587,9 @@ def rank0_owes(ctx, node):
             owed.append(("sweep", "units", f"{n} complete unit(s)", 0))
         if m:
             owed.append(("sweep", "stale", f"{m} stale record(s)", 0))
+        k = ended_count(ctx)
+        if k >= ENDED_NAG:
+            owed.append(("sweep", "sessions", f"{k} ended session(s) still listed", 0))
     except Exception:
         pass
     return owed
@@ -2703,7 +2707,9 @@ def queue_items(ctx, node):
                 "task": f"block '{label}' was answered {human_age(age)} ago and "
                         f"produced no task  — harness blocked --decided",
                 "sweep": f"{label} await a cleanup decision  — harness sweep"
-                         + (" --stale --dry-run" if ident == "stale" else "  (then --dry-run, --why)"),
+                         + (" --stale --dry-run" if ident == "stale" else
+                            " --sessions --dry-run" if ident == "sessions" else
+                            "  (then --dry-run, --why)"),
             }.get(kind)
             out[f"{kind}:{ident}"] = _line or (
                 f"'{label}' ({kind}) has been waiting {human_age(age)}"
@@ -4564,8 +4570,10 @@ def cmd_recycle(a):
     session cannot clear itself, and a session that stopped itself could not
     start its own replacement.
 
-    Never `claude rm` — that deletes the worktree, and on a node the worktree IS
-    the node.
+    It stops, it does not `claude rm`: the stopped session's job folder may
+    hold files a record will cite, and `rm` deletes it. `harness sweep` takes
+    ended sessions off the list once that is decided. (`rm` never deletes a
+    worktree made with `git worktree add`; measured 2026-10-05.)
     """
     ctx = Ctx(); ctx.require_enrolled()
     if a.at_quiet:
@@ -8714,7 +8722,8 @@ def sweep_plan(ctx, unit):
         if sid:
             sids.setdefault(sid, []).append((k, r.get("_node")))
     plan = {"unit": unit["name"], "transcripts": [], "tmp": [], "tmp_keep": {},
-            "records": [], "blocks": [], "caches": [], "kept": [], "skipped": []}
+            "records": [], "blocks": [], "caches": [], "kept": [], "skipped": [],
+            "sessions": []}
     jobs = job_dirs()
     refs = job_refs(ctx, jobs=jobs)
     for sid, owned in sorted(sids.items()):
@@ -8730,10 +8739,14 @@ def sweep_plan(ctx, unit):
         if t:
             plan["transcripts"].append((str(t), _size(t)))
         jd = jobs.get(sid)
+        r = refs.get(jd) or {"all": None, "files": {}}
+        # Off Claude Code's session list too, unless its job folder holds a
+        # cited file: `claude rm` deletes the folder (the transcript stays).
+        if jd and not (r["all"] or r["files"]):
+            plan["sessions"].append(sid)
         tmp = jd / "tmp" if jd else None
         if not (tmp and tmp.is_dir()) or str(tmp) in plan["tmp_keep"]:
             continue
-        r = refs.get(jd) or {"all": None, "files": {}}
         if r["all"]:
             plan["kept"].append((str(tmp), f"cited by {r['all']}")); continue
         keep = sorted(r["files"])
@@ -8881,6 +8894,8 @@ def print_sweep_plan(plan):
     print(f"  records      {len(plan['records']) + len(plan['blocks']):>4}  "
           f"{mb(plan['records'] + plan['blocks']):8.1f} MB  → fold into archive records.json")
     print(f"  caches       {len(plan['caches']):>4}  {mb(plan['caches']):8.1f} MB  → delete")
+    print(f"  sessions     {len(plan.get('sessions', [])):>4}               → claude rm "
+          f"(off the session list)")
     for path, why in plan["kept"]:
         print(f"  keep   {path}  — {why}")
     for sid, why in plan["skipped"]:
@@ -8936,7 +8951,8 @@ def run_sweep(ctx, unit, plan, why, by):
     (archive_dir(ctx) / "index.json").write_text(json.dumps(idx, indent=1) + "\n")
     for path, size in plan["records"] + plan["blocks"] + plan["caches"]:
         Path(path).unlink(missing_ok=True); freed += size
-    entry = {"unit": unit["name"], "kind": unit["kind"], "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    gone = [sid[:8] for sid in plan.get("sessions", []) if claude_rm(sid)[0]]
+    entry = {"sessions_removed": gone, "unit": unit["name"], "kind": unit["kind"], "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
              "by": by, "why": why, "freed": freed,
              "counts": {k: len(plan[k]) for k in ("transcripts", "tmp", "records", "blocks", "caches", "kept")}}
     with open(archive_dir(ctx) / "ledger.jsonl", "a") as fh:
@@ -9024,12 +9040,137 @@ def cmd_hold(a):
              " — none names it; declare \"reads\" in the manifest"))
 
 
+def claude_rm(sid):
+    """Take an ended session off Claude Code's list: `claude rm`. It deletes the
+    job folder (and its tmp/) and keeps the transcript, so `claude --resume`
+    still opens it. A worktree made with `git worktree add` (every node's) is
+    never its to delete. Measured 2026-10-05 on a locked node worktree: list
+    entry and job folder gone; worktree, HEAD and status untouched."""
+    r = subprocess.run(["claude", "rm", sid[:8]], capture_output=True, text=True)
+    return r.returncode == 0, (r.stderr or r.stdout).strip()[:120]
+
+
+def all_sessions():
+    """`claude agents --json --all`: ended sessions too, which plain --json drops."""
+    r = subprocess.run(["claude", "agents", "--json", "--all"], capture_output=True,
+                       text=True, timeout=20)
+    if r.returncode:
+        die(REFUSED, f"`claude agents --json --all` failed: {r.stderr.strip()[:120]}")
+    return json.loads(r.stdout)
+
+
+def ended_sessions(ctx, rows):
+    """This project's ended sessions still on Claude Code's list, as (row, why
+    kept or None). Every recycle and stop leaves one. Ours: named for the
+    project, as `spawn` names them, and started in a node's worktree or in one
+    that is gone (a trimmed node); anything else is the owner's. Kept: a record
+    cites a file in its job folder."""
+    live = {r.get("sessionId") for r in live_rows(rows)}
+    wts = set(load_index(ctx).get("byWorktree") or {}) | {str(ctx.repo)}
+    prefix = ctx.repo.name + "-"
+    me = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    jobs = job_dirs()
+    refs = job_refs(ctx, jobs=jobs)
+    out = []
+    for r in rows:
+        sid, cwd = r.get("sessionId") or "", r.get("cwd") or ""
+        if not sid or sid in live or sid == me:
+            continue
+        if not ((r.get("name") or "").startswith(prefix)
+                and (cwd in wts or not Path(cwd).exists())):
+            continue
+        ref = refs.get(jobs.get(sid)) if jobs.get(sid) else None
+        out.append((r, (ref["all"] or next(iter(ref["files"].values()), None))
+                       if ref else None))
+    return out
+
+
+def ended_count(ctx):
+    """What `sweep --sessions` would remove, counted off the job folders for
+    orientation: no subprocess, same rules, so the nag clears when it is run.
+    Whether a record cites a job folder costs a scan of every tmp/ file (0.7s
+    on a live tree), so that part is cached until a job folder or record changes."""
+    wts = set(load_index(ctx).get("byWorktree") or {}) | {str(ctx.repo)}
+    prefix = ctx.repo.name + "-"
+    cands = []
+    for st in (JOBS.glob("*/state.json") if JOBS.is_dir() else []):
+        try:
+            d = json.loads(st.read_text())
+        except Exception:
+            continue
+        cwd = d.get("cwd") or ""
+        if (d.get("state") in ("done", "stopped", "failed")
+                and (d.get("name") or "").startswith(prefix)
+                and (cwd in wts or not Path(cwd).exists())):
+            cands.append(st.parent)
+    if len(cands) < ENDED_NAG:
+        return len(cands)
+    newest = max((f.stat().st_mtime for k in ("findings", "briefs", "marks", "pairs", "facts")
+                  for f in (ctx.state / k).glob("*.json")), default=0)
+    for f in (archive_dir(ctx).glob("**/*.json") if archive_dir(ctx).is_dir() else []):
+        newest = max(newest, f.stat().st_mtime)
+    key = f"{sorted(c.name for c in cands)}|{newest}"
+    cf = ctx.state / "ended_count.json"
+    try:
+        c = json.loads(cf.read_text())
+        if c.get("key") == key:
+            return c["n"]
+    except Exception:
+        pass
+    refs = job_refs(ctx)
+    n = sum(1 for c in cands if c not in refs)
+    try:
+        cf.write_text(json.dumps({"key": key, "n": n}))
+    except OSError:
+        pass
+    return n
+
+
+def sweep_sessions(ctx, a):
+    """`sweep --sessions`: this project's ended sessions off Claude Code's list."""
+    found = ended_sessions(ctx, all_sessions())
+    go = [r for r, why in found if not why]
+    kept = [(r, why) for r, why in found if why]
+    for r, why in (kept if a.dry_run else []):
+        print(f"  keep   {r.get('name') or '?'} [{r['sessionId'][:8]}]  — its job "
+              f"folder is cited by {why}")
+    if kept and not a.dry_run:
+        print(f"  keep   {len(kept)}: a record cites a file in their job folder "
+              f"(--dry-run names them)")
+    names = {}
+    for r in go:
+        names[r.get("name") or "?"] = names.get(r.get("name") or "?", 0) + 1
+    for n, c in sorted(names.items(), key=lambda x: -x[1]):
+        print(f"  {c:>4}  {n}")
+    print(f"  {len(go)} ended session(s) → claude rm. Their transcripts stay; "
+          f"`claude --resume` still opens one.")
+    if a.dry_run or not (a.why or "").strip():
+        if not a.dry_run and go:
+            print('\n  Nothing done. Decide: harness sweep --sessions --why "..."')
+        return
+    by = sweep_decider(ctx)
+    gone, failed = [], []
+    for r in go:
+        ok, msg = claude_rm(r["sessionId"])
+        (gone if ok else failed).append(r["sessionId"][:8])
+        if not ok:
+            print(f"  FAILED {r.get('name') or '?'} [{r['sessionId'][:8]}]: {msg}")
+    archive_dir(ctx).mkdir(parents=True, exist_ok=True)
+    with open(archive_dir(ctx) / "ledger.jsonl", "a") as fh:
+        fh.write(json.dumps({"unit": "sessions", "kind": "sessions", "removed": gone,
+                             "failed": failed, "by": by, "why": a.why,
+                             "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}) + "\n")
+    print(f"removed {len(gone)} session(s)" + (f", {len(failed)} failed" if failed else ""))
+
+
 def cmd_sweep(a):
     """`sweep` lists complete units; `sweep <unit> --dry-run` shows one; with
     `--why` rank 0 runs it, or `--keep --why` declines it. Both are ledgered."""
     ctx = Ctx(); ctx.require_enrolled()
     if a.stale:
         return sweep_stale(ctx, a)
+    if a.sessions:
+        return sweep_sessions(ctx, a)
     units = completed_units(ctx)
     if not units and (a.all or not a.unit):
         sf, sn = stale_records(ctx)
@@ -10261,6 +10402,8 @@ def main():
     sw.add_argument("--stale", action="store_true",
                     help="facts and findings no open record needs (closed findings; uncited, old facts)")
     sw.add_argument("--older-than", metavar="DAYS", help="with --stale: fact age, default 14")
+    sw.add_argument("--sessions", action="store_true",
+                    help="ended sessions on this project's nodes, off Claude Code's list")
     sw.add_argument("--why", help="the decision, one line")
     ar = add("archive", cmd_archive)
     ar.add_argument("unit", nargs="?", help="a swept unit, or a task in one")

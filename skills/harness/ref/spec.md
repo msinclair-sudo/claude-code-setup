@@ -1278,8 +1278,13 @@ node mid-task is never offered up.
 
 It is a teardown and relaunch, not a clear. A background session cannot clear
 itself, and a session that stopped itself could not start its replacement — so
-the parent does both. **Never `claude rm`:** that deletes the session *and its
-worktree*, and on a node the worktree is the node.
+the parent does both. It stops, it does not `claude rm`: `rm` deletes the job
+folder, whose `tmp/` may hold a file a record cites. It never deletes a worktree
+made with `git worktree add` (measured 2026-10-05: list entry and job folder
+gone, node worktree untouched), so `harness sweep` uses it — on each session it
+archives, and with `--sessions` on every ended `<project>-<node>` session the
+list still carries — skipping any whose job folder a record cites. `claude stop`
+alone left 197 ended sessions listed on one tree in a month.
 
 **Between tasks, not between sessions.** A member's queue is the ordered briefs written for it that no mark has opened. Its lead sets the order (`harness queue <node> --order`), because a member picking its own next task is picking its own work. When a task is signed off, the harness computes what happens to the node and prints it with the command already written: recycle, or carry on. Leaving that to be remembered is how one session ends up doing four tasks on one accumulating context, which is the thing this rule exists to prevent.
 

@@ -2558,6 +2558,12 @@ class TestQueue(unittest.TestCase):
                          capture_output=True, text=True).stdout
         self.assertEqual(len(wl.strip().splitlines()), 1)              # only the repo itself
 
+    def test_ids_are_unique_within_a_second(self):
+        ids = {hz.testq_submit(self.ctx, "cmd", self.sha, "dev", "s", command="true")[0]["id"]
+               for _ in range(5)}
+        self.assertEqual(len(ids), 5)
+        self.assertEqual(len(hz.testq_jobs(self.ctx)), 5)
+
     def test_one_runner(self):
         held = hz._flock(hz.testq_dir(self.ctx) / "runner.lock", block=False)
         try:

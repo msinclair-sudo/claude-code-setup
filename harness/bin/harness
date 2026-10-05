@@ -4386,7 +4386,9 @@ def testq_submit(ctx, kind, sha, node, sid, command=None, timeout=None, arms=Non
                     j["queue"] = "priority"            # a lead's integration check joins it
                 testq_save(ctx, j)
                 return j, "joined"
-    job = {"id": f"{time.strftime('%Y%m%d-%H%M%S')}-{sha[:8]}-{os.getpid() % 1000}",
+    # Unique even for two submits in one second from one process (a collision
+    # overwrote a queued job, 2026-10-06).
+    job = {"id": f"{time.strftime('%Y%m%d-%H%M%S')}-{sha[:8]}-{os.urandom(3).hex()}",
            "kind": kind, "sha": sha, "command": command, "requested_by": [req],
            "state": "queued", "at": _now(), "timeout": timeout, "arms": arms,
            "queue": queue, "origin": origin}
@@ -4429,12 +4431,16 @@ def testq_wait_estimate(ctx, job):
     return total
 
 
+def _wait_words(sec):
+    return "under a minute" if sec < 60 else f"about {human_age(sec)}"
+
+
 def testq_wait_phrase(ctx, job):
     ahead = testq_ahead(ctx, job)
     est = testq_wait_estimate(ctx, job)
     return ((f", {len(ahead)} ahead" if ahead else ", next to run")
             + (f" ({testq_describe(ahead[0])})" if ahead else "")
-            + (f"; done in about {human_age(est)}" if est is not None else
+            + (f"; done in {_wait_words(est)}" if est is not None else
                "; no finished job to estimate from yet"))
 
 
@@ -4734,7 +4740,7 @@ def cmd_test(a):
         est = testq_wait_estimate(ctx, j)
         print(f"{'▶' if j['state'] == 'running' else k}  {j['id']}  {j.get('queue', 'normal'):<8} "
               f"{testq_describe(j)}  (asked {(j.get('at') or '')[11:16]}"
-              + (f"; done in about {human_age(est)}" if est is not None else "") + ")")
+              + (f"; done in {_wait_words(est)}" if est is not None else "") + ")")
     done = [j for j in testq_jobs(ctx, ("done", "failed", "cancelled"))][-5:]
     if done:
         print("recent:")

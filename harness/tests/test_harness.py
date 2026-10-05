@@ -2320,6 +2320,12 @@ class IntermediaryWake(unittest.TestCase):
         self.assertIn("new ask t-1", calls[1][4])
         self.assertIn("harness ask --idle", calls[1][4])
 
+    def test_a_terminal_session_is_never_stopped(self):
+        ok, _, calls = self.wake({"status": "idle", "kind": "interactive", "sessionId": "a" * 36},
+                                 "a" * 36)
+        self.assertEqual(calls, [])
+        self.assertEqual(hz.intermediary_inbox(self.pdir, take=True), ["new ask t-1"])
+
     def test_none_starts_fresh_and_inbox_rides_along(self):
         hz.intermediary_inbox(self.pdir, "earlier")
         ok, _, calls = self.wake(None, None)

@@ -10841,6 +10841,11 @@ def intermediary_wake(pdir, repo, why):
     if live and live.get("status") == "busy":
         intermediary_inbox(pdir, why)
         return True, f"{intermediary_name(repo)} is working; queued for its next stop"
+    if live and live.get("kind") not in (None, "background"):
+        # The owner's own terminal session (`--fg`): never stopped under them.
+        intermediary_inbox(pdir, why)
+        return True, (f"{intermediary_name(repo)} is open in a terminal; queued — it reads it at "
+                      f"`harness ask --idle`")
     lock.write_text(_now())
     try:
         whys = intermediary_inbox(pdir, take=True) + [why]

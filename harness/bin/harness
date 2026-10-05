@@ -10693,7 +10693,9 @@ def cmd_ask(a):
     elif v == "done":
         ask_done(pdir, path, rec, a.text)
         item_close_detached(pdir, rec["id"])
-        print(f"done {rec['id']}; {rec.get('asker_node')} is rung, and told when it next orients")
+        print(f"closed {rec['id']}" if rec.get("asker_node") in ("owner", "operator", "documenter")
+              else f"done {rec['id']}; {rec.get('asker_node')} is rung, and told when it next "
+                   f"orients")
     elif v == "msg":
         by = "owner"
         if os.environ.get("HARNESS_DOCUMENTER") == "1":

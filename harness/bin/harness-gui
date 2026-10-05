@@ -138,7 +138,7 @@ ASK_OPEN = ("asked", "ready", "drafted")
 ASK_OWNERS = ("ready", "drafted")
 
 
-def intermediary(rows, repo):
+def intermediary(rows, repo, wt_of=None):
     """A project's intermediary session, found by its name on the roster. One
     per project, so each project's panel says whether ITS one is up.
 
@@ -155,8 +155,16 @@ def intermediary(rows, repo):
     if r is None:
         return dict(out, running=False)
     a, c = CLI.last_turn(r.get("sessionId") or "")
+    stopped, stop = CLI.is_stopped(r), CLI.stop_detail(r, rows)
+    # Waiting on a reply from a node it messaged: that node, found by the
+    # worktree its session runs in, so the page can draw the line to it.
+    on = None
+    if stopped and (stop or {}).get("kind") == "reply":
+        t = next((x for x in rows if x.get("name") == stop.get("on")), None)
+        if t:
+            on = next((n for n, w in (wt_of or {}).items() if w and w == t.get("cwd")), None)
     return dict(out, running=True, status=r.get("status"), context=c, sid=r.get("sessionId"),
-                stopped=CLI.is_stopped(r), stop=CLI.stop_detail(r, rows),
+                stopped=stopped, stop=stop, waits_on=on,
                 idle=(None if r.get("status") == "busy" or a is None else int(a)),
                 # The roster's startedAt is epoch ms, as on a node card.
                 up=(int(time.time() - r["startedAt"] / 1000)
@@ -621,7 +629,7 @@ def read_state():
                          "nodes": nodes,
                          "orphan_marks": sorted(orphans, key=lambda o: o["task"]),
                          "asks": asks, "rulings": rulings,
-                         "intermediary": intermediary(rows, repo),
+                         "intermediary": intermediary(rows, repo, wt_of),
                          "chat": CLI.intermediary_chat(pdir)[-40:],
                          "documenter": documenter(rows, pdir, repo, asks),
                          "indexed_at": idx.get("generated")})
@@ -717,6 +725,7 @@ border-left:1px solid var(--line);width:0;height:22px}
 .waits{position:absolute;left:0;top:0;pointer-events:none;overflow:visible}
 .waits path{fill:none;stroke:var(--wait);stroke-width:2.5}
 .waits path.held{stroke:var(--held);stroke-dasharray:6 4}
+.waits path.msg{stroke:var(--wait);stroke-width:1.6;stroke-dasharray:2 4;stroke-linecap:round}
 
 .card{display:inline-block;min-width:158px;max-width:300px;background:var(--panel);
 border:1px solid var(--line);border-radius:9px;padding:8px 11px;text-align:left;
@@ -845,9 +854,11 @@ border:1px solid var(--line);border-radius:3px;letter-spacing:.06em;text-transfo
 /* A project's intermediary: beside its tree, never in it. It is not a node --
    it answers to the owner, not to a lead -- so it is drawn like a card and
    visibly not one: dashed, and off to the side. */
-.treerow{display:flex;gap:16px;align-items:flex-start}
-.treerow>.scroll{flex:1;min-width:0}
-.sidecol{width:240px;flex:none}
+.treerow>.scroll{min-width:0}
+.tspace{position:relative;display:flex;gap:26px;align-items:flex-start;width:max-content;
+  min-width:100%}
+.tspace>.tree{flex:1}
+.sidecol{width:240px;flex:none;padding-top:22px}
 .card.interm{display:block;max-width:none;border-style:dashed;border-color:#4a5536}
 .card.interm.busy{border-color:#4a6b30}
 .card.interm.dup{border-color:var(--warn)}
@@ -867,7 +878,7 @@ border-radius:5px;font:inherit;font-size:11px;padding:2px 6px}
 .card.doc .act{cursor:pointer;border-bottom:1px dotted currentColor}
 .card.interm a{color:var(--dim)}
 .card.interm a:hover{color:var(--ink)}
-@media (max-width:960px){.treerow{flex-direction:column}.sidecol{width:100%}}
+
 .ohead{background:var(--panel);border:1px solid var(--line);padding:6px 13px;
 margin-bottom:8px;display:flex;gap:14px;align-items:baseline}
 .ohead b{font-weight:400;color:var(--dim);font-size:11px;letter-spacing:.06em;
@@ -1507,6 +1518,9 @@ function intermCard(p) {
   if (im.running === null) who = '<div class="ln u">unknown &mdash; the roster could not be read</div>';
   else if (!im.running)    who = '<div class="ln q">asleep &mdash; wakes when an ask or ' +
       'your question needs it</div>';
+  else if (reply && im.waits_on) who = '<div class="ln">messaged <span class="ito" data-on="' +
+      esc(im.waits_on) + '"><b>' + esc(im.waits_on) + '</b></span>, waiting on its reply' + age(s) +
+      '</div>' + meter(s);
   else if (reply)          who = '<div class="ln">waiting on <b>you</b>' + age(s) +
       '</div>' + meter(s);
   else if (im.stopped)     who = '<div class="ln dup">' + (im.stop
@@ -1535,9 +1549,11 @@ function tree(nodes, side) {
   });
   const li = n => '<li>' + card(n) +
     (kids[n.name] ? '<ul>' + kids[n.name].map(li).join('') + '</ul>' : '') + '</li>';
-  return '<div class="treerow"><div class="scroll"><div class="tree"><ul>' +
-         roots.map(li).join('') + '</ul></div></div>' +
-         (side ? '<div class="sidecol">' + side + '</div>' : '') + '</div>';
+  // The side cards share the tree's scrolling space, on its left, so a line
+  // from one to a node is drawn in the same coordinates as the tree's own.
+  return '<div class="treerow"><div class="scroll"><div class="tspace">' +
+         (side ? '<div class="sidecol">' + side + '</div>' : '') +
+         '<div class="tree"><ul>' + roots.map(li).join('') + '</ul></div></div></div></div>';
 }
 
 async function tick() {
@@ -2064,7 +2080,7 @@ window.addEventListener('hashchange', () => {
 // The path from each waiting card up to its lead's card: up from the child,
 // across, and down into the lead, over the tree's own connectors.
 function drawWaits() {
-  document.querySelectorAll('.tree').forEach(t => {
+  document.querySelectorAll('.tspace').forEach(t => {
     t.querySelectorAll('svg.waits').forEach(x => x.remove());
     const box = t.getBoundingClientRect(), ds = [];
     t.querySelectorAll('.wto, .hto').forEach(m => {
@@ -2091,6 +2107,19 @@ function drawWaits() {
       }
       ds.push([m.classList.contains('hto') ? 'held' : '',
                'M' + x1 + ' ' + y1 + 'V' + ym + 'H' + x2 + 'V' + y2]);
+    });
+    // The intermediary messaged a node and waits on its reply: a dotted line
+    // from its card's right edge, along the gutter, over the node's row and
+    // down into it.
+    t.querySelectorAll('.ito').forEach(m => {
+      const c = m.closest('.card');
+      const slug = (c && c.dataset.live || '').split(':')[1];
+      const n = t.querySelector('[data-live="card:' + slug + ':' + m.dataset.on + '"]');
+      if (!n) return;
+      const a = c.getBoundingClientRect(), b = n.getBoundingClientRect();
+      const x1 = a.right - box.left, y1 = a.top + 18 - box.top, gx = x1 + 13;
+      const x2 = b.left + b.width / 2 - box.left, y2 = b.top - box.top;
+      ds.push(['msg', 'M' + x1 + ' ' + y1 + 'H' + gx + 'V' + (y2 - 11) + 'H' + x2 + 'V' + y2]);
     });
     if (!ds.length) return;
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');

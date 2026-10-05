@@ -568,6 +568,11 @@ border-top:1px solid var(--line);width:50%;height:22px}
 .tree>ul>li::before,.tree>ul>li::after{display:none}
 .tree ul ul::before{content:'';position:absolute;top:0;left:50%;
 border-left:1px solid var(--line);width:0;height:22px}
+/* A wait between a child and its lead is drawn over the connectors, child to
+   lead, in the wait colour (drawWaits). */
+.tree{position:relative}
+.waits{position:absolute;left:0;top:0;pointer-events:none;overflow:visible}
+.waits path{fill:none;stroke:var(--wait);stroke-width:2.5}
 
 .card{display:inline-block;min-width:158px;max-width:300px;background:var(--panel);
 border:1px solid var(--line);border-radius:9px;padding:8px 11px;text-align:left;
@@ -1136,15 +1141,16 @@ function card(n) {
   // children's cards one at a time.
   const w = n.waiting;
   const wait = w
-    ? '<div class="wt">stopped on <b>' + esc(w.parent || 'its lead') + '</b> &middot; ' +
+    ? '<span class="wto" hidden data-on="' + esc(w.parent || '') + '"></span>' +
+      '<div class="wt">waiting on <b>' + esc(w.parent || 'its lead') + '</b> &middot; ' +
       esc(w.age || '') + '</div>' +
       '<div class="wt q">' + esc(w.asked || 'nothing recorded') + '</div>' +
       (w.still_moving ? '<div class="wt s">still moving: ' + esc(w.still_moving) +
                         '</div>' : '')
     : '';
   const owes = (n.awaited_by || []).length
-    ? '<div class="wt o">' + n.awaited_by.length + ' waiting on you: ' +
-      esc(n.awaited_by.join(', ')) + '</div>' : '';
+    ? n.awaited_by.map(c => '<div class="wt o"><b>' + esc(c) + '</b> waiting on <b>' +
+        esc(n.name) + '</b></div>').join('') : '';
   // Beside the node it is directed AT, naming where it came FROM. One line, the
   // point first, the command behind a click -- rich about what it is, short
   // about saying it.
@@ -1634,6 +1640,35 @@ window.addEventListener('hashchange', () => {
 // IN by tagging it, and forgetting to tag one shows up as a stale number, which
 // is visible. The exclude list it replaces failed the other way -- forgetting to
 // exempt something ate your work silently.
+// The path from each waiting card up to its lead's card: up from the child,
+// across, and down into the lead, over the tree's own connectors.
+function drawWaits() {
+  document.querySelectorAll('.tree').forEach(t => {
+    t.querySelectorAll('svg.waits').forEach(x => x.remove());
+    const box = t.getBoundingClientRect(), ds = [];
+    t.querySelectorAll('.wto').forEach(m => {
+      const c = m.closest('.card');
+      const key = c && c.dataset.live || '';
+      const slug = key.split(':')[1];
+      const lead = m.dataset.on &&
+        t.querySelector('[data-live="card:' + slug + ':' + m.dataset.on + '"]');
+      if (!lead) return;
+      const a = c.getBoundingClientRect(), b = lead.getBoundingClientRect();
+      const x1 = a.left + a.width / 2 - box.left, y1 = a.top - box.top;
+      const x2 = b.left + b.width / 2 - box.left, y2 = b.bottom - box.top;
+      const ym = y1 - 22;
+      ds.push('M' + x1 + ' ' + y1 + 'V' + ym + 'H' + x2 + 'V' + y2);
+    });
+    if (!ds.length) return;
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'waits');
+    svg.setAttribute('width', t.scrollWidth); svg.setAttribute('height', t.scrollHeight);
+    svg.innerHTML = ds.map(d => '<path d="' + d + '"/>').join('');
+    t.appendChild(svg);
+  });
+}
+window.addEventListener('resize', drawWaits);
+
 function paint(h) {
   // Nothing is replaced while prose is being written into this page. The
   // include list protects a textarea that the poll knows about; it cannot
@@ -1651,6 +1686,7 @@ function paint(h) {
   // to patch into. This is the only path that rebuilds, and it is rare.
   if (keys(tpl) !== keys(root)) {
     root.innerHTML = h;
+    drawWaits();
     return;
   }
   Array.prototype.forEach.call(tpl.querySelectorAll('[data-live]'), fresh => {
@@ -1659,6 +1695,7 @@ function paint(h) {
     if (cur.className !== fresh.className) cur.className = fresh.className;
     if (cur.innerHTML !== fresh.innerHTML) cur.innerHTML = fresh.innerHTML;
   });
+  drawWaits();
 }
 tick(); setInterval(tick, 3000);
 </script></body></html>"""

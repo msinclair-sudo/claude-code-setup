@@ -58,7 +58,7 @@ A brief written for you is a segment to split or start. `whoami` says `handed N 
 harness brief <sub-task> --for <child> --from <the-brief-you-were-handed> --write "..."
 ```
 
-`--from` records the split; without it your children never learn the work exists. Give each part `--covers N,N` for the parent's numbered CHECKS it delivers: the split then names any clause no part covers, and the segment cannot read settled or close (without `--force`) while one is uncovered. You can only split a brief written for you. Moving an existing part to another segment needs `--move`, and prints both segments' settled counts. Each child gets a whole specification, rewritten, not your brief forwarded or sent in pieces. Read `harness charter` before splitting; a part that traces to no feature is worth querying upward. If brief and charter disagree, ask your lead.
+`--from` records the split; without it your children never learn the work exists. Give each part `--covers N,N` for the parent's numbered clauses it delivers (`(n)`, `n.` or `n)` under a CHECKS./DONE. paragraph or a heading naming checks or done): the split then names any clause no part covers, and the segment cannot read settled or close (without `--force`) while one is uncovered. You can only split a brief written for you. Moving an existing part to another segment needs `--move`, and prints both segments' settled counts. Each child gets a whole specification, rewritten, not your brief forwarded or sent in pieces. Read `harness charter` before splitting; a part that traces to no feature is worth querying upward. If brief and charter disagree, ask your lead.
 
 A split segment leaves your queue but is not done. Orientation says when every part is signed off (`close   N segment(s) you split are finished`); then run `harness mark <segment> --close`. It refuses while any part is open, and an abandoned part blocks it too, so a segment with an abandoned part closes only with `--force`. Closing a segment recycles nothing.
 
@@ -192,7 +192,7 @@ harness recycle <node> --escalate [--dry-run]   # one effort level up
 harness recycle <node> --at-quiet               # a lead too big to keep: reset at its next quiet turn end
 ```
 
-`status` shows each node's context (`ctx 442k`); a lead over its rank's threshold (300k unless `tree.json` sets `context_warn`) is named in your orientation. A busy lead is never idle, so `--at-quiet` is the reset for it: its own Stop hook first makes it write context-only state into the records, then replaces it at the next turn end with nothing owed. Leads launch with `--autocompact 350k` (`autocompact` in `tree.json`). A pending reset fires regardless at its ceiling (`--by`, default 400k for a lead; `--within`, default 60m). Until then hold non-urgent messages to that lead: each one restarts its quiet clock.
+`status` shows each node's context (`ctx 442k`); a lead over its rank's threshold (300k unless `tree.json` sets `context_warn`) is named in your orientation. A busy lead is never idle, so `--at-quiet` is the reset for it: its own Stop hook first makes it write context-only state into the records, then replaces it at the next turn end with nothing owed. Leads launch with `--autocompact 350k` (`autocompact` in `tree.json`). A pending reset fires regardless at its ceiling (`--by`, default 400k for a lead; `--within`, default 60m); a lead found busy keeps it pending and is retried at its next turn end. `--cancel-reset` withdraws one; `--dry-run` writes nothing. Until then hold non-urgent messages to that lead: each one restarts its quiet clock.
 
 Recycle a child once its work has landed and after sign-off (`--close` does it for you), and replace a cold session rather than speaking to it. Leads too. Close the task record first or `--idle` reads the node as working. It refuses on a dirty worktree, unintegrated commits, a busy session, an unpresented mark and rank 0; take each refusal at face value. If a child asked only by message, answer before recycling.
 
@@ -217,7 +217,7 @@ A brief from a finding is gated on approval, unless rank 0 handed the finding do
 
 ## Asking the owner (`T17`)
 
-Only for what the tree can't settle: intent, judgement, something only the owner can do, or risk they must accept. `harness ask <task> --kind intent|judgement|action|risk --question "..."` (the task needs a brief), then `SendMessage` the project's intermediary (`harness ask` names it) "new ask <id>" and carry on. It may question you; answer it. The ruling lands on the task's brief (`harness brief <task>`) and orientation tells you; a rejected or returned ask is said once. Lanes ask you, not the owner.
+Only for what the tree can't settle: intent, judgement, something only the owner can do, or risk they must accept. `harness ask <task> --kind intent|judgement|action|risk --question "..."` (the task needs a brief), then `SendMessage` the project's intermediary (`harness ask` names it) "new ask <id>" and carry on. It may question you; answer it. The ruling lands on the task's brief (`harness brief <task>`) and orientation tells you; a rejected or returned ask is said once. Lanes ask you, not the owner. A list of files for the owner to delete goes through `harness cited <path>...` first; `--deletable` prints only what no open record needs.
 
 ## You are also somebody's child
 

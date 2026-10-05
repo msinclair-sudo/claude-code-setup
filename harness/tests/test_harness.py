@@ -541,6 +541,58 @@ class ResetCeiling(unittest.TestCase):
         self.assertTrue(self.step(410_000, later))
         self.assertTrue(self.step(300_000, time.time() - 1))
 
+    def test_a_busy_lead_keeps_the_reset_pending(self):
+        """obs 73: the record outlives a launch; a skip leaves it to retry."""
+        self.assertTrue(self.step(410_000, time.time() + 3600))
+        p = hz.reset_path(self.ctx, "dev")
+        self.assertTrue(p.exists())
+        with mock.patch.object(hz, "reset_quiet", return_value=False), \
+             mock.patch.object(hz, "context_size", return_value=410_000), \
+             mock.patch.object(hz, "launch_reset") as launch:
+            self.assertFalse(hz.reset_step(self.ctx, "dev"))      # in flight: once
+            hz.reset_outcome(self.ctx, "dev", "busy")
+            self.assertTrue(json.loads(p.read_text())["skipped_at"])
+            self.assertTrue(hz.reset_step(self.ctx, "dev"))       # retried
+            self.assertEqual(launch.call_count, 1)
+        hz.reset_outcome(self.ctx, "dev")
+        self.assertFalse(p.exists())                              # gone on success
+
+    def test_dry_run_writes_nothing_and_cancel_is_a_command(self):
+        """obs 72."""
+        p = hz.reset_path(self.ctx, "dev")
+        self.ctx.branch = "main"
+        self.ctx.tree["nodes"]["main"]["branch"] = "main"
+        with mock.patch.object(hz, "context_limits", return_value=(300_000, None)), \
+             redirect_stdout(io.StringIO()):
+            hz.request_reset(self.ctx, ["dev"], dry_run=True)
+            self.assertFalse(p.exists())
+            hz.request_reset(self.ctx, ["dev"])
+            self.assertTrue(p.exists())
+            hz.request_reset(self.ctx, ["dev"], dry_run=True, cancel=True)
+            self.assertTrue(p.exists())
+            hz.request_reset(self.ctx, ["dev"], cancel=True)
+            self.assertFalse(p.exists())
+
+
+class Cited(unittest.TestCase):
+    """obs 74: does an open record still need a path, before the owner deletes it."""
+
+    def test_open_records_only_and_every_form(self):
+        ctx = FakeCtx({"main": None})
+        ctx.repo = Path("/r")
+        home = str(Path.home())
+        texts = [("brief open", f'{{"text": "replay from ~/data/backup-2026.db"}}'),
+                 ("fact f", '{"command": "ls scratch/run.py"}')]
+        with mock.patch.object(hz, "open_record_texts", return_value=texts), \
+             mock.patch.object(hz, "load_index", return_value={"byWorktree": {"/r-dev": "dev"}}):
+            got = hz.cited(ctx, [f"{home}/data/backup-2026.db", "/r-dev/scratch/run.py",
+                                 "/elsewhere/backup-2026.db", f"{home}/data/other.bin"])
+        self.assertEqual(got[f"{home}/data/backup-2026.db"], [("brief open", "names it")])
+        self.assertEqual(got["/r-dev/scratch/run.py"], [("fact f", "names it")])
+        self.assertEqual(got["/elsewhere/backup-2026.db"],
+                         [("brief open", "names backup-2026.db")])     # by name: careful
+        self.assertEqual(got[f"{home}/data/other.bin"], [])
+
 
 class TimeGate(unittest.TestCase):
     """obs 70: a task can wait on a clock, read by every start path."""
@@ -794,6 +846,8 @@ class LeadContext(unittest.TestCase):
             with mock.patch.object(hz, "reset_quiet", return_value=True):
                 self.assertTrue(hz.reset_step(self.ctx, "dev", launch_only=True))
             go.assert_called_once()
+        self.assertTrue(p.exists())             # kept until the recycle succeeds (obs 73)
+        hz.reset_outcome(self.ctx, "dev")
         self.assertFalse(p.exists())
 
 
@@ -936,6 +990,9 @@ class Covers(unittest.TestCase):
     def test_clauses_come_from_the_checks_paragraph(self):
         self.assertEqual(hz.brief_clauses(self.TEXT), {1, 2, 3})
         self.assertEqual(hz.brief_clauses("no numbers here"), set())
+        # obs 71: markdown headings and list markers, as rank 0 writes them.
+        self.assertEqual(hz.brief_clauses("## Done means\n1. a\n2) b\n## Notes\n3. no"),
+                         {1, 2})
 
     def test_settled_parts_with_an_uncovered_clause_are_not_ready(self):
         self.w("s6a", {"task": "s6a", "node": "dev_1", "from": "s6", "covers": [2]})

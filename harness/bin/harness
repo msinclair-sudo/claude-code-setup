@@ -546,11 +546,23 @@ def reset_ceiling(r):
     return f"forced at {ktok(r.get('by_tokens'))} or {t}"
 
 
-def request_reset(ctx, nodes, by=None, within=None):
+def request_reset(ctx, nodes, by=None, within=None, dry_run=False, cancel=False):
     """`recycle <node> --at-quiet` (obs 60): recorded here, carried out by the
-    node's own Stop hook, which flushes first and resets at a quiet turn end."""
+    node's own Stop hook, which flushes first and resets at a quiet turn end.
+    `--dry-run` writes nothing (obs 72); `--cancel-reset` withdraws one."""
     if not nodes:
         die(REFUSED, "which node? harness recycle <node> --at-quiet")
+    if cancel:
+        for n in nodes:
+            p = reset_path(ctx, n)
+            if dry_run:
+                print(f"would cancel the pending reset of {n}" if p.exists()
+                      else f"no reset pending for {n}")
+            elif p.exists():
+                p.unlink(); print(f"cancelled the pending reset of {n}")
+            else:
+                print(f"no reset pending for {n}")
+        return
     me = next((n for n, sp in ctx.tree["nodes"].items()
                if sp.get("branch") == ctx.branch), None)
     for n in nodes:
@@ -567,13 +579,18 @@ def request_reset(ctx, nodes, by=None, within=None):
                "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                "by_tokens": _ktok_arg(by) if by else warn + 100_000,
                "deadline": time.time() + 60 * (_minutes_arg(within) if within else 60)}
+        if dry_run:
+            print(f"would set a reset pending for {n}, {reset_ceiling(rec)}. "
+                  f"Nothing written (--dry-run).")
+            continue
         p.write_text(json.dumps(rec) + "\n")
         print(f"reset pending for {n}. At its next turn end it is asked to write what it "
               f"holds only in\n  context into the records; at the next quiet one after "
               f"that it is replaced, or regardless\n  once it is "
               f"{reset_ceiling(rec)}.\n"
               f"  Hold non-urgent messages to {n} until then: each one restarts the quiet clock.\n"
-              f"  `harness status` shows it; cancel it with rm {p}")
+              f"  `harness status` shows it; cancel it with "
+              f"harness recycle {n} --cancel-reset")
 
 
 def reset_step(ctx, node, launch_only=False):
@@ -594,10 +611,37 @@ def reset_step(ctx, node, launch_only=False):
             f"`harness brief`, `--after`). Then end your turn."}}))
         return True
     if r.get("flushed") and (reset_quiet(ctx, node) or reset_due(ctx, node, r)):
+        # The record stays until a recycle succeeds (obs 73): deleted here, a
+        # launch that found the lead busy dropped the reset, twice. In flight,
+        # it is not launched again; a skip clears the mark and the next turn
+        # end retries.
+        if time.time() - (r.get("launched_at") or 0) < RESET_INFLIGHT:
+            return False
+        r["launched_at"] = time.time()
+        p.write_text(json.dumps(r) + "\n")
         launch_reset(ctx, node)
-        p.unlink()
         return True
     return False
+
+
+RESET_INFLIGHT = 300       # seconds a launched reset is left to finish
+
+
+def reset_outcome(ctx, node, why=None):
+    """A launched reset's result, written back by `recycle`: success removes the
+    record; a skip keeps it, says why, and lets the next turn end retry."""
+    p = reset_path(ctx, node)
+    if not p.exists():
+        return
+    if why is None:
+        p.unlink(); return
+    try:
+        r = json.loads(p.read_text())
+    except Exception:
+        return
+    r.pop("launched_at", None)
+    r["skipped_at"], r["skipped_why"] = time.time(), why
+    p.write_text(json.dumps(r) + "\n")
 
 
 def reset_due(ctx, node, r):
@@ -2506,7 +2550,14 @@ def lead_owes(ctx, node):
             continue
         size = context_size(held.get("ref"))
         if size and size > warn:
-            owed.append(("heavy", k, f"{ktok(size)} (warn {ktok(warn)})", 0))
+            try:
+                rr = json.loads(reset_path(ctx, k).read_text())
+            except Exception:
+                rr = {}
+            owed.append(("heavy", k, f"{ktok(size)} (warn {ktok(warn)})" + (
+                f"; reset overdue: skipped {rr.get('skipped_why') or 'busy'} at "
+                f"{time.strftime('%H:%M', time.localtime(rr['skipped_at']))}, retries at "
+                f"its next turn end" if rr.get("skipped_at") else ""), 0))
     return owed
 
 
@@ -4576,8 +4627,8 @@ def cmd_recycle(a):
     worktree made with `git worktree add`; measured 2026-10-05.)
     """
     ctx = Ctx(); ctx.require_enrolled()
-    if a.at_quiet:
-        return request_reset(ctx, a.node, a.by, a.within)
+    if a.at_quiet or a.cancel_reset:
+        return request_reset(ctx, a.node, a.by, a.within, a.dry_run, a.cancel_reset)
     idx = load_index(ctx, refresh=True)
     if a.when_idle:
         wait_until_idle(idx, a.node)
@@ -4804,6 +4855,8 @@ def cmd_recycle(a):
             # claim it.
             print(f"  skip {n:<12} not recycled — still in this worktree: "
                   f"{', '.join(unstopped)}")
+            if a.when_idle and not a.dry_run:
+                reset_outcome(ctx, n, "busy")
             continue
 
         # Resolved BEFORE the dry-run branch: a dry run that cannot show the
@@ -4842,6 +4895,7 @@ def cmd_recycle(a):
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         print(f"  recycled {n:<12} {model}/{effort:<7} fresh context"
               + (f"  +{len(gr)} grant(s)" if gr else ""))
+        reset_outcome(ctx, n)
         done += 1
 
     verb = "would recycle" if a.dry_run else "recycled"
@@ -6117,13 +6171,28 @@ _CLAUSE_PARA = re.compile(r"^\s*(CHECKS|DONE)\b[.:]?(.*?)(?=^\s*[A-Z][A-Z ]{2,}[
                           re.M | re.S)
 
 
+_CLAUSE_HEAD = re.compile(r"^(#{1,6})\s+(.*\b(?:checks?|done)\b.*)$", re.M | re.I)
+_CLAUSE_MARK = re.compile(r"\((\d{1,2})\)|^\s*(\d{1,2})[.)]\s", re.M)
+CLAUSE_FORMS = ("`(n)`, `n.` or `n)` markers, in a paragraph starting CHECKS. or "
+                "DONE., or under a heading naming checks or done")
+
+
 def brief_clauses(text):
-    """The numbered clauses a segment must deliver: `(n)` markers in its CHECKS.
-    (and DONE.) paragraphs (obs 58). Empty when the brief numbers none."""
-    out = set()
-    for _, body in _CLAUSE_PARA.findall(text or ""):
-        out |= {int(n) for n in re.findall(r"\((\d{1,2})\)", body)}
-    return out
+    """The numbered clauses a segment must deliver (obs 58): `(n)`, `n.` or `n)`
+    markers in its CHECKS./DONE. paragraphs or under a markdown heading naming
+    checks or done, as rank 0's `## Done means` does (obs 71). Empty when the
+    brief numbers none."""
+    text = text or ""
+    bodies = [b for _, b in _CLAUSE_PARA.findall(text)]
+    for m in _CLAUSE_HEAD.finditer(text):
+        lvl = len(m.group(1))
+        nxt = re.compile(r"^#{1,%d}\s" % lvl, re.M).search(text, m.end())
+        bodies.append(text[m.end():nxt.start() if nxt else len(text)])
+    return {int(a or b) for body in bodies for a, b in _CLAUSE_MARK.findall(body)}
+
+
+def brief_headings(text):
+    return [h.strip() for h in re.findall(r"^#{1,6}\s+(.+)$", text or "", re.M)]
 
 
 def segment_coverage(ctx, seg, kids=None):
@@ -6958,12 +7027,15 @@ def cmd_brief(a):
             if not parent_task:
                 die(REFUSED, "--covers names the parent's clauses a part delivers; it "
                              "needs --from <segment>")
-            have = brief_clauses((load_brief(ctx, parent_task)[1] or {}).get("text"))
+            ptext = (load_brief(ctx, parent_task)[1] or {}).get("text")
+            have = brief_clauses(ptext)
             bad = [n for n in want if n not in have]
             if bad:
+                hs = brief_headings(ptext)
                 die(REFUSED, f"'{parent_task}' has no clause {', '.join(map(str, bad))}"
                              + (f" (it numbers {', '.join(map(str, sorted(have)))})" if have
-                                else " — it numbers none in its CHECKS. paragraph"))
+                                else f" — it numbers none. Looked for {CLAUSE_FORMS}"
+                                     + (f"; its headings: {', '.join(hs)}" if hs else "")))
             rec["covers"] = want
         elif (b or {}).get("covers"):
             rec["covers"] = b["covers"]
@@ -9163,6 +9235,78 @@ def sweep_sessions(ctx, a):
     print(f"removed {len(gone)} session(s)" + (f", {len(failed)} failed" if failed else ""))
 
 
+def open_record_texts(ctx):
+    """(who, text) for every record that still needs what it names: open briefs
+    and marks, open findings, facts, and holds. Closed and archived work doesn't."""
+    out = []
+    for k, b in all_briefs(ctx).items():
+        if not superseded(b) and task_state(ctx, b.get("task") or k) not in ("closed", "superseded"):
+            out.append((f"brief {b.get('task') or k}", json.dumps(b)))
+    for k, r in open_marks(ctx).items():
+        out.append((f"mark {k}", json.dumps(r)))
+    for k, r in open_findings(ctx).items():
+        out.append((f"finding {k}", json.dumps(r)))
+    for k, r in all_facts(ctx).items():
+        out.append((f"fact {k}", json.dumps(r)))
+    for h in live_holds(ctx):
+        out.append((f"hold by {h.get('by')}", json.dumps(h)))
+    return out
+
+
+def path_forms(ctx, path):
+    """The ways a record might write one path: absolute, ~/, $HOME/, and relative
+    to the repository or any node's worktree. JSON escapes nothing in these."""
+    ab = _expand(path)
+    home = str(Path.home())
+    forms = {ab}
+    if ab.startswith(home + "/"):
+        forms |= {"~" + ab[len(home):], "$HOME" + ab[len(home):]}
+    roots = {str(ctx.repo)} | set((load_index(ctx).get("byWorktree") or {}))
+    for r in roots:
+        if ab.startswith(r.rstrip("/") + "/"):
+            forms.add(ab[len(r.rstrip("/")) + 1:])
+    return ab, forms
+
+
+def cited(ctx, paths):
+    """{path: [(who, how)]}: the open records that name each path (obs 74)."""
+    texts = open_record_texts(ctx)
+    out = {}
+    for p in paths:
+        ab, forms = path_forms(ctx, p)
+        base = Path(ab).name
+        hits = []
+        for who, t in texts:
+            if any(f in t for f in forms):
+                hits.append((who, "names it"))
+            elif len(base) >= 8 and base in t:
+                hits.append((who, f"names {base}"))
+        out[p] = hits
+    return out
+
+
+def cmd_cited(a):
+    """`harness cited <path>...`: does an open record still need this? Run it on
+    a deletion list before it goes to the owner (obs 74); `sweep` protects what
+    records name only when the harness does the deleting."""
+    ctx = Ctx(); ctx.require_enrolled()
+    res = cited(ctx, a.paths)
+    if a.deletable:
+        for p, hits in res.items():
+            if not hits:
+                print(p)
+        return
+    for p, hits in res.items():
+        if not hits:
+            print(f"free    {p}")
+            continue
+        print(f"NEEDED  {p}")
+        for who, how in hits:
+            print(f"        {who} {how}")
+    if any(res.values()):
+        sys.exit(REFUSED)
+
+
 def cmd_sweep(a):
     """`sweep` lists complete units; `sweep <unit> --dry-run` shows one; with
     `--why` rank 0 runs it, or `--keep --why` declines it. Both are ledgered."""
@@ -10190,6 +10334,8 @@ def main():
     rcy.add_argument("--by", metavar="TOKENS",
                      help="with --at-quiet: reset regardless once its context reaches this "
                           "(default: its warning + 100k, 400k for a lead)")
+    rcy.add_argument("--cancel-reset", action="store_true",
+                     help="withdraw a reset set pending with --at-quiet")
     rcy.add_argument("--within", metavar="MIN",
                      help="with --at-quiet: reset regardless after this long (default 60m)")
     rcy.add_argument("--when-idle", action="store_true", help=argparse.SUPPRESS)
@@ -10394,6 +10540,10 @@ def main():
     hd.add_argument("--until", metavar="TASK", help="lifts when TASK is signed off")
     hd.add_argument("--release", action="store_true")
     hd.add_argument("--list", action="store_true")
+    ct = add("cited", cmd_cited)
+    ct.add_argument("paths", nargs="+", metavar="PATH")
+    ct.add_argument("--deletable", action="store_true",
+                    help="print only the paths no open record needs")
     sw = add("sweep", cmd_sweep)
     sw.add_argument("unit", nargs="?", help="a complete unit (see bare `harness sweep`)")
     sw.add_argument("--dry-run", action="store_true")

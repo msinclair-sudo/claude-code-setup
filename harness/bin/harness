@@ -204,7 +204,24 @@ def stopped_rows(rows):
     return [r for r in rows if is_stopped(r)]
 
 
+LAUNCHED = "@launch"     # a stop whose turn began from the harness's own launch prompt
+
+
+def job_intent(row):
+    """The prompt a background session was launched with, from its job record."""
+    try:
+        return (json.loads((JOBS / (row.get("id") or "") / "state.json").read_text())
+                .get("intent") or "").strip()
+    except Exception:
+        return ""
+
+
 FROM_NAME = re.compile(r'<cross-session-message[^>]*\bfrom-name="([^"]+)"')
+
+
+def ctx_parent(idx, node):
+    """A node's lead, from an index's nodes table."""
+    return ((idx.get("nodes") or {}).get(node) or {}).get("parent")
 
 
 def stop_detail(row, rows=None, tail=256 * 1024):
@@ -230,7 +247,8 @@ def stop_detail(row, rows=None, tail=256 * 1024):
     try:
         with open(t, "rb") as fh:
             fh.seek(0, 2)
-            fh.seek(max(0, fh.tell() - tail))
+            whole = tail is None or fh.tell() <= tail
+            fh.seek(0 if tail is None else max(0, fh.tell() - tail))
             lines = fh.read().decode("utf-8", "replace").splitlines()
     except OSError:
         return None
@@ -274,7 +292,16 @@ def stop_detail(row, rows=None, tail=256 * 1024):
                 if not hit and e.get("isMeta"):
                     continue               # injected context, not the prompt
                 on = hit.group(1) if hit else ""
+                if not hit and text.strip() and text.strip() == job_intent(row):
+                    # The harness's own launch prompt, not the owner's words: a
+                    # lane started by spawn or recycle answers to its lead
+                    # (2026-10-05: dev_tests_1 read "waiting on you").
+                    on = LAUNCHED
             break
+    if kind == "reply" and on is None and not whole:
+        # The turn began before the tail: a lane that worked its whole queue in
+        # one turn. Reading the start is what tells its lead from the owner.
+        return stop_detail(row, rows, tail=None)
     if kind != "reply":
         return None
     if (on or "").startswith("uds:"):
@@ -899,8 +926,9 @@ def _whoami(a):
                 if st and st["kind"] == "reply":
                     # A finished turn: a wait nobody recorded. Yours only when
                     # its last word went to you.
-                    on = next((_bw.get(x.get("cwd", "")) for x in _rows
-                               if x.get("name") == st["on"]), None)
+                    on = (node if st["on"] == LAUNCHED else
+                          next((_bw.get(x.get("cwd", "")) for x in _rows
+                                if x.get("name") == st["on"]), None))
                     if on == node:
                         print(f"WAITING  {child} finished its turn and is waiting on "
                               f"you" + (f": {st['said']}" if st["said"] else "")
@@ -2251,7 +2279,8 @@ def cmd_idle(a):
                             "name": r.get("name"), "age": age, "carry": carry,
                             "held": held, "sid": (r.get("sessionId") or "")[:8],
                             "stopped": is_stopped(r) and not reply, "stop": st,
-                            "on": (st["on"] or "you") if reply else None})
+                            "on": ((ctx_parent(idx, node) or "its lead") if st["on"] == LAUNCHED
+                                   else st["on"] or "you") if reply else None})
     if not out:
         print("no idle sessions holding a node"); return
     # Stopped first and unconditionally, whatever their age. Every other row

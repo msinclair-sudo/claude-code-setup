@@ -1614,6 +1614,22 @@ class StopKind(unittest.TestCase):
                          "proj-main")
         self.assertEqual(self.run_(*e)["on"], "an exited session")
 
+    def test_the_harness_launch_prompt_is_not_the_owner(self):
+        jobs = Path(tempfile.mkdtemp())
+        (jobs / "j1").mkdir()
+        (jobs / "j1" / "state.json").write_text(json.dumps({"intent": "Use the harness skill."}))
+        (self.proj / "p" / "s.jsonl").write_text("\n".join(json.dumps(e) for e in (
+            self.U("Use the harness skill."), self.A(self.TXT), self.END)))
+        with mock.patch.object(hz, "JOBS", jobs):
+            r = hz.stop_detail({"state": "blocked", "sessionId": "s", "id": "j1"})
+            self.assertEqual(r["on"], hz.LAUNCHED)
+            # Its prompt beyond the tail: a whole queue worked in one long turn.
+            self.assertEqual(hz.stop_detail({"state": "blocked", "sessionId": "s", "id": "j1"},
+                                            tail=60)["on"], hz.LAUNCHED)
+            (self.proj / "p" / "s.jsonl").write_text("\n".join(json.dumps(e) for e in (
+                self.U("owner typed this"), self.A(self.TXT), self.END)))
+            self.assertEqual(hz.stop_detail({"state": "blocked", "sessionId": "s", "id": "j1"})["on"], "")
+
     def test_neither(self):
         self.assertIsNone(self.run_(self.A(self.TXT), self.END, self.U("again")))
         self.assertIsNone(self.run_(self.U("go"), self.A(self.TXT), self.END,

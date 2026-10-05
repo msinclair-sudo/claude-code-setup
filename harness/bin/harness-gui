@@ -501,7 +501,8 @@ def read_state():
             st = next((s["stop"] for s in n["sessions"] or [] if s.get("stop")), None)
             if n["waiting"] or not st or st["kind"] != "reply":
                 continue
-            on = node_of.get(st["on"], st["on"])
+            on = (n.get("parent") if st["on"] == CLI.LAUNCHED
+                  else node_of.get(st["on"], st["on"]))
             idle = next((s.get("idle") for s in n["sessions"] if s.get("stop")), None)
             n["waiting"] = {"parent": on or "you", "asked": st.get("said") or "",
                             "inferred": True,
@@ -510,6 +511,27 @@ def read_state():
                                     f"{int(idle // 3600)}h{int(idle % 3600 // 60):02d}")}
             if on in by_name and n["name"] not in by_name[on]["awaited_by"]:
                 by_name[on]["awaited_by"] = sorted(by_name[on]["awaited_by"] + [n["name"]])
+        # The wait queue, traced: who each waiting node is ultimately held by,
+        # and, at the head, every node whose wait runs through it. One link per
+        # card left a chain (lane on lead on rank 0) to be pieced together.
+        def chain_of(n):
+            out, cur, seen = [], n, {n["name"]}
+            while cur and cur["waiting"]:
+                on = cur["waiting"].get("parent")
+                out.append(on)
+                cur = by_name.get(on)
+                if not cur or cur["name"] in seen:
+                    break
+                seen.add(cur["name"])
+            return out
+        for n in nodes:
+            if n["waiting"]:
+                n["waiting"]["chain"] = chain_of(n)
+        for n in nodes:
+            # Paths ending here: c ← … ← a, for every a whose chain passes through n.
+            n["held"] = [[m["name"]] + m["waiting"]["chain"][:m["waiting"]["chain"].index(n["name"])]
+                         for m in nodes if m["waiting"] and n["name"] in m["waiting"]["chain"]
+                         and m["waiting"]["chain"].index(n["name"]) >= 1]   # direct: awaited_by
         nodes.sort(key=lambda n: (n["rank"], n["name"]))
         pname = Path(repo).name
 
@@ -1232,16 +1254,20 @@ function card(n) {
     ? '<span class="wto" hidden data-on="' + esc(w.parent || '') + '"></span>' +
       '<div class="wt"' + (w.inferred ? ' title="read off its transcript: it finished ' +
         'its turn and no harness waiting record says on what"' : '') +
-      '>waiting on <b>' + esc(w.parent || 'its lead') + '</b> &middot; ' +
+      '>waiting on ' + ((w.chain && w.chain.length ? w.chain : [w.parent || 'its lead'])
+        .map(x => '<b>' + esc(x) + '</b>').join(' &rarr; ')) + ' &middot; ' +
       esc(w.age || '') + '</div>' +
       '<div class="wt q">' + esc(w.asked || (w.inferred ? 'finished its turn'
                                                         : 'nothing recorded')) + '</div>' +
       (w.still_moving ? '<div class="wt s">still moving: ' + esc(w.still_moving) +
                         '</div>' : '')
     : '';
-  const owes = (n.awaited_by || []).length
-    ? n.awaited_by.map(c => '<div class="wt o"><b>' + esc(c) + '</b> waiting on <b>' +
-        esc(n.name) + '</b></div>').join('') : '';
+  // Direct waiters, then the longer paths that end here, as a ← b ← c.
+  const owes = ((n.awaited_by || []).map(c => '<div class="wt o"><b>' + esc(c) +
+        '</b> waiting on <b>' + esc(n.name) + '</b></div>').join('')) +
+      ((n.held || []).map(path => '<div class="wt o">' +
+        path.slice().reverse().map(x => '<b>' + esc(x) + '</b>').join(' &larr; ') +
+        ' waiting on <b>' + esc(n.name) + '</b></div>').join(''));
   // Beside the node it is directed AT, naming where it came FROM. One line, the
   // point first, the command behind a click -- rich about what it is, short
   // about saying it.

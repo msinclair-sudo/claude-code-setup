@@ -8717,8 +8717,10 @@ def cmd_pairs(a):
         f = pairs_path(ctx, a.task)
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(json.dumps(rec, indent=2) + "\n")
+        now = rec.get("auto") and docs_apply_now(ctx)
         print(f"submitted {len(pairs)} pair(s) for {a.task} — "
-              + ("applied at rank 0's next quiet turn end" if rec.get("auto") else
+              + ("rank 0 is idle, so it is being applied now" if now else
+                 "applied at rank 0's next quiet turn end" if rec.get("auto") else
                  f"{dn} applies them: harness pairs apply {a.task}"))
         return
     task = a.target if a.verb == "apply" else a.verb
@@ -10872,21 +10874,43 @@ def _detached(ctx, args, log, cwd):
                          stdin=subprocess.DEVNULL, start_new_session=True)
 
 
+def _docs_launch(ctx, wt):
+    """Apply the oldest queued documenter batch in rank 0's worktree `wt`,
+    detached, if the tree is clean and no apply is in flight. True when launched."""
+    queued = [r for _, r in docs_batches(ctx) if not r.get("applied") and not r.get("refused")]
+    if not queued or not wt:
+        return False
+    rc, dirt, _ = git("status", "--porcelain", cwd=wt)
+    if rc or dirt.strip() or not docs_lock(ctx):
+        return False
+    oldest = sorted(queued, key=lambda r: r.get("at") or "")[0]
+    _detached(ctx, ["pairs", "apply", oldest["task"], "--auto"], docs_dir(ctx) / "apply.log", wt)
+    return True
+
+
+def docs_apply_now(ctx):
+    """At submit: apply straight away when rank 0's session is not mid-turn. A
+    batch waiting for a turn end sat while rank 0 idled (2026-10-05); idle is as
+    safe a moment as a turn end, and busy still waits for one."""
+    try:
+        dn, _ = doc_node(ctx)
+        wt = (load_index(ctx)["nodes"].get(dn) or {}).get("worktree")
+        rows = live_rows(agents_json())
+    except Exception:
+        return False
+    if any(r.get("cwd") == wt and r.get("status") == "busy" for r in rows):
+        return False
+    return _docs_launch(ctx, wt)
+
+
 def docs_apply_step(ctx, node):
     """Rank 0's Stop hook: apply a queued documenter batch at a quiet turn end,
     else start a documenter run when one is due. Detached both ways: the hook has
     ten seconds and the reference-transaction guard can take nine."""
     if ctx.rank(node) != 0:
         return False
-    queued = [r for _, r in docs_batches(ctx) if not r.get("applied") and not r.get("refused")]
-    if queued:
-        rc, dirt, _ = git("status", "--porcelain", cwd=ctx.worktree)
-        if dirt.strip() or not docs_lock(ctx):
-            return False
-        oldest = sorted(queued, key=lambda r: r.get("at") or "")[0]
-        _detached(ctx, ["pairs", "apply", oldest["task"], "--auto"],
-                  docs_dir(ctx) / "apply.log", ctx.worktree)
-        return True
+    if any(not r.get("applied") and not r.get("refused") for _, r in docs_batches(ctx)):
+        return _docs_launch(ctx, ctx.worktree)
     return docs_trigger(ctx)
 
 

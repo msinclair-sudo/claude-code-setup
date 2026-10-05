@@ -1856,6 +1856,21 @@ class DocRuns(unittest.TestCase):
             self.assertFalse(hz.docs_apply_step(self.ctx, "dev"))        # rank 0 only
         self.assertEqual(go.call_args.args[1], ["pairs", "apply", "docs-1", "--auto"])
 
+    def test_submit_applies_now_when_rank_0_is_idle(self):
+        q = [(Path("x"), {"task": "docs-1", "auto": True, "at": "1"})]
+        idx = {"nodes": {"main": {"worktree": "/w"}}}
+        self.ctx.tree["nodes"]["main"]["kind"] = "doc"
+        with mock.patch.object(hz, "docs_batches", return_value=q), \
+             mock.patch.object(hz, "load_index", return_value=idx), \
+             mock.patch.object(hz, "git", return_value=(0, "", "")), \
+             mock.patch.object(hz, "live_rows", lambda r: r), \
+             mock.patch.object(hz, "_detached") as go:
+            with mock.patch.object(hz, "agents_json", return_value=[{"cwd": "/w", "status": "busy"}]):
+                self.assertFalse(hz.docs_apply_now(self.ctx))           # mid-turn: wait
+            with mock.patch.object(hz, "agents_json", return_value=[{"cwd": "/w", "status": "idle"}]):
+                self.assertTrue(hz.docs_apply_now(self.ctx))
+        self.assertEqual(go.call_args.args[3], "/w")
+
     def test_trigger_at_most_once_a_day(self):
         with mock.patch.object(hz, "docs_due", return_value="over budget"), \
              mock.patch.object(hz, "_detached") as go:

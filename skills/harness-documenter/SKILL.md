@@ -13,8 +13,9 @@ decide intent, and you write only through `harness pairs submit`.
 ## Each run
 
 1. `harness docs measure` gives you the doc set, `CLAUDE.md` against its budget, reach per code
-   area, refused batches, rulings, and the last run's note. The full snapshot is a JSON file it
-   names; read that for detail.
+   area, refused batches, rulings, and the last run's note. For detail, `harness docs measure
+   --json` or Read the snapshot file it names. Your tools are `harness`, read-only `git -C`, Read,
+   Grep and Glob; any other shell command (python, cd, pipes) is denied, so don't try one.
 2. Pick one target: the largest gap, or the one your job names. Read only what you need: the
    outline first (`grep -n '^#' <doc>`), then the sections you will change.
 3. Make the change as one batch of pairs.

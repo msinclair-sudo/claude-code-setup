@@ -2018,3 +2018,27 @@ class DocChain(unittest.TestCase):
             self.assertIn("20", r.call_args.args[0])                 # capped
             self.assertEqual(gui.documenter_action("x", "start", "lots"), (False, "runs must be a number"))
             self.assertEqual(gui.documenter_action("x", "drop", 1), (False, "unknown action"))
+
+
+class Held(unittest.TestCase):
+    """A node whose next task is gated on another's task or a clock is held."""
+
+    def test_mark_held(self):
+        gp = Path(__file__).resolve().parents[1] / "bin" / "harness-gui"
+        ld = importlib.machinery.SourceFileLoader("harness_gui", str(gp))
+        gui = importlib.util.module_from_spec(importlib.util.spec_from_loader("harness_gui", ld))
+        ld.exec_module(gui)
+        nodes = [{"name": "a", "tasks": []}, {"name": "b", "tasks": [{"presented": False}]},
+                 {"name": "c", "tasks": []}, {"name": "d", "tasks": []}]
+        q = {"a": [{"task": "ta"}], "b": [{"task": "tb"}], "c": [{"task": "tc"}], "d": []}
+        why = {"ta": ["after x (open on b)"], "tc": ["until 00:05Z (in 3h)"]}
+        with mock.patch.object(gui.CLI, "queue", lambda c, n: q[n]), \
+             mock.patch.object(gui.CLI, "startable", lambda c, n: []), \
+             mock.patch.object(gui.CLI, "waits_on", lambda c, b: why.get(b["task"], [])):
+            gui.mark_held(None, nodes)
+        a, b, c, d = nodes
+        self.assertEqual(a["held"], [{"task": "ta", "after": "x", "state": "open", "by": "b"}])
+        self.assertEqual(b["holding"], [{"node": "a", "after": "x"}])
+        self.assertEqual(b["held"], [])                   # mid-task: working, not held
+        self.assertEqual(c["held"], [{"task": "tc", "until": "00:05Z (in 3h)"}])
+        self.assertEqual(d["held"], [])                   # nothing queued

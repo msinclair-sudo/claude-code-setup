@@ -18,7 +18,7 @@ The default port is 8791 and it walks upward if that is taken. 8787 is RStudio
 Server's, 8888 is Jupyter's, and a viewer that refuses to start because someone
 else's long-running service got there first is a viewer nobody opens.
 """
-import argparse, importlib.util, json, os, subprocess, sys, threading, time, webbrowser
+import argparse, importlib.util, json, os, re, subprocess, sys, threading, time, webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.machinery import SourceFileLoader
 from urllib.parse import parse_qs, urlparse
@@ -161,6 +161,43 @@ def intermediary(rows, repo):
                 # The roster's startedAt is epoch ms, as on a node card.
                 up=(int(time.time() - r["startedAt"] / 1000)
                     if isinstance(r.get("startedAt"), (int, float)) else None))
+
+
+def mark_held(cctx, nodes):
+    """Held: nothing in hand, and the next queued task can't start yet — it is
+    gated --after another node's task, or --not-before a clock. Not a wait
+    (nobody owes it an answer) and not a fault; its lead set it so. Sets each
+    node's `held`, and the holder's `holding`."""
+    by_name = {n["name"]: n for n in nodes}
+    for n in nodes:
+        n["held"], n["holding"] = [], []
+    for n in nodes:
+        if any(not t.get("presented") for t in n["tasks"]):
+            continue                        # mid-task: it is working
+        q = [b for b in CLI.queue(cctx, n["name"]) if not b.get("coupled_to")]
+        if not q or CLI.startable(cctx, n["name"]):
+            continue
+        for r in CLI.waits_on(cctx, q[0]):
+            m = re.match(r"after (\S+) \(([\w ]+) on ([^)]+)\)", r)
+            if m:
+                n["held"].append({"task": q[0]["task"], "after": m.group(1),
+                                  "state": m.group(2), "by": m.group(3)})
+                if m.group(3) in by_name:
+                    by_name[m.group(3)]["holding"].append({"node": n["name"],
+                                                           "after": m.group(1)})
+            elif r.startswith("until "):
+                n["held"].append({"task": q[0]["task"], "until": r[6:]})
+
+
+def cli_ctx(pdir, repo, tree):
+    """Enough of the CLI's Ctx to ask it about a project's queue and gates,
+    without the git calls (and the chdir) its constructor needs."""
+    c = CLI.Ctx.__new__(CLI.Ctx)
+    c.repo = c.worktree = Path(repo)
+    c.branch, c.slug, c.state = "", Path(pdir).name, Path(pdir)
+    c.binding_path, c.tree_path = Path(pdir) / "binding.json", Path(repo) / ".harness" / "tree.json"
+    c.tree = {"nodes": tree}
+    return c
 
 
 def documenter(rows, pdir, repo, asks):
@@ -529,9 +566,13 @@ def read_state():
                 n["waiting"]["chain"] = chain_of(n)
         for n in nodes:
             # Paths ending here: c ← … ← a, for every a whose chain passes through n.
-            n["held"] = [[m["name"]] + m["waiting"]["chain"][:m["waiting"]["chain"].index(n["name"])]
+            n["chains"] = [[m["name"]] + m["waiting"]["chain"][:m["waiting"]["chain"].index(n["name"])]
                          for m in nodes if m["waiting"] and n["name"] in m["waiting"]["chain"]
                          and m["waiting"]["chain"].index(n["name"]) >= 1]   # direct: awaited_by
+        try:
+            mark_held(cli_ctx(pdir, repo, tree), nodes)
+        except Exception:
+            pass
         nodes.sort(key=lambda n: (n["rank"], n["name"]))
         pname = Path(repo).name
 
@@ -599,7 +640,7 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <title>harness</title><style>
 :root{--bg:#12150f;--panel:#1a1e16;--line:#333b28;--ink:#e8ece0;--dim:#98a288;
 --busy:#8fbf5f;--idle:#6aa3c8;--none:#5a6350;--unk:#8a7fb0;
---warn:#e0894a;--warnbg:#3a2313;--wait:#5fb3a1}
+--warn:#e0894a;--warnbg:#3a2313;--wait:#5fb3a1;--held:#a59be8}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.45 ui-monospace,
 SFMono-Regular,Menlo,Consolas,monospace}
@@ -670,6 +711,7 @@ border-left:1px solid var(--line);width:0;height:22px}
 .tree{position:relative}
 .waits{position:absolute;left:0;top:0;pointer-events:none;overflow:visible}
 .waits path{fill:none;stroke:var(--wait);stroke-width:2.5}
+.waits path.held{stroke:var(--held);stroke-dasharray:6 4}
 
 .card{display:inline-block;min-width:158px;max-width:300px;background:var(--panel);
 border:1px solid var(--line);border-radius:9px;padding:8px 11px;text-align:left;
@@ -679,6 +721,11 @@ overflow-wrap:anywhere}
    not blocked: idle means free, blocked means the operator, and this means a
    lead owes it an answer. */
 .card.waitc{border-color:#2f6157;background:#101f1c}
+/* Held: gated by the lead on another node's task or a clock. Its own colour,
+   violet, because it is neither a wait nor a fault. */
+.card.heldc{border-color:#4d4782;background:#16152a}
+.hd{color:var(--held);font-size:11px;margin-top:4px;line-height:1.45;overflow-wrap:anywhere}
+.hd.o{border-top:1px dotted #4d4782;padding-top:3px}
 .wt{color:var(--wait);font-size:11px;margin-top:4px;line-height:1.45;
 overflow-wrap:anywhere}
 .wt.q{color:var(--dim);font-style:italic}
@@ -1263,9 +1310,19 @@ function card(n) {
                         '</div>' : '')
     : '';
   // Direct waiters, then the longer paths that end here, as a ← b ← c.
+  // Held: its next task is gated on another node's task, or a clock. Violet,
+  // dashed: not a wait (nobody owes it an answer) and not a warning.
+  const held = (n.held || []).map(h => h.by
+      ? '<span class="hto" hidden data-on="' + esc(h.by) + '"></span>' +
+        '<div class="hd">held by <b>' + esc(h.by) + '</b> &middot; ' + esc(h.task) +
+        ' starts after its <b>' + esc(h.after) + '</b> (' + esc(h.state) + ')</div>'
+      : '<div class="hd">held until <b>' + esc(h.until) + '</b> &middot; ' + esc(h.task) + '</div>'
+    ).join('');
+  const holding = (n.holding || []).map(h => '<div class="hd o"><b>' + esc(h.node) +
+      '</b> held on <b>' + esc(n.name) + '</b>\'s ' + esc(h.after) + '</div>').join('');
   const owes = ((n.awaited_by || []).map(c => '<div class="wt o"><b>' + esc(c) +
         '</b> waiting on <b>' + esc(n.name) + '</b></div>').join('')) +
-      ((n.held || []).map(path => '<div class="wt o">' +
+      ((n.chains || []).map(path => '<div class="wt o">' +
         path.slice().reverse().map(x => '<b>' + esc(x) + '</b>').join(' &larr; ') +
         ' waiting on <b>' + esc(n.name) + '</b></div>').join(''));
   // Beside the node it is directed AT, naming where it came FROM. One line, the
@@ -1280,7 +1337,7 @@ function card(n) {
       '<span class="act cp" data-copy="' + esc(g.do) + '">' +
         esc(VERB[g.kind] || 'copy') + '</span>' +
     '</div>').join('');
-  return '<div class="card ' + cls + coldc + (w ? ' waitc' : '') +
+  return '<div class="card ' + cls + coldc + (w ? ' waitc' : (n.held || []).length ? ' heldc' : '') +
     '" data-live="card:' + esc(n._slug + ':' + n.name) + '">' +
     '<div class="hdr"><span class="dot"></span><span class="nm">' + esc(n.name) +
     '</span><span class="kd">' + esc(n.role || '') +
@@ -1288,7 +1345,7 @@ function card(n) {
     (n.branch && n.branch !== n.name || !n.indexed
       ? '<div class="ln q">' + (n.branch && n.branch !== n.name ? 'branch ' + esc(n.branch) : '') +
         (n.indexed ? '' : ' (not indexed)') + '</div>' : '') +
-    who + wait + owes + sigs + task + splitChips(n) + goneChips(n) +
+    who + wait + held + owes + holding + sigs + task + splitChips(n) + goneChips(n) +
     '</div>';
 }
 
@@ -1841,7 +1898,7 @@ function drawWaits() {
   document.querySelectorAll('.tree').forEach(t => {
     t.querySelectorAll('svg.waits').forEach(x => x.remove());
     const box = t.getBoundingClientRect(), ds = [];
-    t.querySelectorAll('.wto').forEach(m => {
+    t.querySelectorAll('.wto, .hto').forEach(m => {
       const c = m.closest('.card');
       const key = c && c.dataset.live || '';
       const slug = key.split(':')[1];
@@ -1850,15 +1907,19 @@ function drawWaits() {
       if (!lead) return;
       const a = c.getBoundingClientRect(), b = lead.getBoundingClientRect();
       const x1 = a.left + a.width / 2 - box.left, y1 = a.top - box.top;
-      const x2 = b.left + b.width / 2 - box.left, y2 = b.bottom - box.top;
-      const ym = y1 - 22;
-      ds.push('M' + x1 + ' ' + y1 + 'V' + ym + 'H' + x2 + 'V' + y2);
+      // Up to a lead's bottom edge; across to a sibling's top edge (a holder is
+      // often on the same row, and a line into its bottom would cross the card).
+      const above = b.bottom <= a.top + 4;
+      const x2 = b.left + b.width / 2 - box.left, y2 = (above ? b.bottom : b.top) - box.top;
+      const ym = Math.min(y1, y2) - 22;
+      ds.push([m.classList.contains('hto') ? 'held' : '',
+               'M' + x1 + ' ' + y1 + 'V' + ym + 'H' + x2 + 'V' + y2]);
     });
     if (!ds.length) return;
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('class', 'waits');
     svg.setAttribute('width', t.scrollWidth); svg.setAttribute('height', t.scrollHeight);
-    svg.innerHTML = ds.map(d => '<path d="' + d + '"/>').join('');
+    svg.innerHTML = ds.map(([c, d]) => '<path class="' + c + '" d="' + d + '"/>').join('');
     t.appendChild(svg);
   });
 }

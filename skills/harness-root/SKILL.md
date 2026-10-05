@@ -69,7 +69,7 @@ Convert the discussion into a grant, a `T9` ruling or a brief; never relay the t
 
 ## Applying a document request (`T5`)
 
-The documenter (`T18`) keeps the markdown: its batches apply at your quiet turn end and you are told once. `CLAUDE.md` has a word budget (`claude_md_words` in the manifest) that `pairs apply` enforces on every pairs batch; your own direct edits are not checked, so keep to it.
+The documenter (`T18`) keeps the markdown, and you review every batch it submits: `harness pairs <task>` shows the diff and marks it read, then `harness pairs apply <task>`, or `harness pairs <task> --decline "why"`. Orientation and your Stop hook name a batch that has waited five minutes; a chain of runs waits on your decision. `CLAUDE.md` has a word budget (`claude_md_words` in the manifest) that `pairs apply` enforces on every pairs batch; your own direct edits are not checked, so keep to it.
 
 `harness pairs <task>` shows a submitted batch; `harness pairs apply <task>` re-checks every pair, applies all or none, prints the context around each change (read it for a now-stale neighbouring sentence), and makes one commit with a `Task:` trailer. A refusal names the decayed pair: return it with `harness note`.
 

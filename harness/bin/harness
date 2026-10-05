@@ -2162,6 +2162,7 @@ CACHE_TTL = 60 * 60
 STALLED_SIGNOFF = 20 * 60      # a lead has not signed off presented work
 STALLED_IDLE = 20 * 60         # a child stands idle with work already written
 STALLED_APPROVAL = 60 * 60     # rank 0 has not decided a gated brief
+DOC_REVIEW_AFTER = 5 * 60      # a documenter batch rank 0 has not reviewed
 WAIT_STALL = 10 * 60          # a grandchild's wait the lead in between has not answered (obs 68)
 # Three contracts, three constants, and for a while one number doing all of it.
 # A presentation twenty minutes old is a lead mid-review; a child idle twenty
@@ -2676,6 +2677,14 @@ def rank0_owes(ctx, node):
     if ctx.rank(node) != 0:
         return []
     owed = []
+    # Documenter batches: rank 0 reviews every one (T18; owner, 2026-10-05).
+    try:
+        for r in docs_pending(ctx):
+            age = time.time() - (_epoch(r.get("at")) or time.time())
+            if age > DOC_REVIEW_AFTER:
+                owed.append(("review", r["task"], f"{r['task']}: {batch_summary(r)}", age))
+    except Exception:
+        pass
     bd = ctx.state / "briefs"
     for f in (sorted(bd.glob("*.json")) if bd.is_dir() else []):
         try:
@@ -2824,6 +2833,8 @@ def queue_items(ctx, node):
             # third kind arrived it would have described itself as a block and
             # named a command that could not find it.
             _line = {
+                "review": f"documenter batch {label} awaits your review ({human_age(age)})"
+                          f"  — harness pairs {ident}, then apply or --decline",
                 "approve": f"'{label}' waits on your approval ({human_age(age)})"
                            f"  — harness brief {label} --approve",
                 "task": f"block '{label}' was answered {human_age(age)} ago and "
@@ -2907,7 +2918,7 @@ def queue_items(ctx, node):
     kept = {k: v for k, v in out.items()
             if k.startswith(("asked:", "comment:", "handed:", "heavy:", "sweep:", "uncovered:",
                              "orphan:", "down:", "stuck:", "ruled:", "rejected:", "returned:",
-                             "docs:"))
+                             "docs:", "review:"))
             or in_focus(fam, task_of(k))}
     if len(kept) < len(out):
         kept[f"fold:{len(out) - len(kept)}"] = (f"+{len(out) - len(kept)} item(s) "
@@ -3125,6 +3136,10 @@ def cmd_hook_stop(a):
                         return (f"  '{label}' is waiting on your approval "
                                 f"({human_age(age)}):{nl}    harness brief {label} "
                                 f"--approve   (or --decline \"why\")")
+                    if kind == "review":
+                        return (f"  documenter batch {label} has waited "
+                                f"{human_age(age)}:{nl}    harness pairs {label.split(':')[0]}"
+                                f"   then harness pairs apply …  (or --decline \"why\")")
                     if kind == "task":
                         return (f"  block '{label}' was answered {human_age(age)} ago "
                                 f"and has produced no task:{nl}    harness blocked "
@@ -8718,8 +8733,15 @@ def budget_verdict(ctx, read, texts):
 
 def pair_guard(ctx):
     """A delete may not take away a path an open record names (obs 74). A move
-    keeps its file, so it strands nothing."""
+    keeps its file, so it strands nothing. A file a batch creates, or a move's
+    destination, must be one the manifest classes as a document (obs 76: the
+    documenter's provenance/ files were code until rank 0 added a glob)."""
     def check(x):
+        new = x["file"] if x.get("op") == "create" else x.get("to") if x.get("op") == "move" else None
+        if new and guard_classify(ctx, [new]).get(new) == "code":
+            top = new.split("/")[0]
+            return (f"the manifest classes {new} as code; add a docs glob that covers it "
+                    f"(e.g. {top}/**/*.md) or pick a document path")
         if x.get("op") != "delete":
             return None
         hits = [w for ws in cited(ctx, [str(ctx.repo / x["file"])]).values() for w, _ in ws]
@@ -8766,16 +8788,15 @@ def cmd_pairs(a):
                "base": git("rev-parse", branch, cwd=ctx.repo)[1].strip(),
                "pairs": pairs, "applied": None}
         if documenter:
-            rec.update(auto=True, job=os.environ.get("HARNESS_DOCUMENTER_JOB") or "auto")
+            rec.update(auto=True, job=os.environ.get("HARNESS_DOCUMENTER_JOB") or "auto",
+                       model=os.environ.get("HARNESS_DOCUMENTER_MODEL") or None)
         a.task = task
         f = pairs_path(ctx, a.task)
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(json.dumps(rec, indent=2) + "\n")
-        now = rec.get("auto") and docs_apply_now(ctx)
         print(f"submitted {len(pairs)} pair(s) for {a.task} — "
-              + ("rank 0 is idle, so it is being applied now" if now else
-                 "applied at rank 0's next quiet turn end" if rec.get("auto") else
-                 f"{dn} applies them: harness pairs apply {a.task}"))
+              + (f"{dn} reviews it before it applies (harness pairs {a.task})"
+                 if rec.get("auto") else f"{dn} applies them: harness pairs apply {a.task}"))
         return
     task = a.target if a.verb == "apply" else a.verb
     f = pairs_path(ctx, task or "")
@@ -8783,30 +8804,80 @@ def cmd_pairs(a):
         die(REFUSED, f"no pairs submitted for '{task}'")
     rec = json.loads(f.read_text())
     if a.verb != "apply":
+        sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+        reviewer = (node if sid and spec.get("kind") == "doc" else
+                    "operator" if not sid and os.environ.get("HARNESS_DOCUMENTER") != "1" else None)
+        if a.__dict__.get("decline") is not None:
+            if not reviewer:
+                die(REFUSED, "declining a batch is rank 0's, or the operator's from a shell")
+            if not a.decline.strip():
+                die(REFUSED, 'say why: harness pairs <task> --decline "..."')
+            if rec.get("applied"):
+                die(REFUSED, f"already applied in {rec['applied'][:8]}; revert it instead")
+            rec.update(refused=f"declined by {reviewer}: {a.decline.strip()}",
+                       refused_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"), declined_by=reviewer)
+            f.write_text(json.dumps(rec, indent=2) + "\n")
+            print(f"declined {task}; the next documenter run reads why")
+            if rec.get("auto"):
+                docs_chain_next(ctx)
+            return
         print(f"{task}: {len(rec['pairs'])} pair(s) from {rec['by']} at {rec['at']}"
-              + (f", applied in {rec['applied'][:8]}" if rec.get("applied") else ""))
-        rows, _ = pair_report(rec["pairs"], on_branch)
+              + (f", applied in {rec['applied'][:8]}" if rec.get("applied") else "")
+              + (f", refused: {rec['refused']}" if rec.get("refused") else ""))
+        if rec.get("auto"):
+            print(f"  {batch_summary(rec)}")
+        rows = pairs_review(ctx, rec, on_branch, full=a.__dict__.get("full"))
+        print()
         print_pair_report(rows)
+        if rec.get("auto") and reviewer and not rec.get("applied") and not rec.get("refused"):
+            rec.update(reviewed_by=reviewer, reviewed_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
+            f.write_text(json.dumps(rec, indent=2) + "\n")
+            print(f"\nreviewed. Apply it: harness pairs apply {task}   "
+                  f"or decline: harness pairs {task} --decline \"why\"")
         return
     pairs_apply(ctx, node, spec, task, rec, f, auto=a.__dict__.get("auto"))
 
 
+def batch_summary(rec):
+    """One line saying what a batch does: `move "History" CLAUDE.md → x.md (+2 more)`."""
+    out = []
+    for x in rec.get("pairs") or []:
+        op = x.get("op", "replace")
+        if op == "move":
+            head = next((l.lstrip("#").strip() for l in (x.get("old") or "").splitlines()
+                         if l.startswith("#")), None)
+            out.append(f"move {('“' + head[:40] + '” ') if head else ''}"
+                       f"{x['file']} → {x['to']} ({words(x.get('old')):,} words)")
+        elif op == "delete":
+            out.append(f"delete {x['file']}")
+        elif op == "create":
+            out.append(f"create {x['file']}")
+        else:
+            out.append(f"rewrite {x['file']}")
+    return (out[0] + (f" (+{len(out) - 1} more)" if len(out) > 1 else "")) if out else "empty"
+
+
 def pairs_apply(ctx, node, spec, task, rec, f, auto=False):
-    """Rank 0 applies a stored batch: all pairs or none, one commit. `--auto` is
-    the documenter's batch applied from rank 0's Stop hook: an outcome is
-    written to the record either way, for the next documenter run to read."""
+    """Rank 0 applies a stored batch: all pairs or none, one commit. A documenter
+    batch (`auto` on the record) is applied only after rank 0 has reviewed it
+    (owner, 2026-10-05: rank 0 reads every one); its outcome is written to the
+    record either way, for the next documenter run to read."""
     if os.environ.get("HARNESS_DOCUMENTER") == "1":
-        die(REFUSED, "the documenter submits; its batches apply at rank 0's turn end")
+        die(REFUSED, "the documenter submits; rank 0 reviews and applies its batches")
+    doc = bool(rec.get("auto"))
     def refuse(why):
-        if auto:
+        if doc and spec.get("kind") == "doc":
             rec.update(refused=why, refused_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
             f.write_text(json.dumps(rec, indent=2) + "\n")
-            docs_lock(ctx, release=True)
+            docs_chain_next(ctx)
         die(REFUSED, why)
     if spec.get("kind") != "doc":
-        refuse("only the document node applies pairs (T5)")
+        die(REFUSED, "only the document node applies pairs (T5)")
     if rec.get("applied"):
-        refuse(f"already applied in {rec['applied'][:8]}")
+        die(REFUSED, f"already applied in {rec['applied'][:8]}")
+    if doc and not rec.get("reviewed_at"):
+        die(REFUSED, f"read it first: harness pairs {task} (rank 0 reviews every "
+                     f"documenter batch)")
     def read(path):
         p = ctx.worktree / path
         return p.read_text() if p.is_file() else None
@@ -8814,7 +8885,7 @@ def pairs_apply(ctx, node, spec, task, rec, f, auto=False):
     files = sorted(texts)
     rc, dirt, _ = git("status", "--porcelain", "--", *files, cwd=ctx.worktree)
     if dirt.strip():
-        refuse(f"uncommitted changes in {', '.join(files)} — commit or stash first")
+        die(REFUSED, f"uncommitted changes in {', '.join(files)} — commit or stash first")
     if not print_pair_report(rows):
         refuse(f"not applied: a pair no longer matches exactly once. Return the "
                f"batch to {rec['by']} — harness note {task} --add \"...\"")
@@ -8822,6 +8893,13 @@ def pairs_apply(ctx, node, spec, task, rec, f, auto=False):
     if over:
         refuse(over)
     was = {p: read(p) for p in files}
+    def restore():
+        git("reset", "-q", "--", *files, cwd=ctx.worktree)
+        for path, t in was.items():
+            if t is None:
+                (ctx.worktree / path).unlink(missing_ok=True)
+            else:
+                git("checkout", "HEAD", "--", path, cwd=ctx.worktree)
     for path, t in texts.items():
         p = ctx.worktree / path
         if t is None:
@@ -8829,6 +8907,15 @@ def pairs_apply(ctx, node, spec, task, rec, f, auto=False):
         else:
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(t)
+    # A move is safe because it is verbatim; check it on disk, not by construction
+    # (obs 77: rank 0 verified line identity by hand on every batch).
+    for _, x, _, _, _ in rows:
+        if x.get("op") == "move":
+            dest, src = read(x["to"]) or "", read(x["file"]) or ""
+            if x["old"] not in dest or x["pointer"] not in src:
+                restore()
+                refuse(f"the move to {x['to']} did not land verbatim; files restored, "
+                       f"nothing applied")
     for _, x, _, _, _ in rows:       # context around each change (obs 47)
         new = x.get("pointer") if x.get("op") == "move" else x.get("new")
         t = texts.get(x["file"])
@@ -8843,21 +8930,25 @@ def pairs_apply(ctx, node, spec, task, rec, f, auto=False):
     if kept:
         git("add", "--", *kept, cwd=ctx.worktree)
     cm = "CLAUDE.md"
-    msg = (f"Apply {len(rows)} document pair(s) from {task} ({rec['by']})\n\n"
+    words_line = (f"CLAUDE.md {words(was[cm]):,} → {words(texts[cm]):,}" if cm in texts else "")
+    # The subject says what moved (obs 77): `git log --oneline` read as noise.
+    subject = (f"Documenter ({rec.get('job') or 'auto'}): {batch_summary(rec)}"
+               + (f"; {words_line}" if words_line else "")) if doc else \
+              f"Apply {len(rows)} document pair(s) from {task} ({rec['by']})"
+    msg = (subject[:200] + "\n\n"
            + "".join(f"- {x['file']} {x.get('op', 'replace')}: "
                      f"{x.get('why') or '(no reason given)'}\n" for _, x, _, _, _ in rows)
            + (f"\nCLAUDE.md: {words(was[cm]):,} -> {words(texts[cm]):,} words\n"
               if cm in texts else "")
            + f"\nTask: {task}\n"
-           + (f"Documenter: {rec.get('job') or 'auto'}\n" if rec.get("auto") else ""))
+           + (f"Documenter: {rec.get('job') or 'auto'}\n"
+              f"Reviewed-by: {rec.get('reviewed_by') or 'rank 0'}\n"
+              f"Co-Authored-By: Claude (harness documenter"
+              + (f", {rec['model']}" if rec.get("model") else "")
+              + ") <noreply@anthropic.com>\n" if doc else ""))
     rc, out, err = git("commit", "-q", "-m", msg, cwd=ctx.worktree)
     if rc:
-        git("reset", "-q", "--", *files, cwd=ctx.worktree)
-        for path, t in was.items():
-            if t is None:
-                (ctx.worktree / path).unlink(missing_ok=True)
-            else:
-                git("checkout", "HEAD", "--", path, cwd=ctx.worktree)
+        restore()
         refuse(f"the commit was refused and the files restored; nothing applied:\n"
                f"{err or out}")
     sha = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
@@ -8866,11 +8957,29 @@ def pairs_apply(ctx, node, spec, task, rec, f, auto=False):
         rec["claude_md"] = [words(was[cm]), words(texts[cm])]
     f.write_text(json.dumps(rec, indent=2) + "\n")
     print(f"applied {len(rows)} pair(s) from {task} in {sha[:8]}")
-    if auto:
-        # One launch applied one batch, so a second submitted while the first
-        # was applying sat until a turn end (2026-10-05). Go on to the next.
-        docs_lock(ctx, release=True)
-        _docs_launch(ctx, ctx.worktree)
+    if doc:
+        docs_chain_next(ctx)
+
+
+def pairs_review(ctx, rec, read, full=False):
+    """What a batch would do, for the reviewer: a diff per changed file, capped
+    unless --full, and CLAUDE.md's words before and after."""
+    rows, texts = pair_report(rec["pairs"], read)
+    cap = None if full else 200
+    for path in sorted(texts):
+        old, new = read(path) or "", texts[path] or ""
+        d = list(difflib.unified_diff(old.splitlines(), new.splitlines(),
+                                      f"a/{path}", f"b/{path}" if texts[path] is not None
+                                      else "/dev/null", lineterm="", n=2))
+        print(f"\n── {path}" + ("  (deleted)" if texts[path] is None else
+                                  "  (new)" if read(path) is None else ""))
+        for l in (d if cap is None else d[:cap]):
+            print(l[:200])
+        if cap is not None and len(d) > cap:
+            print(f"   … {len(d) - cap} more diff lines — harness pairs {rec['task']} --full")
+    if "CLAUDE.md" in texts:
+        print(f"\nCLAUDE.md {words(read('CLAUDE.md')):,} → {words(texts['CLAUDE.md']):,} words")
+    return rows
 
 
 # ── cleanup: sweep a completed unit, on rank 0's recorded decision ───────────
@@ -10583,18 +10692,6 @@ def documenter_name(repo):
     return f"{DOCUMENTER}-{Path(repo).name}"
 
 
-def docs_lock(ctx, release=False):
-    """The in-flight mark for an auto-apply. True when taken. A lock older than
-    ten minutes belongs to an apply that died, and is taken over."""
-    p = docs_dir(ctx) / "applying"
-    if release:
-        p.unlink(missing_ok=True); return True
-    if p.exists() and time.time() - p.stat().st_mtime < 600:
-        return False
-    p.write_text(time.strftime("%Y-%m-%dT%H:%M:%S%z") + "\n")
-    return True
-
-
 def docs_batches(ctx):
     """The documenter's pair batches, newest first: (path, record)."""
     d = ctx.state / "pairs"
@@ -10674,20 +10771,31 @@ def _rel(ctx, p):
     return m.group(1) if m else p.lstrip("./")
 
 
+def guard_classify(ctx, paths):
+    """{path: "doc"|"code"} from the guard itself (`_guard --classify`). Never a
+    reimplementation of its matcher. Empty when the guard is absent."""
+    guard = ctx.repo / ".harness/hooks/_guard"
+    paths = [p for p in paths if p]
+    if not paths or not guard.exists():
+        return {}
+    r = subprocess.run([str(guard), "--classify"], input="\n".join(paths) + "\n",
+                       capture_output=True, text=True, cwd=str(ctx.repo),
+                       env=dict(os.environ, HARNESS_BRANCH=getattr(ctx, "branch", "")))
+    out = {}
+    for l in r.stdout.splitlines():
+        k, _, v = l.partition(" ")
+        if k in ("doc", "code"):
+            out[v] = k
+    return out
+
+
 def doc_files(ctx):
     """The project's markdown documents: tracked .md files the manifest calls docs,
     classified by the guard itself, never a reimplementation of its matcher."""
     rc, out, _ = git("ls-files", "*.md", cwd=ctx.repo)
     paths = [p for p in out.splitlines() if p]
-    guard = ctx.repo / ".harness/hooks/_guard"
-    if not paths:
-        return []
-    if not guard.exists():
-        return paths
-    r = subprocess.run([str(guard), "--classify"], input="\n".join(paths) + "\n",
-                       capture_output=True, text=True, cwd=str(ctx.repo),
-                       env=dict(os.environ, HARNESS_BRANCH=ctx.branch))
-    docs = [l.partition(" ")[2] for l in r.stdout.splitlines() if l.startswith("doc ")]
+    cls = guard_classify(ctx, paths)
+    docs = [p for p in paths if cls.get(p) == "doc"]
     return docs or paths
 
 
@@ -10784,9 +10892,27 @@ def docs_measure(ctx):
     for area, doc in docs_areas(ctx).items():
         ed = [got for got, edits in sessions if any(fnmatch.fnmatch(e, area) for e in edits)]
         reach[area] = {"doc": doc, "editors": len(ed), "read": sum(1 for g in ed if doc in g)}
+    # Moved text: is it still reached? For each applied documenter move, the
+    # sessions that read its destination among transcripts newer than the apply
+    # (obs 77: what leaves an always-loaded file is one hop away afterwards).
+    moved = []
+    for _, r in docs_batches(ctx):
+        t0 = _epoch(r.get("applied_at"))
+        if not t0:
+            continue
+        for x in r.get("pairs") or []:
+            if x.get("op") != "move":
+                continue
+            later = [tr for tr in trs.values() if (tr.get("mtime") or 0) > t0]
+            hits = sum(1 for tr in later if any(_rel(ctx, p2) == x["to"] or
+                                                Path(p2).name == Path(x["to"]).name
+                                                for p2 in tr["reads"]))
+            moved.append({"to": x["to"], "from": x["file"], "since": r.get("applied_at"),
+                          "read": hits, "sessions": len(later),
+                          "provenance": x["to"].startswith("provenance/")})
     cap = claude_md_budget(ctx)
     now = time.time()
-    snap = {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "budget": cap,
+    snap = {"moved": moved,"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "budget": cap,
             "claude_md": words(texts.get("CLAUDE.md")),
             "transcripts": len(trs), "reach": reach,
             "docs": {d: {"words": words(t2), "reads": reads[d], "writes": writes.get(d, 0),
@@ -10895,6 +11021,12 @@ def cmd_docs(a):
             print(f"  {area:<24} {r['read']}/{r['editors']} editors read {r['doc']}")
     else:
         print("reach: no areas mapped — harness docs map <area-glob> <doc>")
+    if snap.get("moved"):
+        print("moved text, read since it moved:")
+        for m in snap["moved"][:8]:
+            print(f"  {m['to']:<40} {m['read']}/{m['sessions']} sessions since "
+                  f"{(m['since'] or '')[11:16]}" + ("  (provenance: rarely read by design)"
+                                                   if m["provenance"] else ""))
     print("gaps, largest first:")
     for job, target, why in snap["gaps"][:8] or [("-", "none", "")]:
         print(f"  {job:<12} {target}  — {why}")
@@ -10950,43 +11082,29 @@ def _detached(ctx, args, log, cwd):
                          stdin=subprocess.DEVNULL, start_new_session=True)
 
 
-def _docs_launch(ctx, wt):
-    """Apply the oldest queued documenter batch in rank 0's worktree `wt`,
-    detached, if the tree is clean and no apply is in flight. True when launched."""
-    queued = [r for _, r in docs_batches(ctx) if not r.get("applied") and not r.get("refused")]
-    if not queued or not wt:
-        return False
-    rc, dirt, _ = git("status", "--porcelain", cwd=wt)
-    if rc or dirt.strip() or not docs_lock(ctx):
-        return False
-    oldest = sorted(queued, key=lambda r: r.get("at") or "")[0]
-    _detached(ctx, ["pairs", "apply", oldest["task"], "--auto"], docs_dir(ctx) / "apply.log", wt)
-    return True
+def docs_pending(ctx):
+    """Documenter batches waiting on rank 0's review, oldest first."""
+    return sorted((r for _, r in docs_batches(ctx)
+                   if not r.get("applied") and not r.get("refused")),
+                  key=lambda r: r.get("at") or "")
 
 
-def docs_apply_now(ctx):
-    """At submit: apply straight away when rank 0's session is not mid-turn. A
-    batch waiting for a turn end sat while rank 0 idled (2026-10-05); idle is as
-    safe a moment as a turn end, and busy still waits for one."""
+def docs_chain_next(ctx):
+    """After a review decides a batch: start the next run of a `--runs N` chain,
+    detached, when runs remain and nothing else waits on review."""
     try:
-        dn, _ = doc_node(ctx)
-        wt = (load_index(ctx)["nodes"].get(dn) or {}).get("worktree")
-        rows = live_rows(agents_json())
+        if (docs_queue(ctx.state).get("remaining") or 0) > 0 and not docs_pending(ctx):
+            _detached(ctx, ["documenter", "--project", ctx.state.name, "--next"],
+                      docs_dir(ctx) / "chain.log", ctx.repo)
     except Exception:
-        return False
-    if any(r.get("cwd") == wt and r.get("status") == "busy" for r in rows):
-        return False
-    return _docs_launch(ctx, wt)
+        pass
 
 
 def docs_apply_step(ctx, node):
-    """Rank 0's Stop hook: apply a queued documenter batch at a quiet turn end,
-    else start a documenter run when one is due. Detached both ways: the hook has
-    ten seconds and the reference-transaction guard can take nine."""
-    if ctx.rank(node) != 0:
+    """Rank 0's Stop hook: start a documenter run when one is due. It never
+    applies a batch: rank 0 reviews each one (owner, 2026-10-05)."""
+    if ctx.rank(node) != 0 or docs_pending(ctx):
         return False
-    if any(not r.get("applied") and not r.get("refused") for _, r in docs_batches(ctx)):
-        return _docs_launch(ctx, ctx.worktree)
     return docs_trigger(ctx)
 
 
@@ -11092,7 +11210,7 @@ def documenter_cmd(pdir, repo, job="auto", model=None, effort=None, why=None):
     # Its identity goes in through --settings: a background session does not
     # inherit the launching process's environment (measured 2026-10-05).
     env = {"HARNESS_DOCUMENTER": "1", "HARNESS_PROJECT": pdir.name,
-           "HARNESS_DOCUMENTER_JOB": job}
+           "HARNESS_DOCUMENTER_JOB": job, "HARNESS_DOCUMENTER_MODEL": model}
     cmd = ["claude", "--bg", "-n", documenter_name(repo), "--restricted", "--strict-mcp-config",
            "--settings", json.dumps({"env": env}),
            "--add-dir", *dirs,
@@ -11187,14 +11305,13 @@ def cmd_documenter(a):
     if a.next:
         # Launched by a run's closing note, detached: the next run in the chain,
         # once nothing of the last one is waiting to apply.
-        end = time.time() + 3600
-        while documenter_pending(pdir) and time.time() < end:
-            time.sleep(20)
         q = docs_queue(pdir)
         if (q.get("remaining") or 0) <= 0:
             print("no runs left"); return
         if documenter_pending(pdir):
-            print("batches still waiting after an hour; not starting the next run"); return
+            # Reviewing the batch starts the next run (docs_chain_next).
+            print("a batch waits on rank 0's review; the next run starts when it is decided")
+            return
         docs_queue(pdir, remaining=q["remaining"] - 1)
         ok, msg = documenter_launch(pdir, repo, q.get("job") or "auto")
         print(msg if ok else f"refused: {msg}")
@@ -11555,6 +11672,8 @@ def main():
     pa.add_argument("target", nargs="?", help="the JSON (path, or - for stdin) or task")
     pa.add_argument("--task", help="with submit: the task the pairs serve")
     pa.add_argument("--auto", action="store_true", help=argparse.SUPPRESS)
+    pa.add_argument("--decline", metavar="WHY", help="with a task: decline a documenter batch")
+    pa.add_argument("--full", action="store_true", help="with a task: the whole diff")
     ak = add("ask", cmd_ask)
     ak.add_argument("target", nargs="?", metavar="TASK|ID",
                     help="a task, to open an ask; an ask id for every other verb")

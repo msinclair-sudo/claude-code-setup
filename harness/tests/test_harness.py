@@ -1780,22 +1780,29 @@ class DocPairs(unittest.TestCase):
         g("add", "-A"); g("commit", "-qm", "init")
         ctx = FakeCtx({"main": None})
         ctx.repo = ctx.worktree = repo
-        rec = {"task": "docs-1", "by": "documenter", "auto": True, "job": "budget",
+        rec = {"task": "docs-1", "by": "documenter", "auto": True, "job": "budget", "model": "opus",
                "pairs": [{"op": "move", "file": "CLAUDE.md", "old": "## History\nstory\n",
                           "to": "provenance/CLAUDE/history.md", "pointer": "History: provenance/CLAUDE/history.md\n"},
                          {"op": "delete", "file": "old.md"}]}
         f = ctx.dir / "docs-1.json"
         with mock.patch.object(hz, "cited", return_value={}), \
-             mock.patch.object(hz, "_docs_launch") as chain, redirect_stdout(io.StringIO()):
-            hz.pairs_apply(ctx, "main", {"kind": "doc"}, "docs-1", rec, f, auto=True)
+             mock.patch.object(hz, "guard_classify", return_value={}), \
+             mock.patch.object(hz, "docs_chain_next") as chain, redirect_stdout(io.StringIO()):
+            with self.assertRaises(SystemExit):                       # not reviewed yet
+                hz.pairs_apply(ctx, "main", {"kind": "doc"}, "docs-1", rec, f)
+            rec.update(reviewed_by="main", reviewed_at="t")
+            hz.pairs_apply(ctx, "main", {"kind": "doc"}, "docs-1", rec, f)
         self.assertFalse((repo / "old.md").exists())
         self.assertEqual((repo / "provenance/CLAUDE/history.md").read_text(), "## History\nstory\n")
         msg = g("log", "-1", "--format=%B").stdout
-        self.assertIn("Documenter: budget", msg)
-        self.assertIn("CLAUDE.md: 4 -> 3 words", msg)
+        self.assertTrue(msg.startswith("Documenter (budget): move “History” CLAUDE.md → "
+                                       "provenance/CLAUDE/history.md (3 words) (+1 more); CLAUDE.md 4 → 3"))
+        for line in ("Documenter: budget", "Reviewed-by: main", "CLAUDE.md: 4 -> 3 words",
+                     "Co-Authored-By: Claude (harness documenter, opus) <noreply@anthropic.com>"):
+            self.assertIn(line, msg)
         self.assertEqual(g("status", "--porcelain").stdout, "")
         self.assertEqual(json.loads(f.read_text())["claude_md"], [4, 3])
-        chain.assert_called_once_with(ctx, repo)          # on to the next queued batch
+        chain.assert_called_once_with(ctx)                          # a chain moves on at review
 
     def test_the_documenter_cannot_apply(self):
         with mock.patch.dict(os.environ, {"HARNESS_DOCUMENTER": "1"}), \
@@ -1861,33 +1868,6 @@ class DocRuns(unittest.TestCase):
     def setUp(self):
         self.ctx = FakeCtx({"main": None, "dev": "main"})
         self.ctx.repo = self.ctx.worktree = Path(tempfile.mkdtemp())
-
-    def test_apply_step_waits_for_a_clean_tree_and_the_lock(self):
-        q = [(Path("x"), {"task": "docs-1", "auto": True, "at": "1"})]
-        with mock.patch.object(hz, "docs_batches", return_value=q), \
-             mock.patch.object(hz, "_detached") as go:
-            with mock.patch.object(hz, "git", return_value=(0, " M CLAUDE.md", "")):
-                self.assertFalse(hz.docs_apply_step(self.ctx, "main"))
-            with mock.patch.object(hz, "git", return_value=(0, "", "")):
-                self.assertTrue(hz.docs_apply_step(self.ctx, "main"))
-                self.assertFalse(hz.docs_apply_step(self.ctx, "main"))   # in flight
-            self.assertFalse(hz.docs_apply_step(self.ctx, "dev"))        # rank 0 only
-        self.assertEqual(go.call_args.args[1], ["pairs", "apply", "docs-1", "--auto"])
-
-    def test_submit_applies_now_when_rank_0_is_idle(self):
-        q = [(Path("x"), {"task": "docs-1", "auto": True, "at": "1"})]
-        idx = {"nodes": {"main": {"worktree": "/w"}}}
-        self.ctx.tree["nodes"]["main"]["kind"] = "doc"
-        with mock.patch.object(hz, "docs_batches", return_value=q), \
-             mock.patch.object(hz, "load_index", return_value=idx), \
-             mock.patch.object(hz, "git", return_value=(0, "", "")), \
-             mock.patch.object(hz, "live_rows", lambda r: r), \
-             mock.patch.object(hz, "_detached") as go:
-            with mock.patch.object(hz, "agents_json", return_value=[{"cwd": "/w", "status": "busy"}]):
-                self.assertFalse(hz.docs_apply_now(self.ctx))           # mid-turn: wait
-            with mock.patch.object(hz, "agents_json", return_value=[{"cwd": "/w", "status": "idle"}]):
-                self.assertTrue(hz.docs_apply_now(self.ctx))
-        self.assertEqual(go.call_args.args[3], "/w")
 
     def test_trigger_at_most_once_a_day(self):
         with mock.patch.object(hz, "docs_due", return_value="over budget"), \
@@ -1977,21 +1957,6 @@ class DocChain(unittest.TestCase):
             self.assertIn("3 more run(s) will follow", self.run_(runs=3))
         self.assertEqual(hz.docs_queue(self.pdir)["remaining"], 3)
 
-    def test_next_waits_for_pending_batches_then_counts_down(self):
-        hz.docs_queue(self.pdir, remaining=2, job="stale")
-        pending = iter([1, 0, 0])
-        with mock.patch.object(hz, "documenter_pending", side_effect=lambda p: next(pending)), \
-             mock.patch.object(hz.time, "sleep") as sl, \
-             mock.patch.object(hz, "documenter_launch", return_value=(True, "started")) as go:
-            self.run_(next=True)
-        self.assertEqual(sl.call_count, 1)                  # waited once for the batch
-        self.assertEqual(go.call_args.args[2], "stale")
-        self.assertEqual(hz.docs_queue(self.pdir)["remaining"], 1)
-        hz.docs_queue(self.pdir, remaining=0)
-        with mock.patch.object(hz, "documenter_launch") as go:
-            self.assertIn("no runs left", self.run_(next=True))
-        go.assert_not_called()
-
     def test_a_busy_run_refuses_an_idle_one_is_replaced(self):
         row = lambda st: [{"name": "harness-documenter-proj", "status": st, "sessionId": "s" * 36,
                            "pid": 1}]
@@ -2055,3 +2020,80 @@ class SessionModel(unittest.TestCase):
             {"type": "user", "message": {"content": "x"}})) + "\n")
         self.assertEqual(hz.session_model("s", f), "claude-opus-5-5")
         self.assertIsNone(hz.session_model("", None))
+
+
+class DocReview(unittest.TestCase):
+    """Rank 0 reviews every documenter batch (owner, 2026-10-05; obs 76, 77)."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main"})
+        self.ctx.repo = self.ctx.worktree = Path(tempfile.mkdtemp())
+        (self.ctx.dir / "pairs").mkdir()
+        self.rec = {"task": "docs-1", "by": "documenter", "auto": True, "job": "budget",
+                    "at": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() - 600)),
+                    "pairs": [{"op": "move", "file": "CLAUDE.md", "old": "## Old\nx\n",
+                               "to": "provenance/C/old.md", "pointer": "Old: provenance/C/old.md\n"}]}
+        (self.ctx.dir / "pairs" / "docs-1.json").write_text(json.dumps(self.rec))
+
+    def test_the_stop_hook_never_applies_and_rank_0_is_told(self):
+        with mock.patch.object(hz, "_detached") as go:
+            self.assertFalse(hz.docs_apply_step(self.ctx, "main"))   # pending: no apply, no new run
+        go.assert_not_called()
+        rows = [r for r in hz.rank0_owes(self.ctx, "main") if r[0] == "review"]
+        self.assertEqual(rows[0][1], "docs-1")
+        self.assertIn("move “Old” CLAUDE.md → provenance/C/old.md", rows[0][2])
+
+    def test_reading_stamps_the_review_and_decline_records_why(self):
+        texts = {"CLAUDE.md": "a\n## Old\nx\n"}
+        a = lambda **k: mock.Mock(**dict({"verb": "docs-1", "target": None, "task": None,
+                                          "decline": None, "full": False, "auto": False}, **k))
+        self.ctx.tree["nodes"]["main"].update(kind="doc", branch="main")
+        self.ctx.branch = "main"
+        out = io.StringIO()
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.object(hz, "git", side_effect=lambda *x, **k: (0, texts.get(x[1].split(":", 1)[-1], "").rstrip("\n"), "")
+                               if x[0] == "show" else (0, "", "")), \
+             mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "sess"}), \
+             mock.patch.object(hz, "docs_chain_next") as chain, redirect_stdout(out):
+            hz.cmd_pairs(a())
+            r = json.loads((self.ctx.dir / "pairs" / "docs-1.json").read_text())
+            self.assertEqual(r["reviewed_by"], "main")
+            self.assertIn("+Old: provenance/C/old.md", out.getvalue())   # the diff
+            hz.cmd_pairs(a(decline="moves a rule sessions need"))
+        r = json.loads((self.ctx.dir / "pairs" / "docs-1.json").read_text())
+        self.assertEqual(r["refused"], "declined by main: moves a rule sessions need")
+        chain.assert_called_once()
+
+    def test_a_new_file_must_be_a_document(self):
+        check = hz.pair_guard(self.ctx)
+        with mock.patch.object(hz, "guard_classify", side_effect=lambda c, ps: {ps[0]: "code"}):
+            self.assertIn("as code", check({"op": "create", "file": "provenance/x.md", "new": "y"}))
+            self.assertIn("provenance/**/*.md", check(self.rec["pairs"][0]))
+        with mock.patch.object(hz, "guard_classify", side_effect=lambda c, ps: {ps[0]: "doc"}):
+            self.assertIsNone(check(self.rec["pairs"][0]))
+
+    def test_next_run_waits_on_review_and_review_starts_it(self):
+        hz.docs_queue(self.ctx.dir, remaining=2, job="budget")
+        with mock.patch.object(hz, "_detached") as go:
+            hz.docs_chain_next(self.ctx)
+            go.assert_not_called()                                   # docs-1 still pending
+            r = dict(self.rec, applied="abc")
+            (self.ctx.dir / "pairs" / "docs-1.json").write_text(json.dumps(r))
+            hz.docs_chain_next(self.ctx)
+        self.assertEqual(go.call_args.args[1][-1], "--next")
+
+    def test_moved_text_reach_counts_only_later_sessions(self):
+        r = dict(self.rec, applied="abc", applied_at="2026-10-05T16:00:00+1100")
+        t0 = hz._epoch(r["applied_at"])
+        trs = {"a": {"reads": ["/x/proj/provenance/C/old.md"], "edits": [], "mtime": t0 + 60},
+               "b": {"reads": ["/x/proj/provenance/C/old.md"], "edits": [], "mtime": t0 - 60},
+               "c": {"reads": [], "edits": [], "mtime": t0 + 90}}
+        self.ctx.repo = Path("/x/proj")
+        with mock.patch.object(hz, "docs_batches", return_value=[(None, r)]), \
+             mock.patch.object(hz, "doc_files", return_value=[]), \
+             mock.patch.object(hz, "doc_transcripts", return_value=trs), \
+             mock.patch.object(hz, "git", return_value=(0, "", "")), \
+             mock.patch.object(hz, "all_briefs", return_value={}), \
+             mock.patch.object(hz, "cited", return_value={}):
+            snap = hz.docs_measure(self.ctx)
+        self.assertEqual((snap["moved"][0]["read"], snap["moved"][0]["sessions"]), (1, 2))

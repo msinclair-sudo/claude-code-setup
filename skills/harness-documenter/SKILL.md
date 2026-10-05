@@ -65,9 +65,14 @@ paragraphs.
  {"op": "delete", "file": "plans/briefs/phase-1-schema.md", "why": "..."}]
 ```
 
-A batch applies all or nothing, at rank 0's next quiet turn end, as one commit. A refused batch
-shows in the next `docs measure` with its reason. Fix it in that run. You can't apply a batch
+Rank 0 reads every batch before it applies (`harness pairs <task>` shows it the diff), then applies
+it as one commit or declines it with a reason. Write each `why` for that reviewer: what moved or
+changed, and why it is safe. A declined or refused batch shows in the next `docs measure` with its
+reason; fix the cause, and never resubmit a declined batch unchanged. You can't apply a batch
 yourself.
+
+New files (a `create`, or a move's `to`) must be paths the manifest classes as documents;
+`provenance/**/*.md` is in the default. A batch that creates a code path is refused.
 
 ## When the doc and the code disagree
 

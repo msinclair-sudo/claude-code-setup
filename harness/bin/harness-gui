@@ -236,7 +236,7 @@ def documenter(rows, pdir, repo, asks):
         if r.get("auto"):
             batches.append(r)
     batches.sort(key=lambda r: r.get("at") or "")
-    out["queued"] = sum(1 for r in batches if not r.get("applied") and not r.get("refused"))
+    out["review"] = [r["task"] for r in batches if not r.get("applied") and not r.get("refused")]
     ref = [r for r in batches if r.get("refused")]
     app = [r for r in batches if r.get("applied")]
     out["refused"] = ({"task": ref[-1]["task"], "why": ref[-1]["refused"]} if ref else None)
@@ -1416,8 +1416,10 @@ function docCard(p) {
       esc(d.applied.sha) + '</code>' + (d.applied.claude_md ? ' &middot; CLAUDE.md ' +
       d.applied.claude_md[0].toLocaleString() + ' &rarr; ' + d.applied.claude_md[1].toLocaleString()
       : '') + '</div>' : '';
-  const q = d.queued ? '<div class="ln">' + d.queued + ' batch' + (d.queued > 1 ? 'es' : '') +
-      ' queued &middot; applies at main\'s next quiet turn end</div>' : '';
+  const rv = d.review || [];
+  const q = rv.length ? '<div class="ln wt">' + rv.length + ' batch' + (rv.length > 1 ? 'es await' : ' awaits') +
+      ' main\'s review: ' + rv.map(t => '<code>' + esc(t) + '</code>').join(', ') +
+      (d.remaining ? ' &middot; the next run starts once it is decided' : '') + '</div>' : '';
   const rf = d.refused ? '<div class="ln dup" title="' + esc(d.refused.why) + '">refused ' +
       esc(d.refused.task) + ': ' + esc(d.refused.why.slice(0, 80)) + '</div>' : '';
   const ak = d.asks ? '<div class="ln"><a href="#issues">' + d.asks + ' open ask' +

@@ -2,7 +2,8 @@
   "docs": [
     "docs/**",
     "*.md",
-    "rulings.md"
+    "rulings.md",
+    "provenance/**/*.md"
   ],
   "code": [
     "src/**",

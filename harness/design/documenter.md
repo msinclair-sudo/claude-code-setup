@@ -120,16 +120,19 @@ Each run is capped at about 80k tokens read. Being a fresh session, it never acc
 
 Only rank 0 commits documents (`T5`); the documenter doesn't change that.
 
-1. It submits a batch of pairs. The harness adds three new operations to the pair format: create a
-   file, delete a file, and move a section to a file and leave a pointer.
-2. The batch is queued.
-3. The harness applies it at root's next turn end, from root's Stop hook. A pending reset is
-   handled at the same point. It applies only when root's worktree is clean, because a commit in
-   the middle of root's turn could collide with root's own edits.
-4. Application is all or nothing, as `pairs apply` is now. It re-runs `harness cited` for every
-   deletion and move. The result is one commit with a `Documenter:` trailer.
-5. A pair that no longer matches goes back to the ledger, and the next pass picks it up.
-6. Root sees one line in its orientation.
+1. It submits a batch of pairs. Pairs can create a file, delete one, or move a section to a file
+   and leave a pointer, as well as replace. A created file or a move's destination must be a path
+   the manifest classes as a document (obs 76).
+2. **Rank 0 reviews every batch** (`harness pairs <task>` shows the diff and stamps the review),
+   then applies it or declines it with a reason. This reverses the original auto-apply: the owner
+   decided on 2026-10-05, after rank 0's assessment of the first three runs (obs 77), that slower
+   now is better in the long run. Orientation and rank 0's Stop hook name a batch that has waited
+   five minutes.
+3. Application is all or nothing. A move is checked verbatim on disk before the commit. The
+   commit's subject says what moved, and it carries `Documenter:`, `Reviewed-by:` and a
+   co-author trailer.
+4. A declined or refused batch shows in the next run's measurements with its reason.
+5. A chain of runs (`--runs N`) starts its next run when rank 0 decides the last batch.
 
 ## The budget is the harness's, not the documenter's
 

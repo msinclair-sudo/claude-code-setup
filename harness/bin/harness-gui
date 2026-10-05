@@ -172,6 +172,29 @@ def intermediary(rows, repo, asks=None, pdir=None):
     return out
 
 
+def tests_queue(pdir, repo):
+    """The project's test queue (obs 81): the running job, then the queued ones in
+    order, and whether a runner is up."""
+    try:
+        c = CLI.ProjCtx(pdir, repo)
+        jobs = CLI.testq_jobs(c, ("running", "queued"))
+        last = (CLI.testq_jobs(c, ("done", "failed", "cancelled")) or [None])[-1]
+    except Exception:
+        return {"jobs": [], "last": None}
+    out = []
+    for j in jobs:
+        out.append({"id": j["id"], "state": j["state"], "kind": j.get("kind"),
+                    "sha": (j.get("sha") or "")[:8], "command": (j.get("command") or "")[:60],
+                    "who": [r.get("node") for r in j.get("requested_by") or []],
+                    "arm": j.get("arm"), "done": j.get("done_arms"), "total": j.get("total"),
+                    "since": CLI.wait_age(j.get("started") or j.get("at"))})
+    lj = None
+    if last:
+        lj = {"id": last["id"], "state": last["state"], "sha": (last.get("sha") or "")[:8],
+              "at": (last.get("finished") or "")[11:16], "why": last.get("why")}
+    return {"jobs": out, "last": lj}
+
+
 def mark_held(cctx, nodes):
     """Held: nothing in hand, and the next queued task can't start yet — it is
     gated --after another node's task, or --not-before a clock. Not a wait
@@ -644,6 +667,7 @@ def read_state():
                          "orphan_marks": sorted(orphans, key=lambda o: o["task"]),
                          "asks": asks, "rulings": rulings,
                          "intermediary": intermediary(rows, repo, asks, pdir),
+                         "tests": tests_queue(pdir, repo),
                          "documenter": documenter(rows, pdir, repo, asks,
                                                   next((n for n, sp in tree.items()
                                                         if not sp.get("parent")), None)),
@@ -1541,6 +1565,31 @@ function docCard(p) {
     '<div class="ln">' + status + '</div>' + budget + last + ak + ctl + msg + '</div>';
 }
 
+// The project's test queue (obs 81): one job runs, in a copy of its commit;
+// the rest wait their turn, first in, first out.
+function testCard(p) {
+  const t = p.tests || {};
+  const jobs = t.jobs || [];
+  const run = jobs.find(j => j.state === 'running');
+  const q = jobs.filter(j => j.state === 'queued');
+  const what = j => j.kind === 'check' ? 'check <code>' + esc(j.sha) + '</code>'
+                                        : '<code>' + esc(j.command) + '</code>';
+  const head = run
+    ? '<div class="ln">' + esc(run.who.join(', ')) + '&rsquo;s ' + what(run) +
+      (run.total ? ' &middot; arm ' + ((run.done || 0) + 1) + '/' + run.total +
+        (run.arm ? ' <span class="q">' + esc(run.arm) + '</span>' : '') : '') +
+      ' &middot; ' + esc(run.since || '') + '</div>'
+    : '<div class="ln q">nothing running</div>';
+  const list = q.map((j, i) => '<div class="ln q">' + (i + 1) + '. ' + esc(j.who.join(', ')) +
+    ' &middot; ' + what(j) + ' &middot; waiting ' + esc(j.since || '') + '</div>').join('');
+  const last = !run && !q.length && t.last ? '<div class="ln q">last: ' + esc(t.last.id) + ' ' +
+    esc(t.last.state) + (t.last.at ? ' at ' + esc(t.last.at) : '') + '</div>' : '';
+  return '<div class="card interm doc ' + (run ? 'busy' : '') + '" data-live="tests:' +
+    esc(p.slug) + '"><div class="hdr"><span class="dot"></span><span class="nm">' +
+    esc(p.project) + '</span><span class="kd">tests</span></div>' + head +
+    (q.length ? '<div class="ln q">' + q.length + ' queued</div>' : '') + list + last + '</div>';
+}
+
 function intermCard(p) {
   // One intermediary per open item. The card lists the items whose session is
   // up, and each item waiting on a node marks it, so drawWaits can run a
@@ -1654,7 +1703,7 @@ async function tick() {
                    : ' <span class="q">names no node</span>') +
           (o.at ? ' <span class="q">&middot; ' + esc(o.at) + '</span>' : '') +
           '</li>').join('') + '</ul>' : '') +
-      tree(p.nodes, intermCard(p) + docCard(p)) + '</div></div>';
+      tree(p.nodes, intermCard(p) + docCard(p) + testCard(p)) + '</div></div>';
   }).join('');
   if (!d.projects.length) h += '<div class="empty">no enrolled projects on this machine</div>';
   paint(h);

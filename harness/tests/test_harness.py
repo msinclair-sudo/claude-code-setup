@@ -332,18 +332,15 @@ class Baseline(unittest.TestCase):
         (ctx.dir / "checks").mkdir()
         hz.baseline_path(ctx).write_text(json.dumps(
             {"sha": "b" * 40, "arms": {"arm": {"failed": True, "files": ["a.py"]}}}))
-        a = mock.Mock(set_baseline=False, timeout=30)
         chk = [{"name": "arm", "command": command, "blindSpot": "-"}]
-        with mock.patch.object(hz, "Ctx", return_value=ctx), \
-             mock.patch.object(hz, "load_checks", return_value=chk), \
-             mock.patch("sys.stdout"):
-            return hz.cmd_check(a)
+        base = hz.load_baseline(ctx)
+        with mock.patch("sys.stdout"):
+            rows, failed = hz.run_arms(ctx, "dev", "c" * 40, ctx.dir, chk, base, 30, "r")
+        return hz.check_exit(hz.make_check_report("dev", "c" * 40, rows, failed, base))
 
     def test_known_reds_pass_and_a_new_red_refuses(self):
-        self.assertIsNone(self.run_check("echo 'failed: a.py(1)'; exit 1"))
-        with self.assertRaises(SystemExit) as e:
-            self.run_check("echo 'failed: a.py(1) b.py(1)'; exit 1")
-        self.assertEqual(e.exception.code, hz.REFUSED)
+        self.assertEqual(self.run_check("echo 'failed: a.py(1)'; exit 1"), 0)
+        self.assertEqual(self.run_check("echo 'failed: a.py(1) b.py(1)'; exit 1"), hz.REFUSED)
 
 
 class CheckVisible(unittest.TestCase):
@@ -354,19 +351,12 @@ class CheckVisible(unittest.TestCase):
         self.ctx.me, self.ctx.branch, self.ctx.worktree = "dev", "dev", self.ctx.dir
         (self.ctx.dir / "checks").mkdir()
 
-    def check(self, command, timeout=30, out=None):
-        a = mock.Mock(set_baseline=False, timeout=timeout)
+    def check(self, command, timeout=30, out=None, progress=None):
         chk = [{"name": "arm", "command": command, "blindSpot": "-"}]
-        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
-             mock.patch.object(hz, "load_checks", return_value=chk), \
-             mock.patch.object(hz, "load_baseline", return_value=None), \
-             mock.patch("sys.stdout", out or io.StringIO()):
-            try:
-                hz.cmd_check(a)
-            except SystemExit:
-                pass
-        rep = next((self.ctx.dir / "checks").glob("dev-*.json"))
-        return json.loads(rep.read_text())["checks"][0]
+        with mock.patch("sys.stdout", out or io.StringIO()):
+            rows, _ = hz.run_arms(self.ctx, "dev", "c" * 40, self.ctx.dir, chk, None, timeout,
+                                  "r", progress=progress)
+        return rows[0]
 
     def test_timeout_keeps_what_it_printed(self):
         row = self.check("echo first; echo second; sleep 5", timeout=1)
@@ -376,19 +366,10 @@ class CheckVisible(unittest.TestCase):
         self.assertIn("timed out after 1s", row["stderr"])
         self.assertIn("second", (self.ctx.dir / "checks" / "dev-arm.out").read_text())
 
-    def test_redirected_output_and_running_record_appear_while_it_runs(self):
-        import threading
-        path = self.ctx.dir / "log.txt"
-        with open(path, "w") as fh:
-            t = threading.Thread(target=self.check, args=("sleep 1.5",), kwargs={"out": fh})
-            t.start()
-            time.sleep(0.7)
-            seen = path.read_text()
-            rec = json.loads(hz.check_running_path(self.ctx, "dev").read_text())
-            t.join()
-        self.assertIn("…     arm", seen)
-        self.assertEqual((rec["done"], rec["total"], rec["arm"]), (0, 1, "arm"))
-        self.assertFalse(hz.check_running_path(self.ctx, "dev").exists())
+    def test_progress_is_reported_before_each_arm(self):
+        seen = []
+        self.check("true", progress=lambda i, arm: seen.append((i, arm)))
+        self.assertEqual(seen, [(0, "arm")])
 
     def test_clip_says_it_cut(self):
         self.assertEqual(hz.clip("x" * 105), "x" * 100 + "…(+5 chars)")
@@ -408,17 +389,17 @@ class WaitChain(unittest.TestCase):
             {"node": "dev_2", "parent": "dev", "asked": "ruling on X", "since": since}))
 
     def checking(self, pid):
-        hz.check_running_path(self.ctx, "dev").write_text(json.dumps(
-            {"pid": pid, "total": 23, "done": 6, "arm": "pytest-all", "started": OLD,
-             "out": "/x/dev-pytest-all.out"}))
+        hz.testq_save(self.ctx, {"id": "j1", "kind": "check", "sha": "c" * 40, "state": "running",
+                                 "requested_by": [{"node": "dev"}], "pid": pid, "total": 23,
+                                 "done_arms": 6, "arm": "pytest-all", "started": OLD, "at": OLD})
 
     def test_activity(self):
         self.wait(OLD)
         self.assertTrue(hz.node_activity(self.ctx, "dev_2").startswith("waiting on dev 3h"))
         self.checking(os.getpid())
-        self.assertEqual(hz.node_activity(self.ctx, "dev"), "check 7/23 (pytest-all), 3h00")
-        with mock.patch.object(hz, "check_pid_alive", return_value=False):
-            self.assertIn("check died at 7/23", hz.node_activity(self.ctx, "dev"))
+        self.assertEqual(hz.node_activity(self.ctx, "dev"), "check running arm 7/23, 3h00")
+        with mock.patch.object(hz, "runner_alive", return_value=False):
+            self.assertIn("check runner died", hz.node_activity(self.ctx, "dev"))
 
     def items(self, node):
         with mock.patch.object(hz, "lead_owes", return_value=[]), \
@@ -435,7 +416,7 @@ class WaitChain(unittest.TestCase):
         self.checking(os.getpid())
         main = self.items("main")
         self.assertIn("stuck:dev_2", main)
-        self.assertIn("dev: check 7/23", main["stuck:dev_2"])
+        self.assertIn("dev: check running arm 7/23", main["stuck:dev_2"])
         dev = self.items("dev")
         self.assertIn("asked:dev_2", dev)
         self.assertNotIn("stuck:dev_2", dev)
@@ -506,13 +487,9 @@ class Hold(unittest.TestCase):
             {"path": str(self.ctx.dir / "db"), "why": "live merge", "by": "dev", "until": ""}))
         touched = self.ctx.dir / "ran"
         chk = [{"name": "arm", "command": f"touch {touched}; cat {self.ctx.dir}/db", "blindSpot": "-"}]
-        a = mock.Mock(set_baseline=False, timeout=30)
-        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
-             mock.patch.object(hz, "load_checks", return_value=chk), \
-             mock.patch.object(hz, "load_baseline", return_value=None), \
-             mock.patch("sys.stdout", io.StringIO()):
-            hz.cmd_check(a)                              # no SystemExit: nothing failed
-        rep = json.loads(next((self.ctx.dir / "checks").glob("dev-*.json")).read_text())
+        with mock.patch("sys.stdout", io.StringIO()):
+            rows, failed = hz.run_arms(self.ctx, "dev", "c" * 40, self.ctx.dir, chk, None, 30, "r")
+        rep = hz.make_check_report("dev", "c" * 40, rows, failed, None)
         self.assertFalse(touched.exists())
         self.assertEqual((rep["passed"], rep["held"]), (False, 1))
         self.assertIn("live merge", rep["checks"][0]["held"])
@@ -2464,3 +2441,137 @@ class ItemMessages(unittest.TestCase):
         code, _, close = self.cli(["t-1", "--reject"], {})
         self.assertEqual(code, 0)
         close.assert_called_once()
+
+
+class TestQueue(unittest.TestCase):
+    """obs 81, owner 2026-10-05: checks run from a queue, one job per project, in a
+    copy of the commit, torn down after."""
+
+    def setUp(self):
+        import subprocess as sp
+        self.sp = sp
+        self.root = Path(tempfile.mkdtemp())
+        self.repo = self.root / "proj"
+        self.repo.mkdir()
+        g = lambda *a: sp.run(["git", "-C", str(self.repo), *a], capture_output=True, text=True)
+        g("init", "-q"); g("config", "user.email", "t@t"); g("config", "user.name", "t")
+        (self.repo / ".harness").mkdir()
+        self.state = self.root / "state"
+        self.state.mkdir()
+        mark = self.state / "tmpdir.txt"
+        (self.repo / ".harness" / "manifest.json").write_text(json.dumps({"checks": [
+            {"name": "good", "command": f"echo $TMPDIR > {mark}; echo fine", "blindSpot": "-"},
+            {"name": "bad", "command": "echo 'failed: x.py(1)'; exit 1", "blindSpot": "-"}]}))
+        (self.repo / "a.txt").write_text("a")
+        g("add", "-A"); g("commit", "-qm", "one")
+        self.sha = g("rev-parse", "HEAD").stdout.strip()
+        self.ctx = hz.ProjCtx(self.state, self.repo)
+        self.runs = self.root / "runs"
+        for m in (mock.patch.object(hz, "RUNS_HOME", self.runs),
+                  mock.patch.object(hz, "TESTQ_IDLE", 0),
+                  mock.patch.object(hz, "testq_ensure_runner")):
+            m.start(); self.addCleanup(m.stop)
+
+    def test_same_commit_joins_and_a_finished_one_is_reused(self):
+        j1, how1 = hz.testq_submit(self.ctx, "check", self.sha, "dev_1", "s1")
+        j2, how2 = hz.testq_submit(self.ctx, "check", self.sha, "dev", "s2")
+        self.assertEqual((how1, how2, j1["id"]), ("queued", "joined", j2["id"]))
+        self.assertEqual([r["node"] for r in hz.testq_jobs(self.ctx)[0]["requested_by"]],
+                         ["dev_1", "dev"])
+        with mock.patch("sys.stdout", io.StringIO()), mock.patch("signal.signal"):
+            hz.testd(self.state, self.repo)
+        self.assertEqual(hz.testq_submit(self.ctx, "check", self.sha, "qa", "s3")[1], "reused")
+        self.assertTrue(hz.check_report_path(self.ctx, "qa", self.sha).exists())
+        self.assertEqual(hz.testq_submit(self.ctx, "check", self.sha, "qa", "s3",
+                                         again=True)[1], "queued")
+
+    def test_a_run_reports_to_every_requester_rings_and_leaves_nothing(self):
+        hz.testq_submit(self.ctx, "check", self.sha, "dev_1", "s1")
+        hz.testq_submit(self.ctx, "check", self.sha, "dev", "s2")
+        with mock.patch("sys.stdout", io.StringIO()), mock.patch("signal.signal"):
+            hz.testd(self.state, self.repo)
+        (job,) = hz.testq_jobs(self.ctx)
+        self.assertEqual(job["state"], "done")
+        for n in ("dev_1", "dev"):
+            rep = json.loads(hz.check_report_path(self.ctx, n, self.sha).read_text())
+            self.assertEqual((rep["failed"], rep["node"]), (1, n))
+            rung = list((self.state / "doorbell" / n / "inbox").glob("*.json"))
+            self.assertIn("1/2 passed", json.loads(rung[0].read_text())["text"])
+        self.assertTrue((self.state / "tmpdir.txt").read_text().startswith(str(self.runs)))
+        self.assertFalse(any(p.is_file() for p in self.runs.rglob("*")))   # nothing it built
+        wl = self.sp.run(["git", "-C", str(self.repo), "worktree", "list"],
+                         capture_output=True, text=True).stdout
+        self.assertEqual(len(wl.strip().splitlines()), 1)              # only the repo itself
+
+    def test_first_in_first_out_and_one_runner(self):
+        a, _ = hz.testq_submit(self.ctx, "cmd", self.sha, "dev", "s", command="echo a")
+        time.sleep(1.1)
+        b, _ = hz.testq_submit(self.ctx, "cmd", self.sha, "dev_1", "s", command="echo b")
+        self.assertEqual([j["id"] for j in hz.testq_ahead(self.ctx, b)], [a["id"]])
+        held = hz._flock(hz.testq_dir(self.ctx) / "runner.lock", block=False)
+        try:
+            with mock.patch("sys.stdout", io.StringIO()) as out:
+                hz.testd(self.state, self.repo)
+            self.assertIn("another runner", out.getvalue())
+            self.assertTrue(hz.testq_runner_alive(self.ctx))
+        finally:
+            held.close()
+
+    def test_a_dead_runners_job_is_failed_and_torn_down(self):
+        d = self.runs / "x" / "j"
+        d.mkdir(parents=True)
+        hz.testq_save(self.ctx, {"id": "j", "kind": "check", "sha": self.sha, "state": "running",
+                                 "pid": 999999, "dir": str(d), "requested_by": [], "at": "1"})
+        hz.testq_recover(self.ctx)
+        self.assertEqual(hz.testq_jobs(self.ctx)[0]["state"], "failed")
+        self.assertFalse(d.exists())
+
+    def test_kill_tree_reaches_a_setsid_grandchild(self):
+        p = self.sp.Popen(["sh", "-c", "setsid sleep 60 & sleep 60"], start_new_session=True)
+        time.sleep(0.5)
+        pids = hz.proc_tree(p.pid)
+        self.assertGreaterEqual(len(pids), 3)
+        hz.kill_tree(p.pid)
+        p.wait()
+        time.sleep(0.3)
+        alive = [x for x in pids if hz._pid_exists(x) and
+                 "zombie" not in open(f"/proc/{x}/status").read().lower()]
+        self.assertEqual(alive, [])
+
+    def test_reads_from_widens_reads_so_a_hold_catches_the_arm(self):
+        c = {"name": "arm", "command": "true", "blindSpot": "-", "reads": [],
+             "reads_from": "echo /data/live.db"}
+        self.assertEqual(hz.check_reads(c, self.repo), ["/data/live.db"])
+        held = hz.hold_catching(dict(c, reads=hz.check_reads(c, self.repo)),
+                                [{"path": "/data/live.db", "why": "rebuild", "by": "dev"}])
+        self.assertIsNotNone(held)
+
+
+class StopKillsWork(unittest.TestCase):
+    """obs 80: `stop` ends the session's processes, not just the conversation."""
+
+    def test_survivors_are_killed(self):
+        import subprocess as sp
+        ctx = FakeCtx({"main": None, "dev": "main"})
+        ctx.branch = "main"
+        sess = sp.Popen(["sh", "-c", "setsid sleep 519 & sleep 520"], start_new_session=True)
+        time.sleep(0.4)
+        tree = hz.proc_tree(sess.pid)
+        idx = {"byWorktree": {"/wt/dev": "dev"}, "byBranch": {"main": "main"},
+               "nodes": {"dev": {"children": []}, "main": {"children": ["dev"]}}}
+        rows = [{"cwd": "/wt/dev", "sessionId": "d" * 36, "name": "p-dev", "pid": sess.pid}]
+        def fake_stop(cmd, **kw):            # `claude stop` ends the session process only
+            if cmd[:2] == ["claude", "stop"]:
+                sess.kill(); sess.wait()
+            return mock.Mock(returncode=0, stdout="", stderr="")
+        with mock.patch.object(hz, "Ctx", return_value=ctx), \
+             mock.patch.object(hz, "load_index", return_value=idx), \
+             mock.patch.object(hz, "agents_json", return_value=rows), \
+             mock.patch.object(hz, "live_rows", side_effect=lambda r: r), \
+             mock.patch.object(hz.subprocess, "run", side_effect=fake_stop), \
+             mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "x"}), \
+             redirect_stdout(io.StringIO()) as out:
+            hz.cmd_stop(mock.Mock(children=False, node=["dev"], dry_run=False))
+        time.sleep(0.3)
+        self.assertIn("killed", out.getvalue())
+        self.assertEqual([p for p in tree if p != sess.pid and hz._pid_exists(p)], [])

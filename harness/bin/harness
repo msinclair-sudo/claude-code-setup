@@ -2120,15 +2120,30 @@ def cmd_stop(a):
             if r["sessionId"] == mine:
                 print(f"  skip {n:<12} that is this session"); continue
             label = f"{r.get('name') or '?'} [{r['sessionId'][:8]}]"
+            # Its work, not just the conversation (obs 80): the process tree is
+            # read before the stop, while its parent links are intact.
+            pid = r.get("pid") if isinstance(r.get("pid"), int) else None
+            tree = [p for p in proc_tree(pid) if p != pid] if pid else []
             if a.dry_run:
-                print(f"  would stop {n:<12} {label}")
+                print(f"  would stop {n:<12} {label}"
+                      + (f" and {len(tree)} process(es) under it" if tree else ""))
             else:
-                rc, out, err = 0, "", ""
                 res = subprocess.run(["claude", "stop", r["sessionId"][:8]],
                                      capture_output=True, text=True)
                 if res.returncode:
                     print(f"  FAILED {n:<12} {label}: {res.stderr.strip()[:80]}"); continue
                 print(f"  stopped {n:<12} {label}")
+                time.sleep(1)
+                alive = [p for p in tree if _pid_exists(p)]
+                for p in alive:
+                    kill_tree(p)
+                if alive:
+                    print(f"           and killed {len(alive)} process(es) it left running: "
+                          + ", ".join(_proc_name(p) for p in alive[:5]))
+                for j in testq_jobs(ctx, ("queued",)):
+                    if [x.get("node") for x in j["requested_by"]] == [n]:
+                        testq_cancel(ctx, j)
+                        print(f"           and cancelled its queued test job {j['id']}")
             stopped += 1
     verb = "would stop" if a.dry_run else "stopped"
     print(f"{verb} {stopped}")
@@ -3867,7 +3882,7 @@ def _tail(path, n=2000):
         return ""
 
 
-def run_arm(command, cwd, limit, outf, errf):
+def run_arm(command, cwd, limit, outf, errf, env=None):
     """One arm under `sh -c`, streamed to disk so a timeout keeps what it printed.
 
     `subprocess.run(timeout=)` threw the output away with the process, so an arm
@@ -3878,20 +3893,98 @@ def run_arm(command, cwd, limit, outf, errf):
     try:
         with open(outf, "wb") as o, open(errf, "wb") as e:
             pr = subprocess.Popen(["sh", "-c", command], cwd=str(cwd), stdout=o, stderr=e,
-                                  stdin=subprocess.DEVNULL, start_new_session=True)
+                                  stdin=subprocess.DEVNULL, start_new_session=True, env=env)
+            _ARM[0] = pr.pid
+            if _ARM_HOOK[0]:
+                _ARM_HOOK[0](pr.pid)
             try:
                 code = pr.wait(timeout=limit)
                 timed_out = False
             except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(pr.pid, 9)
-                except OSError:
-                    pr.kill()
+                # The whole tree, not the group: a runner that setsid's its
+                # children leaves them out of the group (obs 80).
+                kill_tree(pr.pid)
                 pr.wait()
                 code, timed_out = 124, True
+            finally:
+                _ARM[0] = None
     except Exception as ex:
         return 125, "", str(ex), False
     return code, _tail(outf), _tail(errf), timed_out
+
+
+_ARM = [None]          # the arm running now, for a signal handler to kill
+_ARM_HOOK = [None]     # told each arm's pid as it starts (the queue records it on the job)
+_CANCEL = [False]      # set by `harness test --cancel` on the running job
+
+
+def proc_children():
+    """{pid: [child pids]} and {pid: pgid}, read from /proc in one pass."""
+    kids, pg = {}, {}
+    for d in os.listdir("/proc"):
+        if not d.isdigit():
+            continue
+        try:
+            with open(f"/proc/{d}/stat") as fh:
+                st = fh.read()
+            f = st[st.rindex(")") + 2:].split()
+            ppid, pgid = int(f[1]), int(f[2])
+        except Exception:
+            continue
+        kids.setdefault(ppid, []).append(int(d))
+        pg[int(d)] = pgid
+    return kids, pg
+
+
+def proc_tree(pid):
+    """pid and every descendant, found by parent links while they are intact."""
+    kids, _ = proc_children()
+    out, todo = [], [pid]
+    while todo:
+        p = todo.pop()
+        out.append(p)
+        todo += kids.get(p, [])
+    return out
+
+
+def _pid_exists(pid):
+    if not isinstance(pid, int) or pid <= 0:
+        return False             # os.kill(0, …) is the caller's own process group
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+
+
+def _proc_name(pid):
+    try:
+        with open(f"/proc/{pid}/cmdline") as fh:
+            return fh.read().replace("\0", " ").strip()[:60] or str(pid)
+    except OSError:
+        return str(pid)
+
+
+def kill_tree(pid, sig=9):
+    """Kill a process and everything under it (obs 80: killing `check` left its
+    arm's `sh`, killing `run.py` left the test file it had started). The tree is
+    read first, then each process group and each pid is signalled, so a child
+    that setsid'd out of the group dies too. Returns the pids signalled."""
+    pids = proc_tree(pid)
+    _, pg = proc_children()
+    for g in {pg.get(p) for p in pids if pg.get(p) and pg.get(p) != os.getpgrp()}:
+        try:
+            os.killpg(g, sig)
+        except OSError:
+            pass
+    for p in pids:
+        try:
+            os.kill(p, sig)
+        except OSError:
+            pass
+    return pids
 
 
 def read_check_report(ctx, node, sha):
@@ -3999,127 +4092,632 @@ def set_baseline(ctx, node, why):
           f"{sum(v['failed'] for v in base['arms'].values())} arm(s)")
 
 
+def run_arms(ctx, node, sha, cwd, checks, base, timeout, report, env=None, progress=None):
+    """Every arm, in order, never stopping at a failure (I5). Prints as it goes;
+    returns (rows, failed). `progress(i, arm)` is told before each arm."""
+    holds = live_holds(ctx)
+    rows, failed = [], 0
+    for i, c in enumerate(checks):
+        if _CANCEL[0]:
+            print(f"  cancelled before {c['name']}")
+            break
+        limit = c.get("timeout") or timeout             # per-check ceiling (obs 24)
+        outf, errf = check_output_paths(ctx, node, c["name"])
+        c = dict(c, reads=check_reads(c, cwd, env))
+        h = hold_catching(c, holds)
+        if h:
+            why = f"{h['why']} — {h['by']}" + (f", until {h['until']}" if h.get("until") else "")
+            rows.append({"name": c["name"], "command": c["command"],
+                         "blindSpot": c["blindSpot"], "exit": None, "held": why,
+                         "seconds": 0, "timedOut": False, "failedFiles": None,
+                         "stdout": "", "stderr": ""})
+            print(f"  NOT RUN (held: {why})  {c['name']}")
+            continue
+        if progress:
+            progress(i, c["name"])
+        print(f"  …     {c['name']}")
+        t0 = time.time()
+        code, out, err, timed_out = run_arm(c["command"], cwd, limit, outf, errf, env)
+        dur = time.time() - t0
+        ok = code == 0
+        failed += (not ok)
+        last = next((x for x in reversed((out + "\n" + err).splitlines()) if x.strip()), "")
+        if timed_out:
+            err = (err + f"\ntimed out after {limit}s").lstrip("\n")
+        rows.append({"name": c["name"], "command": c["command"],
+                     "blindSpot": c["blindSpot"], "exit": code,
+                     "seconds": round(dur, 2), "timedOut": timed_out,
+                     "failedFiles": failed_files(out), "lastLine": last[-300:],
+                     "stdout": out[-2000:], "stderr": err[-2000:]})
+        verdict = "NOT RUN (timed out)" if timed_out else "PASS" if ok else "FAIL"
+        print(f"  {verdict}  {c['name']:<18} {dur:5.1f}s of {limit}"
+              + ("" if ok or timed_out else f"   exit {code}"))
+        if timed_out and last:
+            print(f"        last output: {clip(last)}")
+        if not ok and not timed_out:
+            lines = (err or out).strip().splitlines()
+            if len(lines) > 6:
+                print(f"        … {len(lines) - 6} earlier line(s) omitted")   # obs 34
+            for line in lines[-6:]:
+                print(f"        {clip(line)}")
+        if not ok:
+            ff = rows[-1]["failedFiles"]
+            print(f"        report: {report}"
+                  + (f"  ({len(ff)} failed file(s) listed)" if ff else "")
+                  + f"\n        output: {outf}")
+        if base and not ok:
+            bl = baseline_line(baseline_diff(rows[-1:], base)[c["name"]])
+            if bl:
+                print(f"        {bl}")
+        # The blind spot is printed beside the RESULT, not filed away in the
+        # manifest, because the moment it matters is the moment somebody is
+        # deciding what a pass means.
+        print(f"        cannot see: {c['blindSpot']}")
+    return rows, failed
+
+
+def check_reads(c, cwd, env=None):
+    """A check's `reads`, widened by its `reads_from` command when it has one
+    (obs 79): the project's own list of what the arm opens, not a typed copy."""
+    reads = list(c.get("reads") or [])
+    cmd = c.get("reads_from")
+    if cmd:
+        try:
+            r = subprocess.run(["sh", "-c", cmd], cwd=str(cwd), env=env, capture_output=True,
+                               text=True, timeout=60)
+            if r.returncode == 0:
+                reads += [l.strip() for l in r.stdout.splitlines() if l.strip()]
+            else:
+                print(f"  reads_from failed for {c['name']} (exit {r.returncode}); "
+                      f"using its typed reads")
+        except Exception as e:
+            print(f"  reads_from failed for {c['name']}: {e}; using its typed reads")
+    return reads
+
+
+def check_summary(rep, base, n):
+    """The closing lines of a check, from its report."""
+    nheld = rep.get("held") or 0
+    out = [f"{n - (rep.get('failed') or 0) - nheld}/{n} passed"
+           + (f", {nheld} held (not run — this report does not cover them)" if nheld else "")
+           + f" — recorded against {rep['sha'][:8]}"]
+    if base and rep.get("baseline"):
+        out.append("  " + baseline_summary(rep, base))
+    return out
+
+
+def print_check_report(rep, base):
+    """A finished report, arm by arm, as a check prints it while it runs."""
+    for r in rep.get("checks") or []:
+        if r.get("held"):
+            print(f"  NOT RUN (held: {r['held']})  {r['name']}"); continue
+        v = ("NOT RUN (timed out)" if r.get("timedOut") else
+             "NOT RUN (setup failed)" if r.get("setup_failed") else
+             "PASS" if r.get("exit") == 0 else "FAIL")
+        print(f"  {v}  {r['name']:<18} {r.get('seconds', 0):5.1f}s"
+              + ("" if r.get("exit") in (0, None) or r.get("timedOut") else f"   exit {r['exit']}"))
+        if v == "FAIL":
+            for line in (r.get("stderr") or r.get("stdout") or "").strip().splitlines()[-6:]:
+                print(f"        {clip(line)}")
+    for line in check_summary(rep, base, len(rep.get("checks") or [])):
+        print(line)
+
+
+def make_check_report(node, sha, rows, failed, base, **extra):
+    rep = dict({"node": node, "sha": sha, "dirty": False, "at": _now(),
+                "passed": failed == 0 and not any(r.get("held") for r in rows),
+                "failed": failed, "held": sum(1 for r in rows if r.get("held")),
+                "checks": rows}, **extra)
+    diff = baseline_diff(rows, base) if base else None
+    if diff is not None:
+        rep["baseline"] = base.get("sha")
+        rep["new"] = sum(len(d["new"]) + d["notrun"] for d in diff.values())
+    return rep
+
+
+def check_exit(rep):
+    """REFUSED on new failures against a baseline, or on any failure without one."""
+    if rep.get("new") is not None:
+        return REFUSED if rep["new"] else 0
+    return REFUSED if rep.get("failed") else 0
+
+
 def cmd_check(a):
-    """I5: run every check in the set, including after one fails, and record it.
+    """I5: submit this commit's checks to the project's test queue.
 
-    EVERY check runs. Stopping at the first failure reports one fault and hides
-    the rest, so the next run finds the second one -- and a suite that reveals
-    its problems one per cycle costs a cycle each. The exit code still says
-    whether anything failed.
-
-    It is recorded against the exact commit, like the review record, so a lead
-    can see whether the thing it is about to integrate was ever checked and at
-    which sha. A new commit invalidates it by construction.
+    EVERY check runs, including after one fails, and the result is recorded
+    against the exact commit. They run in a copy of the commit, one job at a time
+    per project, first in first out (obs 81, owner 2026-10-05): sessions running
+    checks side by side stalled the machine. `--wait` blocks for the result;
+    otherwise the requester's doorbell rings when it is in.
 
     NOTHING RUNS THIS IMPLICITLY. `manifest.json` is a document that travels to
-    every node and `checks[].command` is executed here, which the trust model
-    names as one of three code-execution channels rank 0 holds over the tree.
-    A hook or an orientation path that ran it would turn that channel into an
-    automatic one. It runs when typed.
+    every node and `checks[].command` is executed by the queue, which the trust
+    model names as one of three code-execution channels rank 0 holds over the
+    tree. A job runs only when someone submits it.
     """
     ctx = Ctx(); ctx.require_enrolled()
     node, _ = ctx.node()
     if a.set_baseline:
         return set_baseline(ctx, node, a.why)
-    # Line-buffered: a check redirected to a file printed nothing until it
-    # ended, so a 29-minute run read as 0 bytes whether running, hung or dead (obs 68).
     try:
         sys.stdout.reconfigure(line_buffering=True)
     except Exception:
         pass
+    if a.report:
+        rc, sha, _ = git("rev-parse", a.report, cwd=ctx.worktree)
+        rep = read_check_report(ctx, node, sha.strip()) or _read_json(shared_report_path(ctx, sha.strip()))
+        if not rep:
+            die(REFUSED, f"no check report for {a.report}")
+        print_check_report(rep, load_baseline(ctx)); sys.exit(check_exit(rep))
+    load_checks(ctx)                    # refuses an empty or malformed set now, not in the queue
+    sha = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
+    rc, dirt, _ = git("status", "--porcelain", "--untracked-files=no", cwd=ctx.worktree)
+    if dirt.strip():
+        die(REFUSED, f"{len(dirt.splitlines())} uncommitted change(s). The queue runs a copy of "
+                     f"the commit, so commit first (a WIP commit is fine), then harness check.")
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    job, how = testq_submit(ctx, "check", sha, node, sid, again=a.again, timeout=a.timeout)
+    if how == "reused":
+        rep = read_check_report(ctx, node, sha)
+        print(f"{sha[:8]} was already checked ({rep.get('at', '')[:16]}); its report is now "
+              f"{node}'s too. --again runs it afresh.")
+        print_check_report(rep, load_baseline(ctx)); sys.exit(check_exit(rep))
+    ahead = testq_ahead(ctx, job)
+    print(f"{'joined' if how == 'joined' else 'queued'} {job['id']} — check of {sha[:8]}"
+          + (f", {len(ahead)} ahead" if ahead else ", next to run")
+          + (f" ({testq_describe(ahead[0])})" if ahead else ""))
+    if not a.wait:
+        print("  Your doorbell rings with the result; end your turn, or carry on with "
+              "something else.\n  `harness test` shows the queue; `--wait` would have blocked.")
+        return
+    rep = testq_wait(ctx, job["id"])
+    if rep is None:
+        die(REFUSED, f"{job['id']} ended without a report: harness test --log {job['id']}")
+    print_check_report(rep, load_baseline(ctx))
+    sys.exit(check_exit(rep))
+
+
+# ── the test queue: one job at a time per project, in a copy of the commit ───
+#
+# Owner, 2026-10-05: "tests should be handled by a typical scheduler, not a
+# session. Tests are submitted to the scheduler, so we're not trying to run
+# multiple tests of the same things in different places all together. The test
+# node doesn't need a session. It just takes the jobs, copies the worktree, runs
+# the tests, reports and tears down, removing everything it built."
+# Decisions: one run per project; lanes may still run a single test file
+# directly; copies on the Linux disk; strict first in, first out.
+
+TESTQ_IDLE = 120                # a runner with nothing queued exits after this
+TESTQ_FREE_GB = 5               # the disk a job needs before it copies anything
+RUNS_HOME = Path.home() / ".cache" / "harness" / "runs"
+
+
+class ProjCtx:
+    """Enough of Ctx for the runner, which stands in no node: the repo and its state."""
+
+    def __init__(self, pdir, repo):
+        self.state, self.repo = Path(pdir), Path(repo)
+        self.slug = self.state.name
+        self.worktree = self.repo
+
+    def state_file(self, kind, name, ext):
+        return self.state / kind / (re.sub(r"[^A-Za-z0-9]", "_", name) + ext)
+
+
+def _read_json(f):
+    try:
+        return json.loads(Path(f).read_text())
+    except Exception:
+        return None
+
+
+def shared_report_path(ctx, sha):
+    return Path(ctx.state) / "checks" / f"{sha}.json"
+
+
+def testq_dir(ctx):
+    d = Path(ctx.state) / "testq"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def testq_jobs(ctx, states=None):
+    """Jobs, oldest first, optionally only in `states`."""
+    out = []
+    for f in sorted(testq_dir(ctx).glob("*.json")):
+        j = _read_json(f)
+        if j and (states is None or j.get("state") in states):
+            out.append(j)
+    return sorted(out, key=lambda j: j.get("at") or "")
+
+
+def testq_save(ctx, job):
+    """Whole-file replace, keeping requesters who joined since `job` was read: a
+    node joins a running job while the runner is saving its progress."""
+    f = testq_dir(ctx) / f"{job['id']}.json"
+    old = _read_json(f) or {}
+    have = {r.get("node") for r in job.get("requested_by") or []}
+    job["requested_by"] = (job.get("requested_by") or []) + [
+        r for r in old.get("requested_by") or [] if r.get("node") not in have]
+    if old.get("state") == "cancelled" and job.get("state") == "queued":
+        job["state"] = "cancelled"
+    _save(f, job)
+
+
+def testq_ahead(ctx, job):
+    """The jobs that run before this one: the running one, then older queued ones."""
+    return [j for j in testq_jobs(ctx, ("running", "queued"))
+            if j["id"] != job["id"] and (j["state"] == "running" or j["at"] < job["at"])]
+
+
+def testq_describe(j):
+    who = ", ".join(r.get("node") or "?" for r in j.get("requested_by") or [])
+    what = "check" if j.get("kind") == "check" else f"`{(j.get('command') or '')[:40]}`"
+    if j.get("state") == "running":
+        return (f"{who}'s {what}, running" + (f" arm {j.get('done_arms', 0) + 1}/{j.get('total')}"
+                                              if j.get("total") else "")
+                + f" since {(j.get('started') or '')[11:16]}")
+    return f"{who}'s {what}, queued"
+
+
+def testq_submit(ctx, kind, sha, node, sid, command=None, again=False, timeout=None):
+    """Queue a job, or join one for the same commit, or reuse a finished report.
+    Returns (job, "queued" | "joined" | "reused")."""
+    req = {"node": node, "session": sid, "at": _now()}
+    if kind == "check" and not again:
+        for j in testq_jobs(ctx, ("queued", "running")):
+            if j.get("kind") == "check" and j.get("sha") == sha:
+                if not any(r.get("node") == node for r in j["requested_by"]):
+                    j["requested_by"].append(req)
+                    testq_save(ctx, j)
+                return j, "joined"
+        rep = _read_json(shared_report_path(ctx, sha))
+        if rep:
+            mine = check_report_path(ctx, node, sha)
+            mine.parent.mkdir(parents=True, exist_ok=True)
+            mine.write_text(json.dumps(dict(rep, node=node), indent=2) + "\n")
+            return {"id": None, "sha": sha}, "reused"
+    job = {"id": f"{time.strftime('%Y%m%d-%H%M%S')}-{sha[:8]}-{os.getpid() % 1000}",
+           "kind": kind, "sha": sha, "command": command, "requested_by": [req],
+           "state": "queued", "at": _now(), "timeout": timeout}
+    testq_save(ctx, job)
+    testq_ensure_runner(ctx)
+    return job, "queued"
+
+
+def testq_ensure_runner(ctx):
+    """Start the project's runner, detached, if none holds its lock."""
+    if testq_runner_alive(ctx):
+        return
+    log = testq_dir(ctx) / "runner.log"
+    env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_CODE_SESSION_ID",)}
+    with open(log, "a") as fh:
+        subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "testd",
+                          project_arg(ctx.state)], cwd=str(ctx.repo), env=env, stdout=fh,
+                         stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                         start_new_session=True)
+
+
+def _flock(path, block):
+    import fcntl
+    fh = open(path, "a+")
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | (0 if block else fcntl.LOCK_NB))
+    except OSError:
+        fh.close()
+        return None
+    return fh
+
+
+def testq_runner_alive(ctx):
+    fh = _flock(testq_dir(ctx) / "runner.lock", block=False)
+    if fh is None:
+        return True
+    fh.close()
+    return False
+
+
+def testq_wait(ctx, job_id):
+    """Block until a job ends; its shared report, or None."""
+    while True:
+        j = _read_json(testq_dir(ctx) / f"{job_id}.json") or {}
+        if j.get("state") in ("done", "failed", "cancelled"):
+            return _read_json(j.get("report") or "") if j.get("report") else None
+        time.sleep(5)
+
+
+def testd(pdir, repo):
+    """The project's runner: one at a time, oldest first, until the queue is
+    empty for TESTQ_IDLE. Exits at once if another runner holds the lock."""
+    ctx = ProjCtx(pdir, repo)
+    lock = _flock(testq_dir(ctx) / "runner.lock", block=False)
+    if lock is None:
+        print("another runner holds the lock"); return
+    try:
+        _testd_loop(ctx)
+    finally:
+        lock.close()
+
+
+def _testd_loop(ctx):
+    testq_recover(ctx)
+    state = {"job": None}
+
+    def on_term(signum, frame):
+        if _ARM[0]:
+            kill_tree(_ARM[0])
+        j = state["job"]
+        if j:
+            j.update(state="cancelled", finished=_now(), why="the runner was stopped")
+            testq_save(ctx, j)
+            testq_teardown(ctx, j)
+        sys.exit(1)
+    def on_cancel(signum, frame):
+        # Cancel this job only: kill its arm, and run_arms runs no more arms.
+        _CANCEL[0] = True
+        if _ARM[0]:
+            kill_tree(_ARM[0])
+    import signal
+    signal.signal(signal.SIGTERM, on_term)
+    signal.signal(signal.SIGUSR1, on_cancel)
+    idle_since = time.time()
+    while True:
+        q = testq_jobs(ctx, ("queued",))
+        if not q:
+            if time.time() - idle_since > TESTQ_IDLE:
+                print(f"{_now()} queue empty; runner exits"); return
+            time.sleep(3); continue
+        job = _read_json(testq_dir(ctx) / f"{q[0]['id']}.json") or q[0]
+        if job.get("state") != "queued":
+            continue
+        state["job"] = job
+        testq_run(ctx, job)
+        state["job"] = None
+        idle_since = time.time()
+
+
+def testq_recover(ctx):
+    """A job left `running` by a runner that died: failed, and its copy removed."""
+    for j in testq_jobs(ctx, ("running",)):
+        if not runner_alive(j.get("pid")):
+            if _pid_exists(j.get("arm_pid")):
+                kill_tree(j["arm_pid"])
+            j.update(state="failed", finished=_now(), why="the runner died mid-job")
+            testq_save(ctx, j)
+            testq_teardown(ctx, j)
+
+
+def testq_teardown(ctx, job):
+    """Remove everything a job built: the worktree, then its whole run folder."""
+    d = job.get("dir")
+    if not d:
+        return
+    wt = Path(d) / job.get("wt_name", "")
+    if job.get("wt_name"):
+        git("worktree", "remove", "--force", str(wt), cwd=ctx.repo)
+    git("worktree", "prune", cwd=ctx.repo)
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def testq_run(ctx, job):
+    """One job, start to finish: copy the commit, set up, run, report, ring, tear down."""
+    node = (job["requested_by"][0].get("node") or "operator")
+    run = RUNS_HOME / ctx.slug / job["id"]
+    wt_name = f"{Path(ctx.repo).name}-{node}-{job['sha'][:8]}"
+    log = testq_dir(ctx) / f"{job['id']}.log"
+    job.update(state="running", started=_now(), pid=os.getpid(), dir=str(run), wt_name=wt_name,
+               log=str(log))
+    testq_save(ctx, job)
+    out = open(log, "a", buffering=1)
+    old = sys.stdout
+    sys.stdout = out
+    rep, code = None, None
+    _CANCEL[0] = False
+    def arm_started(pid):
+        job["arm_pid"] = pid
+        testq_save(ctx, job)
+    _ARM_HOOK[0] = arm_started
+    slot = _flock(testq_dir(ctx) / "slot.lock", block=False)
+    if slot is None:
+        print("waiting for the test slot (harness slot holds it)")
+        slot = _flock(testq_dir(ctx) / "slot.lock", block=True)
+    try:
+        free = shutil.disk_usage(Path.home()).free / 2**30
+        if free < TESTQ_FREE_GB:
+            raise RuntimeError(f"only {free:.1f} GB free on the Linux disk; a job needs "
+                               f"{TESTQ_FREE_GB} GB (copies of the test databases land in it)")
+        (run / "tmp").mkdir(parents=True, exist_ok=True)
+        rc, o, e = git("worktree", "add", "--detach", str(run / wt_name), job["sha"], cwd=ctx.repo)
+        if rc:
+            raise RuntimeError(f"git worktree add failed: {(e or o).strip()[:300]}")
+        wt = run / wt_name
+        env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
+        env.update(TMPDIR=str(run / "tmp"), HARNESS_TEST_JOB=job["id"])
+        man = _read_json(Path(ctx.repo) / ".harness" / "manifest.json") or {}
+        setup_ok = True
+        if man.get("test_setup"):
+            print(f"setup: {man['test_setup']}")
+            sc, so, se, st = run_arm(man["test_setup"], wt, 1800, run / "setup.out",
+                                     run / "setup.err", env)
+            setup_ok = sc == 0
+            if not setup_ok:
+                print(f"setup failed (exit {sc}): {(se or so).strip()[-600:]}")
+        if job["kind"] == "check":
+            rep = testq_check(ctx, job, wt, env, setup_ok)
+        else:
+            print(f"$ {job['command']}")
+            code, o, e, to = run_arm(job["command"], wt, None, run / "cmd.out",
+                                     run / "cmd.err", env)
+            keep = testq_dir(ctx) / f"{job['id']}.out"
+            keep.write_text(_tail(run / "cmd.out", 200_000) + "\n--- stderr ---\n" +
+                            _tail(run / "cmd.err", 50_000))
+            print(f"exit {code}; output kept in {keep}")
+        if _CANCEL[0]:
+            job.update(state="cancelled", finished=_now(), why="cancelled with harness test --cancel")
+        else:
+            job.update(state="done", finished=_now())
+    except Exception as ex:
+        print(f"job failed: {ex}")
+        job.update(state="failed", finished=_now(), why=str(ex)[:300])
+    finally:
+        _ARM_HOOK[0] = None
+        slot.close()
+        sys.stdout = old
+        out.close()
+        testq_save(ctx, job)
+        testq_teardown(ctx, job)
+    testq_ring(ctx, job, rep, code)
+
+
+def testq_check(ctx, job, wt, env, setup_ok):
+    """A check job's arms, run in the copy; the report goes to the commit and to
+    every node that asked for it."""
     checks = load_checks(ctx)
     base = load_baseline(ctx)
-    sha = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
-    rc, dirt, _ = git("status", "--porcelain", cwd=ctx.worktree)
-    rows, failed = [], 0
-    report = check_report_path(ctx, node, sha)
-    running = check_running_path(ctx, node)
-    holds = live_holds(ctx)
-    running.parent.mkdir(parents=True, exist_ok=True)
-    started = time.strftime("%Y-%m-%dT%H:%M:%S%z")
-    print(f"{len(checks)} check(s) on {node} at {sha[:8]}"
-          + (f"   ({len(dirt.splitlines())} uncommitted path(s) — this measures the "
-             f"WORKTREE, not the commit)" if dirt.strip() else ""))
-    try:
-        for i, c in enumerate(checks):
-            limit = c.get("timeout") or a.timeout      # per-check ceiling (obs 24)
-            outf, errf = check_output_paths(ctx, node, c["name"])
-            h = hold_catching(c, holds)
-            if h:
-                why = f"{h['why']} — {h['by']}" + (f", until {h['until']}" if h.get("until") else "")
-                rows.append({"name": c["name"], "command": c["command"],
-                             "blindSpot": c["blindSpot"], "exit": None, "held": why,
-                             "seconds": 0, "timedOut": False, "failedFiles": None,
-                             "stdout": "", "stderr": ""})
-                print(f"  NOT RUN (held: {why})  {c['name']}")
-                continue
-            running.write_text(json.dumps({
-                "pid": os.getpid(), "sha": sha, "total": len(checks), "done": i,
-                "arm": c["name"], "started": started, "out": str(outf),
-                "arm_started": time.strftime("%Y-%m-%dT%H:%M:%S%z")}) + "\n")
-            print(f"  …     {c['name']}")
-            t0 = time.time()
-            code, out, err, timed_out = run_arm(c["command"], ctx.worktree, limit, outf, errf)
-            dur = time.time() - t0
-            ok = code == 0
-            failed += (not ok)
-            last = next((x for x in reversed((out + "\n" + err).splitlines()) if x.strip()), "")
-            if timed_out:
-                err = (err + f"\ntimed out after {limit}s").lstrip("\n")
-            rows.append({"name": c["name"], "command": c["command"],
-                         "blindSpot": c["blindSpot"], "exit": code,
-                         "seconds": round(dur, 2), "timedOut": timed_out,
-                         "failedFiles": failed_files(out), "lastLine": last[-300:],
-                         "stdout": out[-2000:], "stderr": err[-2000:]})
-            verdict = "NOT RUN (timed out)" if timed_out else "PASS" if ok else "FAIL"
-            print(f"  {verdict}  {c['name']:<18} {dur:5.1f}s of {limit}"
-                  + ("" if ok or timed_out else f"   exit {code}"))
-            if timed_out and last:
-                print(f"        last output: {clip(last)}")
-            if not ok and not timed_out:
-                lines = (err or out).strip().splitlines()
-                if len(lines) > 6:
-                    print(f"        … {len(lines) - 6} earlier line(s) omitted")   # obs 34
-                for line in lines[-6:]:
-                    print(f"        {clip(line)}")
-            if not ok:
-                ff = rows[-1]["failedFiles"]
-                print(f"        report: {report}"
-                      + (f"  ({len(ff)} failed file(s) listed)" if ff else "")
-                      + f"\n        output: {outf}")
-            if base and not ok:
-                bl = baseline_line(baseline_diff(rows[-1:], base)[c["name"]])
-                if bl:
-                    print(f"        {bl}")
-            # The blind spot is printed beside the RESULT, not filed away in the
-            # manifest, because the moment it matters is the moment somebody is
-            # deciding what a pass means.
-            print(f"        cannot see: {c['blindSpot']}")
-    finally:
-        running.unlink(missing_ok=True)
-    rep = {"node": node, "sha": sha, "branch": ctx.branch,
-           "dirty": bool(dirt.strip()),
-           "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-           "session": os.environ.get("CLAUDE_CODE_SESSION_ID", ""),
-           "passed": failed == 0 and not any(r.get("held") for r in rows),
-           "failed": failed, "held": sum(1 for r in rows if r.get("held")), "checks": rows}
-    diff = baseline_diff(rows, base) if base else None
-    if diff is not None:
-        rep["baseline"] = base.get("sha")
-        rep["new"] = sum(len(d["new"]) + d["notrun"] for d in diff.values())
-    report.parent.mkdir(parents=True, exist_ok=True)
-    report.write_text(json.dumps(rep, indent=2) + "\n")
-    nheld = rep["held"]
-    print(f"\n{len(checks) - failed - nheld}/{len(checks)} passed"
-          + (f", {nheld} held (not run — this report does not cover them)" if nheld else "")
-          + f" — recorded against {sha[:8]}")
-    if diff is not None:
-        print("  " + baseline_summary(rep, base))
-        if rep["new"]:
-            sys.exit(REFUSED)
+    sha = job["sha"]
+    shared = shared_report_path(ctx, sha)
+    job["total"] = len(checks)
+
+    def progress(i, arm):
+        job.update(done_arms=i, arm=arm, arm_started=_now())
+        testq_save(ctx, job)
+    node = job["requested_by"][0].get("node") or "operator"
+    print(f"{len(checks)} check(s) at {sha[:8]} in {wt}")
+    if setup_ok:
+        rows, failed = run_arms(ctx, node, sha, wt, checks, base, job.get("timeout") or 900,
+                                shared, env, progress)
+    else:
+        rows = [{"name": c["name"], "command": c["command"], "blindSpot": c["blindSpot"],
+                 "exit": None, "setup_failed": True, "seconds": 0, "timedOut": False,
+                 "failedFiles": None, "stdout": "", "stderr": "test_setup failed"}
+                for c in checks]
+        failed = len(rows)
+    if _CANCEL[0]:
+        print("cancelled: no report is written, so nothing reuses a partial run")
+        return None
+    rep = make_check_report(node, sha, rows, failed, base,
+                            job=job["id"], requested_by=[r.get("node") for r in job["requested_by"]])
+    shared.parent.mkdir(parents=True, exist_ok=True)
+    shared.write_text(json.dumps(rep, indent=2) + "\n")
+    # Requesters who joined while it ran are read fresh from the job file.
+    latest = _read_json(testq_dir(ctx) / f"{job['id']}.json") or job
+    job["requested_by"] = latest.get("requested_by") or job["requested_by"]
+    for r in job["requested_by"]:
+        n = r.get("node") or "operator"
+        f = check_report_path(ctx, n, sha)
+        f.write_text(json.dumps(dict(rep, node=n), indent=2) + "\n")
+    job["report"] = str(shared)
+    for line in check_summary(rep, base, len(checks)):
+        print(line)
+    return rep
+
+
+def testq_ring(ctx, job, rep, code):
+    """Tell each requester the result, through its doorbell."""
+    if job.get("state") != "done":
+        text = f"test job {job['id']} {job.get('state')}: {job.get('why') or ''} — harness test --log {job['id']}"
+    elif rep is not None:
+        n = len(rep.get("checks") or [])
+        text = (f"check of {job['sha'][:8]}: {n - rep['failed'] - rep['held']}/{n} passed"
+                + (f", {rep['new']} new failure(s) against the baseline" if rep.get("new") else "")
+                + f" — harness check --report {job['sha'][:8]}")
+    else:
+        text = (f"test job {job['id']} (`{(job.get('command') or '')[:60]}`) exited {code} — "
+                f"output: {testq_dir(ctx) / (job['id'] + '.out')}")
+    for r in job.get("requested_by") or []:
+        n = r.get("node")
+        if n and n not in ("operator", "owner"):
+            ring_inbox(ctx.state, n, "test queue", text)
+
+
+def testq_cancel(ctx, job):
+    """Cancel a queued job, or kill a running one's arm; the runner tears it down."""
+    if job.get("state") == "queued":
+        job.update(state="cancelled", finished=_now())
+        testq_save(ctx, job)
+        return "cancelled (it had not started)"
+    if job.get("state") == "running":
+        pid = job.get("pid")
+        if runner_alive(pid):
+            os.kill(pid, 10)        # SIGUSR1: the runner kills the arm's tree, ends the job,
+            return "stopped; its copy is being removed"     # tears it down, and goes on
+        if _pid_exists(job.get("arm_pid")):
+            kill_tree(job["arm_pid"])
+        job.update(state="failed", finished=_now(), why="runner already gone")
+        testq_save(ctx, job)
+        testq_teardown(ctx, job)
+        return "its runner was gone; marked failed and removed"
+    return f"already {job.get('state')}"
+
+
+def cmd_test(a):
+    """`harness test -- <command>` queues a command (a sweep, a probe) to run in a
+    copy of this commit; `harness test` lists the queue."""
+    ctx = Ctx(); ctx.require_enrolled()
+    cmd = [x for x in (a.command or []) if x != "--"]
+    if a.cancel:
+        jobs = testq_jobs(ctx, ("queued", "running"))
+        hit = jobs if a.cancel == "all" else [j for j in jobs if j["id"].startswith(a.cancel)]
+        if not hit:
+            die(REFUSED, f"no queued or running job '{a.cancel}'. harness test")
+        for j in hit:
+            print(f"{j['id']}: {testq_cancel(ctx, j)}")
         return
-    if failed:
-        sys.exit(REFUSED)
+    if a.log:
+        hit = [j for j in testq_jobs(ctx) if j["id"].startswith(a.log)]
+        if not hit:
+            die(REFUSED, f"no job '{a.log}'")
+        f = testq_dir(ctx) / f"{hit[-1]['id']}.log"
+        print(f.read_text() if f.exists() else "no log yet"); return
+    if cmd:
+        node, _ = ctx.node()
+        sha = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
+        rc, dirt, _ = git("status", "--porcelain", "--untracked-files=no", cwd=ctx.worktree)
+        if dirt.strip():
+            die(REFUSED, "uncommitted changes: the queue runs a copy of the commit; commit first")
+        job, _ = testq_submit(ctx, "cmd", sha, node, os.environ.get("CLAUDE_CODE_SESSION_ID", ""),
+                              command=shlex.join(cmd) if len(cmd) > 1 else cmd[0])
+        ahead = testq_ahead(ctx, job)
+        print(f"queued {job['id']}" + (f", {len(ahead)} ahead" if ahead else ", next to run")
+              + ". Your doorbell rings when it ends; its output is kept.")
+        return
+    jobs = testq_jobs(ctx, ("running", "queued"))
+    if not jobs:
+        print("the test queue is empty" + ("" if testq_runner_alive(ctx) else "; no runner up"))
+    for k, j in enumerate(jobs):
+        print(f"{'▶' if j['state'] == 'running' else k}  {j['id']}  {testq_describe(j)}  "
+              f"(asked {(j.get('at') or '')[11:16]})")
+    done = [j for j in testq_jobs(ctx, ("done", "failed", "cancelled"))][-5:]
+    if done:
+        print("recent:")
+        for j in done:
+            print(f"   {j['id']}  {j['state']}  {(j.get('finished') or '')[11:16]}"
+                  + (f"  {j.get('why')}" if j.get("why") else ""))
+
+
+def cmd_testd(a):
+    pdir, repo = intermediary_project(a.project)
+    testd(pdir, repo)
+
+
+def cmd_slot(a):
+    """`harness slot -- <command>`: run a command holding the project's test slot,
+    so a project's own runner never runs beside the queue (obs 81)."""
+    ctx = Ctx(); ctx.require_enrolled()
+    cmd = [x for x in (a.command or []) if x != "--"]
+    if not cmd:
+        die(REFUSED, "harness slot -- <command>")
+    f = testq_dir(ctx) / "slot.lock"
+    fh = _flock(f, block=False)
+    if fh is None:
+        run = testq_jobs(ctx, ("running",))
+        print("waiting for the test slot" + (f": {testq_describe(run[0])}" if run else ""))
+        fh = _flock(f, block=True)
+    try:
+        sys.exit(subprocess.call(cmd if len(cmd) > 1 else ["sh", "-c", cmd[0]]))
+    finally:
+        fh.close()
 
 
 def cmd_spend(a):
@@ -8101,15 +8699,23 @@ def open_waits(ctx):
 
 
 def check_activity(ctx, node):
-    """A running `check` on this node, as a phrase, or None (obs 68)."""
+    """This node's place in the test queue, as a phrase, or None (obs 68, 81)."""
     try:
-        r = json.loads(check_running_path(ctx, node).read_text())
+        jobs = testq_jobs(ctx, ("running", "queued"))
     except Exception:
         return None
-    where = f"{r.get('done', 0) + 1}/{r.get('total', '?')} ({r.get('arm')})"
-    if not check_pid_alive(r.get("pid")):
-        return f"check died at {where} — output in {r.get('out')}"
-    return f"check {where}, {wait_age(r.get('started'))}"
+    for k, j in enumerate(jobs):
+        if not any(r.get("node") == node for r in j.get("requested_by") or []):
+            continue
+        what = "check" if j.get("kind") == "check" else "test job"
+        if j["state"] == "running":
+            if not runner_alive(j.get("pid")):
+                return f"{what} runner died — harness test --log {j['id']}"
+            return (f"{what} running" + (f" arm {j.get('done_arms', 0) + 1}/{j['total']}"
+                                         if j.get("total") else "")
+                    + f", {wait_age(j.get('started'))}")
+        return f"{what} queued, {k} ahead"
+    return None
 
 
 def check_pid_alive(pid):
@@ -8128,6 +8734,16 @@ def check_pid_alive(pid):
     except OSError:
         return True
     return pid == os.getpid() or b"check" in cmd       # a reused pid is not
+
+
+def runner_alive(pid):
+    """A test-queue runner (`harness testd`), not a reused pid."""
+    if not isinstance(pid, int) or pid <= 0 or not _pid_exists(pid):
+        return False
+    try:
+        return pid == os.getpid() or b"testd" in Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return True
 
 
 def node_activity(ctx, node, waits=None):
@@ -12451,6 +13067,21 @@ def main():
     ck.add_argument("--set-baseline", action="store_true",
                     help="record the failures in the report at HEAD as the known set")
     ck.add_argument("--why", help="with --set-baseline: one line")
+    ck.add_argument("--wait", action="store_true",
+                    help="block until the queued run finishes and print its report")
+    ck.add_argument("--again", action="store_true",
+                    help="run afresh even if this commit already has a report")
+    ck.add_argument("--report", metavar="SHA", help="print a finished report for a commit")
+    tq = add("test", cmd_test)
+    tq.add_argument("command", nargs=argparse.REMAINDER,
+                    help="-- <command>: queue it to run in a copy of this commit")
+    tq.add_argument("--cancel", metavar="ID|all")
+    tq.add_argument("--log", metavar="ID")
+    td = add("testd", cmd_testd)
+    td.add_argument("--project", metavar="NAME")
+    sl = add("slot", cmd_slot)
+    sl.add_argument("command", nargs=argparse.REMAINDER,
+                    help="-- <command>: run it holding the project's test slot")
     add("hook-stop", cmd_hook_stop)
     add("hook-orient", cmd_hook_orient)
     wh.add_argument("--delta", action="store_true",

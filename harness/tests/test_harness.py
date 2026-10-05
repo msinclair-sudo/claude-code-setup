@@ -1789,7 +1789,7 @@ class DocPairs(unittest.TestCase):
         f = ctx.dir / "docs-1.json"
         with mock.patch.object(hz, "cited", return_value={}), \
              mock.patch.object(hz, "guard_classify", return_value={}), \
-             mock.patch.object(hz, "docs_chain_next") as chain, redirect_stdout(io.StringIO()):
+             mock.patch.object(hz, "docs_decided") as chain, redirect_stdout(io.StringIO()):
             with self.assertRaises(SystemExit):                       # not reviewed yet
                 hz.pairs_apply(ctx, "main", {"kind": "doc"}, "docs-1", rec, f)
             rec.update(reviewed_by="main", reviewed_at="t")
@@ -1804,7 +1804,7 @@ class DocPairs(unittest.TestCase):
             self.assertIn(line, msg)
         self.assertEqual(g("status", "--porcelain").stdout, "")
         self.assertEqual(json.loads(f.read_text())["claude_md"], [4, 3])
-        chain.assert_called_once_with(ctx)                          # a chain moves on at review
+        self.assertEqual(chain.call_args[0][0], ctx)               # the run ends at review
 
     def test_the_documenter_cannot_apply(self):
         with mock.patch.dict(os.environ, {"HARNESS_DOCUMENTER": "1"}), \
@@ -1935,6 +1935,7 @@ class DocChain(unittest.TestCase):
     def setUp(self):
         self.pdir = Path(tempfile.mkdtemp())
         self.a = lambda **k: mock.Mock(**dict({"project": None, "print_cmd": False, "stop": False,
+                                               "wake": None, "finish": False,
                                                "next": False, "runs": 1, "job": "auto",
                                                "model": None, "effort": None, "why": None}, **k))
         self.p = [mock.patch.object(hz, "intermediary_project", return_value=(self.pdir, "/r/proj"))]
@@ -2058,7 +2059,7 @@ class DocReview(unittest.TestCase):
              mock.patch.object(hz, "git", side_effect=lambda *x, **k: (0, texts.get(x[1].split(":", 1)[-1], "").rstrip("\n"), "")
                                if x[0] == "show" else (0, "", "")), \
              mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "sess"}), \
-             mock.patch.object(hz, "docs_chain_next") as chain, redirect_stdout(out):
+             mock.patch.object(hz, "docs_decided") as chain, redirect_stdout(out):
             hz.cmd_pairs(a())
             r = json.loads((self.ctx.dir / "pairs" / "docs-1.json").read_text())
             self.assertEqual(r["reviewed_by"], "main")
@@ -2076,15 +2077,34 @@ class DocReview(unittest.TestCase):
         with mock.patch.object(hz, "guard_classify", side_effect=lambda c, ps: {ps[0]: "doc"}):
             self.assertIsNone(check(self.rec["pairs"][0]))
 
-    def test_next_run_waits_on_review_and_review_starts_it(self):
-        hz.docs_queue(self.ctx.dir, remaining=2, job="budget")
+    def test_a_decision_ends_the_run_or_wakes_it_to_fix(self):
+        rec = dict(self.rec, session="S" * 36, applied="abc")
+        (self.ctx.dir / "pairs" / "docs-1.json").write_text(json.dumps(rec))
         with mock.patch.object(hz, "_detached") as go:
-            hz.docs_chain_next(self.ctx)
-            go.assert_not_called()                                   # docs-1 still pending
-            r = dict(self.rec, applied="abc")
-            (self.ctx.dir / "pairs" / "docs-1.json").write_text(json.dumps(r))
-            hz.docs_chain_next(self.ctx)
-        self.assertEqual(go.call_args.args[1][-1], "--next")
+            hz.docs_decided(self.ctx, rec)
+        self.assertEqual(go.call_args.args[1][-1], "--finish")      # applied: the run is over
+        rec = dict(self.rec, session="S" * 36, refused="declined by main: wrong heading")
+        (self.ctx.dir / "pairs" / "docs-1.json").write_text(json.dumps(rec))
+        with mock.patch.object(hz, "_detached") as go:
+            hz.docs_decided(self.ctx, rec)
+        self.assertEqual(go.call_args.args[1][-2], "--wake")         # declined: fix it
+        self.assertIn("wrong heading", go.call_args.args[1][-1])
+        (self.ctx.dir / "pairs" / "docs-2.json").write_text(json.dumps(dict(rec, task="docs-2")))
+        with mock.patch.object(hz, "_detached") as go:
+            hz.docs_decided(self.ctx, dict(rec, task="docs-2"))
+        self.assertEqual(go.call_args.args[1][-1], "--finish")      # second decline: over
+
+    def test_note_waits_while_its_batch_is_reviewed(self):
+        env = {"HARNESS_DOCUMENTER": "1", "CLAUDE_CODE_SESSION_ID": "S" * 36}
+        rec = dict(self.rec, session="S" * 36)
+        (self.ctx.dir / "pairs" / "docs-1.json").write_text(json.dumps(rec))
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.dict(os.environ, env), \
+             mock.patch.object(hz.subprocess, "Popen") as po, \
+             redirect_stdout(io.StringIO()) as out:
+            hz.cmd_docs(mock.Mock(verb="note", args=["moved", "history"], json=False))
+        po.assert_not_called()                                       # no stop: it waits
+        self.assertIn("waits on rank 0's review", out.getvalue())
 
     def test_moved_text_reach_counts_only_later_sessions(self):
         r = dict(self.rec, applied="abc", applied_at="2026-10-05T16:00:00+1100")

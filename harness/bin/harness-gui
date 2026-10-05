@@ -209,7 +209,7 @@ def cli_ctx(pdir, repo, tree):
     return c
 
 
-def documenter(rows, pdir, repo, asks):
+def documenter(rows, pdir, repo, asks, root=None):
     """A project's documenter (T18), for its side card: whether a run is live,
     CLAUDE.md against its budget, the last run's note, and its batches and asks.
     Read off files only; the measurements themselves are `harness docs measure`'s."""
@@ -246,12 +246,27 @@ def documenter(rows, pdir, repo, asks):
             batches.append(r)
     batches.sort(key=lambda r: r.get("at") or "")
     out["review"] = [r["task"] for r in batches if not r.get("applied") and not r.get("refused")]
-    ref = [r for r in batches if r.get("refused")]
-    app = [r for r in batches if r.get("applied")]
-    out["refused"] = ({"task": ref[-1]["task"], "why": ref[-1]["refused"]} if ref else None)
-    out["applied"] = ({"task": app[-1]["task"], "sha": app[-1]["applied"][:8],
-                       "at": app[-1].get("applied_at"), "claude_md": app[-1].get("claude_md")}
-                      if app else None)
+    out["counts"] = {"applied": sum(1 for r in batches if r.get("applied")),
+                     "declined": sum(1 for r in batches if r.get("refused"))}
+    # Only the latest batch's outcome: an old decline is history, not news.
+    if batches:
+        b = batches[-1]
+        out["latest"] = {"task": b["task"], "job": b.get("job"),
+                         "outcome": ("applied" if b.get("applied") else
+                                     "declined" if b.get("refused") else "review"),
+                         "sha": (b.get("applied") or "")[:8], "why": b.get("refused"),
+                         "claude_md": b.get("claude_md"),
+                         "at": b.get("applied_at") or b.get("refused_at") or b.get("at")}
+    else:
+        out["latest"] = None
+    # One state, for the card's status line. A run's session waits, idle, on
+    # rank 0's review; the decision closes it or wakes it to fix the batch.
+    out["root"] = root
+    out["state"] = (None if out["running"] is None else
+                    "working" if out["running"] == "busy" else
+                    "waiting" if out["running"] and out["review"] else
+                    "finishing" if out["running"] else
+                    "review" if out["review"] else "between")
     out["asks"] = sum(1 for a in asks if a.get("asker_node") == "documenter")
     try:
         q = json.loads((Path(pdir) / "docs" / "queue.json").read_text())
@@ -631,7 +646,9 @@ def read_state():
                          "orphan_marks": sorted(orphans, key=lambda o: o["task"]),
                          "asks": asks, "rulings": rulings,
                          "intermediary": intermediary(rows, repo, asks, pdir),
-                         "documenter": documenter(rows, pdir, repo, asks),
+                         "documenter": documenter(rows, pdir, repo, asks,
+                                                  next((n for n, sp in tree.items()
+                                                        if not sp.get("parent")), None)),
                          "indexed_at": idx.get("generated")})
     return {"generated": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             # Counted when it is the owner's move, never when an ask merely
@@ -865,6 +882,9 @@ border:1px solid var(--line);border-radius:3px;letter-spacing:.06em;text-transfo
 .card.interm code{color:var(--busy);overflow-wrap:anywhere}
 .card.doc{margin-top:10px}
 .card.doc b.over{color:var(--warn)}
+.dbar{height:4px;background:#2a2f22;border-radius:2px;margin:2px 0 6px;overflow:hidden}
+.dbar i{display:block;height:100%;background:var(--busy)}
+.dbar i.over{background:var(--warn)}
 .docctl select,.docctl button{background:var(--panel);color:var(--fg,#ddd);border:1px solid var(--line);
 border-radius:5px;font:inherit;font-size:11px;padding:2px 6px}
 .docctl button{cursor:pointer}
@@ -1467,47 +1487,63 @@ document.addEventListener('click', e => {
 // The project's documenter (T18): a run per job, so the card says what it did
 // last and what is pending, not whether a session is up.
 function docCard(p) {
+  // Laid out like the other cards: one status line saying what it is doing or
+  // waiting on, then the budget it works against, then the latest batch only.
   const d = p.documenter || {};
-  const over = d.budget && d.words > d.budget;
-  const meterLine = d.words == null ? '<div class="ln q">no CLAUDE.md</div>'
-    : '<div class="ln mt">CLAUDE.md <b class="' + (over ? 'over' : '') + '">' +
-      d.words.toLocaleString() + '</b>' +
-      (d.budget ? ' / ' + Number(d.budget).toLocaleString() + ' words' : ' words &middot; no budget set') +
-      '</div>';
-  const last = d.last ? '<div class="ln q" title="' + esc(d.last.note || '') + '">last run ' +
-      esc((d.last.at || '').slice(0, 16).replace('T', ' ')) + ': ' +
-      esc((d.last.note || '').slice(0, 90)) + '</div>' : '<div class="ln q">no runs yet</div>';
-  const ap = d.applied ? '<div class="ln">applied ' + esc(d.applied.task) + ' in <code>' +
-      esc(d.applied.sha) + '</code>' + (d.applied.claude_md ? ' &middot; CLAUDE.md ' +
-      d.applied.claude_md[0].toLocaleString() + ' &rarr; ' + d.applied.claude_md[1].toLocaleString()
-      : '') + '</div>' : '';
+  const lt = d.latest;
+  const root = d.root || 'main';
   const rv = d.review || [];
-  const q = rv.length ? '<div class="ln wt">' + rv.length + ' batch' + (rv.length > 1 ? 'es await' : ' awaits') +
-      ' main\'s review: ' + rv.map(t => '<code>' + esc(t) + '</code>').join(', ') +
-      (d.remaining ? ' &middot; the next run starts once it is decided' : '') + '</div>' : '';
-  const rf = d.refused ? '<div class="ln dup" title="' + esc(d.refused.why) + '">refused ' +
-      esc(d.refused.task) + ': ' + esc(d.refused.why.slice(0, 80)) + '</div>' : '';
-  const ak = d.asks ? '<div class="ln"><a href="#issues">' + d.asks + ' open ask' +
+  const on = '<span class="ito" data-on="' + esc(root) + '"><b>' + esc(root) + '</b></span>';
+  const status = {
+    working: 'working on a batch',
+    waiting: 'waiting on ' + on + '&rsquo;s review of <code>' + esc(rv[0] || '') + '</code>',
+    review: 'its batch <code>' + esc(rv[0] || '') + '</code> waits on ' + on + '&rsquo;s review',
+    finishing: 'run over &middot; its session is closing',
+    between: d.remaining ? 'between runs &middot; ' + d.remaining + ' more to come'
+                         : 'idle &middot; no run going',
+  }[d.state] || 'unknown &mdash; the roster could not be read';
+  const cls = d.state === 'working' ? 'busy' : d.state === 'waiting' || d.state === 'review'
+    ? 'waitc' : d.state === null ? 'unknown' : '';
+  let budget = '<div class="ln q">no CLAUDE.md</div>';
+  if (d.words != null) {
+    const over = d.budget && d.words > d.budget;
+    const pct = d.budget ? Math.min(100, Math.round(d.words / d.budget * 100)) : 0;
+    budget = '<div class="ln mt">CLAUDE.md <b class="' + (over ? 'over' : '') + '">' +
+      d.words.toLocaleString() + '</b>' + (d.budget ? ' of ' + Number(d.budget).toLocaleString() +
+      ' words' + (over ? ' &middot; ' + (d.words - d.budget).toLocaleString() + ' over' : '')
+      : ' words &middot; no budget set') + '</div>' +
+      (d.budget ? '<div class="dbar"><i class="' + (over ? 'over' : '') + '" style="width:' +
+        pct + '%"></i></div>' : '');
+  }
+  let last = '<div class="ln q">no batches yet</div>';
+  if (lt && lt.outcome === 'applied')
+    last = '<div class="ln">last batch applied <code>' + esc(lt.sha) + '</code>' +
+      (lt.claude_md ? ' &middot; CLAUDE.md ' + lt.claude_md[0].toLocaleString() + ' &rarr; ' +
+        lt.claude_md[1].toLocaleString() : '') + '</div>';
+  else if (lt && lt.outcome === 'declined')
+    last = '<div class="ln" title="' + esc(lt.why || '') + '">last batch declined: <span class="q">' +
+      esc(String(lt.why || '').replace(/^declined by \w+: /, '').slice(0, 90)) + '</span></div>';
+  else if (lt) last = '';
+  const c = d.counts || {};
+  const tally = (c.applied || c.declined) ? '<div class="ln q">' + (c.applied || 0) + ' applied &middot; ' +
+    (c.declined || 0) + ' declined</div>' : '';
+  const ak = d.asks ? '<div class="ln"><a href="#issues">' + d.asks + ' open item' +
       (d.asks > 1 ? 's' : '') + '</a></div>' : '';
-  const cls = d.running === null ? 'unknown' : d.running === 'busy' ? 'busy' : '';
   const n = DOCRUNS[p.slug] || 1;
-  const left = d.remaining ? '<div class="ln">' + d.remaining + ' more run' +
-      (d.remaining > 1 ? 's' : '') + ' to follow &middot; <span class="act" data-docstop="' +
-      esc(p.slug) + '">stop after this one</span></div>' : '';
-  // Always shown. While a run works, the same button queues runs to follow it.
+  const busy = d.state === 'working' || d.state === 'waiting';
+  const left = d.remaining && d.state !== 'between' ? '<div class="ln q">' + d.remaining +
+      ' more run' + (d.remaining > 1 ? 's' : '') + ' after this &middot; <span class="act" ' +
+      'data-docstop="' + esc(p.slug) + '">stop after this one</span></div>' : '';
   const ctl = '<div class="ln docctl"><select data-docruns="' + esc(p.slug) + '">' +
       [1, 2, 3, 5, 10].map(k => '<option value="' + k + '"' + (k === n ? ' selected' : '') + '>' +
-        k + (d.running === 'busy' ? ' more' : '') + ' run' + (k > 1 ? 's' : '') +
-        '</option>').join('') +
+        k + (busy ? ' more' : '') + ' run' + (k > 1 ? 's' : '') + '</option>').join('') +
       '</select> <button data-docstart="' + esc(p.slug) + '">' +
-      (d.running === 'busy' ? 'queue after this' : 'start') + '</button></div>' + left;
+      (busy ? 'queue after this' : 'start') + '</button></div>' + left;
   const msg = DOCMSG[p.slug] ? '<div class="ln q">' + esc(DOCMSG[p.slug]) + '</div>' : '';
   return '<div class="card interm doc ' + cls + '" data-live="doc:' + esc(p.slug) + '">' +
     '<div class="hdr"><span class="dot"></span><span class="nm">' + esc(p.project) +
     '</span><span class="kd">documenter</span></div>' +
-    '<div class="ln q">' + (d.running === 'busy' ? 'working' : d.running === 'idle'
-      ? 'run finished &middot; its session closes shortly' : 'idle between runs') + '</div>' +
-    meterLine + last + ap + q + rf + ak + ctl + msg + '</div>';
+    '<div class="ln">' + status + '</div>' + budget + last + tally + ak + ctl + msg + '</div>';
 }
 
 function intermCard(p) {

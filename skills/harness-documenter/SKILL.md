@@ -20,7 +20,12 @@ decide intent, and you write only through `harness pairs submit`.
    outline first (`grep -n '^#' <doc>`), then the sections you will change.
 3. Make the change as one batch of pairs, then send rank 0 the `SendMessage` that
    `harness pairs submit` prints. Rank 0 may be idle, and a chain of runs waits on its review.
-4. Finish with `harness docs note "<what you changed, why, and what is next>"`, then stop.
+4. Note it: `harness docs note "<what you changed, why, and what is next>"`, and end your turn.
+   The run isn't over yet: it waits for rank 0's review. If rank 0 applies the batch, the harness
+   closes this session (and starts the next run of a chain). If it declines, you are woken with its
+   reason: fix exactly what it names, submit a new batch, message rank 0 again, and note again. Or,
+   if it can't be fixed, note that you are leaving it and why. One fix per run; a second decline
+   ends the run.
 
 | gap | move |
 | --- | --- |

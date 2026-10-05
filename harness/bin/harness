@@ -8802,7 +8802,8 @@ def cmd_pairs(a):
                "pairs": pairs, "applied": None}
         if documenter:
             rec.update(auto=True, job=os.environ.get("HARNESS_DOCUMENTER_JOB") or "auto",
-                       model=os.environ.get("HARNESS_DOCUMENTER_MODEL") or None)
+                       model=os.environ.get("HARNESS_DOCUMENTER_MODEL") or None,
+                       session=os.environ.get("CLAUDE_CODE_SESSION_ID") or None)
         a.task = task
         f = pairs_path(ctx, a.task)
         f.parent.mkdir(parents=True, exist_ok=True)
@@ -8837,9 +8838,9 @@ def cmd_pairs(a):
             rec.update(refused=f"declined by {reviewer}: {a.decline.strip()}",
                        refused_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"), declined_by=reviewer)
             f.write_text(json.dumps(rec, indent=2) + "\n")
-            print(f"declined {task}; the next documenter run reads why")
+            print(f"declined {task}; the documenter run that sent it is told why")
             if rec.get("auto"):
-                docs_chain_next(ctx)
+                docs_decided(ctx, rec)
             return
         print(f"{task}: {len(rec['pairs'])} pair(s) from {rec['by']} at {rec['at']}"
               + (f", applied in {rec['applied'][:8]}" if rec.get("applied") else "")
@@ -8902,7 +8903,7 @@ def pairs_apply(ctx, node, spec, task, rec, f, auto=False):
         if doc and spec.get("kind") == "doc":
             rec.update(refused=why, refused_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
             f.write_text(json.dumps(rec, indent=2) + "\n")
-            docs_chain_next(ctx)
+            docs_decided(ctx, rec)
         die(REFUSED, why)
     if spec.get("kind") != "doc":
         die(REFUSED, "only the document node applies pairs (T5)")
@@ -8991,7 +8992,7 @@ def pairs_apply(ctx, node, spec, task, rec, f, auto=False):
     f.write_text(json.dumps(rec, indent=2) + "\n")
     print(f"applied {len(rows)} pair(s) from {task} in {sha[:8]}")
     if doc:
-        docs_chain_next(ctx)
+        docs_decided(ctx, rec)
 
 
 def pairs_review(ctx, rec, read, full=False):
@@ -11509,10 +11510,18 @@ def cmd_docs(a):
                                  "job": os.environ.get("HARNESS_DOCUMENTER_JOB") or "",
                                  "note": text}) + "\n")
         print("noted")
-        # The note is a run's last step. Its session would otherwise sit idle
-        # until the next run replaced it, reading as still running; stop it
-        # once its closing reply has had time to land.
         sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+        pend = [r for r in docs_pending(ctx) if r.get("session") in (None, sid)]
+        if os.environ.get("HARNESS_DOCUMENTER") == "1" and sid and pend:
+            # The run isn't over until rank 0 has decided its batch (owner,
+            # 2026-10-05): the session waits, and the decision closes it or, on a
+            # decline, wakes it with the reason to fix what it sent.
+            print(f"{pend[-1]['task']} waits on rank 0's review. You are woken with the "
+                  f"decision; end your turn now with a short summary.")
+            return
+        # Nothing waits on review: the run is over. Its session would otherwise
+        # sit idle until the next run replaced it, reading as still running; stop
+        # it once its closing reply has had time to land.
         if os.environ.get("HARNESS_DOCUMENTER") == "1" and sid:
             # Then the next run of a chain, if one is due (`documenter --runs N`).
             env = {k: v for k, v in os.environ.items()
@@ -11617,15 +11626,74 @@ def docs_pending(ctx):
                   key=lambda r: r.get("at") or "")
 
 
-def docs_chain_next(ctx):
-    """After a review decides a batch: start the next run of a `--runs N` chain,
-    detached, when runs remain and nothing else waits on review."""
+DOC_REVISIONS = 1          # a declined batch may be fixed and resent this many times per run
+
+
+def docs_decided(ctx, rec):
+    """Rank 0 has decided a documenter batch: the run that sent it is over, or,
+    on a decline, it is woken with the reason to fix it (once per run). Over
+    means its session is closed and the next run of a chain may start."""
     try:
-        if (docs_queue(ctx.state).get("remaining") or 0) > 0 and not docs_pending(ctx):
-            _detached(ctx, ["documenter", project_arg(ctx.state), "--next"],
+        sid = rec.get("session")
+        declined = [r for _, r in docs_batches(ctx)
+                    if sid and r.get("session") == sid and r.get("refused")]
+        if rec.get("refused") and sid and len(declined) <= DOC_REVISIONS:
+            why = (f"Rank 0 declined {rec['task']}: {rec['refused']}\n\nFix what it names and "
+                   f"submit a new batch (then send rank 0 the message submit prints, and "
+                   f"`harness docs note` again). If it can't be fixed, `harness docs note` that "
+                   f"you are leaving it, and why.")
+            _detached(ctx, ["documenter", project_arg(ctx.state), "--wake", why],
                       docs_dir(ctx) / "chain.log", ctx.repo)
+            return
+        if docs_pending(ctx):
+            return                  # another batch of the run still waits
+        _detached(ctx, ["documenter", project_arg(ctx.state), "--finish"],
+                  docs_dir(ctx) / "chain.log", ctx.repo)
     except Exception:
         pass
+
+
+def documenter_wake(pdir, repo, why):
+    """Resume the run's session with `why` as its next prompt (no flags: a
+    background session keeps its saved options; any flag starts a copy)."""
+    name = documenter_name(repo)
+    try:
+        rows = roster_all()
+    except Exception as e:
+        return False, f"cannot read the session list: {e}"
+    mine = [r for r in rows if r.get("name") == name and r.get("sessionId")]
+    if not mine:
+        return False, "no documenter session to wake"
+    when = lambda r: r.get("startedAt") if isinstance(r.get("startedAt"), (int, float)) else 0
+    r = max(mine, key=when)
+    live = r in live_rows(rows)
+    if live and r.get("status") == "busy":
+        return False, f"{name} is working"
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("CLAUDE_CODE_SESSION_ID", "HARNESS_DOCUMENTER", "HARNESS_DOCUMENTER_JOB")}
+    if live:
+        subprocess.run(["claude", "stop", r["sessionId"][:8]], capture_output=True)
+    home = Path(pdir) / "documenter"
+    x = subprocess.run(["claude", "--bg", "--resume", r["sessionId"], why], cwd=str(home),
+                       env=env, capture_output=True, text=True)
+    return (not x.returncode), (f"woke {name}" if not x.returncode
+                                else f"did not wake: {(x.stderr or x.stdout).strip()[:200]}")
+
+
+def documenter_finish(pdir, repo):
+    """The run is over: close its session, then start the next run of a chain."""
+    name = documenter_name(repo)
+    try:
+        rows = roster_all()
+    except Exception as e:
+        print(f"cannot read the session list: {e}"); return
+    live = {r.get("sessionId") for r in live_rows(rows)}
+    for r in rows:
+        if r.get("name") == name and r.get("sessionId") in live:
+            if r.get("status") == "busy":
+                print(f"{name} is working; it finishes at its next note"); return
+            subprocess.run(["claude", "stop", r["sessionId"][:8]], capture_output=True)
+            print(f"stopped {name}")
 
 
 def docs_apply_step(ctx, node):
@@ -11760,7 +11828,8 @@ def documenter_start(repo, job, why=None):
               "<name>.json and submit it with `harness pairs submit <that path>`, send "
               "rank 0 the SendMessage that submit prints, then `harness docs note` what you did. The last run's note may name a change it "
               "planned and couldn't submit: if so, make that one. "
-              "Then stop.")
+              "Then end your turn: the run waits for rank 0's review. An applied batch "
+              "closes it; a declined one wakes you with the reason to fix it.")
 
 
 def docs_queue(pdir, **upd):
@@ -11824,6 +11893,21 @@ def documenter_pending(pdir):
     return n
 
 
+def _next_run(pdir, repo):
+    """The next run of a `--runs N` chain, once nothing waits on review."""
+    q = docs_queue(pdir)
+    if (q.get("remaining") or 0) <= 0:
+        print("no runs left"); return
+    if documenter_pending(pdir):
+        print("a batch waits on rank 0's review; the next run starts when it is decided")
+        return
+    docs_queue(pdir, remaining=q["remaining"] - 1)
+    ok, msg = documenter_launch(pdir, repo, q.get("job") or "auto")
+    print(msg if ok else f"refused: {msg}")
+    if not ok:
+        docs_queue(pdir, remaining=q["remaining"])
+
+
 def cmd_documenter(a):
     """Start documenter runs for a project, in the background (T18). `--runs N`
     chains N runs, each starting once the last one's batches have applied;
@@ -11832,27 +11916,25 @@ def cmd_documenter(a):
     if a.print_cmd:
         print(" ".join(shlex.quote(c) for c in documenter_cmd(pdir, repo, a.job, a.model,
                                                               a.effort, a.why))); return
+    if a.wake:
+        ok, msg = documenter_wake(pdir, repo, a.wake)
+        print(msg)
+        if not ok:
+            documenter_finish(pdir, repo)
+            _next_run(pdir, repo)
+        return
+    if a.finish:
+        documenter_finish(pdir, repo)
+        _next_run(pdir, repo)
+        return
     if a.stop:
         q = docs_queue(pdir)
         docs_queue(pdir, remaining=0, by="stop")
         print(f"no more runs after the current one ({q.get('remaining', 0)} cancelled)")
         return
     if a.next:
-        # Launched by a run's closing note, detached: the next run in the chain,
-        # once nothing of the last one is waiting to apply.
-        q = docs_queue(pdir)
-        if (q.get("remaining") or 0) <= 0:
-            print("no runs left"); return
-        if documenter_pending(pdir):
-            # Reviewing the batch starts the next run (docs_chain_next).
-            print("a batch waits on rank 0's review; the next run starts when it is decided")
-            return
-        docs_queue(pdir, remaining=q["remaining"] - 1)
-        ok, msg = documenter_launch(pdir, repo, q.get("job") or "auto")
-        print(msg if ok else f"refused: {msg}")
-        if not ok:
-            docs_queue(pdir, remaining=q["remaining"])
-        return
+        # Launched by a run that ended with nothing to review, detached.
+        _next_run(pdir, repo); return
     runs = max(1, min(a.runs or 1, 20))
     ok, msg = documenter_launch(pdir, repo, a.job, a.model, a.effort, a.why)
     if not ok and "is working" in msg:
@@ -12158,6 +12240,8 @@ def main():
     dm.add_argument("--runs", type=int, default=1, help="chain this many runs (max 20)")
     dm.add_argument("--stop", action="store_true", help="no more runs after the current one")
     dm.add_argument("--next", action="store_true", help=argparse.SUPPRESS)
+    dm.add_argument("--wake", metavar="WHY", help=argparse.SUPPRESS)
+    dm.add_argument("--finish", action="store_true", help=argparse.SUPPRESS)
     db = add("doorbell", cmd_doorbell)
     db.add_argument("--read", action="store_true", help="what rang it, then arm it again")
     db.add_argument("--status", action="store_true")

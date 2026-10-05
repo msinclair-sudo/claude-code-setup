@@ -673,6 +673,8 @@ transition:opacity .12s}
 font-size:10px;line-height:1.6}
 .cact:hover{color:var(--ink);background:#00000050}
 .cact.del:hover{color:var(--warn)}
+.cact.off{opacity:.25;cursor:default}
+.cact.off:hover{color:var(--none);background:none}
 .cact.armed{color:var(--warn);background:var(--warnbg);opacity:1}
 .sub{margin-left:11px;border-left:1px solid var(--line);padding-left:9px}
 .cmsg2{color:var(--warn);font-size:11px;line-height:1.45;margin:5px 0 7px}
@@ -1307,7 +1309,10 @@ async function tick() {
 // controls indent, reorder and delete it, and they are the same four you would
 // use on any outline -- up and down stay among siblings, promote and demote are
 // the only way a feature crosses between one heading and another.
-function feat(p, f) {
+// A control that does not apply here: shown, so the pair reads as a pair, but inert.
+const coff = (glyph, title) => '<span class="cact off" title="' + esc(title) + '">' +
+  glyph + '</span>';
+function feat(p, f, firstTop) {
   const key = p.slug + '::' + f.key;
   const open = OPENF.has(key);
   return '<div class="feat' + (f.depth ? ' sub' : '') + '">' +
@@ -1317,10 +1322,15 @@ function feat(p, f) {
       '<span class="cacts">' +
         cact(p.slug, f.name, 'up', '&#9650;', 'move up') +
         cact(p.slug, f.name, 'down', '&#9660;', 'move down') +
+        // Both always shown: promote up a heading level, demote under the one
+        // above. The outline is two levels deep, so each applies on one side.
         (f.depth ? cact(p.slug, f.name, 'promote', '&#9664;',
-                        'promote to a feature of its own')
-                 : cact(p.slug, f.name, 'demote', '&#9654;',
-                        'demote — file it under the feature above')) +
+                        'promote — up a heading level')
+                 : coff('&#9664;', 'already at the top level')) +
+        (!f.depth && !firstTop ? cact(p.slug, f.name, 'demote', '&#9654;',
+                                      'demote — file it under the section above')
+                 : coff('&#9654;', f.depth ? 'the outline is two levels deep'
+                                           : 'nothing above it to sit under')) +
         cact(p.slug, f.name, 'delete', '&#10005;',
              'delete — nothing is kept', 'del') +
       '</span></div>' +
@@ -1352,11 +1362,11 @@ function charter(p) {
         'whatever happens to be broken — and a backlog is not a plan.</div>';
   const fs = (c.features || []);
   const list = fs.length
-    ? fs.map(f => feat(p, f)).join('')
-    : '<div class="ln q">no features listed</div>';
+    ? fs.map((f, i) => feat(p, f, !f.depth && !fs.slice(0, i).some(g => !g.depth))).join('')
+    : '<div class="ln q">no docs listed</div>';
   return '<div class="charter" data-live="charter:' + esc(p.slug) + '">' + head + body +
     (CHMSG ? '<div class="cmsg2">' + esc(CHMSG) + '</div>' : '') +
-    '<div class="feats"><h3>features in scope' +
+    '<div class="feats"><h3>Docs' +
     '<span class="cedit" data-cslug="' + esc(p.slug) + '" data-cnew="1">+ add</span>' +
     '</h3>' + list + '</div></div>';
 }

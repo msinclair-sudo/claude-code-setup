@@ -15,6 +15,7 @@
       "blindSpot": "REQUIRED: state what this check cannot see"
     }
   ],
+  "claude_md_words": 2500,
   "never_travels": [],
   "publish": [],
   "_publish": [

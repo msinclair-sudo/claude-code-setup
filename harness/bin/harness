@@ -367,15 +367,32 @@ def read_roster(path):
 
 # ── R1: position, derived from git ───────────────────────────────────────────
 
+def documenter_repo():
+    """The documenter runs outside every repository (a project CLAUDE.md would
+    load the very file it trims), so its project comes from its launch env."""
+    if os.environ.get("HARNESS_DOCUMENTER") != "1" or not os.environ.get("HARNESS_PROJECT"):
+        return None
+    try:
+        return json.loads((HOME_STATE / os.environ["HARNESS_PROJECT"] / "binding.json")
+                          .read_text()).get("repo")
+    except Exception:
+        return None
+
+
 class Ctx:
     def __init__(self):
+        at = None
         rc, common, _ = git("rev-parse", "--path-format=absolute", "--git-common-dir")
         if rc:
-            die(NOT_ENROLLED, "not inside a git worktree")
+            at = documenter_repo()
+            if not at:
+                die(NOT_ENROLLED, "not inside a git worktree")
+            rc, common, _ = git("rev-parse", "--path-format=absolute", "--git-common-dir",
+                                cwd=at)
         self.repo = Path(common).parent
-        rc, wt, _ = git("rev-parse", "--show-toplevel")
+        rc, wt, _ = git("rev-parse", "--show-toplevel", cwd=at)
         self.worktree = Path(wt)
-        rc, br, _ = git("rev-parse", "--abbrev-ref", "HEAD")
+        rc, br, _ = git("rev-parse", "--abbrev-ref", "HEAD", cwd=at)
         self.branch = br
         self.slug = slug(self.repo)
         self.state = HOME_STATE / self.slug
@@ -2825,6 +2842,8 @@ def queue_items(ctx, node):
     except Exception:
         pass
     out.update(ask_notices(ctx, node))     # T17: rulings, rejections, returns
+    if ctx.rank(node) == 0:
+        out.update(docs_notices(ctx))      # T18: batches applied or refused, said once
     if fam is None:
         return out
     # The item's task is the third field of a node row, else the second.
@@ -2833,7 +2852,8 @@ def queue_items(ctx, node):
         return parts[2] if parts[0] in ("sign off", "start", "down", "orphan") else parts[1]
     kept = {k: v for k, v in out.items()
             if k.startswith(("asked:", "comment:", "handed:", "heavy:", "sweep:", "uncovered:",
-                             "orphan:", "down:", "stuck:", "ruled:", "rejected:", "returned:"))
+                             "orphan:", "down:", "stuck:", "ruled:", "rejected:", "returned:",
+                             "docs:"))
             or in_focus(fam, task_of(k))}
     if len(kept) < len(out):
         kept[f"fold:{len(out) - len(kept)}"] = (f"+{len(out) - len(kept)} item(s) "
@@ -2900,6 +2920,7 @@ def delta(ctx, node, sid, update=True):
         # Told is the moment a rejected or returned stub has done its job. Here
         # rather than in queue_items, which status and the GUI read without telling.
         ask_consume(ctx, new)
+        docs_consume(ctx, new)
     # The ids as well as the lines, so a caller can tell whether what it just
     # printed was a debt without recomputing the queue and getting a different
     # answer than the one it showed.
@@ -3003,6 +3024,12 @@ def cmd_hook_stop(a):
             return
         ctx.tree = json.loads(ctx.tree_path.read_text())
         node, _ = ctx.node()
+        # Rank 0's quiet point is also when a documenter batch lands, or a
+        # documenter run starts (T18). Detached and silent.
+        try:
+            docs_apply_step(ctx, node)
+        except Exception:
+            pass
         # The Stop right after a block carries stop_hook_active. It may launch a
         # pending reset (that is the quiet point the flush leads to) but it must
         # never block again.
@@ -8524,51 +8551,126 @@ def cmd_unenrol(a):
 
 # ── T5 document pairs, as data (obs 25, 47) ─────────────────────────────────
 
+PAIR_OPS = {"replace": ("file", "old", "new"), "create": ("file", "new"),
+            "move": ("file", "old", "to", "pointer"), "delete": ("file",)}
+
+
 def parse_pairs(src):
-    """A JSON list of {file, old, new, why}, from a path or the JSON itself."""
+    """A JSON list of pairs, from a path or the JSON itself. Each is
+    {file, old, new, why} (a replace), or carries `op`: create {file, new},
+    move {file, old, to, pointer} (old leaves file for the end of `to`, pointer
+    takes its place), delete {file}."""
     try:
-        text = Path(src).read_text() if Path(src).is_file() else src
+        text = (sys.stdin.read() if src == "-" else
+                Path(src).read_text() if Path(src).is_file() else src)
         pairs = json.loads(text)
     except Exception as e:
         die(REFUSED, f"pairs are a JSON list of {{file, old, new, why}}: {e}")
     if not isinstance(pairs, list) or not pairs:
         die(REFUSED, "pairs are a non-empty JSON list of {file, old, new, why}")
     for i, x in enumerate(pairs, 1):
-        if not (isinstance(x, dict) and all(isinstance(x.get(k), str) for k in ("file", "old", "new"))
-                and x["old"]):
-            die(REFUSED, f"pair {i} needs string 'file', 'old' (non-empty) and 'new'")
+        op = x.get("op", "replace") if isinstance(x, dict) else None
+        need = PAIR_OPS.get(op)
+        if not need:
+            die(REFUSED, f"pair {i}: op is one of {', '.join(PAIR_OPS)}")
+        if not all(isinstance(x.get(k), str) for k in need) or ("old" in need and not x["old"]):
+            die(REFUSED, f"pair {i} ({op}) needs string {', '.join(repr(k) for k in need)}"
+                         + (" (old non-empty)" if "old" in need else ""))
     return pairs
 
 
-def pair_report(pairs, read):
-    """Each pair's count in its file, in order, applying earlier pairs first so a
-    batch that edits one file twice is judged as it will be applied. Returns
-    (rows, texts): rows are (i, pair, count, nearest); texts the results."""
+def pair_report(pairs, read, check=None):
+    """Each pair judged in order, applying earlier pairs first so a batch that
+    edits one file twice is judged as it will be applied. Returns (rows, texts):
+    rows are (i, pair, count, nearest, note), ok when count is 1; texts the
+    results, None for a file the batch deletes. `check(pair)` may refuse a pair
+    with a reason (a cited path)."""
     texts, rows = {}, []
+    def get(f):
+        if f not in texts:
+            texts[f] = read(f)
+        return texts[f]
     for i, x in enumerate(pairs, 1):
-        if x["file"] not in texts:
-            texts[x["file"]] = read(x["file"])
-        t = texts[x["file"]]
-        n = t.count(x["old"]) if t is not None else 0
-        near = None
-        if n == 0 and t is not None:
-            first = next((l for l in x["old"].splitlines() if l.strip()), "")
-            near = (difflib.get_close_matches(first, t.splitlines(), n=1, cutoff=0.5)
-                    or [None])[0]
-        if n == 1:
-            texts[x["file"]] = t.replace(x["old"], x["new"], 1)
-        rows.append((i, x, n, near))
+        op, f = x.get("op", "replace"), x["file"]
+        t, n, near, note = get(f), 0, None, None
+        if op == "create":
+            n, note = (1, None) if t is None else (0, "the file already exists")
+            if n:
+                texts[f] = x["new"]
+        elif op == "delete":
+            n, note = (1, None) if t is not None else (0, "no such file")
+            if n:
+                texts[f] = None
+        else:
+            n = t.count(x["old"]) if t is not None else 0
+            if n == 0 and t is not None:
+                first = next((l for l in x["old"].splitlines() if l.strip()), "")
+                near = (difflib.get_close_matches(first, t.splitlines(), n=1, cutoff=0.5)
+                        or [None])[0]
+            if n == 1 and op == "move":
+                texts[f] = t.replace(x["old"], x["pointer"], 1)
+                dest = get(x["to"]) or ""
+                texts[x["to"]] = dest + ("\n" if dest and not dest.endswith("\n") else "") \
+                    + x["old"] + ("" if x["old"].endswith("\n") else "\n")
+            elif n == 1:
+                texts[f] = t.replace(x["old"], x["new"], 1)
+        if n == 1 and check:
+            note = check(x)
+            if note:
+                n = 0
+        rows.append((i, x, n, near, note))
     return rows, texts
 
 
 def print_pair_report(rows):
-    for i, x, n, near in rows:
-        print(f"  {'ok ' if n == 1 else 'BAD'} {i:>2}  {x['file']}  count {n}"
-              + (f"  — {x['why']}" if x.get("why") else ""))
+    for i, x, n, near, note in rows:
+        op = x.get("op", "replace")
+        print(f"  {'ok ' if n == 1 else 'BAD'} {i:>2}  {x['file']}"
+              + (f" → {x['to']}" if op == "move" else "")
+              + (f"  {op}" if op != "replace" else f"  count {n}")
+              + (f"  — {note}" if note else f"  — {x['why']}" if x.get("why") else ""))
         if n == 0 and near is not None:
             first = next((l for l in x["old"].splitlines() if l.strip()), "")
             print(f"         old:     {first[:100]}\n         nearest: {near[:100]}")
-    return all(n == 1 for _, _, n, _ in rows)
+    return all(n == 1 for _, _, n, _, _ in rows)
+
+
+def words(t):
+    return len((t or "").split())
+
+
+def claude_md_budget(ctx):
+    """The manifest's word budget for CLAUDE.md, or None."""
+    try:
+        v = json.loads((ctx.repo / ".harness" / "manifest.json").read_text()).get("claude_md_words")
+        return int(v) if v else None
+    except Exception:
+        return None
+
+
+def budget_verdict(ctx, read, texts):
+    """A refusal when the batch leaves CLAUDE.md over budget AND larger than it
+    was. A batch that shrinks it always passes, so an over-budget file can still
+    be cut down. Whoever sent it: the budget is the harness's."""
+    cap = claude_md_budget(ctx)
+    if not cap or "CLAUDE.md" not in texts:
+        return None
+    before, after = words(read("CLAUDE.md")), words(texts["CLAUDE.md"])
+    if after > cap and after > before:
+        return (f"CLAUDE.md would be {after:,} words, over its budget of {cap:,} "
+                f"(it is {before:,}). Move the detail to the doc that owns it and point there.")
+    return None
+
+
+def pair_guard(ctx):
+    """A delete may not take away a path an open record names (obs 74). A move
+    keeps its file, so it strands nothing."""
+    def check(x):
+        if x.get("op") != "delete":
+            return None
+        hits = [w for ws in cited(ctx, [str(ctx.repo / x["file"])]).values() for w, _ in ws]
+        return f"an open record names it: {', '.join(hits[:3])}" if hits else None
+    return check
 
 
 def doc_node(ctx):
@@ -8592,22 +8694,32 @@ def cmd_pairs(a):
         return out + "\n" if rc == 0 else None   # git() strips; the file ends in one
 
     if a.verb == "submit":
-        if not a.task:
+        documenter = os.environ.get("HARNESS_DOCUMENTER") == "1"
+        task = a.task or (f"docs-{time.strftime('%Y%m%d-%H%M%S')}" if documenter else None)
+        if not task:
             die(REFUSED, "which task do these pairs serve? --task <task>")
         pairs = parse_pairs(a.target or "")
-        rows, _ = pair_report(pairs, on_branch)
+        rows, texts = pair_report(pairs, on_branch, pair_guard(ctx))
         ok = print_pair_report(rows)
         if not ok:
             die(REFUSED, f"every old must occur exactly once in {branch}'s copy. Fix the "
                          f"BAD pair(s) and submit again — send whole paragraphs, byte-exact.")
-        rec = {"task": a.task, "by": node, "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        over = budget_verdict(ctx, on_branch, texts)
+        if over:
+            die(REFUSED, over)
+        rec = {"task": task, "by": "documenter" if documenter else node,
+               "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                "base": git("rev-parse", branch, cwd=ctx.repo)[1].strip(),
                "pairs": pairs, "applied": None}
+        if documenter:
+            rec.update(auto=True, job=os.environ.get("HARNESS_DOCUMENTER_JOB") or "auto")
+        a.task = task
         f = pairs_path(ctx, a.task)
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(json.dumps(rec, indent=2) + "\n")
-        print(f"submitted {len(pairs)} pair(s) for {a.task} — {dn} applies them: "
-              f"harness pairs apply {a.task}")
+        print(f"submitted {len(pairs)} pair(s) for {a.task} — "
+              + ("applied at rank 0's next quiet turn end" if rec.get("auto") else
+                 f"{dn} applies them: harness pairs apply {a.task}"))
         return
     task = a.target if a.verb == "apply" else a.verb
     f = pairs_path(ctx, task or "")
@@ -8620,51 +8732,85 @@ def cmd_pairs(a):
         rows, _ = pair_report(rec["pairs"], on_branch)
         print_pair_report(rows)
         return
-    pairs_apply(ctx, node, spec, task, rec, f)
+    pairs_apply(ctx, node, spec, task, rec, f, auto=a.__dict__.get("auto"))
 
 
-def pairs_apply(ctx, node, spec, task, rec, f):
-    """Rank 0 applies a stored batch: all pairs or none, one commit."""
+def pairs_apply(ctx, node, spec, task, rec, f, auto=False):
+    """Rank 0 applies a stored batch: all pairs or none, one commit. `--auto` is
+    the documenter's batch applied from rank 0's Stop hook: an outcome is
+    written to the record either way, for the next documenter run to read."""
+    if os.environ.get("HARNESS_DOCUMENTER") == "1":
+        die(REFUSED, "the documenter submits; its batches apply at rank 0's turn end")
+    def refuse(why):
+        if auto:
+            rec.update(refused=why, refused_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
+            f.write_text(json.dumps(rec, indent=2) + "\n")
+            docs_lock(ctx, release=True)
+        die(REFUSED, why)
     if spec.get("kind") != "doc":
-        die(REFUSED, "only the document node applies pairs (T5)")
+        refuse("only the document node applies pairs (T5)")
     if rec.get("applied"):
-        die(REFUSED, f"already applied in {rec['applied'][:8]}")
-    files = sorted({x["file"] for x in rec["pairs"]})
-    rc, dirt, _ = git("status", "--porcelain", "--", *files, cwd=ctx.worktree)
-    if dirt.strip():
-        die(REFUSED, f"uncommitted changes in {', '.join(files)} — commit or stash first")
+        refuse(f"already applied in {rec['applied'][:8]}")
     def read(path):
         p = ctx.worktree / path
         return p.read_text() if p.is_file() else None
-    rows, texts = pair_report(rec["pairs"], read)
+    rows, texts = pair_report(rec["pairs"], read, pair_guard(ctx))
+    files = sorted(texts)
+    rc, dirt, _ = git("status", "--porcelain", "--", *files, cwd=ctx.worktree)
+    if dirt.strip():
+        refuse(f"uncommitted changes in {', '.join(files)} — commit or stash first")
     if not print_pair_report(rows):
-        die(REFUSED, f"not applied: a pair no longer matches exactly once. Return the "
-                     f"batch to {rec['by']} — harness note {task} --add \"...\"")
+        refuse(f"not applied: a pair no longer matches exactly once. Return the "
+               f"batch to {rec['by']} — harness note {task} --add \"...\"")
+    over = budget_verdict(ctx, read, texts)
+    if over:
+        refuse(over)
+    was = {p: read(p) for p in files}
     for path, t in texts.items():
-        (ctx.worktree / path).write_text(t)
-    for _, x, _, _ in rows:          # context around each change (obs 47)
-        t = texts[x["file"]]
-        at = t.find(x["new"]) if x["new"] else -1
+        p = ctx.worktree / path
+        if t is None:
+            git("rm", "-q", "--", path, cwd=ctx.worktree)
+        else:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(t)
+    for _, x, _, _, _ in rows:       # context around each change (obs 47)
+        new = x.get("pointer") if x.get("op") == "move" else x.get("new")
+        t = texts.get(x["file"])
+        at = t.find(new) if (t and new) else -1
         if at >= 0:
             before = t[:at].splitlines()[-2:]
-            after = t[at + len(x["new"]):].splitlines()[1:3]
+            after = t[at + len(new):].splitlines()[1:3]
             print(f"  ── {x['file']}")
-            for l in before + ["» " + l for l in x["new"].splitlines()] + after:
+            for l in before + ["» " + l for l in new.splitlines()] + after:
                 print(f"     {l[:110]}")
-    git("add", "--", *files, cwd=ctx.worktree)
+    kept = [p for p, t in texts.items() if t is not None]   # deletions are staged by git rm
+    if kept:
+        git("add", "--", *kept, cwd=ctx.worktree)
+    cm = "CLAUDE.md"
     msg = (f"Apply {len(rows)} document pair(s) from {task} ({rec['by']})\n\n"
-           + "".join(f"- {x['file']}: {x.get('why') or '(no reason given)'}\n"
-                     for _, x, _, _ in rows)
-           + f"\nTask: {task}\n")
+           + "".join(f"- {x['file']} {x.get('op', 'replace')}: "
+                     f"{x.get('why') or '(no reason given)'}\n" for _, x, _, _, _ in rows)
+           + (f"\nCLAUDE.md: {words(was[cm]):,} -> {words(texts[cm]):,} words\n"
+              if cm in texts else "")
+           + f"\nTask: {task}\n"
+           + (f"Documenter: {rec.get('job') or 'auto'}\n" if rec.get("auto") else ""))
     rc, out, err = git("commit", "-q", "-m", msg, cwd=ctx.worktree)
     if rc:
         git("reset", "-q", "--", *files, cwd=ctx.worktree)
-        git("checkout", "--", *files, cwd=ctx.worktree)
-        die(REFUSED, f"the commit was refused and the files restored; nothing applied:\n"
-                     f"{err or out}")
+        for path, t in was.items():
+            if t is None:
+                (ctx.worktree / path).unlink(missing_ok=True)
+            else:
+                git("checkout", "HEAD", "--", path, cwd=ctx.worktree)
+        refuse(f"the commit was refused and the files restored; nothing applied:\n"
+               f"{err or out}")
     sha = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
     rec.update(applied=sha, applied_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
+    if cm in texts:
+        rec["claude_md"] = [words(was[cm]), words(texts[cm])]
     f.write_text(json.dumps(rec, indent=2) + "\n")
+    if auto:
+        docs_lock(ctx, release=True)
     print(f"applied {len(rows)} pair(s) from {task} in {sha[:8]}")
 
 
@@ -9601,7 +9747,11 @@ def ask_next_id(state, task):
 
 def ask_open(ctx, task, kind, question, me, sid):
     """`ask <task>`: rank 0 or a lead opens one; a lane goes through its lead."""
-    if sid and role_of(ctx, me) == "member":
+    documenter = me == "documenter"
+    if documenter and tkey(task) != "docs":
+        die(REFUSED, "the documenter asks on its standing task: harness ask docs --kind ... "
+                     "--question \"...\"")
+    if sid and not documenter and role_of(ctx, me) == "member":
         lead = ctx.tree["nodes"][me].get("parent")
         die(REFUSED, f"'{me}' is a lane. A lane asks its lead, and the lead decides "
                      f"whether it is the\n           owner's: harness waiting \"...\" "
@@ -9615,6 +9765,8 @@ def ask_open(ctx, task, kind, question, me, sid):
         die(REFUSED, f"the question is {len(q)} chars; the cap is 200. One sentence the "
                      f"owner can answer —\n           the intermediary gathers the rest.")
     _, b = load_brief(ctx, task)
+    if b is None and documenter:
+        b = {"task": "docs", "node": None}     # no brief: rulings go to docs/rulings.json
     if b is None:
         die(REFUSED, f"no brief for '{task}'. An ask is attached to a task, so the ruling "
                      f"lands where a\n           lead reads it. Write the brief first: "
@@ -9884,6 +10036,18 @@ def ask_accept(pdir, path, rec, text=None, by="operator"):
                      f"intermediary writes one\n           first, or give your own: "
                      f"harness ask {rec['id']} --accept --text \"...\"")
     answer = ((text or "").strip() or rec.get("draft") or "").strip()
+    if rec.get("asker_node") == "documenter":
+        # The documenter's standing task has no brief; its next run reads these.
+        rf = Path(pdir) / "docs" / "rulings.json"
+        rs = json.loads(rf.read_text()) if rf.exists() else []
+        r = {"id": rec["id"], "question": (rec.get("brief") or {}).get("question")
+             or rec.get("question"), "answer": answer, "kind": rec.get("kind"),
+             "ruled_at": _now()}
+        rf.parent.mkdir(parents=True, exist_ok=True)
+        _save(rf, rs + [r])
+        path.unlink()
+        evidence_clear(path, rec["id"])
+        return r
     bf = Path(pdir) / "briefs" / f"{tkey(rec.get('task'))}.json"
     if not bf.exists():
         die(REFUSED, f"the brief '{rec.get('task')}' is gone, so the ruling has nowhere "
@@ -10072,6 +10236,8 @@ def cmd_ask(a):
     if not verbs:
         ctx = Ctx(); ctx.require_enrolled()
         me, _ = ctx.node()
+        if os.environ.get("HARNESS_DOCUMENTER") == "1":
+            me = "documenter"           # not a node: its asks sit on the standing task `docs`
         sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
         rec = ask_open(ctx, a.target, a.kind, a.question, me, sid)
         print(f"asked {rec['id']}  ({rec['kind']}, on {rec['task']})")
@@ -10320,6 +10486,544 @@ def read_dash_from_stdin(a):
     setattr(a, dashes[0], body[:-1] if body.endswith("\n") else body)
 
 
+# ── T18: the documenter ──────────────────────────────────────────────────────
+#
+# Keeps a project's markdown small, current and clear so rank 0 spends its
+# context on orchestration (design/documenter.md). A fresh background session per
+# run: it measures, picks one improvement, and submits it as T5 pairs, which the
+# harness applies at rank 0's next quiet turn end. Everything it measures comes
+# from git, transcripts and records, with no model.
+
+DOCUMENTER = "harness-documenter"
+DOC_JOBS = ("auto", "budget", "reach", "consolidate", "stale", "clarity")
+DOC_DEFAULTS = {"stale": ("sonnet", "medium"), "reach": ("sonnet", "medium")}
+DOC_DEFAULT = ("opus", "high")
+DOCUMENTER_WRITING = ("schimel-science-writing", "google-devdocs-style")
+DOC_TRIGGER_GAP = 24 * 3600         # at most one triggered run a day
+DOC_STALE_DAYS = 14
+_DOC_READ_CMD = re.compile(r"\b(?:cat|sed|head|tail|less|grep|rg)\b[^\n]*?([\w./~-]+\.md)\b")
+
+
+def docs_dir(ctx):
+    d = ctx.state / "docs"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def documenter_name(repo):
+    return f"{DOCUMENTER}-{Path(repo).name}"
+
+
+def docs_lock(ctx, release=False):
+    """The in-flight mark for an auto-apply. True when taken. A lock older than
+    ten minutes belongs to an apply that died, and is taken over."""
+    p = docs_dir(ctx) / "applying"
+    if release:
+        p.unlink(missing_ok=True); return True
+    if p.exists() and time.time() - p.stat().st_mtime < 600:
+        return False
+    p.write_text(time.strftime("%Y-%m-%dT%H:%M:%S%z") + "\n")
+    return True
+
+
+def docs_batches(ctx):
+    """The documenter's pair batches, newest first: (path, record)."""
+    d = ctx.state / "pairs"
+    out = []
+    for f in (d.glob("*.json") if d.is_dir() else []):
+        try:
+            r = json.loads(f.read_text())
+        except Exception:
+            continue
+        if r.get("auto"):
+            out.append((f, r))
+    return sorted(out, key=lambda x: x[1].get("at") or "", reverse=True)
+
+
+def _transcript_facts(path):
+    """Reads and edits one transcript records: {"reads": [...], "edits": [...]},
+    paths as the session wrote them."""
+    reads, edits = set(), set()
+    op = gzip.open if str(path).endswith(".gz") else open
+    try:
+        fh = op(path, "rt", errors="replace")
+    except OSError:
+        return {"reads": [], "edits": []}
+    with fh:
+        for line in fh:
+            if '"tool_use"' not in line:
+                continue
+            try:
+                c = (json.loads(line).get("message") or {}).get("content")
+            except Exception:
+                continue
+            for x in (c if isinstance(c, list) else []):
+                if not isinstance(x, dict) or x.get("type") != "tool_use":
+                    continue
+                i, n = x.get("input") or {}, x.get("name")
+                if n == "Read" and i.get("file_path"):
+                    reads.add(i["file_path"])
+                elif n in ("Edit", "Write", "MultiEdit", "NotebookEdit") and i.get("file_path"):
+                    edits.add(i["file_path"])
+                elif n == "Bash":
+                    reads |= set(_DOC_READ_CMD.findall(str(i.get("command") or "")))
+    return {"reads": sorted(reads), "edits": sorted(edits)}
+
+
+def doc_transcripts(ctx):
+    """Every transcript of this project's sessions, live and swept, with its
+    reads and edits, cached by mtime so a run parses only what is new."""
+    enc = re.sub(r"[^A-Za-z0-9]", "-", str(ctx.repo))
+    paths = list(PROJECTS.glob(f"{enc}*/*.jsonl")) if PROJECTS.is_dir() else []
+    ad = archive_dir(ctx)
+    paths += list(ad.glob("*/transcripts/*.jsonl.gz")) if ad.is_dir() else []
+    cf = docs_dir(ctx) / "transcripts.json"
+    try:
+        cache = json.loads(cf.read_text())
+    except Exception:
+        cache = {}
+    out, fresh = {}, {}
+    for p in paths:
+        k, m = str(p), p.stat().st_mtime
+        hit = cache.get(k)
+        if not hit or hit.get("mtime") != m:
+            hit = dict(_transcript_facts(p), mtime=m)
+        fresh[k] = hit
+        out[k] = hit
+    try:
+        cf.write_text(json.dumps(fresh))
+    except OSError:
+        pass
+    return out
+
+
+def _rel(ctx, p):
+    """A path as a session wrote it, relative to the repository: any worktree of
+    this repo, live or trimmed, is a root (`<repo>-<node>/`)."""
+    p = str(p)
+    m = re.match(r".*?/" + re.escape(ctx.repo.name) + r"(?:-[^/]+)?/(.*)", p)
+    return m.group(1) if m else p.lstrip("./")
+
+
+def doc_files(ctx):
+    """The project's markdown documents: tracked .md files the manifest calls docs,
+    classified by the guard itself, never a reimplementation of its matcher."""
+    rc, out, _ = git("ls-files", "*.md", cwd=ctx.repo)
+    paths = [p for p in out.splitlines() if p]
+    guard = ctx.repo / ".harness/hooks/_guard"
+    if not paths:
+        return []
+    if not guard.exists():
+        return paths
+    r = subprocess.run([str(guard), "--classify"], input="\n".join(paths) + "\n",
+                       capture_output=True, text=True, cwd=str(ctx.repo),
+                       env=dict(os.environ, HARNESS_BRANCH=ctx.branch))
+    docs = [l.partition(" ")[2] for l in r.stdout.splitlines() if l.startswith("doc ")]
+    return docs or paths
+
+
+def docs_areas(ctx):
+    try:
+        return json.loads((docs_dir(ctx) / "areas.json").read_text())
+    except Exception:
+        return {}
+
+
+def docs_ledger(ctx):
+    out = []
+    try:
+        for line in (docs_dir(ctx) / "ledger.jsonl").read_text().splitlines():
+            try:
+                out.append(json.loads(line))
+            except Exception:
+                pass
+    except OSError:
+        pass
+    return out
+
+
+def docs_rulings(ctx):
+    try:
+        return json.loads((docs_dir(ctx) / "rulings.json").read_text())
+    except Exception:
+        return []
+
+
+def docs_measure(ctx):
+    """The snapshot a documenter run starts from (design/documenter.md)."""
+    docs = doc_files(ctx)
+    texts = {}
+    for d in docs:
+        try:
+            texts[d] = (ctx.repo / d).read_text(errors="replace")
+        except OSError:
+            pass
+    runs = sorted((docs_dir(ctx) / "runs").glob("*.json")) if (docs_dir(ctx) / "runs").is_dir() else []
+    last = None
+    if runs:
+        try:
+            last = json.loads(runs[-1].read_text())
+        except Exception:
+            last = None
+    since = (last or {}).get("at")
+    # Writes: commits per doc since the last snapshot, and when each was last touched.
+    writes = {}
+    if since:
+        _, out, _ = git("log", f"--since={since}", "--name-only", "--format=", "--", *texts,
+                        cwd=ctx.repo)
+        for l in out.splitlines():
+            if l:
+                writes[l] = writes.get(l, 0) + 1
+    _, out, _ = git("log", "--name-only", "--format=@%ct", "--", *texts, cwd=ctx.repo)
+    touched, t = {}, None
+    for l in out.splitlines():
+        if l.startswith("@"):
+            t = int(l[1:])
+        elif l and l not in touched:
+            touched[l] = t
+    # Reads and edits, per session transcript.
+    trs = doc_transcripts(ctx)
+    reads = {d: 0 for d in texts}
+    by_name = {}
+    for d in texts:
+        by_name.setdefault(Path(d).name, []).append(d)
+    sessions = []
+    for tr in trs.values():
+        rr = {_rel(ctx, p) for p in tr["reads"]}
+        got = set()
+        for r in rr:
+            if r in reads:
+                got.add(r)
+            elif len(by_name.get(Path(r).name, [])) == 1:
+                got.add(by_name[Path(r).name][0])     # read through a relative or partial path
+        for d in got:
+            reads[d] += 1
+        sessions.append((got, {_rel(ctx, p) for p in tr["edits"]}))
+    # Pointers: which docs (and open briefs) name each doc.
+    briefs = [json.dumps(b) for k, b in all_briefs(ctx).items()
+              if not superseded(b) and task_state(ctx, b.get("task") or k) not in ("closed", "superseded")]
+    pin, pout = {d: 0 for d in texts}, {d: 0 for d in texts}
+    for d in texts:
+        for o, t2 in texts.items():
+            if o != d and (d in t2 or (len(Path(d).name) >= 8 and Path(d).name in t2)):
+                pin[d] += 1; pout[o] += 1
+        pin[d] += sum(1 for b in briefs if d in b)
+    cites = cited(ctx, [str(ctx.repo / d) for d in texts])
+    cited_by = {d: len(cites.get(str(ctx.repo / d)) or []) for d in texts}
+    # Reach: of the sessions that edited an area, how many read its doc.
+    reach = {}
+    for area, doc in docs_areas(ctx).items():
+        ed = [got for got, edits in sessions if any(fnmatch.fnmatch(e, area) for e in edits)]
+        reach[area] = {"doc": doc, "editors": len(ed), "read": sum(1 for g in ed if doc in g)}
+    cap = claude_md_budget(ctx)
+    now = time.time()
+    snap = {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "budget": cap,
+            "claude_md": words(texts.get("CLAUDE.md")),
+            "transcripts": len(trs), "reach": reach,
+            "docs": {d: {"words": words(t2), "reads": reads[d], "writes": writes.get(d, 0),
+                         "pointers_in": pin[d], "pointers_out": pout[d],
+                         "cited": cited_by[d],
+                         "idle_days": (int((now - touched[d]) / 86400) if touched.get(d) else None)}
+                     for d, t2 in texts.items()}}
+    snap["gaps"] = docs_gaps(snap)
+    snap["previous"] = {"at": since, "claude_md": (last or {}).get("claude_md")} if last else None
+    return snap
+
+
+def docs_gaps(snap):
+    """The gaps the numbers show, largest first: (job, target, why)."""
+    out = []
+    cap, cm = snap.get("budget"), snap.get("claude_md") or 0
+    if cap and cm > cap:
+        out.append(("budget", "CLAUDE.md", f"{cm:,} words, budget {cap:,}", cm - cap))
+    for area, r in snap["reach"].items():
+        if r["editors"] >= 2 and r["read"] < 0.75 * r["editors"]:
+            out.append(("reach", area, f"{r['read']} of {r['editors']} sessions that edited "
+                                       f"{area} read {r['doc']}", 5000 * (r["editors"] - r["read"])))
+    for d, r in snap["docs"].items():
+        if d == "CLAUDE.md":
+            continue
+        if r["writes"] >= 3 and r["reads"] == 0:
+            out.append(("consolidate", d, f"written {r['writes']}x since the last run, never read",
+                        r["words"]))
+        if (not r["cited"] and not r["pointers_in"] and not r["reads"]
+                and (r["idle_days"] or 0) >= DOC_STALE_DAYS):
+            out.append(("stale", d, f"{r['words']:,} words; no reads, no pointers, no open record; "
+                                    f"untouched {r['idle_days']}d", r["words"]))
+        if r["words"] > 15000 and r["reads"]:
+            out.append(("clarity", d, f"{r['words']:,} words and read {r['reads']}x: split or trim",
+                        r["words"] // 2))
+    return [g[:3] for g in sorted(out, key=lambda g: -g[3])]
+
+
+def cmd_docs(a):
+    """`harness docs measure|map|note`: the documenter's instruments (T18)."""
+    ctx = Ctx(); ctx.require_enrolled()
+    if a.verb == "map":
+        m = docs_areas(ctx)
+        if not a.args:
+            for k, v in sorted(m.items()):
+                print(f"  {k:<28} {v}")
+            print(f"{len(m)} area(s)" if m else "no areas mapped — harness docs map <area-glob> <doc>")
+            return
+        if a.remove:
+            m.pop(a.args[0], None)
+        elif len(a.args) == 2:
+            if not (ctx.repo / a.args[1]).is_file():
+                die(REFUSED, f"no such doc: {a.args[1]}")
+            m[a.args[0]] = a.args[1]
+        else:
+            die(REFUSED, "harness docs map <area-glob> <doc>, or <area-glob> --remove")
+        (docs_dir(ctx) / "areas.json").write_text(json.dumps(m, indent=1) + "\n")
+        print(f"{len(m)} area(s) mapped")
+        return
+    if a.verb == "note":
+        text = " ".join(a.args).strip()
+        if not text:
+            die(REFUSED, 'say what this run did: harness docs note "..."')
+        with open(docs_dir(ctx) / "ledger.jsonl", "a") as fh:
+            fh.write(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                                 "job": os.environ.get("HARNESS_DOCUMENTER_JOB") or "",
+                                 "note": text}) + "\n")
+        print("noted")
+        return
+    if a.verb != "measure":
+        die(REFUSED, "harness docs measure | map | note")
+    snap = docs_measure(ctx)
+    rd = docs_dir(ctx) / "runs"
+    rd.mkdir(exist_ok=True)
+    sf = rd / f"{time.strftime('%Y%m%d-%H%M%S')}.json"
+    sf.write_text(json.dumps(snap, indent=1) + "\n")
+    if a.json:
+        print(json.dumps(snap, indent=1)); return
+    prev = snap.get("previous") or {}
+    total = sum(r["words"] for r in snap["docs"].values())
+    print(f"{len(snap['docs'])} docs, {total:,} words; {snap['transcripts']} transcripts read")
+    print(f"CLAUDE.md {snap['claude_md']:,} words"
+          + (f" (budget {snap['budget']:,})" if snap["budget"] else " (no budget set)")
+          + (f"; was {prev['claude_md']:,} at {prev['at'][:16]}" if prev.get("claude_md") else ""))
+    if snap["reach"]:
+        print("reach:")
+        for area, r in sorted(snap["reach"].items()):
+            print(f"  {area:<24} {r['read']}/{r['editors']} editors read {r['doc']}")
+    else:
+        print("reach: no areas mapped — harness docs map <area-glob> <doc>")
+    print("gaps, largest first:")
+    for job, target, why in snap["gaps"][:8] or [("-", "none", "")]:
+        print(f"  {job:<12} {target}  — {why}")
+    ref = [(r["task"], r.get("refused")) for _, r in docs_batches(ctx) if r.get("refused")][:3]
+    for t, why in ref:
+        print(f"refused  {t}: {why[:120]}")
+    for r in docs_rulings(ctx)[-5:]:
+        print(f"ruling   {r.get('question', '')[:60]} → {r.get('answer', '')[:80]}")
+    led = docs_ledger(ctx)
+    if led:
+        print(f"last run {led[-1]['at'][:16]}: {led[-1]['note'][:110]}")
+    print(f"snapshot {sf}")
+
+
+def docs_notices(ctx):
+    """Rank 0's one-shot lines about the documenter's applied or refused batches."""
+    out = {}
+    try:
+        for f, r in docs_batches(ctx):
+            if r.get("told") or not (r.get("applied") or r.get("refused")):
+                continue
+            if r.get("applied"):
+                cm = r.get("claude_md")
+                out[f"docs:{r['task']}"] = (
+                    f"documenter applied {r['task']} in {r['applied'][:8]}"
+                    + (f": CLAUDE.md {cm[0]:,} → {cm[1]:,} words" if cm else ""))
+            else:
+                out[f"docs:{r['task']}"] = (f"documenter batch {r['task']} was refused: "
+                                            f"{r['refused'][:90]}")
+    except Exception:
+        pass
+    return out
+
+
+def docs_consume(ctx, ids):
+    for k in ids:
+        if k.startswith("docs:"):
+            f = pairs_path(ctx, k.split(":", 1)[1])
+            try:
+                r = json.loads(f.read_text())
+                r["told"] = True
+                f.write_text(json.dumps(r, indent=2) + "\n")
+            except Exception:
+                pass
+
+
+def _detached(ctx, args, log, cwd):
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("CLAUDE_CODE_SESSION_ID", "HARNESS_DOCUMENTER")}
+    with open(log, "a") as fh:
+        subprocess.Popen([sys.executable, str(Path(__file__).resolve()), *args], cwd=str(cwd),
+                         env=env, stdout=fh, stderr=subprocess.STDOUT,
+                         stdin=subprocess.DEVNULL, start_new_session=True)
+
+
+def docs_apply_step(ctx, node):
+    """Rank 0's Stop hook: apply a queued documenter batch at a quiet turn end,
+    else start a documenter run when one is due. Detached both ways: the hook has
+    ten seconds and the reference-transaction guard can take nine."""
+    if ctx.rank(node) != 0:
+        return False
+    queued = [r for _, r in docs_batches(ctx) if not r.get("applied") and not r.get("refused")]
+    if queued:
+        rc, dirt, _ = git("status", "--porcelain", cwd=ctx.worktree)
+        if dirt.strip() or not docs_lock(ctx):
+            return False
+        oldest = sorted(queued, key=lambda r: r.get("at") or "")[0]
+        _detached(ctx, ["pairs", "apply", oldest["task"], "--auto"],
+                  docs_dir(ctx) / "apply.log", ctx.worktree)
+        return True
+    return docs_trigger(ctx)
+
+
+def docs_due(ctx):
+    """Why a documenter run is due now, or None."""
+    try:
+        man = json.loads((ctx.repo / ".harness" / "manifest.json").read_text())
+    except Exception:
+        man = {}
+    if man.get("documenter") is False:
+        return None
+    cap = claude_md_budget(ctx)
+    try:
+        cm = words((ctx.repo / "CLAUDE.md").read_text())
+    except OSError:
+        cm = 0
+    if cap and cm > cap:
+        return f"CLAUDE.md is {cm:,} words, over its budget of {cap:,}"
+    if any("budget" in (r.get("refused") or "") and not r.get("told")
+           for _, r in docs_batches(ctx)):
+        return "a batch was refused over the CLAUDE.md budget"
+    led = docs_ledger(ctx)
+    last = _epoch(led[-1]["at"]) if led else None
+    if last and time.time() - last > 7 * 86400 and any(
+            (_epoch(e.get("at")) or 0) > last for e in ledger(ctx) if not e.get("kept")):
+        return "a week since the last run, and units have been swept since"
+    return None
+
+
+def docs_trigger(ctx):
+    """Start a documenter run when one is due: at most once a day, never beside
+    a live one."""
+    mark = docs_dir(ctx) / "last_trigger"
+    try:
+        if time.time() - mark.stat().st_mtime < DOC_TRIGGER_GAP:
+            return False
+    except OSError:
+        pass
+    why = docs_due(ctx)
+    if not why:
+        return False
+    mark.write_text(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "why": why}) + "\n")
+    _detached(ctx, ["documenter", "--job", "auto", "--why", why],
+              docs_dir(ctx) / "launch.log", ctx.repo)
+    return True
+
+
+def documenter_prompt(pdir):
+    """Its system prompt: its skill, the owner's Voice section, and the two
+    writing skills' own SKILL.md (--restricted loads no user skills)."""
+    home = Path.home() / ".claude"
+    parts = [(home / "skills" / DOCUMENTER / "SKILL.md").read_text()]
+    try:
+        g = (home / "CLAUDE.md").read_text()
+        m = re.search(r"^## Voice\n(.*?)(?=^## |\Z)", g, re.S | re.M)
+        if m:
+            parts.append("# The owner's voice (from their CLAUDE.md)\n" + m.group(1).strip())
+    except Exception:
+        pass
+    for sk in DOCUMENTER_WRITING:
+        f = home / "skills" / sk / "SKILL.md"
+        if f.exists():
+            parts.append(f"# Writing skill: {sk} (its other files are in {f.parent})\n"
+                         + f.read_text())
+    out = Path(pdir) / "documenter" / "prompt.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n\n".join(parts) + "\n")
+    return out
+
+
+def documenter_cmd(pdir, repo, job="auto", model=None, effort=None, why=None):
+    """One project's documenter `claude --bg` line. Read-only like the
+    intermediary; its one write path is `harness pairs submit`."""
+    pdir = Path(pdir)
+    dirs, repos = [str(pdir)], []
+    cand = [repo]
+    try:
+        idx = json.loads((pdir / "index.json").read_text())
+        cand += [sp.get("worktree") for sp in (idx.get("nodes") or {}).values()]
+    except Exception:
+        pass
+    for d in cand:
+        if d and d not in dirs and Path(d).is_dir():
+            dirs.append(d); repos.append(d)
+    for sk in DOCUMENTER_WRITING:
+        d = str(Path.home() / ".claude" / "skills" / sk)
+        if Path(d).is_dir() and d not in dirs:
+            dirs.append(d)
+    allow = ["Bash(harness docs *)", "Bash(harness pairs submit *)",
+             "Bash(harness cited *)", "Bash(harness ask *)"]
+    for d in repos:
+        for q in ('"', "'") + (("",) if " " not in d else ()):
+            allow += [f"Bash(git -C {q}{d}{q} {g} *)" for g in INTERMEDIARY_GIT]
+    model = model or DOC_DEFAULTS.get(job, DOC_DEFAULT)[0]
+    effort = effort or DOC_DEFAULTS.get(job, DOC_DEFAULT)[1]
+    # Its identity goes in through --settings: a background session does not
+    # inherit the launching process's environment (measured 2026-10-05).
+    env = {"HARNESS_DOCUMENTER": "1", "HARNESS_PROJECT": pdir.name,
+           "HARNESS_DOCUMENTER_JOB": job}
+    cmd = ["claude", "--bg", "-n", documenter_name(repo), "--restricted", "--strict-mcp-config",
+           "--settings", json.dumps({"env": env}),
+           "--add-dir", *dirs,
+           "--tools", *INTERMEDIARY_TOOLS,
+           "--allowedTools", *allow,
+           "--permission-mode", "dontAsk",
+           "--append-system-prompt-file", str(documenter_prompt(pdir)),
+           "--model", model, "--effort", effort]
+    return cmd + [documenter_start(repo, job, why)]
+
+
+def documenter_start(repo, job, why=None):
+    return (f"You are the harness documenter for {Path(repo).name}; your instructions are in "
+            f"your system prompt. This run's job: {job}"
+            + (f" (started because {why})" if why else "") + ". Start now: run "
+            f"`harness docs measure`, pick the one improvement it points to"
+            + ("" if job == "auto" else f" within '{job}'")
+            + ", make it with `harness pairs submit`, then `harness docs note` what you did. "
+              "Then stop.")
+
+
+def cmd_documenter(a):
+    """Start one documenter run for a project, in the background (T18)."""
+    pdir, repo = intermediary_project(a.project)
+    cmd = documenter_cmd(pdir, repo, a.job, a.model, a.effort, a.why)
+    if a.print_cmd:
+        print(" ".join(shlex.quote(c) for c in cmd)); return
+    name = documenter_name(repo)
+    try:
+        rows = agents_json()
+    except Exception as e:
+        die(REFUSED, f"cannot read the session list: {e}")
+    if any(r.get("name") == name for r in live_rows(rows)):
+        die(REFUSED, f"{name} is already running; one run at a time per project")
+    for r in rows:                  # the last run, off the list: a fresh one replaces it
+        if r.get("name") == name and r.get("sessionId"):
+            claude_rm(r["sessionId"])
+    home = Path(pdir) / "documenter"
+    home.mkdir(parents=True, exist_ok=True)
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
+    r = subprocess.run(cmd, cwd=str(home), env=env, capture_output=True, text=True)
+    if r.returncode:
+        die(REFUSED, f"the documenter did not start: {(r.stderr or r.stdout).strip()[:200]}")
+    print(f"started {name} ({a.job}); `harness docs measure` shows what it will see")
+
+
+
 def main():
     # `gui` is handed off before argparse sees anything. The viewer has its own
     # flags and argparse.REMAINDER does not reliably pass a leading `--flag`
@@ -10398,6 +11102,18 @@ def main():
     wk = add("wake", cmd_wake)
     wk.add_argument("task")
     wk.add_argument("--at", required=True, help=argparse.SUPPRESS)
+    dc = add("docs", cmd_docs)
+    dc.add_argument("verb", choices=("measure", "map", "note"))
+    dc.add_argument("args", nargs="*", help="map: <area-glob> <doc>; note: the text")
+    dc.add_argument("--json", action="store_true", help="measure: the full snapshot")
+    dc.add_argument("--remove", action="store_true", help="map: drop an area")
+    dm = add("documenter", cmd_documenter)
+    dm.add_argument("--project", help="the repo's directory name or state slug")
+    dm.add_argument("--job", choices=DOC_JOBS, default="auto")
+    dm.add_argument("--model")
+    dm.add_argument("--effort", choices=list(EFFORTS))
+    dm.add_argument("--why", help=argparse.SUPPRESS)
+    dm.add_argument("--print-cmd", action="store_true")
     rcy = add("recycle", cmd_recycle)
     rcy.add_argument("node", nargs="*", help="nodes to restart with fresh context")
     rcy.add_argument("--children", action="store_true", help="every child of this node")
@@ -10643,6 +11359,7 @@ def main():
                     help="submit <json> --task T, apply <T>, or a task to show")
     pa.add_argument("target", nargs="?", help="the JSON (path, or - for stdin) or task")
     pa.add_argument("--task", help="with submit: the task the pairs serve")
+    pa.add_argument("--auto", action="store_true", help=argparse.SUPPRESS)
     ak = add("ask", cmd_ask)
     ak.add_argument("target", nargs="?", metavar="TASK|ID",
                     help="a task, to open an ask; an ask id for every other verb")

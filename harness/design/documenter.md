@@ -1,6 +1,6 @@
 # Documenter — scope
 
-Agreed with the owner 2026-10-05. Not built. This file is not installed, so it costs no session
+Agreed with the owner 2026-10-05. v1 built 2026-10-05 (`harness docs`, `harness documenter`, spec `T18`). This file is not installed, so it costs no session
 context.
 
 ## What it is for

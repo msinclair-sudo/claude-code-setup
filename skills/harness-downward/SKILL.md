@@ -179,7 +179,7 @@ Two sibling leads conflict under `T8`. Then: state the cause before the resoluti
 
 ## `T5` — relaying documents
 
-You write no documents. Read a child's batch with `harness pairs <task>` (it re-checks every count), and when two children touch one paragraph, submit one merged batch yourself.
+You write no documents. Read a child's batch with `harness pairs <task>` (it re-checks every count), and when two children touch one paragraph, submit one merged batch yourself. A batch that leaves `CLAUDE.md` over its word budget and larger is refused: point to the doc that owns the detail instead. The documenter (`T18`) does the trimming.
 
 ## Recycling
 
@@ -196,7 +196,7 @@ harness recycle <node> --at-quiet               # a lead too big to keep: reset 
 
 Recycle a child once its work has landed and after sign-off (`--close` does it for you), and replace a cold session rather than speaking to it. Leads too. Close the task record first or `--idle` reads the node as working. It refuses on a dirty worktree, unintegrated commits, a busy session, an unpresented mark and rank 0; take each refusal at face value. If a child asked only by message, answer before recycling.
 
-`--escalate` is available, not the default; prefer raising the node's starting effort in `tree.json`. A second failure is a finding. Never `claude rm`: the worktree is the node. Removing a node is `harness trim`, rank 0 only; ask for it as a `T5` request naming the node and the commit proving you hold its work.
+`--escalate` is available, not the default; prefer raising the node's starting effort in `tree.json`. A second failure is a finding. Don't `claude rm` a session yourself; ended sessions come off the list with `harness sweep --sessions`. Removing a node is `harness trim`, rank 0 only; ask for it as a `T5` request naming the node and the commit proving you hold its work.
 
 `orphan` in orientation means a child's session ended holding its task: `harness recycle <child>` resumes it (`--dry-run` shows the same). A requirement you send a child by message dies with its session; put it on the task too (`harness note <task> --add -`).
 

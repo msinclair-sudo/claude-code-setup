@@ -386,6 +386,15 @@ A brief exists **before** its mark: the lead writes it, then the member accepts.
 
 **Enforcement** `harness ask` refuses a lane and a task with no brief; the intermediary's verbs need `HARNESS_INTERMEDIARY=1`, which only `harness intermediary` sets; briefs over a cap are refused by section. Design: `harness/design/owner-channel.md` in the setup repo.
 
+### T18 — The documenter keeps the documents
+
+**Direction** sideways, outside the tree, into rank 0's worktree by `T5` pairs.
+**Rule** A fresh background session per run (`harness documenter`) measures the project's markdown (`harness docs measure`: length, reads and writes from transcripts, pointers, reach per code area, `CLAUDE.md` against its budget), picks the one improvement the numbers point to, and submits it as a pairs batch. Pairs may `create`, `move` (text leaves for the end of another file, a pointer takes its place) and `delete` as well as replace. The batch applies at rank 0's next quiet turn end, from its Stop hook, detached and only on a clean worktree; rank 0 is told once. Runs start the same way when due: `CLAUDE.md` over budget, a batch refused over it, or a week and a sweep since the last run.
+
+**Why this shape.** biblion2's `CLAUDE.md` reached 16,212 words, about 21k tokens loaded by every session at start, with 409k more words of markdown behind it, and rank 0 is the only writer: upkeep competed with orchestration and lost. A fresh session per run keeps no context to manage; pairs keep rank 0 the only committer.
+
+**Enforcement** `pairs apply` refuses any batch (from anyone) that leaves `CLAUDE.md` over the manifest's `claude_md_words` and larger than before, and any `delete` of a path an open record names. The documenter runs `--restricted` with read tools; its identity (`HARNESS_DOCUMENTER`) comes through `--settings`, a background session not inheriting the launcher's environment, and `pairs apply` refuses it. Design: `harness/design/documenter.md` in the setup repo.
+
 ## Invariants
 
 ### I1 — One session per branch

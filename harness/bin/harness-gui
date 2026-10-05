@@ -163,6 +163,49 @@ def intermediary(rows, repo):
                     if isinstance(r.get("startedAt"), (int, float)) else None))
 
 
+def documenter(rows, pdir, repo, asks):
+    """A project's documenter (T18), for its side card: whether a run is live,
+    CLAUDE.md against its budget, the last run's note, and its batches and asks.
+    Read off files only; the measurements themselves are `harness docs measure`'s."""
+    name = CLI.documenter_name(repo)
+    out = {"name": name, "running": None, "words": None, "budget": None, "last": None,
+           "queued": 0, "refused": None, "applied": None, "asks": 0}
+    if rows is not None:
+        out["running"] = any(r.get("name") == name for r in rows)
+    try:
+        out["words"] = len((Path(repo) / "CLAUDE.md").read_text(errors="replace").split())
+    except OSError:
+        pass
+    try:
+        out["budget"] = json.loads((Path(repo) / ".harness" / "manifest.json")
+                                   .read_text()).get("claude_md_words")
+    except Exception:
+        pass
+    try:
+        lines = (Path(pdir) / "docs" / "ledger.jsonl").read_text().splitlines()
+        out["last"] = json.loads(lines[-1]) if lines else None
+    except Exception:
+        pass
+    batches = []
+    for f in (Path(pdir) / "pairs").glob("*.json") if (Path(pdir) / "pairs").is_dir() else []:
+        try:
+            r = json.loads(f.read_text())
+        except Exception:
+            continue
+        if r.get("auto"):
+            batches.append(r)
+    batches.sort(key=lambda r: r.get("at") or "")
+    out["queued"] = sum(1 for r in batches if not r.get("applied") and not r.get("refused"))
+    ref = [r for r in batches if r.get("refused")]
+    app = [r for r in batches if r.get("applied")]
+    out["refused"] = ({"task": ref[-1]["task"], "why": ref[-1]["refused"]} if ref else None)
+    out["applied"] = ({"task": app[-1]["task"], "sha": app[-1]["applied"][:8],
+                       "at": app[-1].get("applied_at"), "claude_md": app[-1].get("claude_md")}
+                      if app else None)
+    out["asks"] = sum(1 for a in asks if a.get("asker_node") == "documenter")
+    return out
+
+
 def read_state():
     rows, roster_error = roster()
     # A LIST per worktree, not one session. Two sessions in one worktree is the
@@ -503,6 +546,7 @@ def read_state():
                          "orphan_marks": sorted(orphans, key=lambda o: o["task"]),
                          "asks": asks, "rulings": rulings,
                          "intermediary": intermediary(rows, repo),
+                         "documenter": documenter(rows, pdir, repo, asks),
                          "indexed_at": idx.get("generated")})
     return {"generated": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             # Counted when it is the owner's move, never when an ask merely
@@ -724,6 +768,8 @@ border:1px solid var(--line);border-radius:3px;letter-spacing:.06em;text-transfo
 .card.interm.busy{border-color:#4a6b30}
 .card.interm.dup{border-color:var(--warn)}
 .card.interm code{color:var(--busy);overflow-wrap:anywhere}
+.card.doc{margin-top:10px}
+.card.doc b.over{color:var(--warn)}
 .card.interm a{color:var(--dim)}
 .card.interm a:hover{color:var(--ink)}
 @media (max-width:960px){.treerow{flex-direction:column}.sidecol{width:100%}}
@@ -1214,6 +1260,38 @@ function card(n) {
 // the CLI's shlex.quote would, since enrolled repos live under paths with spaces.
 const shq = x => /^[\w@%+=:,./-]+$/.test(x) ? x : "'" + String(x).replace(/'/g, "'\"'\"'") + "'";
 const startCmd = p => 'cd ' + shq(p.repo) + ' && harness intermediary';
+// The project's documenter (T18): a run per job, so the card says what it did
+// last and what is pending, not whether a session is up.
+function docCard(p) {
+  const d = p.documenter || {};
+  const over = d.budget && d.words > d.budget;
+  const meterLine = d.words == null ? '<div class="ln q">no CLAUDE.md</div>'
+    : '<div class="ln mt">CLAUDE.md <b class="' + (over ? 'over' : '') + '">' +
+      d.words.toLocaleString() + '</b>' +
+      (d.budget ? ' / ' + Number(d.budget).toLocaleString() + ' words' : ' words &middot; no budget set') +
+      '</div>';
+  const last = d.last ? '<div class="ln q" title="' + esc(d.last.note || '') + '">last run ' +
+      esc((d.last.at || '').slice(0, 16).replace('T', ' ')) + ': ' +
+      esc((d.last.note || '').slice(0, 90)) + '</div>' : '<div class="ln q">no runs yet</div>';
+  const ap = d.applied ? '<div class="ln">applied ' + esc(d.applied.task) + ' in <code>' +
+      esc(d.applied.sha) + '</code>' + (d.applied.claude_md ? ' &middot; CLAUDE.md ' +
+      d.applied.claude_md[0].toLocaleString() + ' &rarr; ' + d.applied.claude_md[1].toLocaleString()
+      : '') + '</div>' : '';
+  const q = d.queued ? '<div class="ln">' + d.queued + ' batch' + (d.queued > 1 ? 'es' : '') +
+      ' queued &middot; applies at main\'s next quiet turn end</div>' : '';
+  const rf = d.refused ? '<div class="ln dup" title="' + esc(d.refused.why) + '">refused ' +
+      esc(d.refused.task) + ': ' + esc(d.refused.why.slice(0, 80)) + '</div>' : '';
+  const ak = d.asks ? '<div class="ln"><a href="#issues">' + d.asks + ' open ask' +
+      (d.asks > 1 ? 's' : '') + '</a></div>' : '';
+  const cls = d.running === null ? 'unknown' : d.running ? 'busy' : '';
+  return '<div class="card interm doc ' + cls + '" data-live="doc:' + esc(p.slug) + '">' +
+    '<div class="hdr"><span class="dot"></span><span class="nm">' + esc(p.project) +
+    '</span><span class="kd">documenter</span></div>' +
+    '<div class="ln q">' + (d.running ? 'running' : 'idle between runs') + '</div>' +
+    meterLine + last + ap + q + rf + ak +
+    '<div class="ln"><code>harness documenter --project ' + esc(p.project) + '</code></div></div>';
+}
+
 function intermCard(p) {
   const im = p.intermediary || {};
   const asks = p.asks || [];
@@ -1324,7 +1402,7 @@ async function tick() {
                    : ' <span class="q">names no node</span>') +
           (o.at ? ' <span class="q">&middot; ' + esc(o.at) + '</span>' : '') +
           '</li>').join('') + '</ul>' : '') +
-      tree(p.nodes, intermCard(p)) + '</div></div></div>';
+      tree(p.nodes, intermCard(p) + docCard(p)) + '</div></div></div>';
   }).join('');
   if (!d.projects.length) h += '<div class="empty">no enrolled projects on this machine</div>';
   paint(h);

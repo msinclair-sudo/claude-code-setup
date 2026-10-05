@@ -1711,3 +1711,184 @@ class Wake(unittest.TestCase):
              redirect_stdout(io.StringIO()):
             hz.cmd_wake(mock.Mock(task="run", at=str(time.time() - 1)))
         self.assertEqual(run.call_args.args[0][-3:], ["recycle", "dev_1", "--when-idle"])
+
+
+class DocPairs(unittest.TestCase):
+    """T18: pairs that create, move and delete, and the CLAUDE.md budget."""
+
+    def report(self, pairs, files, check=None):
+        return hz.pair_report(pairs, lambda f: files.get(f), check)
+
+    def test_ops(self):
+        files = {"CLAUDE.md": "intro\n## History\nlong story\n## Rules\nr\n", "old.md": "x"}
+        rows, texts = self.report([
+            {"op": "move", "file": "CLAUDE.md", "old": "## History\nlong story\n",
+             "to": "provenance/CLAUDE/history.md", "pointer": "History: provenance/CLAUDE/history.md\n"},
+            {"op": "create", "file": "new.md", "new": "hello\n"},
+            {"op": "delete", "file": "old.md"}], files)
+        self.assertTrue(all(r[2] == 1 for r in rows))
+        self.assertEqual(texts["CLAUDE.md"], "intro\nHistory: provenance/CLAUDE/history.md\n## Rules\nr\n")
+        self.assertEqual(texts["provenance/CLAUDE/history.md"], "## History\nlong story\n")
+        self.assertEqual(texts["new.md"], "hello\n")
+        self.assertIsNone(texts["old.md"])
+
+    def test_refusals(self):
+        files = {"a.md": "x"}
+        self.assertEqual(self.report([{"op": "create", "file": "a.md", "new": "y"}], files)[0][0][2], 0)
+        self.assertEqual(self.report([{"op": "delete", "file": "b.md"}], files)[0][0][2], 0)
+        rows, _ = self.report([{"op": "delete", "file": "a.md"}], files,
+                              check=lambda x: "an open record names it: brief t")
+        self.assertEqual((rows[0][2], rows[0][4]), (0, "an open record names it: brief t"))
+        with self.assertRaises(SystemExit):
+            hz.parse_pairs('[{"op": "move", "file": "a.md", "old": "x"}]')   # no to/pointer
+
+    def test_budget_refuses_growth_only(self):
+        ctx = FakeCtx({"main": None})
+        ctx.repo = Path(tempfile.mkdtemp())
+        (ctx.repo / ".harness").mkdir()
+        (ctx.repo / ".harness" / "manifest.json").write_text('{"claude_md_words": 5}')
+        read = lambda f: "one two three four five six seven" if f == "CLAUDE.md" else None
+        self.assertIsNone(hz.budget_verdict(ctx, read, {"CLAUDE.md": "one two three"}))
+        self.assertIsNone(hz.budget_verdict(ctx, read, {"CLAUDE.md": "a b c d e f"}))  # shrinks
+        self.assertIn("over its budget", hz.budget_verdict(
+            ctx, read, {"CLAUDE.md": "a b c d e f g h"}))
+        self.assertIsNone(hz.budget_verdict(ctx, read, {"other.md": "a " * 50}))
+
+    def test_apply_commits_a_move_and_a_delete(self):
+        import subprocess
+        repo = Path(tempfile.mkdtemp())
+        g = lambda *a: subprocess.run(["git", "-C", str(repo), *a], capture_output=True, text=True)
+        g("init", "-q"); g("config", "user.email", "t@t"); g("config", "user.name", "t")
+        (repo / "CLAUDE.md").write_text("intro\n## History\nstory\n")
+        (repo / "old.md").write_text("gone\n")
+        g("add", "-A"); g("commit", "-qm", "init")
+        ctx = FakeCtx({"main": None})
+        ctx.repo = ctx.worktree = repo
+        rec = {"task": "docs-1", "by": "documenter", "auto": True, "job": "budget",
+               "pairs": [{"op": "move", "file": "CLAUDE.md", "old": "## History\nstory\n",
+                          "to": "provenance/CLAUDE/history.md", "pointer": "History: provenance/CLAUDE/history.md\n"},
+                         {"op": "delete", "file": "old.md"}]}
+        f = ctx.dir / "docs-1.json"
+        with mock.patch.object(hz, "cited", return_value={}), redirect_stdout(io.StringIO()):
+            hz.pairs_apply(ctx, "main", {"kind": "doc"}, "docs-1", rec, f, auto=True)
+        self.assertFalse((repo / "old.md").exists())
+        self.assertEqual((repo / "provenance/CLAUDE/history.md").read_text(), "## History\nstory\n")
+        msg = g("log", "-1", "--format=%B").stdout
+        self.assertIn("Documenter: budget", msg)
+        self.assertIn("CLAUDE.md: 4 -> 3 words", msg)
+        self.assertEqual(g("status", "--porcelain").stdout, "")
+        self.assertEqual(json.loads(f.read_text())["claude_md"], [4, 3])
+
+    def test_the_documenter_cannot_apply(self):
+        with mock.patch.dict(os.environ, {"HARNESS_DOCUMENTER": "1"}), \
+             self.assertRaises(SystemExit):
+            hz.pairs_apply(FakeCtx({"main": None}), "main", {"kind": "doc"}, "t", {}, Path("/x"))
+
+
+class DocMeasure(unittest.TestCase):
+    """T18: what a run measures, from transcripts and records."""
+
+    def lines(self, *tools):
+        return "\n".join(json.dumps({"message": {"content": [
+            {"type": "tool_use", "name": n, "input": i} for n, i in tools]}}) for _ in [0]) + "\n"
+
+    def test_transcript_reads_and_edits_plain_and_gz(self):
+        import gzip as gz
+        d = Path(tempfile.mkdtemp())
+        body = self.lines(("Read", {"file_path": "/r/proj-dev/schema/SCHEMA.md"}),
+                          ("Bash", {"command": "sed -n 1,40p design/API.md | head"}),
+                          ("Edit", {"file_path": "/r/proj-dev/schema/schema.sql"}))
+        (d / "a.jsonl").write_text(body)
+        with gz.open(d / "b.jsonl.gz", "wt") as fh:
+            fh.write(body)
+        for f in ("a.jsonl", "b.jsonl.gz"):
+            got = hz._transcript_facts(d / f)
+            self.assertEqual(got["reads"], ["/r/proj-dev/schema/SCHEMA.md", "design/API.md"])
+            self.assertEqual(got["edits"], ["/r/proj-dev/schema/schema.sql"])
+
+    def test_cache_parses_only_what_changed(self):
+        ctx = FakeCtx({"main": None})
+        ctx.repo = Path("/r/proj")
+        proj = Path(tempfile.mkdtemp())
+        (proj / "-r-proj-dev").mkdir()
+        (proj / "-r-proj-dev" / "s.jsonl").write_text(self.lines(("Read", {"file_path": "x.md"})))
+        with mock.patch.object(hz, "PROJECTS", proj):
+            self.assertEqual(len(hz.doc_transcripts(ctx)), 1)
+            with mock.patch.object(hz, "_transcript_facts", side_effect=AssertionError):
+                self.assertEqual(list(hz.doc_transcripts(ctx).values())[0]["reads"], ["x.md"])
+
+    def test_rel_strips_any_worktree_of_the_repo(self):
+        ctx = FakeCtx({"main": None})
+        ctx.repo = Path("/a/proj")
+        self.assertEqual(hz._rel(ctx, "/a/proj-dev_1/schema/x.sql"), "schema/x.sql")
+        self.assertEqual(hz._rel(ctx, "/a/proj/CLAUDE.md"), "CLAUDE.md")
+
+    def test_gaps(self):
+        snap = {"budget": 100, "claude_md": 400,
+                "reach": {"schema/**": {"doc": "S.md", "editors": 4, "read": 1}},
+                "docs": {"old.md": {"words": 900, "reads": 0, "writes": 0, "pointers_in": 0,
+                                    "cited": 0, "idle_days": 30},
+                         "used.md": {"words": 900, "reads": 3, "writes": 0, "pointers_in": 2,
+                                     "cited": 1, "idle_days": 30}}}
+        jobs = [(j, t) for j, t, _ in hz.docs_gaps(snap)]
+        self.assertIn(("budget", "CLAUDE.md"), jobs)
+        self.assertIn(("reach", "schema/**"), jobs)
+        self.assertIn(("stale", "old.md"), jobs)
+        self.assertNotIn(("stale", "used.md"), jobs)
+
+
+class DocRuns(unittest.TestCase):
+    """T18: batches land at rank 0's quiet turn end; runs start when due."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main"})
+        self.ctx.repo = self.ctx.worktree = Path(tempfile.mkdtemp())
+
+    def test_apply_step_waits_for_a_clean_tree_and_the_lock(self):
+        q = [(Path("x"), {"task": "docs-1", "auto": True, "at": "1"})]
+        with mock.patch.object(hz, "docs_batches", return_value=q), \
+             mock.patch.object(hz, "_detached") as go:
+            with mock.patch.object(hz, "git", return_value=(0, " M CLAUDE.md", "")):
+                self.assertFalse(hz.docs_apply_step(self.ctx, "main"))
+            with mock.patch.object(hz, "git", return_value=(0, "", "")):
+                self.assertTrue(hz.docs_apply_step(self.ctx, "main"))
+                self.assertFalse(hz.docs_apply_step(self.ctx, "main"))   # in flight
+            self.assertFalse(hz.docs_apply_step(self.ctx, "dev"))        # rank 0 only
+        self.assertEqual(go.call_args.args[1], ["pairs", "apply", "docs-1", "--auto"])
+
+    def test_trigger_at_most_once_a_day(self):
+        with mock.patch.object(hz, "docs_due", return_value="over budget"), \
+             mock.patch.object(hz, "_detached") as go:
+            self.assertTrue(hz.docs_trigger(self.ctx))
+            self.assertFalse(hz.docs_trigger(self.ctx))
+        self.assertEqual(go.call_count, 1)
+        self.assertEqual(go.call_args.args[1][:3], ["documenter", "--job", "auto"])
+
+    def test_launch_is_restricted_and_carries_its_identity(self):
+        pdir = self.ctx.dir
+        (pdir / "index.json").write_text(json.dumps({"nodes": {}}))
+        home = Path(tempfile.mkdtemp())
+        (home / ".claude" / "skills" / "harness-documenter").mkdir(parents=True)
+        (home / ".claude" / "skills" / "harness-documenter" / "SKILL.md").write_text("skill")
+        with mock.patch.object(hz.Path, "home", return_value=home):
+            cmd = hz.documenter_cmd(pdir, str(self.ctx.repo), "stale")
+        self.assertEqual(cmd[:4], ["claude", "--bg", "-n", f"harness-documenter-{self.ctx.repo.name}"])
+        self.assertIn("--restricted", cmd)
+        env = json.loads(cmd[cmd.index("--settings") + 1])["env"]
+        self.assertEqual((env["HARNESS_DOCUMENTER"], env["HARNESS_DOCUMENTER_JOB"]), ("1", "stale"))
+        allow = cmd[cmd.index("--allowedTools") + 1:cmd.index("--permission-mode")]
+        self.assertIn("Bash(harness pairs submit *)", allow)
+        self.assertNotIn("Bash(harness pairs *)", allow)                 # never apply
+        self.assertEqual(cmd[cmd.index("--model") + 1], "sonnet")        # stale: the cheap one
+
+    def test_the_documenter_asks_on_docs_and_the_ruling_lands_in_its_file(self):
+        with mock.patch.object(hz, "load_brief", return_value=(None, None)):
+            with self.assertRaises(SystemExit):
+                hz.ask_open(self.ctx, "other", "intent", "q?", "documenter", "s")
+            rec = hz.ask_open(self.ctx, "docs", "intent", "Which is right?", "documenter", "s")
+        rec.update(state="drafted", draft="the code")
+        p = self.ctx.dir / "asks" / f"{rec['id']}.json"
+        with mock.patch.object(hz, "evidence_clear"):
+            hz.ask_accept(self.ctx.dir, p, rec)
+        r = json.loads((self.ctx.dir / "docs" / "rulings.json").read_text())
+        self.assertEqual((r[0]["question"], r[0]["answer"]), ("Which is right?", "the code"))

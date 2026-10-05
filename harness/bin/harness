@@ -8811,9 +8811,12 @@ def pairs_apply(ctx, node, spec, task, rec, f, auto=False):
     if cm in texts:
         rec["claude_md"] = [words(was[cm]), words(texts[cm])]
     f.write_text(json.dumps(rec, indent=2) + "\n")
-    if auto:
-        docs_lock(ctx, release=True)
     print(f"applied {len(rows)} pair(s) from {task} in {sha[:8]}")
+    if auto:
+        # One launch applied one batch, so a second submitted while the first
+        # was applying sat until a turn end (2026-10-05). Go on to the next.
+        docs_lock(ctx, release=True)
+        _docs_launch(ctx, ctx.worktree)
 
 
 # ── cleanup: sweep a completed unit, on rank 0's recorded decision ───────────

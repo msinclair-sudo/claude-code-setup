@@ -1769,7 +1769,8 @@ class DocPairs(unittest.TestCase):
                           "to": "provenance/CLAUDE/history.md", "pointer": "History: provenance/CLAUDE/history.md\n"},
                          {"op": "delete", "file": "old.md"}]}
         f = ctx.dir / "docs-1.json"
-        with mock.patch.object(hz, "cited", return_value={}), redirect_stdout(io.StringIO()):
+        with mock.patch.object(hz, "cited", return_value={}), \
+             mock.patch.object(hz, "_docs_launch") as chain, redirect_stdout(io.StringIO()):
             hz.pairs_apply(ctx, "main", {"kind": "doc"}, "docs-1", rec, f, auto=True)
         self.assertFalse((repo / "old.md").exists())
         self.assertEqual((repo / "provenance/CLAUDE/history.md").read_text(), "## History\nstory\n")
@@ -1778,6 +1779,7 @@ class DocPairs(unittest.TestCase):
         self.assertIn("CLAUDE.md: 4 -> 3 words", msg)
         self.assertEqual(g("status", "--porcelain").stdout, "")
         self.assertEqual(json.loads(f.read_text())["claude_md"], [4, 3])
+        chain.assert_called_once_with(ctx, repo)          # on to the next queued batch
 
     def test_the_documenter_cannot_apply(self):
         with mock.patch.dict(os.environ, {"HARNESS_DOCUMENTER": "1"}), \

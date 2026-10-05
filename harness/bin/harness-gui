@@ -1322,11 +1322,13 @@ function docCard(p) {
   const left = d.remaining ? '<div class="ln">' + d.remaining + ' more run' +
       (d.remaining > 1 ? 's' : '') + ' to follow &middot; <span class="act" data-docstop="' +
       esc(p.slug) + '">stop after this one</span></div>' : '';
-  const ctl = d.running === 'busy' ? left
-    : '<div class="ln docctl"><select data-docruns="' + esc(p.slug) + '">' +
+  // Always shown. While a run works, the same button queues runs to follow it.
+  const ctl = '<div class="ln docctl"><select data-docruns="' + esc(p.slug) + '">' +
       [1, 2, 3, 5, 10].map(k => '<option value="' + k + '"' + (k === n ? ' selected' : '') + '>' +
-        k + ' run' + (k > 1 ? 's' : '') + '</option>').join('') +
-      '</select> <button data-docstart="' + esc(p.slug) + '">start</button></div>' + left;
+        k + (d.running === 'busy' ? ' more' : '') + ' run' + (k > 1 ? 's' : '') +
+        '</option>').join('') +
+      '</select> <button data-docstart="' + esc(p.slug) + '">' +
+      (d.running === 'busy' ? 'queue after this' : 'start') + '</button></div>' + left;
   const msg = DOCMSG[p.slug] ? '<div class="ln q">' + esc(DOCMSG[p.slug]) + '</div>' : '';
   return '<div class="card interm doc ' + cls + '" data-live="doc:' + esc(p.slug) + '">' +
     '<div class="hdr"><span class="dot"></span><span class="nm">' + esc(p.project) +

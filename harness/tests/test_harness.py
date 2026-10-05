@@ -1956,6 +1956,11 @@ class DocChain(unittest.TestCase):
         self.assertIn("2 cancelled", self.run_(stop=True))
         self.assertEqual(hz.docs_queue(self.pdir)["remaining"], 0)
 
+    def test_runs_asked_during_a_run_queue_behind_it(self):
+        with mock.patch.object(hz, "documenter_launch", return_value=(False, "x is working; one run")):
+            self.assertIn("3 more run(s) will follow", self.run_(runs=3))
+        self.assertEqual(hz.docs_queue(self.pdir)["remaining"], 3)
+
     def test_next_waits_for_pending_batches_then_counts_down(self):
         hz.docs_queue(self.pdir, remaining=2, job="stale")
         pending = iter([1, 0, 0])

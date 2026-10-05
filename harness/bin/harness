@@ -11149,6 +11149,12 @@ def cmd_documenter(a):
         return
     runs = max(1, min(a.runs or 1, 20))
     ok, msg = documenter_launch(pdir, repo, a.job, a.model, a.effort, a.why)
+    if not ok and "is working" in msg:
+        # A run is under way: the runs asked for follow it, chained from its note.
+        docs_queue(pdir, remaining=runs, job=a.job, by="queued")
+        print(f"a run is working; {runs} more run(s) will follow it, each once the last "
+              f"one's batches apply")
+        return
     if not ok:
         die(REFUSED, msg)
     docs_queue(pdir, remaining=runs - 1, job=a.job, by="start")

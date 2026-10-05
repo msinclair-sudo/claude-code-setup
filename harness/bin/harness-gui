@@ -598,6 +598,10 @@ def read_state():
             nodes.append({
                 "name": name, "branch": spec.get("branch"), "parent": spec.get("parent"),
                 "kind": spec.get("kind"), "rank": _rank(tree, name), "worktree": wt,
+                # root is rank 0; a lead has children; everything else is a worker.
+                "role": ("root" if not spec.get("parent") else
+                         "lead" if any(x.get("parent") == name for x in tree.values())
+                         else "worker"),
                 "indexed": name in idx.get("nodes", {}),
                 # null, meaning unknown, is deliberately distinct from [] here.
                 # Idle age and carried context, so a node you walked away from
@@ -611,7 +615,11 @@ def read_state():
                              # nobody.
                              [dict({"name": r.get("name"), "status": r.get("status"),
                                     "stopped": CLI.is_stopped(r),
-                                    "id": (r.get("sessionId") or "")[:8]},
+                                    "id": (r.get("sessionId") or "")[:8],
+                                    # Uptime: the roster's startedAt is epoch ms.
+                                    "up": (int(time.time() - r["startedAt"] / 1000)
+                                           if isinstance(r.get("startedAt"), (int, float))
+                                           else None)},
                                    **(lambda a, c: {"idle": a, "carry": c,
                                                     "cold": bool(a and a > CLI.CACHE_TTL)}
                                       )(*CLI.last_turn(r.get("sessionId") or "")))
@@ -1315,6 +1323,18 @@ function age(s) {
     : ' &middot; idle ' + t;
 }
 
+// Context and uptime, one line per running session.
+function hm(sec) {
+  const m = Math.floor(sec / 60);
+  return m < 60 ? m + 'm' : Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0');
+}
+function meter(s) {
+  const bits = [];
+  if (s.carry) bits.push('context ' + tokf(s.carry));
+  if (s.up != null) bits.push('up ' + hm(s.up));
+  return bits.length ? '<div class="ln q">' + bits.join(' &middot; ') + '</div>' : '';
+}
+
 function card(n) {
   const unknown = n.sessions === null;
   const ss = n.sessions || [];
@@ -1331,9 +1351,10 @@ function card(n) {
   else if (ss.length > 1) who = '<div class="ln dup">' + ss.length +
       ' sessions in one worktree</div>';
   else if (halted)        who = '<div class="ln dup">' + esc(ss[0].name) +
-      ' &middot; STOPPED at a prompt &middot; claude attach ' + esc(ss[0].id) + '</div>';
+      ' &middot; STOPPED at a prompt &middot; claude attach ' + esc(ss[0].id) + '</div>' +
+      meter(ss[0]);
   else if (ss.length)     who = '<div class="ln">' + esc(ss[0].name) + ' &middot; ' +
-      esc(ss[0].status) + age(ss[0]) + '</div>';
+      esc(ss[0].status) + age(ss[0]) + '</div>' + meter(ss[0]);
   else if (n.claimed)     who = '<div class="ln dup">claimed, no session</div>';
   else                    who = '<div class="ln q">no session</div>';
   // "unassigned" read as "nothing is there", which is the opposite of what it
@@ -1380,7 +1401,8 @@ function card(n) {
   return '<div class="card ' + cls + coldc + (w ? ' waitc' : '') +
     '" data-live="card:' + esc(n._slug + ':' + n.name) + '">' +
     '<div class="hdr"><span class="dot"></span><span class="nm">' + esc(n.name) +
-    '</span><span class="kd">' + esc(n.kind || '') + '</span></div>' +
+    '</span><span class="kd">' + esc((n.role ? n.role + ' · ' : '') + (n.kind || '')) +
+    '</span></div>' +
     '<div class="ln q">' + esc(n.branch || '') + (n.indexed ? '' : ' (not indexed)') + '</div>' +
     who + wait + owes + sigs + task + splitChips(n) + goneChips(n) +
     '</div>';

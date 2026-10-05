@@ -10510,6 +10510,15 @@ def docs_dir(ctx):
     return d
 
 
+def documenter_batches(pdir):
+    """Where the documenter writes its batch files: outside ~/.claude, whose
+    paths Claude Code protects from edits whatever the allow rules say
+    (measured 2026-10-05: a Write rule on a ~/.claude path was still denied)."""
+    d = Path.home() / ".local" / "state" / "harness" / Path(pdir).name / "batches"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def documenter_name(repo):
     return f"{DOCUMENTER}-{Path(repo).name}"
 
@@ -10966,8 +10975,15 @@ def documenter_cmd(pdir, repo, job="auto", model=None, effort=None, why=None):
         d = str(Path.home() / ".claude" / "skills" / sk)
         if Path(d).is_dir() and d not in dirs:
             dirs.append(d)
+    # A batch goes in as a file it writes into its own folder. Piped in through a
+    # heredoc, any JSON object in the body was denied by the permission check
+    # (measured 2026-10-05: `[]` passed, `[{"x": "a b"}]` did not), so the first
+    # live run could not submit anything. Write is allowed there and nowhere else.
+    batches = documenter_batches(pdir)
+    dirs.append(str(batches))
     allow = ["Bash(harness docs *)", "Bash(harness pairs submit *)",
-             "Bash(harness cited *)", "Bash(harness ask *)"]
+             "Bash(harness cited *)", "Bash(harness ask *)",
+             f"Write(/{batches}/**)", f"Edit(/{batches}/**)"]
     for d in repos:
         for q in ('"', "'") + (("",) if " " not in d else ()):
             allow += [f"Bash(git -C {q}{d}{q} {g} *)" for g in INTERMEDIARY_GIT]
@@ -10980,7 +10996,7 @@ def documenter_cmd(pdir, repo, job="auto", model=None, effort=None, why=None):
     cmd = ["claude", "--bg", "-n", documenter_name(repo), "--restricted", "--strict-mcp-config",
            "--settings", json.dumps({"env": env}),
            "--add-dir", *dirs,
-           "--tools", *INTERMEDIARY_TOOLS,
+           "--tools", *INTERMEDIARY_TOOLS, "Write",
            "--allowedTools", *allow,
            "--permission-mode", "dontAsk",
            "--append-system-prompt-file", str(documenter_prompt(pdir)),
@@ -10994,7 +11010,10 @@ def documenter_start(repo, job, why=None):
             + (f" (started because {why})" if why else "") + ". Start now: run "
             f"`harness docs measure`, pick the one improvement it points to"
             + ("" if job == "auto" else f" within '{job}'")
-            + ", make it with `harness pairs submit`, then `harness docs note` what you did. "
+            + f", write the batch to {documenter_batches(HOME_STATE / slug(Path(repo)))}/"
+              "<name>.json and submit it with `harness pairs submit <that path>`, then "
+              "`harness docs note` what you did. The last run's note may name a change it "
+              "planned and couldn't submit: if so, make that one. "
               "Then stop.")
 
 

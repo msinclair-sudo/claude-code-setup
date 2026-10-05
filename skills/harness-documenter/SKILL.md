@@ -50,8 +50,11 @@ budget and larger is refused, whoever sends it. Cutting it down always passes.
 
 ## Pairs
 
-You have no Write tool, so pipe the batch in: `harness pairs submit - <<'EOF'` … `EOF`. It takes a
-JSON list. Every `old` must occur exactly once, byte for byte: send whole paragraphs.
+Write the batch with the Write tool to `<name>.json` in your batch folder (named in your opening
+prompt; Write is allowed there and nowhere else), then run
+`harness pairs submit <that path>`. Never pipe a batch through a heredoc: the permission check
+denies it. It takes a JSON list. Every `old` must occur exactly once, byte for byte: send whole
+paragraphs.
 
 ```json
 [{"file": "CLAUDE.md", "old": "...", "new": "...", "why": "..."},

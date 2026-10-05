@@ -1879,6 +1879,10 @@ class DocRuns(unittest.TestCase):
         allow = cmd[cmd.index("--allowedTools") + 1:cmd.index("--permission-mode")]
         self.assertIn("Bash(harness pairs submit *)", allow)
         self.assertNotIn("Bash(harness pairs *)", allow)                 # never apply
+        # Writes only its own batch files: a heredoc'd batch was denied live.
+        bd = home / ".local" / "state" / "harness" / pdir.name / "batches"
+        self.assertEqual([a for a in allow if a.startswith(("Write", "Edit"))],
+                         [f"Write(/{bd}/**)", f"Edit(/{bd}/**)"])            # outside ~/.claude
         self.assertEqual(cmd[cmd.index("--model") + 1], "sonnet")        # stale: the cheap one
 
     def test_the_documenter_asks_on_docs_and_the_ruling_lands_in_its_file(self):

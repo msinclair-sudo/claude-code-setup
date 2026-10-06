@@ -2255,6 +2255,68 @@ def cmd_doctor(a):
     print(f"guarded: {node} ({ctx.branch}) — refusal demonstrated, not inferred")
 
 
+def stop_session_row(ctx, n, r):
+    """Stop one session in node n's worktree, and the processes it left, and
+    cancel its node's queued test jobs: (ok, [lines])."""
+    label = f"{r.get('name') or '?'} [{r['sessionId'][:8]}]"
+    pid = r.get("pid") if isinstance(r.get("pid"), int) else None
+    tree = [p_ for p_ in proc_tree(pid) if p_ != pid] if pid else []
+    res = subprocess.run(["claude", "stop", r["sessionId"][:8]], capture_output=True, text=True)
+    if res.returncode:
+        return False, [f"FAILED {n:<12} {label}: {res.stderr.strip()[:80]}"]
+    out = [f"stopped {n:<12} {label}"]
+    time.sleep(1)
+    alive = [p_ for p_ in tree if _pid_exists(p_)]
+    for p_ in alive:
+        kill_tree(p_)
+    if alive:
+        out.append(f"         and killed {len(alive)} process(es) it left running: "
+                   + ", ".join(_proc_name(p_) for p_ in alive[:5]))
+    for j in testq_jobs(ctx, ("queued",)):
+        if [x.get("node") for x in j["requested_by"]] == [n]:
+            testq_cancel(ctx, j)
+            out.append(f"         and cancelled its queued test job {j['id']}")
+    return True, out
+
+
+def node_running(ctx, node, rows=None):
+    """Is a session running in this node? One answer for orientation, spawn and
+    integrate (log 105: the hooks said "no running session, spawn it" from the
+    claim lock while spawn and integrate refused "occupied" from the roster).
+    -> (how, detail): ("claimed", lock) | ("unclaimed", roster row) | (None, None)."""
+    try:
+        held = json.loads(ctx.lock_path(node).read_text())
+    except Exception:
+        held = None
+    if held and holder_alive(held, rows) is not False:
+        return "claimed", held
+    try:
+        wt = ((load_index(ctx).get("nodes") or {}).get(node) or {}).get("worktree")
+        rows = rows if rows is not None else cached_roster(ctx)
+        row = next((r for r in rows if wt and r.get("cwd") == wt), None)
+    except Exception:
+        row = None
+    if row:
+        return "unclaimed", row
+    return None, None
+
+
+def finished_released(ctx, node, holders):
+    """A child that released its node and has nothing open and unpresented, yet
+    a session stays in its worktree: finished work whose session never exited."""
+    sids = {r.get("sessionId") for r in holders}
+    try:
+        held = json.loads(ctx.lock_path(node).read_text())
+        if held.get("session_id") in sids:
+            return False                    # claimed by the session that is there
+    except Exception:
+        pass
+    for t, r in open_marks(ctx).items():
+        if r.get("_node") == node and not r.get("_presented_at"):
+            return False                    # work in hand, not presented
+    return True
+
+
 def cmd_stop(a):
     """Stop the sessions occupying given nodes. `claude stop` is a full teardown:
     the process dies, the session file is removed, and it leaves the table."""
@@ -2292,28 +2354,17 @@ def cmd_stop(a):
             label = f"{r.get('name') or '?'} [{r['sessionId'][:8]}]"
             # Its work, not just the conversation (obs 80): the process tree is
             # read before the stop, while its parent links are intact.
-            pid = r.get("pid") if isinstance(r.get("pid"), int) else None
-            tree = [p for p in proc_tree(pid) if p != pid] if pid else []
             if a.dry_run:
+                pid = r.get("pid") if isinstance(r.get("pid"), int) else None
+                tree = [p for p in proc_tree(pid) if p != pid] if pid else []
                 print(f"  would stop {n:<12} {label}"
                       + (f" and {len(tree)} process(es) under it" if tree else ""))
             else:
-                res = subprocess.run(["claude", "stop", r["sessionId"][:8]],
-                                     capture_output=True, text=True)
-                if res.returncode:
-                    print(f"  FAILED {n:<12} {label}: {res.stderr.strip()[:80]}"); continue
-                print(f"  stopped {n:<12} {label}")
-                time.sleep(1)
-                alive = [p for p in tree if _pid_exists(p)]
-                for p in alive:
-                    kill_tree(p)
-                if alive:
-                    print(f"           and killed {len(alive)} process(es) it left running: "
-                          + ", ".join(_proc_name(p) for p in alive[:5]))
-                for j in testq_jobs(ctx, ("queued",)):
-                    if [x.get("node") for x in j["requested_by"]] == [n]:
-                        testq_cancel(ctx, j)
-                        print(f"           and cancelled its queued test job {j['id']}")
+                ok, lines = stop_session_row(ctx, n, r)
+                for line in lines:
+                    print("  " + line)
+                if not ok:
+                    continue
             stopped += 1
     verb = "would stop" if a.dry_run else "stopped"
     print(f"{verb} {stopped}")
@@ -2782,7 +2833,15 @@ def lead_owes(ctx, node):
             held = json.loads(ctx.lock_path(k).read_text())
         except Exception:
             held = None
-        alive = holder_alive(held) if held else False
+        how, row = node_running(ctx, k)
+        alive = False if how is None else True
+        if how == "unclaimed":
+            # A session is in the worktree without a claim: spawn would refuse
+            # it as occupied, so never tell the lead to spawn (log 105).
+            if finished_released(ctx, k, [row]):
+                owed.append(("lingering", k, f"'{q[0]['task']}' queued",
+                             time.time() - (_epoch(q[0].get("written_at")) or time.time())))
+                continue
         # Standing still since its last task closed, the work was written, or
         # its session last wrote, whichever is latest.
         stamps = [_epoch(r.get("_closed_at")) for r in marks.values()
@@ -2834,8 +2893,10 @@ def owed_line(kind, child, task, age):
                     f"  — harness mark {task} --close",
         "start": f"{child} quiet {human_age(age)}, '{task}' queued"
                  f"  — message it to start (SendMessage)",
-        "down": f"{child} has no running session, {task}"
+        "down": f"{child} has no running session (no claim, nothing in its worktree), {task}"
                 f"  — harness spawn {child}",
+        "lingering": f"{child} finished and released, but its session is still in its worktree, "
+                     f"{task}  — harness integrate {child} ends it and merges (log 105)",
         "heavy": f"{child} at {task} context"
                  f"  — harness recycle {child} --at-quiet",
         "orphan": f"{child}'s session ended {human_age(age)} ago holding '{task}' open"
@@ -3151,7 +3212,7 @@ def queue_items(ctx, node):
 # a debt costs one line every DEBT_RENAG, not one line every turn.
 DEBT_RENAG = 10 * 60
 DEBT_KINDS = ("sign off:", "start:", "down:", "orphan:", "stuck:", "heavy:", "approve:", "task:", "asked:", "handed:",
-              "sweep:", "hold old:", "untraced:")
+              "sweep:", "hold old:", "untraced:", "lingering:")
 HOLD_OLD = 30 * 60      # a hold this old is asked about (log 92: one stood three hours over nothing)
 
 
@@ -5775,6 +5836,23 @@ def cmd_integrate(a):
             print(f"     {n:<12} nothing to integrate — already in {here}"); continue
 
         holders = [r for r in rows if r.get("cwd") == cw]
+        if holders and finished_released(ctx, n, holders):
+            # Log 105: a lane presented, released its node, and its session
+            # stayed. Integration ends it here, so the lead never has to run a
+            # kill the permission checker refuses.
+            for r in holders:
+                ok, lines = stop_session_row(ctx, n, r)
+                print(f"     {n:<12} it presented and released, but its session stayed up; "
+                      f"ending it so it can be integrated")
+                for line in lines:
+                    print(f"     {line}")
+            deadline = time.time() + 15
+            while time.time() < deadline:
+                left = [r for r in live_rows(agents_json()) if r.get("cwd") == cw]
+                if not left:
+                    break
+                time.sleep(1)
+            holders = [r for r in live_rows(agents_json()) if r.get("cwd") == cw]
         if holders:
             who = ", ".join(r.get("name") or r.get("sessionId", "?")[:8] for r in holders)
             print(f"skip {n:<12} OCCUPIED by {who} — catching it up would write into a "

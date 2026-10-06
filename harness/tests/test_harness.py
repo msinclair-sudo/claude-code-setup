@@ -1651,6 +1651,44 @@ class AskEvidence2(unittest.TestCase):
         self.assertEqual(json.loads(self.path.read_text())["state"], "rejected")
 
 
+class Log105(unittest.TestCase):
+    """Log 105: one answer for "running", and a finished lane's lingering session
+    never deadlocks its lead."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_2": "dev"})
+        self.row = {"cwd": "/w/dev_2", "sessionId": "s2", "name": "p-dev_2", "pid": 7}
+        self.idx = {"nodes": {"dev_2": {"worktree": "/w/dev_2"}}}
+
+    def test_node_running_reads_the_roster_when_nothing_is_claimed(self):
+        with mock.patch.object(hz, "load_index", return_value=self.idx):
+            self.assertEqual(hz.node_running(self.ctx, "dev_2", [self.row]), ("unclaimed", self.row))
+            self.assertEqual(hz.node_running(self.ctx, "dev_2", []), (None, None))
+
+    def test_finished_and_released_or_still_working(self):
+        with mock.patch.object(hz, "open_marks", return_value={"t": {"_node": "dev_2", "_presented_at": "x"}}):
+            self.assertTrue(hz.finished_released(self.ctx, "dev_2", [self.row]))
+        with mock.patch.object(hz, "open_marks", return_value={"t": {"_node": "dev_2"}}):
+            self.assertFalse(hz.finished_released(self.ctx, "dev_2", [self.row]))   # work in hand
+        self.ctx.lock_path("dev_2").parent.mkdir(parents=True, exist_ok=True)
+        self.ctx.lock_path("dev_2").write_text(json.dumps({"session_id": "s2"}))
+        with mock.patch.object(hz, "open_marks", return_value={}):
+            self.assertFalse(hz.finished_released(self.ctx, "dev_2", [self.row]))   # claimed
+
+    def test_the_lead_is_never_told_to_spawn_an_occupied_child(self):
+        q = [{"task": "next", "written_at": OLD}]
+        with mock.patch.object(hz, "load_index", return_value=self.idx), \
+             mock.patch.object(hz, "cached_roster", return_value=[self.row]), \
+             mock.patch.object(hz, "startable", side_effect=lambda c, k: q if k == "dev_2" else []), \
+             mock.patch.object(hz, "open_marks", return_value={}), \
+             mock.patch.object(hz, "context_limits", return_value=(None, None)):
+            owed = hz.lead_owes(self.ctx, "dev")
+        self.assertIn("lingering", [o[0] for o in owed])
+        self.assertNotIn("down", [o[0] for o in owed])
+        line = hz.owed_line(*[o for o in owed if o[0] == "lingering"][0])
+        self.assertIn("harness integrate dev_2 ends it", line)
+
+
 class Intermediary(unittest.TestCase):
     """T17: one intermediary per project, its reach that project only."""
 

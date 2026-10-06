@@ -10827,7 +10827,11 @@ def cmd_archive(a):
 # project, never one per machine: it reads that project only. The owner signs
 # the ruling; it lands on the task's brief. Design: harness/design/owner-channel.md.
 
-ASK_KINDS = ("intent", "judgement", "action", "risk", "note")   # note: the owner's own
+ASK_KINDS = ("intent", "judgement", "action", "risk", "scope", "note")   # note: the owner's own
+# scope: the docs, the code or the work describe something the charter does not
+# cover, or two of them disagree about what the project is (owner, 2026-10-06: a
+# drifting scope piles up issues until the project can't be recovered).
+ASK_CLOSED = ("rejected", "returned", "done", "accepted", "merged")
 ASK_OPEN = ("asked", "ready", "drafted")
 INTERMEDIARY = "harness-intermediary"          # its skill; a session's name adds the project
 # The seven sections, in order: heading, key, cap. A cap is chars unless noted.
@@ -10948,6 +10952,16 @@ def ask_open(ctx, task, kind, question, me, sid, runs=None):
         if len(r) > ASK_RUN_CAP:
             die(REFUSED, f"command {i} is {len(r)} chars; the cap is {ASK_RUN_CAP}. "
                          f"Put it in a script and hand the owner that.")
+    for f in sorted((Path(ctx.state) / "asks").glob("*.json")) \
+            if (Path(ctx.state) / "asks").is_dir() else []:
+        try:
+            o = json.loads(f.read_text())
+        except Exception:
+            continue
+        if (tkey(o.get("task") or "") == tkey(task) and o.get("state") not in ASK_CLOSED
+                and (o.get("question") or "").strip().lower() == q.lower()):
+            die(REFUSED, f"already asked, and open: {o['id']}. Add to it with "
+                         f"harness ask {o['id']} --msg -")
     _, b = (None, None) if owner else load_brief(ctx, task)
     if b is None and documenter:
         b = {"task": "docs", "node": None}     # no brief: rulings go to docs/rulings.json
@@ -11829,7 +11843,7 @@ CHAT_CAP = 4000                 # chars in one message, either way
 ITEM_TOOLS = ("Read", "Grep", "Glob", "Bash")
 ITEM_MODEL = {"action": ("sonnet", "medium"), "note": ("sonnet", "medium"),
               "intent": ("opus", "high"), "judgement": ("opus", "high"),
-              "risk": ("opus", "high")}
+              "risk": ("opus", "high"), "scope": ("opus", "high")}
 
 
 def item_name(repo, ask_id):
@@ -12149,8 +12163,10 @@ def read_dash_from_stdin(a):
 # from git, transcripts and records, with no model.
 
 DOCUMENTER = "harness-documenter"
-DOC_JOBS = ("auto", "budget", "reach", "consolidate", "stale", "clarity")
-DOC_DEFAULTS = {"stale": ("sonnet", "medium"), "reach": ("sonnet", "medium")}
+# A run is one whole document (owner, 2026-10-06): its job is a doc path, or
+# "auto" for the top of `docs measure`'s list. Opus throughout: every run checks
+# a doc's claims against the code.
+DOC_DEFAULTS = {}
 DOC_DEFAULT = ("opus", "high")
 DOCUMENTER_WRITING = ("schimel-science-writing", "google-devdocs-style")
 DOC_TRIGGER_GAP = 24 * 3600         # at most one triggered run a day
@@ -12396,6 +12412,17 @@ def docs_measure(ctx):
             moved.append({"to": x["to"], "from": x["file"], "since": r.get("applied_at"),
                           "read": hits, "sessions": len(later),
                           "provenance": x["to"].startswith("provenance/")})
+    known = doc_check_symbols(ctx, texts)
+    ver = docs_verified(ctx)
+    checks, vstate = {}, {}
+    for d, t2 in texts.items():
+        if is_provenance(d):
+            continue
+        checks[d] = doc_check(ctx, d, t2, texts, known)
+        v = ver.get(d)
+        if v:
+            vstate[d] = {"sha": v.get("sha"), "at": v.get("at"),
+                         "changed": doc_changed_since(ctx, v.get("sha"), doc_code_paths(ctx, t2))}
     cap = claude_md_budget(ctx)
     now = time.time()
     snap = {"moved": moved,"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "budget": cap,
@@ -12404,42 +12431,326 @@ def docs_measure(ctx):
             "docs": {d: {"words": words(t2), "reads": reads[d], "writes": writes.get(d, 0),
                          "pointers_in": pin[d], "pointers_out": pout[d],
                          "cited": cited_by[d],
-                         "idle_days": (int((now - touched[d]) / 86400) if touched.get(d) else None)}
+                         "idle_days": (int((now - touched[d]) / 86400) if touched.get(d) else None),
+                         "check": checks.get(d), "verified": vstate.get(d)}
                      for d, t2 in texts.items()}}
+    snap["charter"] = [{"name": f.get("name"), "text": f.get("text")}
+                       for f in (load_charter(ctx)[1].get("features") or {}).values()
+                       if not f.get("retired_at")]
+    snap["scope_asks"] = docs_open_asks(ctx)
     snap["gaps"] = docs_gaps(snap)
     snap["previous"] = {"at": since, "claude_md": (last or {}).get("claude_md")} if last else None
     return snap
 
 
+# ── content checks: is what a doc says still there? ─────────────────────────
+#
+# The documenter's job is that the docs describe the project as it is now, and
+# that what they say holds (owner, 2026-10-06: runs were trimming words and
+# moving text, and nothing checked the content). These are the checks a machine
+# can make for certain; the session checks the rest against the code.
+
+_PATH_EXT = r"(?:py|md|sql|json|ya?ml|toml|sh|ts|tsx|js|jsx|html|css|txt|csv|tsv|ini|cfg|r|R|ipynb)"
+_PATH_RE = re.compile(r"`([A-Za-z0-9_.][\w.\-/]*?(?:/[\w.\-]+|\." + _PATH_EXT + r"))(?::\d+(?:-\d+)?)?`")
+_LINK_RE = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
+_FUNC_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]{3,})\(\)`")
+_HISTORY_RE = re.compile(
+    r"\b20\d\d-\d\d-\d\d\b|\bobs(?:ervation)?s? \d+|\bsuperseded\b|\bpreviously\b|\bused to\b"
+    r"|\bno longer\b|\bincident\b|\b(?:measured|observed|found) (?:on |in )?20\d\d|\bwas (?:changed|"
+    r"replaced|removed|renamed|moved|reversed)\b", re.I)
+
+
+def _slug_heading(h):
+    """A markdown heading's anchor, as GitHub and Obsidian make it."""
+    h = re.sub(r"[`*_\[\]()]", "", h.strip().lower())
+    return re.sub(r"\s+", "-", re.sub(r"[^\w\s-]", "", h))
+
+
+def _headings(text):
+    return {_slug_heading(m.group(1)) for m in re.finditer(r"^#{1,6}\s+(.+?)\s*#*$", text, re.M)}
+
+
+_TRACKED = {}
+
+
+def doc_sources(ctx):
+    """Other repositories a doc may describe (manifest `doc_sources`, paths
+    relative to the repo): an inherited codebase a rewrite still cites. Rank 0's
+    to declare; without it, such paths read as not in this repo, which is true."""
+    try:
+        man = json.loads((ctx.repo / ".harness" / "manifest.json").read_text())
+    except Exception:
+        return []
+    out = []
+    for r in man.get("doc_sources") or []:
+        p = (ctx.repo / r).resolve() if not str(r).startswith("/") else Path(r)
+        if p.is_dir():
+            out.append(p)
+    return out
+
+
+def tracked_files(ctx, root=None):
+    """A repo's tracked files, and every path suffix of them: a doc may name
+    `merge/writer.py` for `biblion/merge/writer.py`, or a bare `MODEL.md`."""
+    root = root or ctx.repo
+    k = str(root)
+    if k not in _TRACKED:
+        _, out, _ = git("ls-files", cwd=root)
+        suf = set()
+        for f in out.splitlines():
+            parts = f.split("/")
+            for j in range(len(parts)):
+                suf.add("/".join(parts[j:]))
+            for j in range(1, len(parts)):
+                suf.add("/".join(parts[:j]))          # its folders, too
+        _TRACKED[k] = suf
+    return _TRACKED[k]
+
+
+def path_there(ctx, base, pth):
+    if (ctx.repo / pth).exists() or (base / pth).exists():
+        return True
+    p = pth.lstrip("./").rstrip("/")
+    return any(p in tracked_files(ctx, r) for r in [None] + doc_sources(ctx))
+
+
+def doc_check(ctx, doc, text, texts=None, known=None):
+    """What one doc names that is not there: missing paths, broken links and
+    anchors, functions defined nowhere, and lines that read as history.
+    `known`: function names found in the code (doc_check_symbols).
+
+    A path is there if it exists from the repo root or the doc's folder, or is
+    the tail of a tracked file. A name with a slash and no extension is only a
+    path if its first part is a real folder (else a branch, a ref, a ratio)."""
+    base = (ctx.repo / doc).parent
+    lines = text.splitlines()
+    paths, links, funcs, hist = [], [], [], []
+    for i, line in enumerate(lines, 1):
+        for m in _PATH_RE.finditer(line):
+            pth = m.group(1).rstrip(".")
+            if pth.startswith(("http", "~", "/")) or "*" in pth or "<" in pth or "{" in pth:
+                continue
+            if "." not in pth.rsplit("/", 1)[-1]:
+                first = pth.split("/", 1)[0]
+                if first not in ("..", ".") and not path_there(ctx, base, first):
+                    continue
+            if not path_there(ctx, base, pth):
+                paths.append((i, pth))
+        for m in _LINK_RE.finditer(line):
+            tgt = m.group(1)
+            if tgt.startswith(("http:", "https:", "mailto:")):
+                continue
+            f, _, anchor = tgt.partition("#")
+            if f:
+                fp = (base / f) if not f.startswith("/") else (ctx.repo / f.lstrip("/"))
+                if not fp.exists():
+                    links.append((i, tgt)); continue
+                if anchor and fp.suffix == ".md":
+                    try:
+                        if anchor.lower() not in _headings(fp.read_text(errors="replace")):
+                            links.append((i, tgt))
+                    except OSError:
+                        pass
+            elif anchor and anchor.lower() not in _headings(text):
+                links.append((i, tgt))
+        if known is not None:
+            for m in _FUNC_RE.finditer(line):
+                if m.group(1) not in known:
+                    funcs.append((i, m.group(1) + "()"))
+        if _HISTORY_RE.search(line):
+            hist.append(i)
+    return {"paths": paths, "links": links, "functions": funcs, "history": hist}
+
+
+def doc_check_symbols(ctx, texts):
+    """The function names the docs mention that are defined somewhere in the
+    code: one `git grep` for all of them, outside markdown."""
+    names = sorted({m.group(1) for t in texts.values() for m in _FUNC_RE.finditer(t)})
+    if not names:
+        return set()
+    found = set()
+    for i in range(0, len(names), 200):
+        chunk = names[i:i + 200]
+        pat = r"\b(" + "|".join(re.escape(n) for n in chunk) + r")\b"
+        _, out, _ = git("grep", "-h", "-o", "-E", pat, "--", ".", ":(exclude)*.md",
+                        cwd=ctx.repo)
+        found |= set(out.split())
+    return found
+
+
+def doc_code_paths(ctx, text):
+    """The code files a doc names that exist: what its truth depends on."""
+    out = set()
+    for m in _PATH_RE.finditer(text):
+        pth = m.group(1).rstrip(".")
+        if not pth.endswith(".md") and (ctx.repo / pth).exists():
+            out.add(pth)
+    return sorted(out)
+
+
+def docs_open_asks(ctx):
+    """The documenter's open asks: what it has put to the owner and must not
+    raise again, nor touch the text of, until it is ruled."""
+    out = []
+    d = Path(ctx.state) / "asks"
+    for f in sorted(d.glob("*.json")) if d.is_dir() else []:
+        try:
+            o = json.loads(f.read_text())
+        except Exception:
+            continue
+        if tkey(o.get("task") or "") == "docs" and o.get("state") not in ASK_CLOSED:
+            out.append({"id": o.get("id"), "kind": o.get("kind"), "question": o.get("question"),
+                        "state": o.get("state")})
+    return out
+
+
+def docs_verified(ctx):
+    try:
+        return json.loads((docs_dir(ctx) / "verified.json").read_text())
+    except Exception:
+        return {}
+
+
+def doc_changed_since(ctx, sha, paths):
+    """Commits since `sha` touching the code a doc names. None when the doc
+    names none; -1 when sha is unknown here."""
+    if not paths:
+        return None
+    rc, out, _ = git("rev-list", "--count", f"{sha}..HEAD", "--", *paths, cwd=ctx.repo)
+    return int(out) if rc == 0 and out.strip().isdigit() else -1
+
+
+def is_provenance(doc):
+    return doc.startswith("provenance/") or "/provenance/" in doc
+
+
 def docs_gaps(snap):
-    """The gaps the numbers show, largest first: (job, target, why)."""
+    """Every doc that needs a run, most urgent first, with why:
+    [{doc, score, why: [...], stale}]. Score is importance x trouble.
+
+    Importance is how many sessions meet the doc (reads, pointers to it; CLAUDE.md
+    is loaded by every session). Trouble is what is wrong with it: names that are
+    not there, a check against the code never made or out of date, history in a
+    current doc, size, and CLAUDE.md over its budget. A run takes one whole doc,
+    so this ranks docs, not changes (owner, 2026-10-06)."""
     out = []
     cap, cm = snap.get("budget"), snap.get("claude_md") or 0
-    if cap and cm > cap:
-        out.append(("budget", "CLAUDE.md", f"{cm:,} words, budget {cap:,}", cm - cap))
-    for area, r in snap["reach"].items():
-        if r["editors"] >= 2 and r["read"] < 0.75 * r["editors"]:
-            out.append(("reach", area, f"{r['read']} of {r['editors']} sessions that edited "
-                                       f"{area} read {r['doc']}", 5000 * (r["editors"] - r["read"])))
     for d, r in snap["docs"].items():
-        if d == "CLAUDE.md":
+        if is_provenance(d):
             continue
-        if r["writes"] >= 3 and r["reads"] == 0:
-            out.append(("consolidate", d, f"written {r['writes']}x since the last run, never read",
-                        r["words"]))
-        if (not r["cited"] and not r["pointers_in"] and not r["reads"]
-                and (r["idle_days"] or 0) >= DOC_STALE_DAYS):
-            out.append(("stale", d, f"{r['words']:,} words; no reads, no pointers, no open record; "
-                                    f"untouched {r['idle_days']}d", r["words"]))
-        if r["words"] > 15000 and r["reads"]:
-            out.append(("clarity", d, f"{r['words']:,} words and read {r['reads']}x: split or trim",
-                        r["words"] // 2))
-    return [g[:3] for g in sorted(out, key=lambda g: -g[3])]
+        ck = r.get("check") or {}
+        broken = len(ck.get("paths") or []) + len(ck.get("links") or [])
+        funcs = len(ck.get("functions") or [])
+        hist = len(ck.get("history") or [])
+        v = r.get("verified") or {}
+        why, trouble = [], 0.0
+        if broken:
+            why.append(f"{broken} path(s) or link(s) not there"); trouble += 3 * broken
+        if funcs:
+            why.append(f"{funcs} function(s) defined nowhere"); trouble += funcs
+        if not v:
+            why.append("never checked against the code"); trouble += 5
+        elif v.get("changed"):
+            why.append(f"{v['changed']} commit(s) to its code since it was checked"
+                       if v["changed"] > 0 else "checked at a commit not in this history")
+            trouble += 2 * min(abs(v["changed"]), 5)
+        if hist:
+            why.append(f"{hist} line(s) read as history"); trouble += hist / 5
+        if r["words"] > 15000:
+            why.append(f"{r['words']:,} words"); trouble += r["words"] / 15000
+        if d == "CLAUDE.md" and cap and cm > cap:
+            why.append(f"{cm - cap:,} words over budget"); trouble += 10
+        # CLAUDE.md is loaded into every session, never Read: never stale.
+        stale = (d != "CLAUDE.md" and not r["cited"] and not r["pointers_in"] and not r["reads"]
+                 and (r["idle_days"] or 0) >= DOC_STALE_DAYS)
+        if stale:
+            why.append(f"stale: no reads, pointers or records, untouched {r['idle_days']}d")
+        importance = 1 + r["reads"] + r["pointers_in"]
+        if d == "CLAUDE.md":
+            importance = max(importance, snap.get("transcripts") or 1)
+        if trouble or stale:
+            out.append({"doc": d, "score": round(importance * trouble, 1), "why": why,
+                        "stale": stale, "reads": r["reads"], "words": r["words"]})
+    return sorted(out, key=lambda g: (g["stale"], -g["score"]))
+
+
+def _doc_arg(ctx, doc):
+    doc = (doc or "").strip().lstrip("./")
+    if not doc or not (ctx.repo / doc).is_file() or not doc.endswith(".md"):
+        die(REFUSED, f"no such doc: {doc or '(none given)'}")
+    return doc
+
+
+def print_doc_check(ctx, doc, ck, v=None):
+    print(f"{doc}:")
+    for i, pth in ck["paths"]:
+        print(f"  line {i:<5} path not there: {pth}")
+    for i, tgt in ck["links"]:
+        print(f"  line {i:<5} link not there: {tgt}")
+    for i, fn in ck["functions"]:
+        print(f"  line {i:<5} defined nowhere in the code: {fn}  (may be prose; check)")
+    if ck["history"]:
+        h = ck["history"]
+        print(f"  {len(h)} line(s) read as history: " + ", ".join(map(str, h[:20]))
+              + (" …" if len(h) > 20 else "") + "  (provenance, if they are)")
+    if not any(ck.values()):
+        print("  every path, link and function it names is there; no history lines")
+    if v is not None:
+        print("  checked against the code: " + (
+            "never" if not v else f"at {v['sha'][:8]} {v['at'][:16]}"
+            + (f", {v['changed']} commit(s) to its code since" if (v.get("changed") or 0) > 0 else "")))
 
 
 def cmd_docs(a):
-    """`harness docs measure|map|note`: the documenter's instruments (T18)."""
+    """`harness docs measure|check|begin|verified|map|note`: the documenter's
+    instruments (T18)."""
     ctx = Ctx(); ctx.require_enrolled()
+    if a.verb in ("check", "begin"):
+        texts = {d: (ctx.repo / d).read_text(errors="replace") for d in doc_files(ctx)
+                 if (ctx.repo / d).is_file()}
+        docs = [_doc_arg(ctx, d) for d in a.args] or [d for d in texts if not is_provenance(d)]
+        if a.verb == "begin" and len(docs) != 1:
+            die(REFUSED, "harness docs begin <doc>: one doc per run")
+        known = doc_check_symbols(ctx, {d: texts.get(d, "") for d in docs})
+        ver = docs_verified(ctx)
+        for d in docs:
+            t = texts.get(d) or (ctx.repo / d).read_text(errors="replace")
+            ck = doc_check(ctx, d, t, texts, known)
+            v = ver.get(d)
+            if v:
+                v = dict(v, changed=doc_changed_since(ctx, v.get("sha"), doc_code_paths(ctx, t)))
+            if a.verb == "check" and len(docs) > 1 and not any(ck.values()):
+                continue
+            print_doc_check(ctx, d, ck, v or {})
+        if a.verb == "begin":
+            d = docs[0]
+            (docs_dir(ctx) / "current.json").write_text(json.dumps({
+                "doc": d, "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                "session": os.environ.get("CLAUDE_CODE_SESSION_ID", ""),
+                "words": words((ctx.repo / d).read_text(errors="replace"))}) + "\n")
+            code = doc_code_paths(ctx, texts.get(d, ""))
+            if code:
+                print(f"  code it names ({len(code)}): " + ", ".join(code[:15])
+                      + (" …" if len(code) > 15 else ""))
+            for o in docs_open_asks(ctx):
+                print(f"  open ask {o['id']} ({o['kind']}): {o['question']}")
+            print(f"this run is {d}. Read all of it, check every section against the code, "
+                  f"then send one batch.")
+        return
+    if a.verb == "verified":
+        if not a.args:
+            die(REFUSED, 'harness docs verified <doc> "what you checked and found"')
+        d = _doc_arg(ctx, a.args[0])
+        note = " ".join(a.args[1:]).strip()
+        if not note:
+            die(REFUSED, f'say what you checked: harness docs verified {d} "N sections; ..."')
+        _, sha, _ = git("rev-parse", "HEAD", cwd=ctx.repo)
+        ver = docs_verified(ctx)
+        ver[d] = {"sha": sha.strip(), "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "note": note,
+                  "session": os.environ.get("CLAUDE_CODE_SESSION_ID", "")}
+        (docs_dir(ctx) / "verified.json").write_text(json.dumps(ver, indent=1) + "\n")
+        print(f"{d} recorded as checked against the code at {sha.strip()[:8]}")
+        return
     if a.verb == "map":
         m = docs_areas(ctx)
         if not a.args:
@@ -12495,7 +12806,7 @@ def cmd_docs(a):
             print(f"this session stops in {DOC_STOP_AFTER}s; end your turn with a short summary")
         return
     if a.verb != "measure":
-        die(REFUSED, "harness docs measure | map | note")
+        die(REFUSED, "harness docs measure | check | begin | verified | map | note")
     snap = docs_measure(ctx)
     rd = docs_dir(ctx) / "runs"
     rd.mkdir(exist_ok=True)
@@ -12521,9 +12832,19 @@ def cmd_docs(a):
             print(f"  {m['to']:<40} {m['read']}/{m['sessions']} sessions since "
                   f"{(m['since'] or '')[11:16]}" + ("  (provenance: rarely read by design)"
                                                    if m["provenance"] else ""))
-    print("gaps, largest first:")
-    for job, target, why in snap["gaps"][:8] or [("-", "none", "")]:
-        print(f"  {job:<12} {target}  — {why}")
+    gaps = [g for g in snap["gaps"] if not g["stale"]]
+    stale = [g for g in snap["gaps"] if g["stale"]]
+    print("docs that need a run, most urgent first (importance x trouble):")
+    for g in gaps[:10] or [{"doc": "none", "score": 0, "why": [], "reads": 0}]:
+        print(f"  {g['score']:>8}  {g['doc']}  (read {g['reads']}x): " + "; ".join(g["why"]))
+    if stale:
+        print(f"stale, {len(stale)} doc(s) nothing reads, points to or cites: "
+              + ", ".join(g["doc"] for g in stale[:8]) + (" …" if len(stale) > 8 else ""))
+    ch = snap.get("charter") or []
+    print(f"charter: {len(ch)} feature(s) — what is in scope; `harness docs measure --json` "
+          f"has their text" if ch else "charter: none written — scope can't be checked")
+    for o in snap.get("scope_asks") or []:
+        print(f"open ask {o['id']} ({o['kind']}): {o['question'][:100]}")
     ref = [(r["task"], r.get("refused")) for _, r in docs_batches(ctx) if r.get("refused")][:3]
     for t, why in ref:
         print(f"refused  {t}: {why[:120]}")
@@ -12583,7 +12904,7 @@ def docs_pending(ctx):
                   key=lambda r: r.get("at") or "")
 
 
-DOC_REVISIONS = 1          # a declined batch may be fixed and resent this many times per run
+DOC_REVISIONS = 2          # a declined batch may be fixed and resent this many times per run (a whole doc)
 
 
 def docs_decided(ctx, rec):
@@ -12653,10 +12974,14 @@ def documenter_finish(pdir, repo):
             print(f"stopped {name}")
 
 
+DOC_AUTO_RUN = False   # owner, 2026-10-06: no automatic runs until the design is good enough
+
+
 def docs_apply_step(ctx, node):
-    """Rank 0's Stop hook: start a documenter run when one is due. It never
+    """Rank 0's Stop hook: start a documenter run when one is due. Off
+    (DOC_AUTO_RUN): runs start from the GUI or `harness documenter`. It never
     applies a batch: rank 0 reviews each one (owner, 2026-10-05)."""
-    if ctx.rank(node) != 0 or docs_pending(ctx):
+    if not DOC_AUTO_RUN or ctx.rank(node) != 0 or docs_pending(ctx):
         return False
     return docs_trigger(ctx)
 
@@ -12776,17 +13101,18 @@ def documenter_cmd(pdir, repo, job="auto", model=None, effort=None, why=None):
 
 
 def documenter_start(repo, job, why=None):
+    doc = "the top doc `harness docs measure` lists" if job in (None, "", "auto") else job
     return (f"You are the harness documenter for {Path(repo).name}; your instructions are in "
-            f"your system prompt. This run's job: {job}"
+            f"your system prompt. This run is one document, whole: {doc}"
             + (f" (started because {why})" if why else "") + ". Start now: run "
-            f"`harness docs measure`, pick the one improvement it points to"
-            + ("" if job == "auto" else f" within '{job}'")
-            + f", write the batch to {documenter_batches(HOME_STATE / slug(Path(repo)))}/"
-              "<name>.json and submit it with `harness pairs submit <that path>`, send "
-              "rank 0 the SendMessage that submit prints, then `harness docs note` what you did. The last run's note may name a change it "
-              "planned and couldn't submit: if so, make that one. "
-              "Then end your turn: the run waits for rank 0's review. An applied batch "
-              "closes it; a declined one wakes you with the reason to fix it.")
+            f"`harness docs measure`, then `harness docs begin <doc>`. Read all of it and check "
+            f"every section against the code, as your instructions say; ask the owner about "
+            f"scope conflicts with `harness ask docs --kind scope`. Write one batch to "
+            f"{documenter_batches(HOME_STATE / slug(Path(repo)))}/<name>.json, submit it with "
+            f"`harness pairs submit <that path>`, send rank 0 the SendMessage it prints, record "
+            f"`harness docs verified <doc> \"...\"`, then `harness docs note` what you did and "
+            f"end your turn: the run waits for rank 0's review. An applied batch closes it; a "
+            f"declined one wakes you with the reason to fix it.")
 
 
 def docs_queue(pdir, **upd):
@@ -12896,13 +13222,13 @@ def cmd_documenter(a):
     ok, msg = documenter_launch(pdir, repo, a.job, a.model, a.effort, a.why)
     if not ok and "is working" in msg:
         # A run is under way: the runs asked for follow it, chained from its note.
-        docs_queue(pdir, remaining=runs, job=a.job, by="queued")
+        docs_queue(pdir, remaining=runs, job="auto", by="queued")
         print(f"a run is working; {runs} more run(s) will follow it, each once the last "
               f"one's batches apply")
         return
     if not ok:
         die(REFUSED, msg)
-    docs_queue(pdir, remaining=runs - 1, job=a.job, by="start")
+    docs_queue(pdir, remaining=runs - 1, job="auto", by="start")
     print(msg + (f"; {runs - 1} more run(s) follow, each once the last one's batches apply"
                  if runs > 1 else "") + ". `harness docs measure` shows what it will see")
 
@@ -13215,13 +13541,17 @@ def main():
     wk.add_argument("task")
     wk.add_argument("--at", required=True, help=argparse.SUPPRESS)
     dc = add("docs", cmd_docs)
-    dc.add_argument("verb", choices=("measure", "map", "note"))
-    dc.add_argument("args", nargs="*", help="map: <area-glob> <doc>; note: the text")
+    dc.add_argument("verb", choices=("measure", "check", "begin", "verified", "map", "note"))
+    dc.add_argument("args", nargs="*", help="check: [doc...]; begin: <doc>; verified: <doc> "
+                                            "<what you checked>; map: <area-glob> <doc>; "
+                                            "note: the text")
     dc.add_argument("--json", action="store_true", help="measure: the full snapshot")
     dc.add_argument("--remove", action="store_true", help="map: drop an area")
     dm = add("documenter", cmd_documenter)
     dm.add_argument("--project", help="the repo's directory name or state slug")
-    dm.add_argument("--job", choices=DOC_JOBS, default="auto")
+    dm.add_argument("--doc", dest="job", default="auto",
+                    help="the doc this run takes, whole; auto: the top of docs measure")
+    dm.add_argument("--job", dest="job", help=argparse.SUPPRESS)
     dm.add_argument("--model")
     dm.add_argument("--effort", choices=list(EFFORTS))
     dm.add_argument("--why", help=argparse.SUPPRESS)

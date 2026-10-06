@@ -17,6 +17,39 @@ The cost it exists to cut, measured on biblion2 on 2026-10-05:
   `schema/` (33k). Most of `plans/` likely describes finished work.
 - `CLAUDE.md` was committed 28 times in the last month, and no pass has ever taken anything out.
 
+## Revised 2026-10-06: current and true, one whole doc per run
+
+The owner, after watching runs: they were very quick, only trimmed words and moved text, and
+nothing checked whether the content was true. "Its job is to document what things currently look
+like, and move provenance out of current docs, so documentation is current." And: "if the scope
+starts to drift then issues will pile up and the project will become very difficult to recover."
+
+What changed:
+
+1. **The job is truth first.** The docs describe the project as it is now, and what they say holds.
+   Size comes last.
+2. **A run is one document, whole.** "One change per run is a bit light: it means the documenter
+   has to relearn every time." It reads every section, checks each concrete claim against the code
+   at HEAD, fixes what the code plainly contradicts (citing `file:line` or a commit in the pair's
+   `why`), moves history to provenance, trims last, and sends one batch. A declined batch may be
+   fixed twice.
+3. **Mechanical content checks** (`harness docs check`): paths, links and anchors, and functions a
+   doc names that are not there; lines that read as history. The manifest's `doc_sources` lists
+   other repositories the docs may describe (biblion2 cites its inherited biblion codebase: without
+   it, 2,155 path hits, 334 with it and suffix matching, most of them real).
+4. **Checked against the code, and when.** `harness docs verified <doc>` records the commit a doc
+   was checked at; it is due again when the code it names changes.
+5. **Docs are ranked, not changes:** importance (reads, pointers; every session for `CLAUDE.md`)
+   times trouble (missing names, never or outdated check, history lines, size, budget). A 47k-word
+   log nobody reads no longer outranks the spine everyone reads.
+6. **Scope conflicts go to the owner** as a new ask kind, `scope`, through an intermediary to the
+   Issues tab. The sections involved stay untouched until ruled.
+7. **No automatic runs** until the design is good enough (`DOC_AUTO_RUN = False`). Runs start
+   from the GUI card or `harness documenter [--doc <path>] [--runs N]`.
+
+The sections below describe v1, kept for the reasoning; where they disagree with this list, this
+list holds.
+
 ## What it does
 
 Each pass does one of four jobs:

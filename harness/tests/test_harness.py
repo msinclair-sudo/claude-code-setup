@@ -5,6 +5,7 @@ import io
 import json
 import os
 import socket
+import sys
 import tempfile
 import time
 import unittest
@@ -1190,8 +1191,8 @@ class Ask(unittest.TestCase):
         self.err.start()
         self.addCleanup(self.err.stop)
 
-    def open(self, me="dev", sid="s" * 36, task="s1"):
-        return hz.ask_open(self.ctx, task, "intent", "Ship X or Y?", me, sid)
+    def open(self, me="dev", sid="s" * 36, task="s1", q="Ship X or Y?"):
+        return hz.ask_open(self.ctx, task, "intent", q, me, sid)
 
     def path(self, rec):
         return self.ctx.dir / "asks" / f"{rec['id']}.json"
@@ -1199,10 +1200,17 @@ class Ask(unittest.TestCase):
     def test_lead_opens_member_refused_brief_required(self):
         r = self.open()
         self.assertEqual((r["id"], r["state"], r["node"]), ("s1-1", "asked", "dev_1"))
-        self.assertEqual(self.open(me="main")["id"], "s1-2")
+        self.assertEqual(self.open(me="main", q="Ship Z?")["id"], "s1-2")
         with self.assertRaises(SystemExit):
-            self.open(me="dev_1")                       # a lane, in a session
-        self.assertEqual(self.open(me="dev_1", sid="")["asked_by"], "dev_1 (operator)")
+            self.open(me="dev_1", q="Ship W?")          # a lane, in a session
+        self.assertEqual(self.open(me="dev_1", sid="", q="Ship V?")["asked_by"],
+                         "dev_1 (operator)")
+
+    def test_the_same_open_question_is_not_asked_twice(self):
+        self.open()
+        with self.assertRaises(SystemExit):
+            self.open(me="main", q="ship x or y?")
+        self.assertIn("already asked, and open: s1-1", sys.stderr.getvalue())
         with self.assertRaises(SystemExit):
             self.open(task="nope")                      # no brief
         with self.assertRaises(SystemExit):
@@ -1458,7 +1466,9 @@ class AskEvidence(unittest.TestCase):
         self.diff.write_text("--- a\n+++ b\n")
 
     def open(self):
-        r = hz.ask_open(self.ctx, "s1", "intent", "Ship X or Y?", "dev", "")
+        # A fresh question each time: the same open question is refused.
+        self.n = getattr(self, "n", 0) + 1
+        r = hz.ask_open(self.ctx, "s1", "intent", f"Ship X or Y ({self.n})?", "dev", "")
         return self.ctx.dir / "asks" / f"{r['id']}.json", r
 
     def test_attach_copies_and_records(self):
@@ -1867,18 +1877,123 @@ class DocMeasure(unittest.TestCase):
         self.assertEqual(hz._rel(ctx, "/a/proj-dev_1/schema/x.sql"), "schema/x.sql")
         self.assertEqual(hz._rel(ctx, "/a/proj/CLAUDE.md"), "CLAUDE.md")
 
-    def test_gaps(self):
-        snap = {"budget": 100, "claude_md": 400,
-                "reach": {"schema/**": {"doc": "S.md", "editors": 4, "read": 1}},
-                "docs": {"old.md": {"words": 900, "reads": 0, "writes": 0, "pointers_in": 0,
-                                    "cited": 0, "idle_days": 30},
-                         "used.md": {"words": 900, "reads": 3, "writes": 0, "pointers_in": 2,
-                                     "cited": 1, "idle_days": 30}}}
-        jobs = [(j, t) for j, t, _ in hz.docs_gaps(snap)]
-        self.assertIn(("budget", "CLAUDE.md"), jobs)
-        self.assertIn(("reach", "schema/**"), jobs)
-        self.assertIn(("stale", "old.md"), jobs)
-        self.assertNotIn(("stale", "used.md"), jobs)
+    def test_gaps_rank_whole_docs_by_importance_times_trouble(self):
+        # Owner, 2026-10-06: a run is one whole doc, and the most-read doc with
+        # something untrue in it comes before a big one nobody reads.
+        clean = {"paths": [], "links": [], "functions": [], "history": []}
+        d = lambda **k: dict({"words": 900, "reads": 0, "writes": 0, "pointers_in": 0,
+                              "cited": 0, "idle_days": 30, "check": clean,
+                              "verified": {"sha": "a", "changed": 0}}, **k)
+        snap = {"budget": 100, "claude_md": 400, "transcripts": 50, "reach": {},
+                "docs": {"CLAUDE.md": d(),
+                         "old.md": d(verified=None),
+                         "huge.md": d(words=47000, reads=2, verified=None),
+                         "spine.md": d(reads=40, pointers_in=30,
+                                       check=dict(clean, paths=[(3, "gone.py")])),
+                         "fine.md": d(reads=9, pointers_in=1),
+                         "provenance/x/y.md": d(verified=None)}}
+        g = {x["doc"]: x for x in hz.docs_gaps(snap)}
+        order = [x["doc"] for x in hz.docs_gaps(snap)]
+        self.assertEqual(order[:2], ["CLAUDE.md", "spine.md"])     # read by all; broken path
+        self.assertLess(order.index("spine.md"), order.index("huge.md"))
+        self.assertIn("never checked against the code", g["huge.md"]["why"])
+        self.assertIn("1 path(s) or link(s) not there", g["spine.md"]["why"])
+        self.assertTrue(g["old.md"]["stale"]) and self.assertEqual(order[-1], "old.md")
+        self.assertNotIn("fine.md", g)                            # checked, nothing wrong
+        self.assertNotIn("provenance/x/y.md", g)                  # history is meant to be there
+
+
+class DocTruth(unittest.TestCase):
+    """The documenter checks that a doc's content is there and current, a run
+    is one whole doc, and scope conflicts go to the owner (owner, 2026-10-06)."""
+
+    def setUp(self):
+        import subprocess as sp
+        self.repo = Path(tempfile.mkdtemp())
+        (self.repo / "src").mkdir()
+        (self.repo / "src" / "app.py").write_text("def load_rows():\n    pass\n")
+        (self.repo / "docs").mkdir()
+        (self.repo / "docs" / "B.md").write_text("# Intro\n## Load path\ntext\n")
+        (self.repo / "A.md").write_text(
+            "# A\n"
+            "Rows come from `src/app.py` via `load_rows()`.\n"           # 2: fine
+            "The old `src/gone.py` and `parse_all()` did it.\n"          # 3: both missing
+            "See [load](docs/B.md#load-path) and [x](docs/B.md#nope).\n"  # 4: one bad anchor
+            "Branch `fix/writer-oa` and the bare `app.py` are fine.\n"    # 5: not paths / suffix
+            "Measured 2026-09-01, superseded by the new loader.\n")      # 6: history
+        for c in (["init", "-q"], ["add", "-A"],
+                  ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "x"]):
+            sp.run(["git", "-C", str(self.repo)] + c, check=True)
+        hz._TRACKED.clear()
+        self.ctx = FakeCtx({"main": None})
+        self.ctx.repo = self.repo
+
+    def check(self):
+        texts = {"A.md": (self.repo / "A.md").read_text()}
+        return hz.doc_check(self.ctx, "A.md", texts["A.md"], texts,
+                            hz.doc_check_symbols(self.ctx, texts))
+
+    def test_names_that_are_not_there(self):
+        ck = self.check()
+        self.assertEqual(ck["paths"], [(3, "src/gone.py")])
+        self.assertEqual(ck["functions"], [(3, "parse_all()")])
+        self.assertEqual(ck["links"], [(4, "docs/B.md#nope")])
+        self.assertEqual(ck["history"], [6])
+
+    def test_another_repo_the_docs_describe(self):
+        other = Path(tempfile.mkdtemp())
+        (other / "src").mkdir()
+        (other / "src" / "gone.py").write_text("")
+        import subprocess as sp
+        for c in (["init", "-q"], ["add", "-A"],
+                  ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "x"]):
+            sp.run(["git", "-C", str(other)] + c, check=True)
+        (self.repo / ".harness").mkdir()
+        (self.repo / ".harness" / "manifest.json").write_text(
+            json.dumps({"doc_sources": [str(other)]}))
+        self.assertEqual(self.check()["paths"], [])
+
+    def test_verified_records_the_commit_and_code_changes_make_it_due(self):
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             redirect_stdout(io.StringIO()) as out:
+            hz.cmd_docs(mock.Mock(verb="verified", args=["A.md", "6 sections; 2 fixed"]))
+        self.assertIn("checked against the code at", out.getvalue())
+        v = hz.docs_verified(self.ctx)["A.md"]
+        code = hz.doc_code_paths(self.ctx, (self.repo / "A.md").read_text())
+        self.assertEqual(code, ["src/app.py"])
+        self.assertEqual(hz.doc_changed_since(self.ctx, v["sha"], code), 0)
+        (self.repo / "src" / "app.py").write_text("def load_rows():\n    return 1\n")
+        import subprocess as sp
+        sp.run(["git", "-C", str(self.repo), "-c", "user.email=t@t", "-c", "user.name=t",
+                "commit", "-qam", "y"], check=True)
+        self.assertEqual(hz.doc_changed_since(self.ctx, v["sha"], code), 1)
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             self.assertRaises(SystemExit), mock.patch("sys.stderr", new_callable=io.StringIO):
+            hz.cmd_docs(mock.Mock(verb="verified", args=["A.md"]))         # says nothing
+
+    def test_begin_takes_one_doc_and_names_it(self):
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.object(hz, "doc_files", return_value=["A.md", "docs/B.md"]), \
+             redirect_stdout(io.StringIO()) as out:
+            hz.cmd_docs(mock.Mock(verb="begin", args=["A.md"]))
+        self.assertIn("line 3     path not there: src/gone.py", out.getvalue())
+        self.assertIn("this run is A.md", out.getvalue())
+        cur = json.loads((hz.docs_dir(self.ctx) / "current.json").read_text())
+        self.assertEqual(cur["doc"], "A.md")
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.object(hz, "doc_files", return_value=["A.md", "docs/B.md"]), \
+             self.assertRaises(SystemExit), mock.patch("sys.stderr", new_callable=io.StringIO):
+            hz.cmd_docs(mock.Mock(verb="begin", args=["A.md", "docs/B.md"]))
+
+    def test_no_automatic_runs(self):
+        with mock.patch.object(hz, "docs_trigger", return_value=True) as tr, \
+             mock.patch.object(hz, "docs_pending", return_value=[]):
+            self.assertFalse(hz.docs_apply_step(self.ctx, "main"))
+        tr.assert_not_called()
+
+    def test_scope_is_an_ask_kind_on_opus(self):
+        self.assertIn("scope", hz.ASK_KINDS)
+        self.assertEqual(hz.ITEM_MODEL["scope"], ("opus", "high"))
 
 
 class DocRuns(unittest.TestCase):
@@ -1903,11 +2018,13 @@ class DocRuns(unittest.TestCase):
         (home / ".claude" / "skills" / "harness-documenter").mkdir(parents=True)
         (home / ".claude" / "skills" / "harness-documenter" / "SKILL.md").write_text("skill")
         with mock.patch.object(hz.Path, "home", return_value=home):
-            cmd = hz.documenter_cmd(pdir, str(self.ctx.repo), "stale")
+            cmd = hz.documenter_cmd(pdir, str(self.ctx.repo), "schema/SCHEMA.md")
         self.assertEqual(cmd[:4], ["claude", "--bg", "-n", f"harness-documenter-{self.ctx.repo.name}"])
         self.assertIn("--restricted", cmd)
         env = json.loads(cmd[cmd.index("--settings") + 1])["env"]
-        self.assertEqual((env["HARNESS_DOCUMENTER"], env["HARNESS_DOCUMENTER_JOB"]), ("1", "stale"))
+        self.assertEqual((env["HARNESS_DOCUMENTER"], env["HARNESS_DOCUMENTER_JOB"]),
+                         ("1", "schema/SCHEMA.md"))
+        self.assertIn("one document, whole: schema/SCHEMA.md", cmd[-1])
         allow = cmd[cmd.index("--allowedTools") + 1:cmd.index("--permission-mode")]
         self.assertIn("Bash(harness pairs submit *)", allow)
         self.assertNotIn("Bash(harness pairs *)", allow)                 # never apply
@@ -1915,7 +2032,7 @@ class DocRuns(unittest.TestCase):
         bd = home / ".local" / "state" / "harness" / pdir.name / "batches"
         self.assertEqual([a for a in allow if a.startswith(("Write", "Edit"))],
                          [f"Write(/{bd}/**)", f"Edit(/{bd}/**)"])            # outside ~/.claude
-        self.assertEqual(cmd[cmd.index("--model") + 1], "sonnet")        # stale: the cheap one
+        self.assertEqual(cmd[cmd.index("--model") + 1], "opus")          # every run checks claims
 
     def test_the_documenter_asks_on_docs_and_the_ruling_lands_in_its_file(self):
         with mock.patch.object(hz, "load_brief", return_value=(None, None)):
@@ -2139,7 +2256,11 @@ class DocReview(unittest.TestCase):
         (self.ctx.dir / "pairs" / "docs-2.json").write_text(json.dumps(dict(rec, task="docs-2")))
         with mock.patch.object(hz, "_detached") as go:
             hz.docs_decided(self.ctx, dict(rec, task="docs-2"))
-        self.assertEqual(go.call_args.args[1][-1], "--finish")      # second decline: over
+        self.assertEqual(go.call_args.args[1][-2], "--wake")         # a whole doc: two fixes
+        (self.ctx.dir / "pairs" / "docs-3.json").write_text(json.dumps(dict(rec, task="docs-3")))
+        with mock.patch.object(hz, "_detached") as go:
+            hz.docs_decided(self.ctx, dict(rec, task="docs-3"))
+        self.assertEqual(go.call_args.args[1][-1], "--finish")      # third decline: over
 
     def test_note_waits_while_its_batch_is_reviewed(self):
         env = {"HARNESS_DOCUMENTER": "1", "CLAUDE_CODE_SESSION_ID": "S" * 36}

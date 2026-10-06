@@ -318,6 +318,11 @@ def documenter(rows, pdir, repo, asks, root=None):
         out["remaining"] = int(q.get("remaining") or 0)
     except Exception:
         out["remaining"] = 0
+    # The doc this run took (`harness docs begin`): a run is one whole doc.
+    try:
+        out["doc"] = json.loads((Path(pdir) / "docs" / "current.json").read_text())
+    except Exception:
+        out["doc"] = None
     return out
 
 
@@ -1575,7 +1580,9 @@ function docCard(p) {
   const rv = d.review || [];
   const on = '<span class="ito" data-on="' + esc(root) + '"><b>' + esc(root) + '</b></span>';
   const status = {
-    working: 'working on a batch',
+    working: d.doc && d.doc.doc ? 'working through <code>' + esc(d.doc.doc) + '</code>' +
+             (d.doc.words ? ' &middot; ' + Number(d.doc.words).toLocaleString() + ' words' : '')
+             : 'measuring, before it picks a doc',
     waiting: 'waiting on ' + on + '&rsquo;s review of <code>' + esc(rv[0] || '') + '</code>',
     review: 'its batch <code>' + esc(rv[0] || '') + '</code> waits on ' + on + '&rsquo;s review',
     finishing: 'run over &middot; its session is closing',

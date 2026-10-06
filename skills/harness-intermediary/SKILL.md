@@ -85,10 +85,12 @@ could explain the problem, out loud, to someone who has never seen the project.
 4. **Ask the asker** (`--to <node>`) for anything still missing: what the owner would see, what
    each option costs in time and risk, what happens if nothing is done. Keep asking until the
    background writes itself.
-5. **Is it the owner's?** Only four kinds are: intent (is this what they meant, is X in scope),
+5. **Is it the owner's?** Only five kinds are: intent (is this what they meant, is X in scope),
    judgement or taste (a direction whose options lead to different work), something only the owner
-   can do (look at a render, add a permission rule, log in), and risk they must accept (a live or
-   destructive write). Return the rest with the reason: `harness ask <id> --return "..."`. Access
+   can do (look at a render, add a permission rule, log in), risk they must accept (a live or
+   destructive write), and scope (the documenter found the docs, the code or the work describing
+   something the charter doesn't cover, or disagreeing about what the project is; put both sides
+   in front of the owner, with paths, and what each reading would commit them to). Return the rest with the reason: `harness ask <id> --return "..."`. Access
    is a block, approval is rank 0's, a stalled session is its lead's. Fold a duplicate:
    `harness ask <id> --merge <other>`.
 

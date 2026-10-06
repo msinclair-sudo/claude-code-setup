@@ -3193,6 +3193,46 @@ class TestQueue(unittest.TestCase):
         with mock.patch("sys.stdout", io.StringIO()), mock.patch("signal.signal"):
             hz.testd(self.state, self.repo)
 
+    def test_a_command_is_estimated_from_its_own_runs_and_says_when_it_overruns(self):
+        # Log 103: a timing job read "done in under a minute" 27 minutes in.
+        def done(cmd, secs):
+            j, _ = hz.testq_submit(self.ctx, "cmd", self.sha, "dev", "s", command=cmd)
+            j.update(state="done", started="2026-10-06T10:00:00+1100",
+                     finished=time.strftime("%Y-%m-%dT%H:%M:%S%z",
+                                            time.localtime(hz._epoch("2026-10-06T10:00:00+1100") + secs)))
+            hz.testq_save(self.ctx, j)
+        done("echo probe", 5)
+        self.assertEqual(hz.testq_duration(self.ctx, "cmd", None, "echo probe"), 5)
+        self.assertIsNone(hz.testq_duration(self.ctx, "cmd", None, "sh time-every-file"))
+        done("sh time-every-file", 600)
+        j, _ = hz.testq_submit(self.ctx, "cmd", self.sha, "dev", "s", command="sh time-every-file")
+        j.update(state="running", started=time.strftime("%Y-%m-%dT%H:%M:%S%z",
+                                                        time.localtime(time.time() - 1500)))
+        hz.testq_save(self.ctx, j)
+        self.assertAlmostEqual(hz.testq_overdue(self.ctx, j), 900, delta=5)
+
+    def test_slot_commands_are_listed_in_order_and_go_before_the_queue(self):
+        # Log 104: three of the owner's writes held the slot and showed nowhere.
+        d = hz.testq_dir(self.ctx) / "slots"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "999999.json").write_text(json.dumps({"pid": 999999, "state": "waiting",
+                                                   "since": "2026-10-06T10:00:00+1100"}))
+        for pid, since in ((os.getpid(), "2026-10-06T10:02:00+1100"),
+                           (os.getppid(), "2026-10-06T10:01:00+1100")):
+            (d / f"{pid}.json").write_text(json.dumps({"pid": pid, "state": "waiting", "who": "owner",
+                                                       "since": since, "command": "import"}))
+        ts = hz.slot_tickets(self.ctx)
+        self.assertEqual([t["pid"] for t in ts], [os.getppid(), os.getpid()])   # oldest first
+        self.assertFalse((d / "999999.json").exists())                          # its process is gone
+        hz.testq_submit(self.ctx, "cmd", self.sha, "dev", "s", command="echo queued")
+        started = []
+        with mock.patch.object(hz, "testq_run", side_effect=lambda *a, **k: started.append(1)), \
+             mock.patch.object(hz.time, "sleep", side_effect=SystemExit), \
+             mock.patch("sys.stdout", io.StringIO()), mock.patch("signal.signal"):
+            with self.assertRaises(SystemExit):
+                hz._testd_loop(self.ctx)
+        self.assertEqual(started, [])                                          # waited for the slot
+
     def test_rank_0_or_a_lead_promotes_and_a_lane_touches_only_its_own(self):
         # Log 98: the critical-path job sat two hours behind full checks.
         tree = {"main": None, "dev": "main", "dev_1": "dev", "dev_2": "dev"}

@@ -189,12 +189,18 @@ def tests_queue(pdir, repo):
                     "arm": j.get("arm"), "done": j.get("done_arms"), "total": j.get("total"),
                     "arms": j.get("arms"), "queue": j.get("queue") or "normal",
                     "eta": CLI.testq_wait_estimate(c, j),
+                    "over": CLI.testq_overdue(c, j),
                     "since": CLI.wait_age(j.get("started") or j.get("at"))})
     lj = None
     if last:
         lj = {"id": last["id"], "state": last["state"], "sha": (last.get("sha") or "")[:8],
               "at": (last.get("finished") or "")[11:16], "why": last.get("why")}
-    return {"jobs": out, "last": lj}
+    try:
+        slots = [{"who": t.get("who"), "state": t.get("state"), "command": t.get("command"),
+                  "since": CLI.wait_age(t.get("since"))} for t in CLI.slot_tickets(c)]
+    except Exception:
+        slots = []
+    return {"jobs": out, "last": lj, "slots": slots}
 
 
 def mark_held(cctx, nodes):
@@ -1672,8 +1678,15 @@ function testCard(p) {
       (run.total ? ' &middot; arm ' + ((run.done || 0) + 1) + '/' + run.total +
         (run.arm ? ' <span class="q">' + esc(run.arm) + '</span>' : '') : '') +
       ' &middot; ' + esc(run.since || '') +
-      (run.eta != null ? ' &middot; done in ~' + dur(run.eta) : '') + '</div>'
+      (run.over ? ' &middot; <b class="over">over its estimate by ' + dur(run.over) + '</b>'
+       : run.eta != null ? ' &middot; done in ~' + dur(run.eta) : '') + '</div>'
     : '<div class="ln q">nothing running</div>';
+  // `harness slot` commands: holding the slot or waiting for it, before the
+  // queue (log 104: three of the owner's writes showed nowhere).
+  const slots = (t.slots || []).map(x => '<div class="ln' + (x.state === 'holding' ? '' : ' q') +
+    '">slot ' + esc(x.state) + ': ' + esc(x.who || '?') + '&rsquo;s <code>' +
+    esc((x.command || '').slice(0, 60)) + '</code> &middot; ' + esc(x.since || '') +
+    (x.state === 'waiting' ? ' &middot; goes before the queue' : '') + '</div>').join('');
   const list = q.length
     ? '<div class="tq"><div class="tqh">queue &middot; ' + q.length + '</div>' +
       q.map((j, i) => '<div class="ln"><span class="tqn">' + (i + 1) + '</span>' + tag(j) +
@@ -1683,9 +1696,11 @@ function testCard(p) {
     : '<div class="ln q">queue empty</div>';
   const last = t.last ? '<div class="ln q">last: ' + esc(t.last.id) + ' ' +
     esc(t.last.state) + (t.last.at ? ' at ' + esc(t.last.at) : '') + '</div>' : '';
-  return '<div class="card interm doc ' + (run ? 'busy' : '') + '" data-live="tests:' +
+  return '<div class="card interm doc ' + (run || (t.slots || []).length ? 'busy' : '') +
+    '" data-live="tests:' +
     esc(p.slug) + '"><div class="hdr"><span class="dot"></span><span class="nm">' +
-    esc(p.project) + '</span><span class="kd">tests</span></div>' + head + list + last + '</div>';
+    esc(p.project) + '</span><span class="kd">tests</span></div>' + head + slots + list + last +
+    '</div>';
 }
 
 function intermCard(p) {

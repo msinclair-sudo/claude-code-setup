@@ -4865,12 +4865,17 @@ def testq_order(jobs):
     return run + q
 
 
-def testq_duration(ctx, kind, arms):
-    """The median seconds of the last five finished jobs like this one (same kind
-    and arms, else same kind), or None."""
+def testq_duration(ctx, kind, arms, command=None):
+    """The median seconds of the last five finished jobs like this one, or None.
+    A check: same arms, else any check. A command: the same command only (log
+    103: a timing job was estimated from short probes, "done in under a minute"
+    27 minutes in)."""
     done = [j for j in testq_jobs(ctx, ("done",)) if j.get("kind") == kind
             and _epoch(j.get("started")) and _epoch(j.get("finished"))]
-    same = [j for j in done if j.get("arms") == arms] or done
+    if kind == "cmd":
+        same = [j for j in done if (j.get("command") or "") == (command or "")]
+    else:
+        same = [j for j in done if j.get("arms") == arms] or done
     ds = sorted(_epoch(j["finished"]) - _epoch(j["started"])
                 for j in sorted(same, key=lambda j: j["finished"])[-5:])
     return ds[len(ds) // 2] if ds else None
@@ -4881,13 +4886,22 @@ def testq_wait_estimate(ctx, job):
     None when no job like one of them has finished yet."""
     total = 0
     for j in testq_ahead(ctx, job) + [job]:
-        d = testq_duration(ctx, j.get("kind"), j.get("arms"))
+        d = testq_duration(ctx, j.get("kind"), j.get("arms"), j.get("command"))
         if d is None:
             return None
         if j.get("state") == "running":
             d = max(0, d - (time.time() - (_epoch(j.get("started")) or time.time())))
         total += d
     return total
+
+
+def testq_overdue(ctx, job):
+    """Seconds a running job is past its own estimate, or None."""
+    if job.get("state") != "running":
+        return None
+    d = testq_duration(ctx, job.get("kind"), job.get("arms"), job.get("command"))
+    ran = time.time() - (_epoch(job.get("started")) or time.time())
+    return ran - d if d is not None and ran > d else None
 
 
 def _wait_words(sec):
@@ -4897,8 +4911,10 @@ def _wait_words(sec):
 def testq_wait_phrase(ctx, job):
     ahead = testq_ahead(ctx, job)
     est = testq_wait_estimate(ctx, job)
+    over = testq_overdue(ctx, ahead[0]) if ahead else None
     return ((f", {len(ahead)} ahead" if ahead else ", next to run")
             + (f" ({testq_describe(ahead[0])})" if ahead else "")
+            + (f", over its estimate by {human_age(over)}" if over else "")
             + (f"; done in {_wait_words(est)}" if est is not None else
                "; no finished job to estimate from yet"))
 
@@ -4984,6 +5000,10 @@ def _testd_loop(ctx):
             # The owner halted the tree: the running job has finished; start no
             # new one. `resume` starts a runner again (owner, 2026-10-06).
             print(f"{_now()} the tree is halted; runner exits"); return
+        if any(t.get("state") == "waiting" for t in slot_tickets(ctx)):
+            # A slot command (a live write, often the owner's) asked first; it
+            # goes before the next queued job (log 104).
+            time.sleep(2); idle_since = time.time(); continue
         q = testq_order(testq_jobs(ctx, ("queued",)))
         if not q:
             if time.time() - idle_since > TESTQ_IDLE:
@@ -5239,13 +5259,21 @@ def cmd_test(a):
               + ". Your doorbell rings when it ends; its output is kept.")
         return
     jobs = testq_order(testq_jobs(ctx, ("running", "queued")))
-    if not jobs:
+    slots = slot_tickets(ctx)
+    for t in slots:
+        print(f"{'▶' if t['state'] == 'holding' else '·'}  slot  {t['state']:<8} {t.get('who')}'s "
+              f"`{t.get('command', '')[:50]}` since {(t.get('since') or '')[11:16]}"
+              + ("  (goes before queued jobs)" if t["state"] == "waiting" else ""))
+    if not jobs and not slots:
         print("the test queue is empty" + ("" if testq_runner_alive(ctx) else "; no runner up"))
     for k, j in enumerate(jobs):
         est = testq_wait_estimate(ctx, j)
+        over = testq_overdue(ctx, j)
         print(f"{'▶' if j['state'] == 'running' else k}  {j['id']}  {j.get('queue', 'normal'):<8} "
               f"{testq_describe(j)}  (asked {(j.get('at') or '')[11:16]}"
-              + (f"; done in {_wait_words(est)}" if est is not None else "") + ")")
+              + (f"; over its estimate by {human_age(over)}" if over else
+                 f"; done in {_wait_words(est)}" if est is not None else
+                 "; no run of this command to estimate from") + ")")
     done = [j for j in testq_jobs(ctx, ("done", "failed", "cancelled"))][-5:]
     if done:
         print("recent:")
@@ -5259,23 +5287,66 @@ def cmd_testd(a):
     testd(pdir, repo)
 
 
+def slot_tickets(ctx):
+    """Live `harness slot` commands, oldest first: [{command, who, since, state, pid}].
+    A ticket whose process has gone is removed (log 104: a slot holder blocked
+    every check and appeared nowhere)."""
+    d = testq_dir(ctx) / "slots"
+    out = []
+    for f in sorted(d.glob("*.json")) if d.is_dir() else []:
+        t = _read_json(f)
+        if not t or not _pid_exists(int(t.get("pid") or 0)):
+            f.unlink(missing_ok=True); continue
+        out.append(t)
+    return sorted(out, key=lambda t: (t.get("since") or "", t.get("pid") or 0))
+
+
 def cmd_slot(a):
     """`harness slot -- <command>`: run a command holding the project's test slot,
-    so a project's own runner never runs beside the queue (obs 81)."""
+    so a project's own runner never runs beside the queue (obs 81). It is
+    listed while it waits and runs, waiters go first in, first out, and they go
+    before queued test jobs (log 104)."""
     ctx = Ctx(); ctx.require_enrolled()
     cmd = [x for x in (a.command or []) if x != "--"]
     if not cmd:
         die(REFUSED, "harness slot -- <command>")
-    f = testq_dir(ctx) / "slot.lock"
-    fh = _flock(f, block=False)
-    if fh is None:
-        run = testq_jobs(ctx, ("running",))
-        print("waiting for the test slot" + (f": {testq_describe(run[0])}" if run else ""))
-        fh = _flock(f, block=True)
     try:
-        sys.exit(subprocess.call(cmd if len(cmd) > 1 else ["sh", "-c", cmd[0]]))
+        who, _ = ctx.node()
+    except SystemExit:
+        who = "operator"
+    if not os.environ.get("CLAUDE_CODE_SESSION_ID"):
+        who = "owner"
+    d = testq_dir(ctx) / "slots"
+    d.mkdir(parents=True, exist_ok=True)
+    tf = d / f"{os.getpid()}.json"
+    ticket = {"pid": os.getpid(), "who": who, "since": _now(), "state": "waiting",
+              "command": " ".join(cmd)[:200]}
+    tf.write_text(json.dumps(ticket))
+    f = testq_dir(ctx) / "slot.lock"
+    try:
+        told = False
+        while True:
+            first = next((t for t in slot_tickets(ctx) if t.get("state") == "waiting"), None)
+            if first and first.get("pid") == os.getpid():
+                fh = _flock(f, block=False)
+                if fh is not None:
+                    break
+            if not told:
+                run = testq_jobs(ctx, ("running",))
+                ahead = [t for t in slot_tickets(ctx) if t.get("pid") != os.getpid()]
+                print("waiting for the test slot"
+                      + (f": {testq_describe(run[0])}" if run else "")
+                      + (f"; {len(ahead)} slot command(s) ahead" if ahead else ""))
+                told = True
+            time.sleep(1)
+        tf.write_text(json.dumps(dict(ticket, state="holding", held_since=_now())))
+        try:
+            rc = subprocess.call(cmd if len(cmd) > 1 else ["sh", "-c", cmd[0]])
+        finally:
+            fh.close()
+        sys.exit(rc)
     finally:
-        fh.close()
+        tf.unlink(missing_ok=True)
 
 
 def spend_window(sid, start=None, end=None, warn=None):

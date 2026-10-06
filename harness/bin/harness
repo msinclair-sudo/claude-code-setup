@@ -2927,6 +2927,18 @@ def queue_items(ctx, node):
     — which is correct: it is news the second time too.
     """
     out = {}
+    # An old hold is its placer's (and rank 0's) to confirm or release: every
+    # check that reads the path skips those arms while it stands (log 92).
+    try:
+        for h in live_holds(ctx):
+            age = time.time() - (_epoch(h.get("at")) or time.time())
+            if age >= HOLD_OLD and (h.get("by") == node or ctx.rank(node) == 0):
+                out[f"hold old:{h['path']}"] = (
+                    f"hold on {h['path']} has stood {human_age(age)} ({h.get('why')}, by "
+                    f"{h.get('by')}); every check that reads it skips those arms. Still "
+                    f"guarding a write? If not: harness hold {h['path']} --release")
+    except Exception:
+        pass
     try:
         for kind, child, task, age in lead_owes(ctx, node):
             # heavy's text changes every turn; its id must not, or it re-reports
@@ -3045,7 +3057,8 @@ def queue_items(ctx, node):
 # a debt costs one line every DEBT_RENAG, not one line every turn.
 DEBT_RENAG = 10 * 60
 DEBT_KINDS = ("sign off:", "start:", "down:", "orphan:", "stuck:", "heavy:", "approve:", "task:", "asked:", "handed:",
-              "sweep:")
+              "sweep:", "hold old:")
+HOLD_OLD = 30 * 60      # a hold this old is asked about (log 92: one stood three hours over nothing)
 
 
 def is_debt(item_id):
@@ -3566,6 +3579,10 @@ def cmd_mark(a):
         if _rep is None:
             print(f"  NOT CHECKED at {_sha[:8]} — nothing has run the check set against "
                   f"this commit.\n  Your lead will see that too:  harness check")
+        elif partial_line(_rep):
+            print(f"  CHECKS at {_sha[:8]}: {partial_line(_rep)}. The arms that didn't run "
+                  f"are not a pass;\n  say so in your report, and rerun once the hold is "
+                  f"released.")
         elif _rep.get("baseline") and not _rep.get("new"):
             print(f"  checks at {_sha[:8]}: no new failures against baseline "
                   f"{_rep['baseline'][:8]}")
@@ -4233,6 +4250,11 @@ def set_baseline(ctx, node, why):
     rep = read_check_report(ctx, node, sha)
     if rep is None:
         die(REFUSED, f"no check report at {sha[:8]} — run `harness check` first")
+    if partial_line(rep):
+        # A held arm was recorded as a known failure (exit None != 0), so a
+        # baseline from a partial report hid real failures later (log 92).
+        die(REFUSED, f"{partial_line(rep)}.\n           A baseline needs every arm run: "
+                     f"release the hold (harness hold --list) and check again.")
     old = load_baseline(ctx)
     base = {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "by": node, "node": node,
             "sha": sha, "why": why,
@@ -4331,6 +4353,29 @@ def check_reads(c, cwd, env=None):
     return reads
 
 
+def notrun_rows(rep):
+    """Arms the report does not cover: held, timed out, or exit 125."""
+    return [r for r in rep.get("checks") or []
+            if r.get("held") or r.get("timedOut") or r.get("exit") == 125]
+
+
+def partial_line(rep):
+    """'PARTIAL: 1 of 9 arms ran; 8 NOT RUN (held: subset.db by dev)', or None.
+    A report most of whose arms didn't run must not read as a check (log 92:
+    a hold skipped 8 of 9 arms for three hours, and the report looked whole)."""
+    rows = rep.get("checks") or []
+    nr = notrun_rows(rep)
+    if not nr:
+        return None
+    why = {}
+    for r in nr:
+        k = (f"held: {r['held']}" if r.get("held") else
+             "timed out" if r.get("timedOut") else "exit 125")
+        why[k] = why.get(k, 0) + 1
+    return (f"PARTIAL: {len(rows) - len(nr)} of {len(rows)} arms ran; {len(nr)} NOT RUN ("
+            + "; ".join(f"{k}" + (f" x{n}" if n > 1 else "") for k, n in why.items()) + ")")
+
+
 def check_summary(rep, base, n):
     """The closing lines of a check, from its report."""
     nheld = rep.get("held") or 0
@@ -4344,6 +4389,8 @@ def check_summary(rep, base, n):
 
 def print_check_report(rep, base):
     """A finished report, arm by arm, as a check prints it while it runs."""
+    if partial_line(rep):
+        print(partial_line(rep))
     for r in rep.get("checks") or []:
         if r.get("held"):
             print(f"  NOT RUN (held: {r['held']})  {r['name']}"); continue
@@ -4558,7 +4605,7 @@ def testq_order(jobs):
     ones, each first in, first out (owner, 2026-10-06; obs 82)."""
     run = [j for j in jobs if j.get("state") == "running"]
     q = sorted((j for j in jobs if j.get("state") == "queued"),
-               key=lambda j: (j.get("queue") != "priority", j.get("at") or ""))
+               key=lambda j: (j.get("queue") != "priority", j.get("order") or j.get("at") or ""))
     return run + q
 
 
@@ -4830,7 +4877,8 @@ def testq_ring(ctx, job, rep, code):
         text = f"test job {job['id']} {job.get('state')}: {job.get('why') or ''} — harness test --log {job['id']}"
     elif rep is not None:
         n = len(rep.get("checks") or [])
-        text = (f"check of {job['sha'][:8]}: {n - rep['failed'] - rep['held']}/{n} passed"
+        text = ((partial_line(rep) + ". ") if partial_line(rep) else "") + (
+                f"check of {job['sha'][:8]}: {n - rep['failed'] - rep['held']}/{n} passed"
                 + (f", {rep['new']} new failure(s) against the baseline" if rep.get("new") else "")
                 + f" — harness check --report {job['sha'][:8]}")
     else:
@@ -4867,11 +4915,47 @@ def cmd_test(a):
     copy of this commit; `harness test` lists the queue."""
     ctx = Ctx(); ctx.require_enrolled()
     cmd = [x for x in (a.command or []) if x != "--"]
+    # Who may move or stop other nodes' jobs: rank 0 and leads, or the owner
+    # from a shell. A lane touches only what it asked for (log 98).
+    me, steer = "operator", True
+    if os.environ.get("CLAUDE_CODE_SESSION_ID"):
+        try:
+            me, _ = ctx.node()
+            steer = bool(ctx.children(me)) or ctx.rank(me) == 0
+        except SystemExit:
+            me, steer = "?", False
+    mine = lambda j: any(r.get("node") == me for r in j.get("requested_by") or [])
+    if a.promote:
+        if not steer:
+            die(REFUSED, f"'{me}' is a lane; its lead or rank 0 moves jobs in the queue")
+        if not (a.why or "").strip():
+            die(REFUSED, 'say why: harness test --promote ID --why "gates the critical path"')
+        hit = [j for j in testq_jobs(ctx, ("queued",)) if j["id"].startswith(a.promote)]
+        if len(hit) != 1:
+            die(REFUSED, f"{'no' if not hit else 'more than one'} queued job '{a.promote}'. "
+                         f"harness test lists them")
+        j = hit[0]
+        j.update(queue="priority", order="0-" + _now(),
+                 promoted={"by": me, "why": a.why.strip(), "at": _now()})
+        testq_save(ctx, j)
+        for r in j.get("requested_by") or []:
+            if r.get("node") and r["node"] not in ("operator", "owner", me):
+                ring_inbox(ctx.state, r["node"], "test queue",
+                           f"{me} moved your job {j['id']} to the front of the queue: {a.why}")
+        print(f"{j['id']} is next after the running job" + testq_wait_phrase(ctx, j))
+        return
     if a.cancel:
         jobs = testq_jobs(ctx, ("queued", "running"))
         hit = jobs if a.cancel == "all" else [j for j in jobs if j["id"].startswith(a.cancel)]
+        if not steer:
+            others = [j for j in hit if not mine(j)]
+            hit = [j for j in hit if mine(j)]
+            if others and a.cancel != "all":
+                die(REFUSED, f"'{me}' is a lane: it cancels only jobs it asked for, and "
+                             f"{others[0]['id']} is {others[0]['requested_by'][0].get('node')}'s")
         if not hit:
-            die(REFUSED, f"no queued or running job '{a.cancel}'. harness test")
+            die(REFUSED, f"no queued or running job '{a.cancel}'"
+                         + ("" if steer else " of yours") + ". harness test")
         for j in hit:
             print(f"{j['id']}: {testq_cancel(ctx, j)}")
         return
@@ -13880,6 +13964,9 @@ def main():
     tq.add_argument("command", nargs=argparse.REMAINDER,
                     help="-- <command>: queue it to run in a copy of this commit")
     tq.add_argument("--cancel", metavar="ID|all")
+    tq.add_argument("--promote", metavar="ID",
+                    help="rank 0 or a lead: move a queued job to the front (with --why)")
+    tq.add_argument("--why", metavar="TEXT")
     tq.add_argument("--log", metavar="ID")
     td = add("testd", cmd_testd)
     td.add_argument("--project", metavar="NAME")

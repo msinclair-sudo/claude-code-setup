@@ -767,6 +767,10 @@ border-left:1px solid var(--line);width:0;height:22px}
 .waits path{fill:none;stroke:var(--wait);stroke-width:2.5}
 .waits path.held{stroke:var(--held);stroke-dasharray:6 4}
 .waits path.msg{stroke:var(--wait);stroke-width:1.6;stroke-dasharray:2 4;stroke-linecap:round}
+.waits path.test{stroke:var(--busy);stroke-width:1.6;stroke-dasharray:2 4;stroke-linecap:round}
+.tq{margin-top:4px;border-top:1px solid var(--line);padding-top:3px}
+.tqh{color:var(--dim);font-size:10px;letter-spacing:.05em;text-transform:uppercase}
+.tqn{display:inline-block;min-width:14px;color:var(--dim)}
 
 .card{display:inline-block;min-width:158px;max-width:300px;background:var(--panel);
 border:1px solid var(--line);border-radius:9px;padding:8px 11px;text-align:left;
@@ -1569,7 +1573,9 @@ function docCard(p) {
 }
 
 // The project's test queue (obs 81): one job runs, in a copy of its commit;
-// the rest wait their turn, first in, first out.
+// the rest wait their turn, priority first, then first in, first out. Whoever
+// asked for the running job is marked (.tto), so drawWaits runs a line from
+// this card to that node.
 function testCard(p) {
   const t = p.tests || {};
   const jobs = t.jobs || [];
@@ -1578,23 +1584,29 @@ function testCard(p) {
   const what = j => j.kind === 'check'
     ? (j.arms ? esc(j.arms.join(', ')) + ' of ' : 'check ') + '<code>' + esc(j.sha) + '</code>'
     : '<code>' + esc(j.command) + '</code>';
-  const eta = j => j.eta != null ? ' &middot; done in ~' + dur(j.eta) : '';
   const tag = j => j.queue === 'priority' ? '<b class="prio">priority</b> ' : '';
+  const who = (j, mark) => j.who.map(n => mark
+    ? '<span class="tto" data-on="' + esc(n) + '"><b>' + esc(n) + '</b></span>'
+    : esc(n)).join(', ');
   const head = run
-    ? '<div class="ln">' + esc(run.who.join(', ')) + '&rsquo;s ' + what(run) +
+    ? '<div class="ln">running: ' + tag(run) + who(run, true) + ' &middot; ' + what(run) +
       (run.total ? ' &middot; arm ' + ((run.done || 0) + 1) + '/' + run.total +
         (run.arm ? ' <span class="q">' + esc(run.arm) + '</span>' : '') : '') +
-      ' &middot; ' + esc(run.since || '') + eta(run) + '</div>'
+      ' &middot; ' + esc(run.since || '') +
+      (run.eta != null ? ' &middot; done in ~' + dur(run.eta) : '') + '</div>'
     : '<div class="ln q">nothing running</div>';
-  const list = q.map((j, i) => '<div class="ln q">' + (i + 1) + '. ' + tag(j) +
-    esc(j.who.join(', ')) + ' &middot; ' + what(j) + ' &middot; waiting ' + esc(j.since || '') +
-    eta(j) + '</div>').join('');
-  const last = !run && !q.length && t.last ? '<div class="ln q">last: ' + esc(t.last.id) + ' ' +
+  const list = q.length
+    ? '<div class="tq"><div class="tqh">queue &middot; ' + q.length + '</div>' +
+      q.map((j, i) => '<div class="ln"><span class="tqn">' + (i + 1) + '</span>' + tag(j) +
+        who(j, false) + ' &middot; ' + what(j) + ' <span class="q">&middot; waiting ' +
+        esc(j.since || '') + (j.eta != null ? ', done in ~' + dur(j.eta) : '') +
+        '</span></div>').join('') + '</div>'
+    : '<div class="ln q">queue empty</div>';
+  const last = t.last ? '<div class="ln q">last: ' + esc(t.last.id) + ' ' +
     esc(t.last.state) + (t.last.at ? ' at ' + esc(t.last.at) : '') + '</div>' : '';
   return '<div class="card interm doc ' + (run ? 'busy' : '') + '" data-live="tests:' +
     esc(p.slug) + '"><div class="hdr"><span class="dot"></span><span class="nm">' +
-    esc(p.project) + '</span><span class="kd">tests</span></div>' + head +
-    (q.length ? '<div class="ln q">' + q.length + ' queued</div>' : '') + list + last + '</div>';
+    esc(p.project) + '</span><span class="kd">tests</span></div>' + head + list + last + '</div>';
 }
 
 function intermCard(p) {
@@ -2206,10 +2218,10 @@ function drawWaits() {
       ds.push([m.classList.contains('hto') ? 'held' : '',
                'M' + x1 + ' ' + y1 + 'V' + ym + 'H' + x2 + 'V' + y2]);
     });
-    // The intermediary messaged a node and waits on its reply: a dotted line
-    // from its card's right edge, along the gutter, over the node's row and
-    // down into it.
-    t.querySelectorAll('.ito').forEach(m => {
+    // The intermediary messaged a node and waits on its reply, or the test
+    // queue is running a node's job: a dotted line from the card's right edge,
+    // along the gutter, over the node's row and down into it.
+    t.querySelectorAll('.ito, .tto').forEach(m => {
       const c = m.closest('.card');
       const slug = (c && c.dataset.live || '').split(':')[1];
       const n = t.querySelector('[data-live="card:' + slug + ':' + m.dataset.on + '"]');
@@ -2218,7 +2230,7 @@ function drawWaits() {
       const mr = m.getBoundingClientRect();
       const x1 = a.right - box.left, y1 = mr.top + mr.height / 2 - box.top, gx = x1 + 13;
       const x2 = b.left + b.width / 2 - box.left, y2 = b.top - box.top;
-      ds.push(['msg', 'M' + x1 + ' ' + y1 + 'H' + gx + 'V' + (y2 - 11) + 'H' + x2 + 'V' + y2]);
+      ds.push([m.classList.contains('tto') ? 'test' : 'msg', 'M' + x1 + ' ' + y1 + 'H' + gx + 'V' + (y2 - 11) + 'H' + x2 + 'V' + y2]);
     });
     if (!ds.length) return;
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');

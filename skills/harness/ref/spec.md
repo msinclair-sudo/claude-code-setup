@@ -87,6 +87,8 @@ its construction warns you about.
 **Enforcement** `git merge --ff-only <child>`, or `harness integrate <child> | --children`, which is that merge with the catch-up and the ordering around it. A contributor that has not caught up is refused with `fatal: Not possible to fast-forward, aborting.`
 **Fails when** Treated as a push. Pushing to a checked-out branch is rejected: `! [remote rejected] … (branch is currently checked out)`.
 
+**Presenting rings the lead.** `harness mark <task> --done` rings the lead's doorbell at once, and orientation never folds a "presented, unsigned" line away under the owner's focus (obs 91: a lane presented, its session ended without a message, and the lead learned 2h43m later from a nag its focus had folded).
+
 **A lead with more than one child should use the command**, because serialising is the part that was left to be remembered and [[#T2 — Catch-up (merge down)]] is where that bill came due. It refuses an occupied or dirty child worktree, refuses work that was never presented, aborts and hands a conflict back rather than resolving one, and does not run the child's checks — nothing in this CLI executes a manifest command, and the one place the design has a lead run a member's checks is [[#T7 — Conflict escalation]], where a conflict has already made it necessary. It is a merge with the bookkeeping, not a reviewer.
 
 **A review is required, and it is enforced.** `harness review <node> --record` reads the diff and records the read against the child's exact commit; `reference-transaction` refuses the parent's fast-forward without that record. A new commit on the child invalidates it automatically, so there is nothing to expire.
@@ -565,6 +567,8 @@ Every task carries an estimated cost band at [[#T1 — Task assignment]] and a m
 | **M** | 40k – 120k | several files, some exploration |
 | **L** | 120k – 300k | needs design, touches more than one seam |
 | **XL** | > 300k | not a task — a decomposition that has not happened yet |
+
+**A finished session's own record is readable.** `harness spend <task>` from another session, or from a shell, reads the marking session's transcript within the task's window (mark to presentation) and splits its NEW tokens by tool, Bash command class, after-compaction and past-warning turns (obs 88). That is one session's record, not a subtraction across sessions, which stays refused.
 
 **The band counts NEW tokens** (up + down), not billed total. Resent context is excluded, or every band would be exceeded by the second turn and the estimate would measure conversation length instead of work.
 

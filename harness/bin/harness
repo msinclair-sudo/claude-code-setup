@@ -887,6 +887,8 @@ def _whoami(a):
                       f"{r.get('asked')}")
                 if r.get("still_moving"):
                     print(f"           still moving: {r['still_moving']}")
+                if r.get("answered"):
+                    print(f"           answered: {r['answered']}")
     except Exception:
         pass
     # A child halted at a prompt. NOT in `lead_owes` and not a Stop-hook block,
@@ -2933,7 +2935,7 @@ def queue_items(ctx, node):
     kept = {k: v for k, v in out.items()
             if k.startswith(("asked:", "comment:", "handed:", "heavy:", "sweep:", "uncovered:",
                              "orphan:", "down:", "stuck:", "ruled:", "rejected:", "returned:",
-                             "docs:", "review:", "done:", "imask:"))
+                             "docs:", "review:", "done:", "imask:", "sign off:"))
             or in_focus(fam, task_of(k))}
     if len(kept) < len(out):
         kept[f"fold:{len(out) - len(kept)}"] = (f"+{len(out) - len(kept)} item(s) "
@@ -3386,6 +3388,13 @@ def cmd_mark(a):
         except Exception:
             pass
         parent = ctx.tree["nodes"].get(node, {}).get("parent")
+        if parent:
+            # The lead hears now, not from a nag twenty minutes on that its focus
+            # may fold away: a lane whose session ends after presenting tells
+            # nobody (obs 91: 2h43m).
+            ring_inbox(ctx.state, parent, node,
+                       f"{node} presented '{a.task}' at {rec['_presented_sha'][:8]} — "
+                       f"harness review {node}, then harness mark {a.task} --close")
         if rec.get("_model"):
             print(f"ran as {rec['_model']}, effort {rec.get('_effort')}")
         if rec.get("_band") and rec.get("_delta"):
@@ -4556,6 +4565,10 @@ def testq_teardown(ctx, job):
         git("worktree", "remove", "--force", str(wt), cwd=ctx.repo)
     git("worktree", "prune", cwd=ctx.repo)
     shutil.rmtree(d, ignore_errors=True)
+    try:
+        Path(d).parent.rmdir()          # the project's folder, once its last job is gone
+    except OSError:
+        pass
 
 
 def testq_run(ctx, job):
@@ -4773,10 +4786,116 @@ def cmd_slot(a):
         fh.close()
 
 
+def spend_window(sid, start=None, end=None, warn=None):
+    """One session's own spend between two moments, from its transcript, with
+    where it went (obs 88). Each usage record is credited to the tool calls in
+    the same assistant message; a message with none is talk. Also: what came
+    after a compaction, and what was spent with the context past `warn`."""
+    t = transcript_for(sid)
+    if t is None:
+        return None
+    t0, t1 = _epoch(start) if start else None, _epoch(end) if end else None
+    tot = {k: 0 for k in TOKEN_KINDS}
+    by, after, heavy, n, compacted = {}, 0, 0, 0, False
+
+    def new(u):
+        return (u.get("input_tokens", 0) + u.get("cache_creation_input_tokens", 0)
+                + u.get("output_tokens", 0))
+    for line in t.open(errors="replace"):
+        try:
+            d = json.loads(line)
+        except Exception:
+            continue
+        ts = _epoch(d.get("timestamp")) if d.get("timestamp") else None
+        if (t0 and ts and ts < t0) or (t1 and ts and ts > t1):
+            continue
+        if d.get("subtype") == "compact_boundary" or d.get("isCompactSummary"):
+            compacted = True
+        m = d.get("message") or {}
+        u = m.get("usage")
+        if not u or d.get("type") != "assistant":
+            continue
+        n += 1
+        tot["input"] += u.get("input_tokens", 0)
+        tot["cache_write"] += u.get("cache_creation_input_tokens", 0)
+        tot["cache_read"] += u.get("cache_read_input_tokens", 0)
+        tot["output"] += u.get("output_tokens", 0)
+        x = new(u)
+        calls = [c for c in (m.get("content") or []) if isinstance(c, dict)
+                 and c.get("type") == "tool_use"]
+        kinds = []
+        for c in calls:
+            nm = c.get("name") or "?"
+            if nm == "Bash":
+                cmd = str((c.get("input") or {}).get("command") or "")
+                kinds.append("Bash: test queue" if re.search(r"\bharness (check|test)\b", cmd)
+                             else "Bash: harness" if re.search(r"\bharness\b", cmd)
+                             else "Bash: other")
+            elif nm in ("Edit", "Write", "NotebookEdit"):
+                kinds.append("Edit/Write")
+            elif nm in ("Grep", "Glob"):
+                kinds.append("Grep/Glob")
+            elif nm == "Read":
+                kinds.append("Read")
+            else:
+                kinds.append("other tools")
+        for k in kinds or ["talk"]:
+            by[k] = by.get(k, 0) + x / len(kinds or ["talk"])
+        if compacted:
+            after += x
+        ctxsize = (u.get("input_tokens", 0) + u.get("cache_read_input_tokens", 0)
+                   + u.get("cache_creation_input_tokens", 0))
+        if warn and ctxsize > warn:
+            heavy += x
+    return {"totals": tot, "records": n, "by": by, "after_compact": after,
+            "past_warn": heavy, "compacted": compacted}
+
+
+def spend_other_session(ctx, task, base, sid):
+    """Report `sid`'s own record of a task it marked: never a subtraction across
+    sessions, only one session's transcript read within the task's window."""
+    node = base.get("_node")
+    warn = context_limits(ctx, node)[0] if node in ctx.tree["nodes"] else None
+    w = spend_window(sid, base.get("_at"), base.get("_presented_at") or base.get("_closed_at"),
+                     warn)
+    if w is None:
+        die(REFUSED, f"'{task}' was marked in session {sid[:8]}, and its transcript is not on "
+                     f"this machine, so there is nothing to read. Report the totals you have.")
+    live = any(r.get("sessionId") == sid for r in live_rows(agents_json())) \
+        if shutil.which("claude") else False
+    up, down, resent = split(w["totals"])
+    print(f"session {sid[:8]}'s own record of '{task}'"
+          + ("" if live else " (it has ended)") + f"   {w['records']} usage records"
+          + (f"   {base['_model']}/{base.get('_effort')}" if base.get("_model") else ""))
+    print(f"  {'NEW':<12}{up + down:>14,}   up {up:,} + down {down:,} — this is what a band means")
+    print(f"  {'resent':<12}{resent:>14,}   cache reads, never added in")
+    print("  where the NEW went:")
+    for k, v in sorted(w["by"].items(), key=lambda kv: -kv[1]):
+        print(f"    {k:<18}{int(v):>12,}   {100 * v / max(1, up + down):4.0f}%")
+    if w["compacted"]:
+        print(f"    {'after compaction':<18}{w['after_compact']:>12,}")
+    if warn:
+        print(f"    {'past ' + ktok(warn) + ' context':<18}{w['past_warn']:>12,}   "
+              f"turns taken with the context over its warning")
+    if base.get("_band"):
+        print(f"\n  band: {band_of(up + down)}, estimated {base['_band']}")
+
+
 def cmd_spend(a):
     """The delta since the mark, in components. Never one number."""
     ctx = Ctx(); ctx.require_enrolled()
     sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if a.task and (a.session or not sid):
+        f = ctx.state_file("marks", a.task, ".json")
+        if not f.exists():
+            die(REFUSED, f"no mark for '{a.task}'")
+        base = json.loads(f.read_text())
+        other = a.session or base.get("_session") or ""
+        if len(other) < 36:
+            other = next((r.get("sessionId") for r in (all_sessions() if shutil.which("claude")
+                                                         else [])
+                          if str(r.get("sessionId") or "").startswith(other)), other)
+        return spend_other_session(ctx, a.task, base, other)
     if not sid:
         die(CONTRACT, "CLAUDE_CODE_SESSION_ID is unset — cannot measure (C1)")
     now = read_spend(sid)
@@ -4788,6 +4907,11 @@ def cmd_spend(a):
                          f"its share cannot be measured — report the session total and "
                          f"say so, rather than apportioning (I10)")
         base = json.loads(f.read_text())
+        if base.get("_session") != sid and transcript_for(str(base.get("_session") or "")):
+            # Not a subtraction: the marking session's own transcript, read within
+            # the task's window (obs 88: once a lane's session ended, nobody could
+            # ask what its spend went on).
+            return spend_other_session(ctx, a.task, base, base["_session"])
         if base.get("_session") != sid:
             # REFUSED, not CONTRACT: the platform is fine. Exit 2 means Claude's
             # internals changed and you must not work around it; this is the
@@ -8864,6 +8988,8 @@ def cmd_waiting(a):
                   f"{wait_age(r.get('since')):>6}  {r.get('asked') or '—'}")
             if r.get("still_moving"):
                 print(f"{'':<12}   still moving: {r['still_moving']}")
+            if r.get("answered"):
+                print(f"{'':<12}   answered: {r['answered']}")
         return
 
     if a.clear:
@@ -10162,6 +10288,23 @@ def hold_catching(check, holds):
     return None
 
 
+def hold_tell(ctx, me, task, path):
+    """A hold placed for a task tells the node doing that task (obs 90: a lane
+    waited 2h22 for a hold its lead had already placed). Its doorbell rings, and
+    a wait it recorded on the placer is marked answered; the lane ends the wait."""
+    rec = open_marks(ctx).get(task)
+    lane = (rec or {}).get("_node") or (load_brief(ctx, task)[1] or {}).get("node")
+    if not lane or lane == me:
+        return
+    line = f"{me} placed a hold on {path} for {task} — harness hold --list"
+    ring_inbox(ctx.state, lane, me, line)
+    w = open_waits(ctx).get(lane)
+    if w and w.get("parent") == me:
+        w.update(answered=line, answered_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
+        waiting_path(ctx, lane).write_text(json.dumps(w, indent=2) + "\n")
+    print(f"  told {lane} (doorbell)")
+
+
 def cmd_hold(a):
     """`hold <path> --why`: no check reads this while a shared job holds it (obs 66).
 
@@ -10200,6 +10343,8 @@ def cmd_hold(a):
                                              .read_text()).get("checks") or [])
               if hold_catching(c, [{"path": a.path}])] \
         if (ctx.repo / ".harness" / "manifest.json").exists() else []
+    if a.until:
+        hold_tell(ctx, me, a.until, a.path)
     print(f"held {a.path}" + (f" until {a.until} closes" if a.until else "")
           + f". `check` skips {len(caught)} arm(s)"
           + (f": {', '.join(caught)}" if caught else
@@ -12874,6 +13019,9 @@ def main():
                     help="sign it off — a lead closes its children's, rank 0 its own")
     spd = add("spend", cmd_spend)
     spd.add_argument("task", nargs="?", help="task id to measure since; omit for the session total")
+    spd.add_argument("--session", metavar="ID",
+                     help="read this session's own record of the task (default: the session "
+                          "that marked it, when that is not this one)")
     rv = add("review", cmd_review)
     rv.add_argument("node", nargs="*", help="nodes to review (default: this one)")
     rv.add_argument("--children", action="store_true", help="every child of this node")

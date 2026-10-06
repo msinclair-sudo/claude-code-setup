@@ -642,6 +642,25 @@ class Requires(unittest.TestCase):
         self.g("merge", "-q", "--ff-only", "main")
         self.assertNotIn("requires main", self.present())
 
+    def test_presenting_rings_the_lead(self):
+        """obs 91: the lead heard 2h43m later, from a nag its focus folded away."""
+        self.g("merge", "-q", "--ff-only", "main")
+        class A:                                   # every other flag unset
+            task, done = "t", True
+            def __getattr__(self, k):
+                return None
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch("sys.stderr", io.StringIO()), mock.patch("sys.stdout", io.StringIO()):
+            try:
+                hz.cmd_mark(A())
+            except SystemExit:
+                pass
+        rung = list((self.ctx.dir / "doorbell" / "main" / "inbox").glob("*.json"))
+        self.assertEqual(len(rung), 1)
+        msg = json.loads(rung[0].read_text())
+        self.assertEqual(msg["from"], "dev")
+        self.assertIn("presented 't'", msg["text"])
+
 
 class Pairs(unittest.TestCase):
     """obs 25, 47: document pairs travel as data and apply all-or-nothing."""
@@ -2632,3 +2651,75 @@ class StopKillsWork(unittest.TestCase):
         time.sleep(0.3)
         self.assertIn("killed", out.getvalue())
         self.assertEqual([p for p in tree if p != sess.pid and hz._pid_exists(p)], [])
+
+
+
+class LogEntries88to91(unittest.TestCase):
+    """obs 87, 88, 90 and 91."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev"})
+        for d in ("briefs", "marks", "waiting", "holds"):
+            (self.ctx.dir / d).mkdir()
+        self.ctx.repo = self.ctx.dir
+        self.err = mock.patch("sys.stderr", new_callable=io.StringIO)
+        self.err.start()
+        self.addCleanup(self.err.stop)
+
+    def test_a_hold_for_a_task_rings_its_lane_and_answers_its_wait(self):
+        (self.ctx.dir / "marks" / "t.json").write_text(json.dumps({"_node": "dev_1"}))
+        hz.waiting_path(self.ctx, "dev_1").write_text(json.dumps(
+            {"node": "dev_1", "parent": "dev", "asked": "hold subset.db", "since": OLD}))
+        with mock.patch.object(hz, "open_marks", return_value={"t": {"_node": "dev_1"}}), \
+             redirect_stdout(io.StringIO()):
+            hz.hold_tell(self.ctx, "dev", "t", "/data/subset.db")
+        rung = list((self.ctx.dir / "doorbell" / "dev_1" / "inbox").glob("*.json"))
+        self.assertIn("/data/subset.db", json.loads(rung[0].read_text())["text"])
+        w = json.loads(hz.waiting_path(self.ctx, "dev_1").read_text())
+        self.assertIn("placed a hold", w["answered"])
+        with mock.patch.object(hz, "open_marks", return_value={"u": {"_node": "dev"}}), \
+             redirect_stdout(io.StringIO()):
+            hz.hold_tell(self.ctx, "dev", "u", "/x")              # its own task: nobody to ring
+        self.assertFalse((self.ctx.dir / "doorbell" / "dev").exists())
+
+    def test_sign_off_is_never_folded(self):
+        self.assertIn('"sign off:"', Path(hz.__file__).read_text().split("kept = {k: v")[1][:600])
+
+    def transcript(self, recs):
+        d = Path(tempfile.mkdtemp()) / "proj"
+        d.mkdir()
+        sid = "a" * 8 + "-0000-0000-0000-" + "b" * 12
+        (d / f"{sid}.jsonl").write_text("\n".join(json.dumps(r) for r in recs) + "\n")
+        return d.parent, sid
+
+    def test_spend_window_splits_by_tool_and_window(self):
+        u = lambda n, ctx=0: {"input_tokens": n, "output_tokens": 0, "cache_read_input_tokens": ctx,
+                              "cache_creation_input_tokens": 0}
+        tool = lambda name, **inp: {"type": "tool_use", "name": name, "input": inp}
+        recs = [
+            {"type": "assistant", "timestamp": "2026-10-06T01:00:00+0000",
+             "message": {"usage": u(999), "content": [tool("Read")]}},               # before
+            {"type": "assistant", "timestamp": "2026-10-06T02:00:00+0000",
+             "message": {"usage": u(100), "content": [tool("Read")]}},
+            {"type": "assistant", "timestamp": "2026-10-06T02:01:00+0000",
+             "message": {"usage": u(40), "content": [tool("Bash", command="harness check"),
+                                                     tool("Bash", command="ls")]}},
+            {"type": "system", "subtype": "compact_boundary", "timestamp": "2026-10-06T02:02:00+0000"},
+            {"type": "assistant", "timestamp": "2026-10-06T02:03:00+0000",
+             "message": {"usage": u(10, ctx=500_000), "content": [{"type": "text", "text": "x"}]}}]
+        root, sid = self.transcript(recs)
+        with mock.patch.object(hz, "PROJECTS", root):
+            w = hz.spend_window(sid, "2026-10-06T01:30:00+0000", None, warn=400_000)
+        self.assertEqual(w["totals"]["input"], 150)
+        self.assertEqual(w["by"], {"Read": 100, "Bash: test queue": 20, "Bash: other": 20, "talk": 10})
+        self.assertEqual((w["after_compact"], w["past_warn"]), (10, 10))
+
+    def test_teardown_removes_an_empty_project_folder_only(self):
+        root = Path(tempfile.mkdtemp())
+        a, b = root / "proj" / "j1", root / "proj" / "j2"
+        a.mkdir(parents=True); b.mkdir()
+        with mock.patch.object(hz, "git", return_value=(0, "", "")):
+            hz.testq_teardown(self.ctx, {"dir": str(a)})
+            self.assertTrue((root / "proj").exists())             # j2 still there
+            hz.testq_teardown(self.ctx, {"dir": str(b)})
+        self.assertFalse((root / "proj").exists())

@@ -43,6 +43,9 @@ its setup, where its scratch goes, which arms a change needs, and whether an old
 4. The manifest's checks list stays as the project's declaration: named commands with a timeout and
    a blind spot, run as given (the owner was unsure; kept so `mark --done` and `review` keep their
    per-arm reports).
+5. No second slot for short jobs (entry 89, declined): "the tests shouldn't take that long to begin
+   with. That's a biblion side issue, not a harness one." A long check is the project's to shorten.
+6. No harness `prepare` step (entry 87): a build an arm needs goes in that arm's own command.
 
 ## How it works
 

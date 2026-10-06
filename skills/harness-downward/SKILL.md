@@ -160,7 +160,7 @@ harness mark <task> --close        # sign off; recycles the child onto its next 
 harness mark <task> --close --no-recycle
 ```
 
-A child presents with `--done` and cannot close its own. `whoami` lists what waits on you; `status` shows `awaiting sign-off`. Review first. `--close` refuses on a dirty worktree or an open unpresented mark; with nothing queued, nothing starts. Sign off promptly: after twenty minutes the rank above you is told, and your `Stop` hook blocks once while a sign-off is owed.
+A child presents with `--done` and cannot close its own; presenting rings your doorbell, so review it then. A `harness hold <path> --until <task>` you place rings the lane doing that task and marks its wait on you answered. `whoami` lists what waits on you; `status` shows `awaiting sign-off`. Review first. `--close` refuses on a dirty worktree or an open unpresented mark; with nothing queued, nothing starts. Sign off promptly: after twenty minutes the rank above you is told, and your `Stop` hook blocks once while a sign-off is owed.
 
 ## `T7` / `T8` — mediating a conflict
 

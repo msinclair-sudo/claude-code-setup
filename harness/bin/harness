@@ -104,16 +104,25 @@ def turn_ended(sid, tail=64 * 1024):
     """True when the session's last turn has ended: walking back from the end
     of its transcript, a `turn_duration` record comes before any message. False
     when a message comes first (a turn is running) or nothing can be read."""
+    return turn_end_at(sid, tail) is not None
+
+
+def turn_end_at(sid, tail=64 * 1024):
+    """When the session's last turn ended (epoch seconds), or None while a turn
+    runs or nothing can be read. How long a node has been idle is measured from
+    here, not from the transcript's mtime: Claude Code writes its own notes into
+    an idle transcript (an away_summary), and each one restarted the nudge's
+    five minutes (2026-10-06: dev's nudge came due eight minutes after its turn)."""
     t = transcript_for(sid)
     if t is None:
-        return False
+        return None
     try:
         with open(t, "rb") as fh:
             fh.seek(0, 2)
             fh.seek(max(0, fh.tell() - tail))
             lines = fh.read().decode("utf-8", "replace").splitlines()
     except OSError:
-        return False
+        return None
     for line in reversed(lines):
         try:
             r = json.loads(line)
@@ -122,14 +131,18 @@ def turn_ended(sid, tail=64 * 1024):
         kind = r.get("type")
         if kind == "system":
             if r.get("subtype") == "turn_duration":
-                return True
+                at = r.get("timestamp")
+                try:
+                    return datetime.datetime.fromisoformat(at.replace("Z", "+00:00")).timestamp()
+                except Exception:
+                    return t.stat().st_mtime
             continue                        # stop_hook_summary, away_summary, ...
         if kind in ("user", "assistant"):
-            return False
+            return None
         if kind in _TURN_NEUTRAL or kind is None:
             continue
-        return False
-    return False
+        return None
+    return None
 
 
 def live_rows(rows):
@@ -13330,8 +13343,9 @@ def bell_nudge(ctx, node, sid):
     me = next((r for r in rows if r.get("sessionId") == sid), None)
     if not me or me.get("status") == "busy":
         return None
-    quiet, _ = last_turn(sid)
-    if (quiet or 0) < NUDGE_AFTER:
+    ended = turn_end_at(sid)
+    quiet = time.time() - ended if ended else 0
+    if quiet < NUDGE_AFTER:
         return None
     tf = bell_dir(ctx, node) / "told.json"
     try:

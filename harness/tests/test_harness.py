@@ -2381,16 +2381,31 @@ class Doorbell(unittest.TestCase):
         with mock.patch.object(hz, "cached_roster", return_value=rows), \
              mock.patch.object(hz, "waiters_on", return_value=w), \
              mock.patch.object(hz, "load_index", return_value={"byWorktree": {}}):
-            with mock.patch.object(hz, "last_turn", return_value=(60, 0)):
+            with mock.patch.object(hz, "turn_end_at", return_value=time.time() - 60):
                 self.assertIsNone(hz.bell_nudge(self.ctx, "main", "sess-main"))   # just spoke
-            with mock.patch.object(hz, "last_turn", return_value=(900, 0)):
+            with mock.patch.object(hz, "turn_end_at", return_value=time.time() - 900):
                 self.assertIn("dev has been waiting on you for 15m: carry rebuilt",
                               hz.bell_nudge(self.ctx, "main", "sess-main"))
                 self.assertIsNone(hz.bell_nudge(self.ctx, "main", "sess-main"))   # told once
             rows[0]["status"] = "busy"
             with mock.patch.object(hz, "waiters_on", return_value=[("dev", 900, "", "inf:dev:2")]), \
-                 mock.patch.object(hz, "last_turn", return_value=(900, 0)):
+                 mock.patch.object(hz, "turn_end_at", return_value=time.time() - 900):
                 self.assertIsNone(hz.bell_nudge(self.ctx, "main", "sess-main"))   # working
+
+    def test_idle_is_counted_from_the_turn_end_not_a_later_note(self):
+        # Claude Code's away_summary lands in an idle transcript; it restarted
+        # the five minutes when idle was read off the file's mtime (2026-10-06).
+        t = Path(tempfile.mkdtemp()) / "s.jsonl"
+        t.write_text("\n".join(json.dumps(r) for r in (
+            {"type": "assistant", "message": {"content": []}},
+            {"type": "system", "subtype": "turn_duration", "timestamp": "2026-10-06T05:43:51.000Z"},
+            {"type": "system", "subtype": "away_summary", "timestamp": "2026-10-06T05:46:49.000Z"})))
+        with mock.patch.object(hz, "transcript_for", return_value=t):
+            self.assertEqual(hz.turn_end_at("s"),
+                             hz.datetime.datetime(2026, 10, 6, 5, 43, 51,
+                                                  tzinfo=hz.datetime.timezone.utc).timestamp())
+            t.write_text(t.read_text() + "\n" + json.dumps({"type": "user", "message": {"content": "go"}}))
+            self.assertIsNone(hz.turn_end_at("s"))                       # a turn is running
 
 
 class DoorbellHooks(unittest.TestCase):

@@ -7,4 +7,6 @@ This session holds a node in an Agent Workstream Harness. When summarising, keep
 - owed sign-offs, unanswered questions from children, and any `--after` wait being relied on
 - the last instruction from the lead or the operator that has not been carried out
 
+Anything the owner must run, approve or answer goes out as `harness ask` (rank 0: `harness ask owner --kind action --run ...`), never as chat text, even when the owner is in this session.
+
 After compacting, run `harness whoami` before anything else; the records outrank the summary.

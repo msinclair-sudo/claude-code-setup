@@ -49,9 +49,9 @@ Make a condition structural, not a note: a note does not stop a close or a check
 
 ## Asking the owner
 
-Use `harness ask` (see `harness-downward`), as leads do. When the owner is in your session, asking them directly is fine; record the answer where it is used (a brief, a fact or the charter). Do not use a block for a question: a block means "I cannot reach X".
+Use `harness ask` (see `harness-downward`), as leads do. **Everything you need from the owner goes through an ask, even when they are in your session**: chat scrolls away and the owner reads the Issues tab, not your transcript. You may say in chat that you raised it ("I've put the delete in Issues as ask 7"), but the command, the approval or the question lives in the ask. Answering the owner's own question in chat is fine; record any ruling where it is used (a brief, a fact or the charter). Do not use a block for a question: a block means "I cannot reach X".
 
-**Commands the owner must run** (a login, an install, a permission rule, anything outside your reach) go out as one action ask on your standing task `owner`, never as chat text the owner has to find:
+**Commands the owner must run or approve** (a login, an install, a permission rule, a live write a permission checker refused, anything outside your reach) go out as one action ask on your standing task `owner`, never as chat text the owner has to find. When it needs their approval, say so in the question; they approve by running it and clicking **Done**, or decline in the item's chat box:
 
 ```bash
 harness ask owner --kind action --question "Install the pinned x before the import runs?" \

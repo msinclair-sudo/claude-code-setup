@@ -624,6 +624,15 @@ def read_state():
                 n["assigned"] = list(CLI.assignment_for(cctx, n["name"]))
         except Exception:
             pass
+        # Doorbell mail not yet shown to the node's session, and whether a
+        # waiter is armed to wake it (2026-10-06: a ring to main sat unread).
+        bctx = cli_ctx(pdir, repo, tree)
+        for n in nodes:
+            try:
+                n["mail"] = CLI.MAIL().pending(Path(pdir), n["name"])
+                n["bell"] = bool(CLI.bell_armed(bctx, n["name"]))
+            except Exception:
+                n["mail"], n["bell"] = 0, False
         nodes.sort(key=lambda n: (n["rank"], n["name"]))
         pname = Path(repo).name
 
@@ -767,6 +776,7 @@ border-left:1px solid var(--line);width:0;height:22px}
 .waits path{fill:none;stroke:var(--wait);stroke-width:2.5}
 .waits path.held{stroke:var(--held);stroke-dasharray:6 4}
 .waits path.msg{stroke:var(--wait);stroke-width:1.6;stroke-dasharray:2 4;stroke-linecap:round}
+.ln.mail{color:var(--warn)}
 .waits path.test{stroke:var(--busy);stroke-width:1.6;stroke-dasharray:2 4;stroke-linecap:round}
 .tq{margin-top:4px;border-top:1px solid var(--line);padding-top:3px}
 .tqh{color:var(--dim);font-size:10px;letter-spacing:.05em;text-transform:uppercase}
@@ -1447,8 +1457,20 @@ function card(n) {
     (n.branch && n.branch !== n.name || !n.indexed
       ? '<div class="ln q">' + (n.branch && n.branch !== n.name ? 'branch ' + esc(n.branch) : '') +
         (n.indexed ? '' : ' (not indexed)') + '</div>' : '') +
-    who + wait + held + owes + holding + sigs + task + splitChips(n) + goneChips(n) +
-    '</div>';
+    who + mailLine(n, ss) + wait + held + owes + holding + sigs + task + splitChips(n) +
+    goneChips(n) + '</div>';
+}
+
+// Doorbell mail waiting for the node's session. Hooks hand it over at its next
+// tool call, turn end or prompt; an idle session wakes for it only if its
+// doorbell is armed, so say when nothing will wake it.
+function mailLine(n, ss) {
+  if (!n.mail) return '';
+  const idle = !ss.some(s => s.status === 'busy');
+  return '<div class="ln mail">&#9993; ' + n.mail + ' unread' +
+    (!ss.length ? ' &middot; no session' :
+     !idle ? ' &middot; at its next tool call' :
+     n.bell ? ' &middot; waking it' : ' &middot; nothing armed to wake it') + '</div>';
 }
 
 // The project's intermediary, as a card off to the side of its tree. Not a

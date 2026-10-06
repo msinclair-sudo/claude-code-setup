@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""harness-mail: hand a node's doorbell mail to its session, from a hook.
+
+The doorbell used to be read only by a background `harness doorbell` the
+session had to keep armed and re-arm after every ring. A session that never
+armed one (rank 0, attended, compacted) never read its mail: an owner's note
+sat in main's inbox while main was busy in the next window (owner, 2026-10-06).
+Hooks need no arming. This script is the PostToolUse half and runs after every
+tool call, so it is kept small: stdlib only, no harness import, and silent
+unless there is mail. `harness` loads `take`/`render` from here for the Stop
+hook, orientation and `harness doorbell --read`, so there is one reader.
+
+Mail goes only to the session holding the node's lock. A second session opened
+in the same checkout, or a subagent (its hook payload carries `agent_id`),
+gets nothing and leaves the mail where it is.
+"""
+import json
+import os
+import re
+import sys
+import time
+from pathlib import Path
+
+HOME_STATE = Path.home() / ".claude" / "harness"
+
+
+def find_node(cwd):
+    """(state dir, node) for the worktree holding `cwd`, from each project's
+    index.json; the longest matching worktree wins. None outside every tree."""
+    best = None
+    for idx in HOME_STATE.glob("*/index.json"):
+        try:
+            by = json.loads(idx.read_text()).get("byWorktree") or {}
+        except Exception:
+            continue
+        for wt, node in by.items():
+            w = wt.rstrip("/")
+            if (cwd == w or cwd.startswith(w + "/")) and (not best or len(w) > best[0]):
+                best = (len(w), idx.parent, node)
+    return (best[1], best[2]) if best else None
+
+
+def owner(state, node):
+    """The session id in the node's lock, or None."""
+    f = Path(state) / "locks" / (re.sub(r"[^A-Za-z0-9]", "_", node) + ".lock")
+    try:
+        return json.loads(f.read_text()).get("session_id")
+    except Exception:
+        return None
+
+
+def pending(state, node):
+    """How many messages wait unread."""
+    d = Path(state) / "doorbell" / node / "inbox"
+    return len(list(d.glob("*.json"))) if d.is_dir() else 0
+
+
+def take(state, node, how):
+    """Claim and return every unread message, oldest first. Each file is
+    claimed by an atomic rename, so two readers (a tool call and a turn end at
+    once) never both deliver it. Delivered mail is kept in delivered.jsonl."""
+    base = Path(state) / "doorbell" / node
+    d = base / "inbox"
+    if not d.is_dir():
+        return []
+    msgs = []
+    for f in sorted(d.glob("*.json")):
+        claim = f.with_name(f"{f.stem}.taken-{os.getpid()}")
+        try:
+            os.rename(f, claim)
+        except OSError:
+            continue                        # another reader has it
+        try:
+            msgs.append(json.loads(claim.read_text()))
+        except Exception:
+            pass
+        claim.unlink(missing_ok=True)
+    if msgs:
+        at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        with open(base / "delivered.jsonl", "a") as log:
+            for m in msgs:
+                log.write(json.dumps(dict(m, delivered=at, how=how)) + "\n")
+    return msgs
+
+
+def render(msgs):
+    lines = [f"Doorbell — {len(msgs)} message(s) for you:"]
+    for m in msgs:
+        lines.append(f"  {(m.get('at') or '')[11:16]}  from {m.get('from') or '?'}: {m.get('text')}")
+    lines.append("They are marked read: act on them now, or say on the record why not.")
+    return "\n".join(lines)
+
+
+def main():
+    try:
+        payload = json.loads(sys.stdin.read() or "{}")
+    except Exception:
+        return
+    if payload.get("agent_id"):
+        return
+    try:
+        hit = find_node(payload.get("cwd") or os.getcwd())
+        if not hit:
+            return
+        state, node = hit
+        sid = payload.get("session_id") or os.environ.get("CLAUDE_CODE_SESSION_ID")
+        who = owner(state, node)
+        if not sid or (who and who != sid) or not pending(state, node):
+            return
+        msgs = take(state, node, "tool call")
+        if msgs:
+            print(json.dumps({"hookSpecificOutput": {
+                "hookEventName": "PostToolUse", "additionalContext": render(msgs)}}))
+    except Exception:
+        return
+
+
+if __name__ == "__main__":
+    main()

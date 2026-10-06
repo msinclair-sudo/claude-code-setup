@@ -2165,6 +2165,8 @@ class Doorbell(unittest.TestCase):
         self.env.start(); self.addCleanup(self.env.stop)
         self.c = mock.patch.object(hz, "Ctx", return_value=self.ctx)
         self.c.start(); self.addCleanup(self.c.stop)
+        self.r = mock.patch.object(hz, "cached_roster", return_value=[])
+        self.r.start(); self.addCleanup(self.r.stop)
 
     def out(self, f, a):
         o = io.StringIO()
@@ -2178,11 +2180,20 @@ class Doorbell(unittest.TestCase):
         self.ctx.me = "main"
         with mock.patch.object(hz, "bell_nudge", return_value=None):
             o = self.out(hz.cmd_doorbell, mock.Mock(read=False, status=False))
-        self.assertIn("rang: 1 message", o)
+        self.assertIn("rang: mail is waiting", o)
         self.assertFalse((hz.bell_dir(self.ctx, "main") / "armed.json").exists())
         o = self.out(hz.cmd_doorbell, mock.Mock(read=True, status=False))
         self.assertIn("from dev: dev needs a ruling", o)
-        self.assertIn("nothing has rung", self.out(hz.cmd_doorbell, mock.Mock(read=True, status=False)))
+        self.assertIn("nothing new", self.out(hz.cmd_doorbell, mock.Mock(read=True, status=False)))
+
+    def test_the_waiter_leaves_the_mail_for_whoever_reads_it(self):
+        # It only wakes the session; a hook may have shown the mail first.
+        hz.ring_inbox(self.ctx.state, "main", "dev", "hello")
+        with mock.patch.object(hz, "bell_nudge", return_value=None):
+            self.out(hz.cmd_doorbell, mock.Mock(read=False, status=False))
+        self.assertEqual(hz.MAIL().pending(self.ctx.state, "main"), 1)
+        self.assertEqual([m["text"] for m in hz.MAIL().take(self.ctx.state, "main", "t")], ["hello"])
+        self.assertIn("nothing new", self.out(hz.cmd_doorbell, mock.Mock(read=True, status=False)))
 
     def test_a_newer_doorbell_replaces_the_old(self):
         d = hz.bell_dir(self.ctx, "main")
@@ -2208,6 +2219,146 @@ class Doorbell(unittest.TestCase):
             with mock.patch.object(hz, "waiters_on", return_value=[("dev", 900, "", "inf:dev:2")]), \
                  mock.patch.object(hz, "last_turn", return_value=(900, 0)):
                 self.assertIsNone(hz.bell_nudge(self.ctx, "main", "sess-main"))   # working
+
+
+class DoorbellHooks(unittest.TestCase):
+    """Mail reaches the node's own session through hooks, with no arming: after
+    a tool call, at a turn end, at a prompt. The Stop hook's blocks are
+    top-level JSON, the only form Claude Code acts on (2026-10-06)."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main"})
+        self.ctx.me = "main"
+        self.ctx.tree_path = self.ctx.dir / "tree.json"
+        self.ctx.binding_path = self.ctx.dir / "binding.json"
+        self.ctx.tree_path.write_text(json.dumps(self.ctx.tree))
+        self.ctx.binding_path.write_text("{}")
+        self.ctx.lock_path("main").parent.mkdir(parents=True, exist_ok=True)
+        self.ctx.lock_path("main").write_text(json.dumps({"node": "main", "session_id": "sess-main"}))
+        for p in [mock.patch.object(hz, "Ctx", return_value=self.ctx),
+                  mock.patch.object(hz, "git", return_value=(0, "", "")),
+                  mock.patch.object(hz, "docs_apply_step", return_value=None),
+                  mock.patch.object(hz, "reset_step", return_value=False),
+                  mock.patch.object(hz, "lead_owes", return_value=[]),
+                  mock.patch.object(hz, "rank0_owes", return_value=[]),
+                  mock.patch.object(hz, "print_delta", return_value=None),
+                  mock.patch.object(hz, "cached_roster", return_value=[]),
+                  mock.patch.dict(os.environ, {}, clear=False)]:
+            p.start(); self.addCleanup(p.stop)
+        os.environ.pop("HARNESS_INTERMEDIARY", None)
+        os.environ.pop("HARNESS_DOCUMENTER", None)
+
+    def stop(self, sid="sess-main", again=False, armed=True):
+        o = io.StringIO()
+        payload = json.dumps({"session_id": sid, "stop_hook_active": again})
+        with mock.patch.object(hz, "bell_armed", return_value={"pid": 1} if armed else None), \
+             mock.patch("sys.stdin", io.StringIO(payload)), redirect_stdout(o):
+            hz.cmd_hook_stop(mock.Mock())
+        return json.loads(o.getvalue()) if o.getvalue().strip() else None
+
+    def test_a_block_is_top_level_json(self):
+        hz.ring_inbox(self.ctx.state, "main", "dev", "a ruling, please")
+        out = self.stop()
+        self.assertEqual(out["decision"], "block")
+        self.assertNotIn("hookSpecificOutput", out)
+        self.assertIn("from dev: a ruling, please", out["reason"])
+        self.assertIsNone(self.stop())                       # taken as shown
+
+    def test_only_the_node_s_own_session_gets_mail_or_nags(self):
+        hz.ring_inbox(self.ctx.state, "main", "dev", "for main")
+        self.assertIsNone(self.stop(sid="someone-else", armed=False))
+        os.environ["HARNESS_INTERMEDIARY"] = "1"
+        self.assertIsNone(self.stop(armed=False))
+        del os.environ["HARNESS_INTERMEDIARY"]
+        self.assertEqual(hz.MAIL().pending(self.ctx.state, "main"), 1)
+
+    def test_mail_blocks_even_after_a_block_but_nags_do_not(self):
+        self.assertIsNone(self.stop(again=True, armed=False))
+        hz.ring_inbox(self.ctx.state, "main", "dev", "late news")
+        self.assertIn("late news", self.stop(again=True)["reason"])
+
+    def test_an_unarmed_doorbell_blocks_every_turn_end(self):
+        for _ in range(2):
+            self.assertIn("harness doorbell", self.stop(armed=False)["reason"])
+        self.assertIsNone(self.stop(armed=True))
+
+    def test_the_prompt_hook_hands_over_mail(self):
+        hz.ring_inbox(self.ctx.state, "main", "owner", "re-file the delete")
+        self.addCleanup(setattr, hz, "QUIET", hz.QUIET)     # hook-orient sets it
+        o = io.StringIO()
+        with mock.patch("sys.stdin", io.StringIO(json.dumps({"session_id": "sess-main"}))), \
+             redirect_stdout(o), self.assertRaises(SystemExit):
+            hz.cmd_hook_orient(mock.Mock())
+        self.assertIn("from owner: re-file the delete", o.getvalue())
+        self.assertEqual(hz.MAIL().pending(self.ctx.state, "main"), 0)
+
+    def test_the_tool_call_hook_finds_its_node_and_skips_subagents(self):
+        M = hz.MAIL()
+        home = Path(tempfile.mkdtemp())
+        st = home / "proj"
+        (st / "locks").mkdir(parents=True)
+        (st / "locks" / "main.lock").write_text(json.dumps({"session_id": "s1"}))
+        (st / "index.json").write_text(json.dumps({"byWorktree": {"/w/repo": "main",
+                                                                  "/w/repo-dev": "dev"}}))
+        hz.ring_inbox(st, "main", "dev", "mid-turn note")
+
+        def run(payload):
+            o = io.StringIO()
+            with mock.patch.object(M, "HOME_STATE", home), \
+                 mock.patch("sys.stdin", io.StringIO(json.dumps(payload))), redirect_stdout(o):
+                M.main()
+            return o.getvalue()
+        self.assertEqual(run({"cwd": "/w/repo-dev", "session_id": "s1"}), "")   # not its node
+        self.assertEqual(run({"cwd": "/w/repo", "session_id": "s2"}), "")       # not its owner
+        self.assertEqual(run({"cwd": "/w/repo/sub", "session_id": "s1", "agent_id": "a"}), "")
+        out = json.loads(run({"cwd": "/w/repo/sub", "session_id": "s1"}))
+        self.assertEqual(out["hookSpecificOutput"]["hookEventName"], "PostToolUse")
+        self.assertIn("mid-turn note", out["hookSpecificOutput"]["additionalContext"])
+        self.assertEqual(run({"cwd": "/w/repo", "session_id": "s1"}), "")       # once
+        log = (st / "doorbell" / "main" / "delivered.jsonl").read_text().splitlines()
+        self.assertEqual(json.loads(log[0])["how"], "tool call")
+
+    def test_ring_says_when_it_will_be_read(self):
+        with mock.patch.object(hz, "bell_armed", return_value={"pid": 1}):
+            self.assertIn("wakes now", hz.ring_report(self.ctx, "main"))
+        with mock.patch.object(hz, "bell_armed", return_value=None):
+            self.assertIn("no live session", hz.ring_report(self.ctx, "main"))
+            with mock.patch.object(hz, "cached_roster",
+                                   return_value=[{"sessionId": "sess-main", "status": "busy"}]):
+                self.assertIn("next tool call", hz.ring_report(self.ctx, "main"))
+            with mock.patch.object(hz, "cached_roster",
+                                   return_value=[{"sessionId": "sess-main", "status": "idle"}]):
+                self.assertIn("next prompt", hz.ring_report(self.ctx, "main"))
+
+    def test_a_waiting_doorbell_does_not_make_an_idle_session_busy(self):
+        # Claude Code calls a session with a background command busy.
+        t = self.ctx.dir / "t.jsonl"
+        ended = [{"type": "assistant", "message": {"content": []}},
+                 {"type": "system", "subtype": "stop_hook_summary"},
+                 {"type": "system", "subtype": "turn_duration"},
+                 {"type": "system", "subtype": "away_summary"},
+                 {"type": "custom-title"}]
+        running = ended + [{"type": "user", "message": {"content": "task done"}}]
+        with mock.patch.object(hz, "transcript_for", return_value=t):
+            t.write_text("\n".join(json.dumps(r) for r in ended))
+            self.assertTrue(hz.turn_ended("s"))
+            rows = hz.agents_json(json.dumps([{"sessionId": "s", "status": "busy"}]))
+            self.assertEqual((rows[0]["status"], rows[0]["reported_status"]), ("idle", "busy"))
+            t.write_text("\n".join(json.dumps(r) for r in running))
+            self.assertFalse(hz.turn_ended("s"))
+            self.assertEqual(hz.agents_json(json.dumps([{"sessionId": "s", "status": "busy"}]))[0]
+                             ["status"], "busy")
+
+    def test_doctor_names_a_missing_session_hook(self):
+        repo = Path(tempfile.mkdtemp())
+        (repo / ".claude").mkdir()
+        conf = {"hooks": {ev: [json.loads(json.dumps(e))] for ev, e in hz.SESSION_HOOKS
+                          if ev != "PostToolUse"}}
+        (repo / ".claude" / "settings.json").write_text(json.dumps(conf))
+        self.assertEqual(hz.session_hooks_missing(repo), ["PostToolUse (harness-mail)"])
+        conf["hooks"]["PostToolUse"] = [dict(hz.SESSION_HOOKS[-1][1])]
+        (repo / ".claude" / "settings.json").write_text(json.dumps(conf))
+        self.assertEqual(hz.session_hooks_missing(repo), [])
 
 
 class OwnerActions(unittest.TestCase):

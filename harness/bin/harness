@@ -69,21 +69,67 @@ def agents_json(override=None):
     """
     if override is not None:
         try:
-            return json.loads(override)
+            d = json.loads(override)
         except json.JSONDecodeError:
             raise ValueError("roster override is not valid JSON")
-    r = subprocess.run(["claude", "agents", "--json"], capture_output=True,
-                       text=True, timeout=20)
-    if r.returncode != 0:
-        raise ValueError(f"`claude agents --json` failed: {r.stderr.strip()[:120]}")
-    try:
-        d = json.loads(r.stdout)
-    except json.JSONDecodeError:
-        raise ValueError("`claude agents --json` did not return JSON — "
-                         "its output format has changed")
+    else:
+        r = subprocess.run(["claude", "agents", "--json"], capture_output=True,
+                           text=True, timeout=20)
+        if r.returncode != 0:
+            raise ValueError(f"`claude agents --json` failed: {r.stderr.strip()[:120]}")
+        try:
+            d = json.loads(r.stdout)
+        except json.JSONDecodeError:
+            raise ValueError("`claude agents --json` did not return JSON — "
+                             "its output format has changed")
     if not isinstance(d, list):
         raise ValueError("`claude agents --json` no longer returns a JSON array")
+    # Claude Code reports a session with a background command running as busy,
+    # and every node keeps its doorbell running in the background: an idle lane
+    # read as busy everywhere (owner, 2026-10-06). The transcript says whether
+    # its turn has ended; that wins, and the row keeps what Claude Code said.
+    for r in d:
+        if r.get("status") == "busy" and r.get("sessionId") and turn_ended(r["sessionId"]):
+            r["status"], r["reported_status"] = "idle", "busy"
     return d
+
+
+# Transcript records that say nothing about whether a turn is running: titles,
+# modes, queue bookkeeping, and the system notes written around a turn's end.
+_TURN_NEUTRAL = {"custom-title", "agent-name", "mode", "permission-mode", "atis-latch",
+                 "last-prompt", "queue-operation", "attachment", "summary"}
+
+
+def turn_ended(sid, tail=64 * 1024):
+    """True when the session's last turn has ended: walking back from the end
+    of its transcript, a `turn_duration` record comes before any message. False
+    when a message comes first (a turn is running) or nothing can be read."""
+    t = transcript_for(sid)
+    if t is None:
+        return False
+    try:
+        with open(t, "rb") as fh:
+            fh.seek(0, 2)
+            fh.seek(max(0, fh.tell() - tail))
+            lines = fh.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return False
+    for line in reversed(lines):
+        try:
+            r = json.loads(line)
+        except Exception:
+            continue                        # the first line of the tail is cut
+        kind = r.get("type")
+        if kind == "system":
+            if r.get("subtype") == "turn_duration":
+                return True
+            continue                        # stop_hook_summary, away_summary, ...
+        if kind in ("user", "assistant"):
+            return False
+        if kind in _TURN_NEUTRAL or kind is None:
+            continue
+        return False
+    return False
 
 
 def live_rows(rows):
@@ -646,13 +692,12 @@ def reset_step(ctx, node, launch_only=False):
     if not r.get("flushed") and not launch_only:
         r["flushed"] = True
         p.write_text(json.dumps(r) + "\n")
-        print(json.dumps({"hookSpecificOutput": {
-            "hookEventName": "Stop", "decision": "block", "reason":
+        stop_block(
             f"A reset of this node is pending (requested by {r.get('by')}). A fresh "
             f"session replaces you from the records at your next quiet turn end. Write "
             f"anything you hold only in context into them now: a promise to a child, a "
             f"seam you are watching, a held recycle (`harness note <task> --add -`, "
-            f"`harness brief`, `--after`). Then end your turn."}}))
+            f"`harness brief`, `--after`). Then end your turn.")
         return True
     if r.get("flushed") and (reset_quiet(ctx, node) or reset_due(ctx, node, r)):
         # The record stays until a recycle succeeds (obs 73): deleted here, a
@@ -1953,6 +1998,15 @@ def cmd_doctor(a):
                   f"that out:\n"
                   f"         diff -u {tpl}/_guard {hp}/_guard")
 
+    # The session hooks live in the repo's .claude/settings.json, which only
+    # scaffold writes; a repo scaffolded before a hook existed lacks it, and
+    # nothing else notices (the PostToolUse mail hook, 2026-10-06).
+    gone = session_hooks_missing(ctx.repo)
+    arm("session hooks registered in .claude/settings.json", not gone,
+        "" if not gone else "absent: " + ", ".join(gone)
+        + (f"  — re-scaffold: harness scaffold --force {ctx.repo}, then commit "
+           f".claude/settings.json" if mine else "  — NOT yours to fix: report it to your lead"))
+
     if fails and not (guard and guard.exists()):
         die(UNGUARDED, "hooksPath does not contain a usable _guard — this worktree "
                        "is UNGUARDED.\n           Failed: " + ", ".join(fails))
@@ -3065,8 +3119,24 @@ def cmd_hook_orient(a):
     global QUIET
     QUIET = True
     try:
-        sys.stdin.read()
+        payload = json.loads(sys.stdin.read() or "{}")
     except Exception:
+        payload = {}
+    # Doorbell mail first: the prompt is a moment the node's own session is
+    # certainly listening, armed or not.
+    try:
+        if not git("rev-parse", "--git-dir")[0]:
+            ctx = Ctx()
+            if ctx.binding_path.exists():
+                ctx.tree = json.loads(ctx.tree_path.read_text())
+                node, _ = ctx.node()
+                sid = payload.get("session_id") or os.environ.get("CLAUDE_CODE_SESSION_ID")
+                who = MAIL().owner(ctx.state, node)
+                if sid and (not who or who == sid) and MAIL().pending(ctx.state, node):
+                    msgs = MAIL().take(ctx.state, node, "prompt")
+                    if msgs:
+                        print(MAIL().render(msgs))
+    except (Exception, SystemExit):
         pass
     print_delta()
     sys.exit(0)
@@ -3083,15 +3153,20 @@ def cmd_hook_stop(a):
     Three things it must never do. It must never raise: a hook that errors on
     every turn is worse than no enforcement. It must never print on the allow
     path, because plain stdout on exit 0 becomes context on EVERY turn of every
-    session in the repository. And it must never block twice — `stop_hook_active`
+    session in the repository. And it must never nag twice — `stop_hook_active`
     says a block already happened this turn, and one nudge is the whole of what
-    is proportionate.
+    is proportionate. Doorbell mail is the exception: it is taken as it is shown,
+    so it can only block again for mail that arrived since.
+
+    It speaks only to the node's own session (the one in its lock), first with
+    its mail, then for an unarmed doorbell, then for what it owes.
     """
     try:
         payload = json.loads(sys.stdin.read() or "{}")
     except Exception:
         return
     again = bool(payload.get("stop_hook_active"))
+    sid = payload.get("session_id") or os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     # Not inside a git worktree is the common case for this hook: it is
     # installed per repository, but a session can sit anywhere. Ctx() calls
     # die() there, which raises SystemExit and exits 3 — a non-blocking error
@@ -3112,24 +3187,37 @@ def cmd_hook_stop(a):
             docs_apply_step(ctx, node)
         except Exception:
             pass
+        # Everything below speaks to the node's own session: the one in its
+        # lock. Another session in the same checkout (an intermediary, the
+        # documenter, the owner's own) is not the node, and until 2026-10-06 that
+        # did not matter, because no block here ever took effect (see stop_block).
+        if os.environ.get("HARNESS_INTERMEDIARY") == "1" or \
+                os.environ.get("HARNESS_DOCUMENTER") == "1":
+            return
+        who = MAIL().owner(ctx.state, node)
+        if who and sid and who != sid:
+            return
+        # Mail first, and even right after a block: a session must not go idle
+        # with a message waiting. It is taken as it is shown, so this cannot
+        # loop on the same message.
+        if sid and MAIL().pending(ctx.state, node):
+            msgs = MAIL().take(ctx.state, node, "turn end")
+            if msgs:
+                stop_block(MAIL().render(msgs))
+                return
         # The Stop right after a block carries stop_hook_active. It may launch a
         # pending reset (that is the quiet point the flush leads to) but it must
         # never block again.
         if reset_step(ctx, node, launch_only=again) or again:
             return
-        # A session without a doorbell can't be woken while idle: remind it,
-        # once per session, at the first turn end that finds it unarmed.
-        sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+        # Hooks deliver mail while the session works; only a background waiter
+        # can wake it once it is idle. So no turn ends without one running.
         if sid and not bell_armed(ctx, node, sid):
-            mark = bell_dir(ctx, node) / "reminded"
-            if (mark.read_text().strip() if mark.exists() else "") != sid:
-                mark.write_text(sid)
-                print(json.dumps({"hookSpecificOutput": {
-                    "hookEventName": "Stop", "decision": "block", "reason":
-                    "Arm your doorbell so the harness can wake you when idle: run "
-                    "`harness doorbell` with run_in_background. When it finishes, run "
-                    "`harness doorbell --read`, act on it, and arm it again."}}))
-                return
+            stop_block(
+                "Your doorbell is not armed, so nothing can wake you once you are idle. "
+                "Run `harness doorbell` with run_in_background, then end your turn. "
+                "When it finishes, run `harness doorbell --read` and act on what it says.")
+            return
         # Downward first: what this node owes the rank below. It applies to rank
         # 0 as much as anyone — main is dev's lead — which is why every row is
         # aged past a threshold, so a design conversation is not interrupted over
@@ -3142,11 +3230,9 @@ def cmd_hook_stop(a):
             lines = []
             for kind, child, task, age in owed[:4]:
                 lines.append("  " + owed_line(kind, child, task, age))
-            print(json.dumps({"hookSpecificOutput": {
-                "hookEventName": "Stop", "decision": "block", "reason":
-                f"Owed to the rank below you:{nl}"
-                + nl.join(lines) + f"{nl}"
-                + "Act on each, or say on the record why not."}}))
+            stop_block(f"Owed to the rank below you:{nl}"
+                       + nl.join(lines) + f"{nl}"
+                       + "Act on each, or say on the record why not.")
             return
         if ctx.rank(node) == 0:
             # It presents to nobody, so the upward arm below does not apply. But
@@ -3181,14 +3267,13 @@ def cmd_hook_stop(a):
                             f"{human_age(age)}:{nl}    harness status")
                 lines = [_owed(kind, label, age)
                          for kind, ident, label, age in mine[:4]]
-                print(json.dumps({"hookSpecificOutput": {
-                    "hookEventName": "Stop", "decision": "block", "reason":
+                stop_block(
                     f"You are about to stop with these still yours:{nl}{nl}"
                     + f"{nl}{nl}".join(lines) + f"{nl}{nl}"
                     + "Nobody below you may do either, and you are the node that is "
                       "never recycled — so nothing will re-orient you into noticing. "
                       "Being told is not being tasked: an answered block is finished "
-                      "when it has produced a brief or an explicit `none`."}}))
+                      "when it has produced a brief or an explicit `none`.")
             return
         rows = unreported(ctx, node)
         if not rows:
@@ -3209,10 +3294,35 @@ def cmd_hook_stop(a):
             f"record: harness blocked for something you need, or harness brief "
             f"{task} --suggest if the plan is wrong. Do not stop silently, because "
             f"nothing else in the tree can see that you are done.")
-        print(json.dumps({"hookSpecificOutput": {
-            "hookEventName": "Stop", "decision": "block", "reason": reason}}))
+        stop_block(reason)
     except (Exception, SystemExit):
         return
+
+
+def stop_block(reason):
+    """Block a turn end with a reason the session reads and acts on. Top-level
+    keys: Claude Code reads a Stop hook's `decision` there. Until 2026-10-06
+    every block here was nested in `hookSpecificOutput`, and every one was
+    ignored (main: 359 turn ends, each `preventedContinuation: false`); the
+    doorbell reminder and every owed-work nag reached nobody."""
+    print(json.dumps({"decision": "block", "reason": reason}))
+
+
+_MAIL_MOD = None
+
+
+def MAIL():
+    """harness-mail, beside this file: the one reader of doorbell mail, shared
+    by its own PostToolUse hook, the Stop hook, orientation and --read."""
+    global _MAIL_MOD
+    if _MAIL_MOD is None:
+        import importlib.machinery, importlib.util
+        p = str(Path(__file__).resolve().with_name("harness-mail"))
+        loader = importlib.machinery.SourceFileLoader("harness_mail", p)
+        spec = importlib.util.spec_from_loader("harness_mail", loader)
+        _MAIL_MOD = importlib.util.module_from_spec(spec)
+        loader.exec_module(_MAIL_MOD)
+    return _MAIL_MOD
 
 
 def lead_address(ctx, parent):
@@ -9257,6 +9367,46 @@ def cmd_blocked(a):
     print("  block, and say in your report what it does.")
 
 
+# The session hooks scaffold writes into an enrolled repo's .claude/settings.json
+# (this repo only: a harness hook has no business outside an enrolled repo, and
+# the file is committable, so it travels with the tree). Doctor checks the same
+# list, so a repo scaffolded before a hook was added says so.
+#
+# SessionStart: orientation at startup, resume and compact.
+# Stop: the one moment a member that has finished and said nothing is still
+#   reachable; it reaches the model only by blocking (see stop_block).
+# UserPromptSubmit: the per-turn orientation heartbeat. Exit-0 stdout becomes
+#   context for UserPromptSubmit, UserPromptExpansion, SessionStart and
+#   PostModelSwitch, and for everything else goes to the debug log (checked
+#   2026-09-08). It prints only what changed, so a quiet tree costs nothing.
+# PostToolUse: doorbell mail mid-turn (harness-mail, 2026-10-06). It runs after
+#   every tool call, so it is a separate stdlib-only script, silent without mail.
+SESSION_HOOKS = [
+    ("SessionStart", {"matcher": "startup|resume|compact",
+                      "hooks": [{"type": "command", "timeout": 10,
+                                 "command": "~/.claude/harness/bin/harness whoami --quiet --no-check",
+                                 "statusMessage": "Resolving harness position..."}]}),
+    ("Stop", {"hooks": [{"type": "command", "timeout": 10,
+                         "command": "~/.claude/harness/bin/harness hook-stop"}]}),
+    ("UserPromptSubmit", {"hooks": [{"type": "command", "timeout": 5,
+                                     "command": "~/.claude/harness/bin/harness hook-orient"}]}),
+    ("PostToolUse", {"hooks": [{"type": "command", "timeout": 5,
+                                "command": "~/.claude/harness/bin/harness-mail"}]}),
+]
+
+
+def session_hooks_missing(repo):
+    """The SESSION_HOOKS commands absent from the repo's .claude/settings.json."""
+    try:
+        conf = json.loads((Path(repo) / ".claude" / "settings.json").read_text())
+    except Exception:
+        conf = {}
+    have = {(ev, h.get("command")) for ev, lst in (conf.get("hooks") or {}).items()
+            for e in lst for h in e.get("hooks", [])}
+    return [f"{ev} ({h['command'].split('/')[-1]})" for ev, entry in SESSION_HOOKS
+            for h in entry["hooks"] if (ev, h["command"]) not in have]
+
+
 def cmd_scaffold(a):
     # The most tree-wide act in this CLI, and until now it was reachable — and
     # recommended in writing — from the most junior session in the tree.
@@ -9354,43 +9504,12 @@ def cmd_scaffold(a):
         except json.JSONDecodeError:
             die(REFUSED, f"{cs} exists but is not valid JSON — refusing to overwrite it")
     hooks = conf.setdefault("hooks", {})
-    ss = hooks.setdefault("SessionStart", [])
-    for e in ss:
-        e["hooks"] = [h for h in e.get("hooks", []) if "harness" not in h.get("command", "")]
-    ss[:] = [e for e in ss if e["hooks"]]
-    ss.append({"matcher": "startup|resume|compact",
-               "hooks": [{"type": "command", "timeout": 10,
-                          "command": "~/.claude/harness/bin/harness whoami --quiet --no-check",
-                          "statusMessage": "Resolving harness position..."}]})
-    # The one moment a member that has finished and said nothing is still
-    # reachable. Everything else here reaches a session when it runs a command,
-    # and the failure this catches is that it runs none: it finishes the work and
-    # ends its turn. Blocks once, names the command, then lets the stop proceed.
-    st = hooks.setdefault("Stop", [])
-    for e in st:
-        e["hooks"] = [h for h in e.get("hooks", []) if "harness" not in h.get("command", "")]
-    st[:] = [e for e in st if e["hooks"]]
-    st.append({"hooks": [{"type": "command", "timeout": 10,
-                          "command": "~/.claude/harness/bin/harness hook-stop"}]})
-    # The per-turn orientation heartbeat, and the reason it is THIS event.
-    # Checked against the reference 2026-09-08 rather than assumed: exit-0
-    # stdout becomes context for UserPromptSubmit, UserPromptExpansion,
-    # SessionStart and PostModelSwitch, and for everything else — Stop included
-    # — it goes to the debug log. So `Stop` can only reach a session by BLOCKING
-    # it, which is right for work that is owed and wrong for news; this is the
-    # channel that can simply say something.
-    #
-    # It costs nothing when nothing has changed, because it prints nothing. A
-    # line printed at turn k of an n-turn session is resent on every turn after
-    # it, so a per-turn report of STATE would be quadratic; a report of CHANGE
-    # is paid once per change and never again. Timeout is short because this is
-    # on the interactive path and it reads local JSON only.
-    up = hooks.setdefault("UserPromptSubmit", [])
-    for e in up:
-        e["hooks"] = [h for h in e.get("hooks", []) if "harness" not in h.get("command", "")]
-    up[:] = [e for e in up if e["hooks"]]
-    up.append({"hooks": [{"type": "command", "timeout": 5,
-                          "command": "~/.claude/harness/bin/harness hook-orient"}]})
+    for event, entry in SESSION_HOOKS:
+        lst = hooks.setdefault(event, [])
+        for e in lst:
+            e["hooks"] = [h for h in e.get("hooks", []) if "harness" not in h.get("command", "")]
+        lst[:] = [e for e in lst if e["hooks"]]
+        lst.append(json.loads(json.dumps(entry)))
     cs.write_text(json.dumps(conf, indent=2) + "\n")
     print(f"scaffolded {dst}")
     # It was sold as "make the hooks match" and also rewrote how every session
@@ -9401,9 +9520,10 @@ def cmd_scaffold(a):
           f"this tree,\n              because core.hooksPath is absolute. No commit "
           f"stands between the\n              copy and the effect; sessions mid-task "
           f"will not learn of it.")
-    print(f"  settings    {cs}  — a Stop hook was added or refreshed here. That "
-          f"changes how\n              every session in this project ends, which is "
-          f"not what you ran this for.")
+    print(f"  settings    {cs}  — the session hooks (Stop, prompt, start, and "
+          f"PostToolUse mail)\n              were added or refreshed here. That "
+          f"changes how every session in this\n              project ends a turn, "
+          f"which may not be what you ran this for.")
     print(f"  Both are left for you to review and commit. Uncommitted hooks in a "
           f"single-checkout\n  worktree are the worse resting state: every node runs "
           f"what HEAD does not contain,\n  and one `git reset` anywhere disarms the "
@@ -10302,7 +10422,7 @@ def hold_tell(ctx, me, task, path):
     if w and w.get("parent") == me:
         w.update(answered=line, answered_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
         waiting_path(ctx, lane).write_text(json.dumps(w, indent=2) + "\n")
-    print(f"  told {lane} (doorbell)")
+    print(f"  told {lane}: {ring_report(ctx, lane)}")
 
 
 def cmd_hold(a):
@@ -11531,8 +11651,9 @@ def cmd_ask(a):
                  "an answer rings your doorbell"))
     elif v == "to":
         ask_to(pdir, repo, path, rec, a.to, a.text)
-        print(f"sent to {a.to} (its doorbell rang); its answer wakes you. End your turn "
-              f"with `harness ask --idle` if there is nothing else to do.")
+        print(f"sent to {a.to}: {ring_report(ProjCtx(pdir, repo), a.to)}. Its answer "
+              f"wakes you. End your turn with `harness ask --idle` if there is nothing "
+              f"else to do.")
     elif v == "reply":
         ask_reply(path, rec, a.reply)
         print(f"replied on {rec['id']}; the owner sees it under the ask")
@@ -12766,13 +12887,20 @@ def cmd_documenter(a):
 
 # ── the doorbell: waking an idle session without a resume ────────────────────
 #
-# Nothing outside a session can message it, and a resume re-reads its whole
-# context. So each node session keeps `harness doorbell` running in the
-# background. It sleeps; it exits when something needs the session (a `ring`, or
-# a node that has waited on this idle one too long), and Claude Code wakes a
-# session when its background command exits (measured 2026-10-05: an idle
-# background session took a turn 19s after its shell ended). The session reads
-# why with `harness doorbell --read`, acts, and arms it again.
+# Mail is a file in doorbell/<node>/inbox/. Hooks hand it to the node's own
+# session (the one in its lock) at whatever it does next: after a tool call
+# (harness-mail, PostToolUse), at a turn end (hook-stop, which blocks with it)
+# and at a prompt (hook-orient). No arming is needed for any of that, and mail
+# is taken as it is shown, so it is shown once.
+#
+# A hook cannot wake an idle session, and nothing outside a session can message
+# it. So each node session also keeps `harness doorbell` running in the
+# background, and the Stop hook will not let a turn end without one. It sleeps;
+# it exits when mail waits (a `ring`, or a node that has waited on this idle one
+# too long), and Claude Code wakes a session when its background command exits
+# (measured 2026-10-05: an idle background session took a turn 19s after its
+# shell ended). The session reads it with `harness doorbell --read`, acts, and
+# arms it again.
 
 DOORBELL_TICK = 10              # seconds between inbox checks
 NUDGE_AFTER = 300               # a wait, and the waited-on node's quiet, before a nudge
@@ -12883,12 +13011,19 @@ def cmd_doorbell(a):
     d = bell_dir(ctx, node)
     sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     if a.read:
-        f = d / "last.json"
-        if not f.exists():
-            print("nothing has rung"); return
-        for m in json.loads(f.read_text()):
+        msgs = []
+        f = d / "last.json"                 # left by a waiter from before 2026-10-06
+        if f.exists():
+            try:
+                msgs = json.loads(f.read_text())
+            except Exception:
+                pass
+            f.unlink(missing_ok=True)
+        msgs += MAIL().take(ctx.state, node, "read")
+        if not msgs:
+            print("nothing new: a hook already showed you what rang")
+        for m in msgs:
             print(f"{m.get('at', '')[:16]}  from {m.get('from') or '?'}: {m.get('text')}")
-        f.unlink()
         print("\nArm it again: harness doorbell  (run_in_background)")
         return
     if a.status:
@@ -12907,28 +13042,22 @@ def cmd_doorbell(a):
                 print("replaced by a newer doorbell"); return
         except Exception:
             return
-        msgs = []
-        for f in sorted((d / "inbox").glob("*.json")):
-            try:
-                msgs.append(json.loads(f.read_text()))
-            except Exception:
-                pass
-            f.unlink(missing_ok=True)
-        if not msgs and time.time() - last_nudge > 60:
+        # It only wakes the session; it never takes the mail. Whatever the
+        # session does next (this exit's notice, a tool call, the turn end) has
+        # a hook that hands the mail over.
+        n = MAIL().pending(ctx.state, node)
+        if not n and time.time() - last_nudge > 60:
             last_nudge = time.time()
             try:
                 text = bell_nudge(ctx, node, sid)
             except Exception:
                 text = None
             if text:
-                msgs.append({"from": "harness", "text": text,
-                             "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")})
-        if msgs:
-            f = d / "last.json"
-            old = json.loads(f.read_text()) if f.exists() else []
-            f.write_text(json.dumps(old + msgs))
+                ring_inbox(ctx.state, node, "harness", text)
+                n = 1
+        if n:
             (d / "armed.json").unlink(missing_ok=True)
-            print(f"rang: {len(msgs)} message(s). Read them: harness doorbell --read")
+            print("rang: mail is waiting. Read it: harness doorbell --read")
             return
         time.sleep(DOORBELL_TICK)
 
@@ -12956,8 +13085,25 @@ def cmd_ring(a):
         pass
     me = me or ("documenter" if os.environ.get("HARNESS_DOCUMENTER") == "1" else "operator")
     ring_inbox(ctx.state, a.node, me, text)
-    print(f"rang {a.node}" if bell_armed(ctx, a.node) else
-          f"{a.node}'s doorbell is not armed; it reads this when it next arms one")
+    print(f"rang {a.node}: {ring_report(ctx, a.node)}")
+
+
+def ring_report(ctx, node):
+    """When a ring will be read, said plainly. The old line said 'rang' whether
+    or not anything would read it, and a ring to rank 0 sat unread (2026-10-06)."""
+    if bell_armed(ctx, node):
+        return "its doorbell is armed, so it wakes now"
+    sid = MAIL().owner(ctx.state, node)
+    try:
+        row = next((r for r in cached_roster(ctx) if sid and r.get("sessionId") == sid), None)
+    except Exception:
+        row = None
+    if not row:
+        return "it has no live session; its next session gets this at its first prompt"
+    if row.get("status") == "busy":
+        return "it is mid-turn and gets this after its next tool call"
+    return ("it is idle with no doorbell armed, so it gets this at its next prompt — "
+            "nothing wakes it sooner")
 
 
 

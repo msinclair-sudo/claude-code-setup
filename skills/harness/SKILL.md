@@ -30,7 +30,9 @@ top lead  → harness + harness-downward + harness-root
 
 ## Your doorbell
 
-Nothing outside a session can message it, so keep `harness doorbell` running in the background (`run_in_background`) from the moment you claim. It exits when you are needed: someone ran `harness ring <node> "..."`, or a node has waited on you, idle, for five minutes. When it finishes, run `harness doorbell --read`, act on what it says, and arm it again. To wake another node, `harness ring <node> "..."`.
+Messages to your node (`harness ring <node> "..."`, a presentation, a hold, a finished check) reach you through hooks: after your next tool call, at your turn end, or at your next prompt, marked "Doorbell — N message(s)". Act on them when they appear; each is shown once.
+
+A hook can't wake you once you're idle, so keep `harness doorbell` running in the background (`run_in_background`) from the moment you claim; the Stop hook won't let a turn end without one. It exits when mail waits, or when a node has waited on you, idle, for five minutes. When it finishes, run `harness doorbell --read`, act on what it says, and arm it again. To reach another node, `harness ring <node> "..."`; it tells you when that node will read it.
 
 ## Prose goes in on stdin, not in quotes
 

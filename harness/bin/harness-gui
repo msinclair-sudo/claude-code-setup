@@ -994,8 +994,11 @@ min-width:76px;text-align:center}
 .abody dt{color:var(--none);font-size:10px;text-transform:uppercase;letter-spacing:.08em}
 .abody dd{margin:1px 0 8px;white-space:pre-wrap;overflow-wrap:anywhere}
 .abody ol{margin:0;padding-left:20px}
-.adraft{width:100%;min-height:70px;background:#0e1109;color:var(--ink);
-border:1px solid var(--line);padding:7px;font:inherit;resize:vertical}
+/* The draft is as tall as its text, always (owner, 2026-10-06): field-sizing
+   where the browser has it, fitDrafts() where it does not. */
+.adraft{width:100%;box-sizing:border-box;min-height:calc(1.5em + 16px);background:#0e1109;
+color:var(--ink);border:1px solid var(--line);padding:7px;font:inherit;line-height:1.5;
+resize:none;overflow:hidden;field-sizing:content}
 .adraft[readonly]{color:var(--dim)}
 .arun{display:flex;gap:8px;align-items:flex-start;margin:4px 0}
 .arun button.cp{margin-top:0;padding:5px 10px}
@@ -2001,7 +2004,7 @@ function askItem(slug, a) {
         sec('Recommendation', b.recommendation) +
         sec('Waiting', b.waiting) +
         '<dt>Draft ruling</dt><dd style="white-space:normal">' +
-        '<textarea class="adraft" readonly data-akey="' + esc(k) + '" data-raw="' +
+        '<textarea class="adraft" rows="1" readonly data-akey="' + esc(k) + '" data-raw="' +
         esc(a.draft || '') + '" placeholder="no draft yet &mdash; Edit to write your own">' +
         esc(a.draft || '') + '</textarea></dd></dl>' +
         '<div class="row"><button data-aacc="' + esc(k) + '"' +
@@ -2152,7 +2155,7 @@ document.addEventListener('click', e => {
       ta.readOnly = false; holdDraft(ta); ed.textContent = 'Revert'; ta.focus();
     } else {
       ta.value = ta.dataset.raw || ''; ta.readOnly = true; ed.textContent = 'Edit';
-      freeDraft(ed.dataset.aedit); syncAccept(ta);
+      freeDraft(ed.dataset.aedit); syncAccept(ta); fitDraft(ta);
     }
     return;
   }
@@ -2201,8 +2204,18 @@ document.addEventListener('click', e => {
     return;
   }
 });
+// A browser without field-sizing sizes the draft by hand: shrink, then grow to
+// the text. Run after every paint and keystroke; a collapsed item has no body.
+const FIELD_SIZING = window.CSS && CSS.supports && CSS.supports('field-sizing', 'content');
+function fitDraft(ta) {
+  if (FIELD_SIZING || !ta) return;
+  ta.style.height = 'auto';
+  ta.style.height = (ta.scrollHeight + 2) + 'px';
+}
+function fitDrafts() { document.querySelectorAll('.adraft').forEach(fitDraft); }
+window.addEventListener('resize', fitDrafts);
 document.addEventListener('input', e => {
-  if (e.target.classList.contains('adraft')) syncAccept(e.target);
+  if (e.target.classList.contains('adraft')) { syncAccept(e.target); fitDraft(e.target); }
   if (e.target.classList.contains('ofilter')) {
     FILTER = e.target.value;
     // Polls are held while the filter has focus, so it re-filters by hand.
@@ -2317,7 +2330,7 @@ function paint(h) {
   // to patch into. This is the only path that rebuilds, and it is rare.
   if (keys(tpl) !== keys(root)) {
     root.innerHTML = h;
-    drawWaits();
+    drawWaits(); fitDrafts();
     return;
   }
   Array.prototype.forEach.call(tpl.querySelectorAll('[data-live]'), fresh => {
@@ -2326,7 +2339,7 @@ function paint(h) {
     if (cur.className !== fresh.className) cur.className = fresh.className;
     if (cur.innerHTML !== fresh.innerHTML) cur.innerHTML = fresh.innerHTML;
   });
-  drawWaits();
+  drawWaits(); fitDrafts();
 }
 tick(); setInterval(tick, 3000);
 </script></body></html>"""

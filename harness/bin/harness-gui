@@ -708,6 +708,7 @@ def read_state():
                          "asks": asks, "rulings": rulings,
                          "intermediary": intermediary(rows, repo, asks, pdir),
                          "tests": tests_queue(pdir, repo),
+                         "halt": CLI._read_json(Path(pdir) / "halt.json"),
                          "documenter": documenter(rows, pdir, repo, asks,
                                                   next((n for n, sp in tree.items()
                                                         if not sp.get("parent")), None)),
@@ -806,6 +807,8 @@ border-left:1px solid var(--line);width:0;height:22px}
 .waits path.held{stroke:var(--held);stroke-dasharray:6 4}
 .waits path.msg{stroke:var(--wait);stroke-width:1.6;stroke-dasharray:2 4;stroke-linecap:round}
 .ln.mail{color:var(--warn)}
+.halt{border:1px solid var(--warn);background:var(--warnbg);color:var(--warn);border-radius:8px;
+padding:8px 12px;margin:6px 0 10px;font-weight:600}
 .waits path.test{stroke:var(--busy);stroke-width:1.6;stroke-dasharray:2 4;stroke-linecap:round}
 .tq{margin-top:4px;border-top:1px solid var(--line);padding-top:3px}
 .tqh{color:var(--dim);font-size:10px;letter-spacing:.05em;text-transform:uppercase}
@@ -1574,6 +1577,16 @@ document.addEventListener('click', e => {
 
 // The project's documenter (T18): a run per job, so the card says what it did
 // last and what is pending, not whether a session is up.
+// The owner halted the tree (owner, 2026-10-06): nothing new starts until they
+// resume it, so the board says so above everything else.
+function haltBanner(p) {
+  const h = p.halt;
+  if (!h) return '';
+  return '<div class="halt" data-live="halt:' + esc(p.slug) + '">HALTED at ' +
+    esc((h.at || '').slice(11, 16)) + ' &middot; ' + esc(h.why || '') +
+    ' &middot; nothing new starts. <code>harness resume</code> ends it.</div>';
+}
+
 function docCard(p) {
   // Laid out like the other cards: one status line saying what it is doing or
   // waiting on, then the budget it works against, then the latest batch only.
@@ -1769,7 +1782,7 @@ async function tick() {
   h += d.projects.map((p, pi) => {
     p.nodes.forEach(n => n._slug = p.slug);
     return '<div class="proj"><h2>' + esc(p.project) + '</h2>' +
-      '<div class="repo">' + esc(p.repo) + '</div>' +
+      '<div class="repo">' + esc(p.repo) + '</div>' + haltBanner(p) +
       // No side panel (owner, 2026-10-05): the tree and its side cards take the
       // width. The charter is still edited with `harness charter`.
       '<div class="treecol">' +

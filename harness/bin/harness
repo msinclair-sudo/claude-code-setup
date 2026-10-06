@@ -1244,6 +1244,10 @@ def _whoami(a):
         # The scope in full (owner, 2026-10-06): this runs at every start,
         # resume and compaction, so no session works without it, attended ones
         # included. It replaces a 64-character line and a pointer.
+        if halted(ctx):
+            h = halted(ctx)
+            print(f"HALTED   by the owner at {h.get('at', '')[11:16]}: {h.get('why')}. Nothing "
+                  f"new starts; write what you hold into the records and wait.")
         _, ch = load_charter(ctx)
         txt = ((ch.get("description") or {}).get("text") or "").strip()
         if txt or ch.get("features"):
@@ -1784,6 +1788,68 @@ def _position(a):
     print(line)
 
 
+# ── the halt: the owner stops the tree (owner, 2026-10-06) ───────────────────
+#
+# Issues far outside the project's scope mean the tree is drifting: agents
+# looping and making tasks out of nothing. The owner can stop it all, from an
+# out-of-scope item or a shell. Nothing new starts while it stands; what is
+# running finishes its current command, writes down what it holds, and waits.
+
+def halt_path(ctx):
+    return Path(ctx.state) / "halt.json"
+
+
+def halted(ctx):
+    """The halt record, or None."""
+    try:
+        return json.loads(halt_path(ctx).read_text())
+    except Exception:
+        return None
+
+
+def refuse_if_halted(ctx, what):
+    h = halted(ctx)
+    if h:
+        die(REFUSED, f"the owner halted the tree at {h.get('at', '')[11:16]}: {h.get('why')}.\n"
+                     f"           {what} waits until they resume it (harness resume). Write what "
+                     f"you hold into the records, then end your turn.")
+
+
+def cmd_halt(a):
+    """`harness halt --why` / `harness resume`: the owner's, from a shell or the GUI."""
+    ctx = Ctx(); ctx.require_enrolled()
+    if os.environ.get("CLAUDE_CODE_SESSION_ID"):
+        die(REFUSED, "halting the tree is the owner's: a shell, or the GUI's out-of-scope item")
+    nodes = list(ctx.tree["nodes"])
+    if a.resume:
+        h = halted(ctx)
+        if not h:
+            print("the tree is not halted"); return
+        halt_path(ctx).unlink(missing_ok=True)
+        try:
+            if testq_jobs(ctx, ("queued",)):
+                testq_ensure_runner(ctx)
+        except Exception:
+            pass
+        for n in nodes:
+            ring_inbox(ctx.state, n, "owner", f"the owner resumed the tree (halted at "
+                       f"{h.get('at', '')[11:16]}: {h.get('why')}). Carry on with your queue.")
+        print(f"resumed; {len(nodes)} node(s) told")
+        return
+    why = (a.why or "").strip()
+    if not why:
+        die(REFUSED, 'say why: harness halt --why "the work has left the charter"')
+    rec = {"by": "owner", "why": why, "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+           "ask": a.ask}
+    halt_path(ctx).write_text(json.dumps(rec, indent=2) + "\n")
+    for n in nodes:
+        ring_inbox(ctx.state, n, "owner", f"the owner HALTED the tree: {why}. Finish the command "
+                   f"you are in, write what you hold into the records (harness note, brief "
+                   f"comments), then end your turn and wait. Nothing new starts until they resume.")
+    print(f"halted: {why}\n  {len(nodes)} node(s) told. Nothing new starts; the running test "
+          f"finishes. harness resume ends it.")
+
+
 def cmd_spawn(a):
     """Launch one correctly-named background session per unoccupied node.
 
@@ -1792,6 +1858,8 @@ def cmd_spawn(a):
     is told where it is. Attach later with `claude attach <id>`.
     """
     ctx = Ctx(); ctx.require_enrolled()
+    if not getattr(a, "dry_run", False):
+        refuse_if_halted(ctx, "spawning")
     idx = load_index(ctx, refresh=True)
     rows = live_rows(agents_json(read_roster(a.roster)))
     by_wt = idx["byWorktree"]
@@ -2935,10 +3003,19 @@ def queue_items(ctx, node):
     — which is correct: it is news the second time too.
     """
     out = {}
+    h = halted(ctx)
+    if h:
+        out[f"halt:{h.get('at')}"] = (f"HALTED by the owner at {h.get('at', '')[11:16]}: "
+                                      f"{h.get('why')} — nothing new starts; write what you hold "
+                                      f"and wait")
     # Work that serves no charter feature is drift until rank 0 maps it or drops
     # it (owner, 2026-10-06: tasks created out of nothing).
     try:
         if ctx.rank(node) == 0:
+            for a_, b_, n1, n2 in drift_loops(ctx):
+                out[f"loop:{a_}:{b_}:{int(time.time() // LOOP_WINDOW)}"] = (
+                    f"{a_} and {b_} have rung each other {n1}/{n2} times in the last hour — a "
+                    f"loop? Read both nodes' notes; if nothing is landing, stop it")
             for t, n in untraced_briefs(ctx):
                 out[f"untraced:{t}"] = (f"'{t}' ({n}) serves no charter feature — harness brief "
                                         f"{t} --feature <name>, or drop it as out of scope")
@@ -3272,6 +3349,19 @@ def cmd_hook_stop(a):
             if msgs:
                 stop_block(MAIL().render(msgs))
                 return
+        # The owner halted the tree: said once per halt to each session, at its
+        # turn end, so it writes down what it holds and stops (owner, 2026-10-06).
+        h = halted(ctx)
+        if h and sid and not again:
+            told = bell_dir(ctx, node) / "halt_told"
+            key = f"{sid}:{h.get('at')}"
+            if (told.read_text().strip() if told.exists() else "") != key:
+                told.write_text(key)
+                stop_block(f"The owner halted the tree: {h.get('why')}. Write anything you hold "
+                           f"only in context into the records (harness note <task> --add -, brief "
+                           f"comments), then end your turn and wait. Nothing new starts until "
+                           f"they resume.")
+                return
         # The Stop right after a block carries stop_hook_active. It may launch a
         # pending reset (that is the quiet point the flush leads to) but it must
         # never block again.
@@ -3586,6 +3676,8 @@ def cmd_mark(a):
     node, _ = ctx.node()
     f = ctx.state_file("marks", a.task, ".json")
     f.parent.mkdir(parents=True, exist_ok=True)
+    if not (a.done or a.close or a.abandon or a.requeue_after):
+        refuse_if_halted(ctx, f"opening '{a.task}'")
 
     if a.done:
         # The MEMBER presents, and the measurement is taken here rather than at
@@ -4546,6 +4638,8 @@ def cmd_check(a):
     node, _ = ctx.node()
     if a.set_baseline:
         return set_baseline(ctx, node, a.why)
+    if not a.report:
+        refuse_if_halted(ctx, "a new check")
     try:
         sys.stdout.reconfigure(line_buffering=True)
     except Exception:
@@ -4825,6 +4919,10 @@ def _testd_loop(ctx):
     signal.signal(signal.SIGUSR1, on_cancel)
     idle_since = time.time()
     while True:
+        if halted(ctx):
+            # The owner halted the tree: the running job has finished; start no
+            # new one. `resume` starts a runner again (owner, 2026-10-06).
+            print(f"{_now()} the tree is halted; runner exits"); return
         q = testq_order(testq_jobs(ctx, ("queued",)))
         if not q:
             if time.time() - idle_since > TESTQ_IDLE:
@@ -5067,6 +5165,7 @@ def cmd_test(a):
         f = testq_dir(ctx) / f"{hit[-1]['id']}.log"
         print(f.read_text() if f.exists() else "no log yet"); return
     if cmd:
+        refuse_if_halted(ctx, "a new test job")
         node, _ = ctx.node()
         sha = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
         rc, dirt, _ = git("status", "--porcelain", "--untracked-files=no", cwd=ctx.worktree)
@@ -5843,6 +5942,8 @@ def cmd_recycle(a):
     worktree made with `git worktree add`; measured 2026-10-05.)
     """
     ctx = Ctx(); ctx.require_enrolled()
+    if not (getattr(a, "cancel_reset", False) or getattr(a, "dry_run", False)):
+        refuse_if_halted(ctx, "recycling")
     if a.at_quiet or a.cancel_reset:
         return request_reset(ctx, a.node, a.by, a.within, a.dry_run, a.cancel_reset)
     idx = load_index(ctx, refresh=True)
@@ -8151,6 +8252,39 @@ def untraced_briefs(ctx):
     return sorted(out)
 
 
+LOOP_MIN = 4            # messages each way within LOOP_WINDOW before it reads as a loop
+LOOP_WINDOW = 3600
+
+
+def drift_loops(ctx, now=None):
+    """Pairs of nodes ringing each other back and forth: [(a, b, n_ab, n_ba)],
+    from each node's delivered mail in the last hour. Two sessions answering
+    each other with nothing landing is how tasks get made out of nothing
+    (owner, 2026-10-06)."""
+    now = now or time.time()
+    got = {}
+    for n in ctx.tree["nodes"]:
+        f = Path(ctx.state) / "doorbell" / n / "delivered.jsonl"
+        try:
+            lines = f.read_text().splitlines()[-400:]
+        except OSError:
+            continue
+        for line in lines:
+            try:
+                m = json.loads(line)
+            except Exception:
+                continue
+            frm = m.get("from")
+            if frm in ctx.tree["nodes"] and now - (_epoch(m.get("at")) or 0) <= LOOP_WINDOW:
+                got[(frm, n)] = got.get((frm, n), 0) + 1
+    out = []
+    for (a_, b_), n_ab in got.items():
+        n_ba = got.get((b_, a_), 0)
+        if a_ < b_ and n_ab >= LOOP_MIN and n_ba >= LOOP_MIN:
+            out.append((a_, b_, n_ab, n_ba))
+    return sorted(out)
+
+
 def resolve_feature(ctx, name):
     """A charter feature's key from its key or its name, or None."""
     _, ch = load_charter(ctx)
@@ -8246,6 +8380,7 @@ def cmd_brief(a):
                      "\"...\" —\n           coupling two tasks does not write the "
                      "second one for you.")
     if a.write is not None:
+        refuse_if_halted(ctx, "writing a brief")
         if target is None:
             die(REFUSED, f"no brief for '{a.task}' yet and no node named — "
                          f"say who it is for: harness brief {a.task} --for <node> --write ...")
@@ -14032,6 +14167,12 @@ def main():
     rg = add("ring", cmd_ring)
     rg.add_argument("node")
     rg.add_argument("text", nargs="+")
+    hl = add("halt", cmd_halt)
+    hl.add_argument("--why", metavar="TEXT")
+    hl.add_argument("--ask", metavar="ID", help=argparse.SUPPRESS)
+    hl.set_defaults(resume=False)
+    rs = add("resume", cmd_halt)
+    rs.set_defaults(resume=True, why=None, ask=None)
     rcy = add("recycle", cmd_recycle)
     rcy.add_argument("node", nargs="*", help="nodes to restart with fresh context")
     rcy.add_argument("--children", action="store_true", help="every child of this node")

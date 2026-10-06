@@ -1438,6 +1438,86 @@ class ScopeFrame(unittest.TestCase):
             self.assertNotIn("untraced:old", hz.queue_items(self.ctx, "main"))
 
 
+class Halt(unittest.TestCase):
+    """Owner, 2026-10-06: the owner can halt the whole tree when work leaves scope."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev"})
+        self.ctx.require_enrolled = lambda: None
+        self.err = mock.patch("sys.stderr", new_callable=io.StringIO)
+        self.err.start(); self.addCleanup(self.err.stop)
+
+    def halt(self, sid=None, resume=False, why="drifted"):
+        env = {"CLAUDE_CODE_SESSION_ID": sid} if sid else {}
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.dict(os.environ, env, clear=False), redirect_stdout(io.StringIO()):
+            if not sid:
+                os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
+            hz.cmd_halt(mock.Mock(resume=resume, why=why, ask=None))
+
+    def test_only_the_owner_halts_and_every_node_is_told(self):
+        with self.assertRaises(SystemExit):
+            self.halt(sid="s" * 36)
+        self.halt()
+        self.assertEqual(hz.halted(self.ctx)["why"], "drifted")
+        for n in ("main", "dev", "dev_1"):
+            self.assertTrue(list((self.ctx.dir / "doorbell" / n / "inbox").glob("*.json")))
+        with self.assertRaises(SystemExit):
+            hz.refuse_if_halted(self.ctx, "spawning")
+        self.assertIn("halted the tree", sys.stderr.getvalue())
+        self.assertIn("halt:", "".join(hz.queue_items(self.ctx, "dev_1")))
+        with mock.patch.object(hz, "testq_jobs", return_value=[]):
+            self.halt(resume=True)
+        self.assertIsNone(hz.halted(self.ctx))
+        hz.refuse_if_halted(self.ctx, "spawning")                     # no longer refused
+
+    def test_the_runner_starts_nothing_while_halted(self):
+        self.halt()
+        c = hz.ProjCtx(self.ctx.dir, self.ctx.dir)
+        with mock.patch.object(hz, "testq_recover"), \
+             mock.patch.object(hz, "testq_jobs", side_effect=AssertionError("picked a job")), \
+             mock.patch("signal.signal"), redirect_stdout(io.StringIO()) as o:
+            hz._testd_loop(c)
+        self.assertIn("halted; runner exits", o.getvalue())
+
+    def test_the_stop_hook_says_it_once_per_halt(self):
+        self.halt()
+        self.ctx.tree_path = self.ctx.dir / "tree.json"; self.ctx.tree_path.write_text("{}")
+        self.ctx.binding_path = self.ctx.dir / "binding.json"; self.ctx.binding_path.write_text("{}")
+        self.ctx.tree_path.write_text(json.dumps(self.ctx.tree))
+        def stop():
+            o = io.StringIO()
+            with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+                 mock.patch.object(hz, "git", return_value=(0, "", "")), \
+                 mock.patch.object(hz, "docs_apply_step"), \
+                 mock.patch.object(hz, "bell_armed", return_value={"pid": 1}), \
+                 mock.patch.object(hz, "lead_owes", return_value=[]), \
+                 mock.patch.object(hz, "unreported", return_value=[]), \
+                 mock.patch.object(hz, "turn_texts", return_value=[]), \
+                 mock.patch("sys.stdin", io.StringIO(json.dumps({"session_id": "s1"}))), \
+                 redirect_stdout(o):
+                for k in list(hz.MAIL().take(self.ctx.state, "dev_1", "t")):
+                    pass
+                hz.cmd_hook_stop(mock.Mock())
+            return o.getvalue()
+        self.ctx.me = "dev_1"
+        self.assertIn("halted the tree", stop())
+        self.assertEqual(stop(), "")
+
+    def test_a_ping_pong_between_two_nodes_reads_as_a_loop(self):
+        at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        for frm, to in (("dev", "main"), ("main", "dev")):
+            d = self.ctx.dir / "doorbell" / to
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "delivered.jsonl").write_text("\n".join(
+                json.dumps({"from": frm, "text": "x", "at": at}) for _ in range(5)) + "\n")
+        self.assertEqual(hz.drift_loops(self.ctx), [("dev", "main", 5, 5)])
+        with mock.patch.object(hz, "lead_owes", return_value=[]), \
+             mock.patch.object(hz, "rank0_owes", return_value=[]), \
+             mock.patch.object(hz, "untraced_briefs", return_value=[]):
+            self.assertTrue(any(k.startswith("loop:dev:main") for k in hz.queue_items(self.ctx, "main")))
+
+
 class Intermediary(unittest.TestCase):
     """T17: one intermediary per project, its reach that project only."""
 

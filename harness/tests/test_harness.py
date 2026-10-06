@@ -2786,6 +2786,21 @@ class ItemMessages(unittest.TestCase):
                 code = e.code
         return code, wake, close
 
+    def test_msg_from_a_session_names_its_node(self):
+        # obs 93: a bare Ctx() has no tree until require_enrolled(); --msg from
+        # any session crashed, and it is the one answer route to an intermediary.
+        class C:
+            def require_enrolled(self):
+                self.tree = {"nodes": {"main": {}}}
+            def node(self):
+                return "main", self.tree["nodes"]["main"]
+        with mock.patch.object(hz, "Ctx", C):
+            code, wake, _ = self.cli(["t-1", "--msg", "the answer"],
+                                     {"CLAUDE_CODE_SESSION_ID": "s" * 36})
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(self.path.read_text())["thread"][-1]["by"], "main")
+        wake.assert_called_once()
+
     def test_scoping_and_closing(self):
         im = {"HARNESS_INTERMEDIARY": "1", "HARNESS_ASK": "t-2"}
         code, _, _ = self.cli(["t-1", "--reply", "x"], im)           # not its ask

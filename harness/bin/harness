@@ -11685,9 +11685,12 @@ def cmd_ask(a):
         if os.environ.get("HARNESS_DOCUMENTER") == "1":
             by = "documenter"
         elif sid:
+            # The tree must be loaded before node() can read it (obs 93: a bare
+            # Ctx() crashed every --msg from a session, the one answer route).
             try:
-                by, _ = Ctx().node()
-            except SystemExit:
+                c = Ctx(); c.require_enrolled()
+                by, _ = c.node()
+            except (SystemExit, Exception):
                 by = f"session {sid[:8]}"
         ask_msg(path, rec, by, a.msg)
         how = ("Answer the owner with `harness ask {i} --reply \"...\"`; it shows under the ask."

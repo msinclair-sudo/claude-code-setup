@@ -1588,7 +1588,28 @@ class StopKind(unittest.TestCase):
 
     def test_reply_to_operator(self):
         self.assertEqual(self.run_(self.U("go"), self.A(self.TXT), self.END),
-                         {"kind": "reply", "on": "", "said": ""})
+                         {"kind": "reply", "on": "", "said": "", "messaged": False,
+                          "opener": ""})
+
+    def test_waiting_means_it_messaged_someone_else(self):
+        # Owner, 2026-10-06: waiting is having messaged a node for an answer.
+        msg = '<cross-session-message from="uds:/r/9.sock" from-name="proj-dev">hi'
+        send = lambda to: {"type": "tool_use", "name": "SendMessage",
+                           "input": {"to": to, "summary": "q"}}
+        res = {"type": "user", "message": {"content": [{"type": "tool_result"}]}}
+        # a turn that ended without a message is at rest, whoever opened it
+        self.assertIsNone(hz.stop_wait_on(self.run_(self.U(msg), self.A(self.TXT), self.END)))
+        note = "<task-notification><status>completed</status></task-notification>"
+        st = self.run_(self.U(note), self.A(self.TXT), self.END)
+        self.assertIsNone(hz.stop_wait_on(st))
+        self.assertEqual(st["on"], "")
+        # answering whoever opened the turn is not waiting on them
+        self.assertIsNone(hz.stop_wait_on(
+            self.run_(self.U(msg), self.A(send("proj-dev")), res, self.A(self.TXT), self.END)))
+        # asking someone else is
+        self.assertEqual(hz.stop_wait_on(
+            self.run_(self.U(msg), self.A(send("proj-dev_1")), res, self.A(self.TXT), self.END)),
+            "proj-dev_1")
 
     def test_reply_to_the_session_that_prompted_it(self):
         msg = '<cross-session-message from="uds:/r/9.sock" from-name="proj-dev">hi'
@@ -2008,6 +2029,36 @@ class Held(unittest.TestCase):
         self.assertEqual(b["held"], [])                   # mid-task: working, not held
         self.assertEqual(c["held"], [{"task": "tc", "until": "00:05Z (in 3h)"}])
         self.assertEqual(d["held"], [])                   # nothing queued
+
+    def test_held_by_is_always_another_node_that_must_act(self):
+        # Owner, 2026-10-06: held by means another node must do something first.
+        gp = Path(__file__).resolve().parents[1] / "bin" / "harness-gui"
+        ld = importlib.machinery.SourceFileLoader("harness_gui", str(gp))
+        gui = importlib.util.module_from_spec(importlib.util.spec_from_loader("harness_gui", ld))
+        ld.exec_module(gui)
+        cctx = mock.Mock(tree={"nodes": {"lead": {}, "a": {"parent": "lead"},
+                                         "w": {"parent": "lead"}}})
+        nodes = [{"name": "a", "tasks": []}, {"name": "lead", "tasks": []},
+                 {"name": "w", "tasks": []}]
+        why = {"ta": ["after own (briefed on a)"], "own": ["after x (open on w)"],
+               "tb": ["after p (presented on w)"], "tc": ["after solo (briefed on a)"]}
+        briefs = {"own": {"task": "own"}, "solo": {"task": "solo"}}
+        q = {"a": [{"task": "ta"}], "lead": [], "w": []}
+        with mock.patch.object(gui.CLI, "queue", lambda c, n: q[n]), \
+             mock.patch.object(gui.CLI, "startable", lambda c, n: []), \
+             mock.patch.object(gui.CLI, "load_brief", lambda c, t: (None, briefs.get(t))), \
+             mock.patch.object(gui.CLI, "waits_on", lambda c, b: why.get((b or {}).get("task"), [])):
+            gui.mark_held(cctx, nodes)
+            self.assertEqual(nodes[0]["held"],                # its own task, followed
+                             [{"task": "ta", "after": "x", "state": "open", "by": "w"}])
+            q["a"] = [{"task": "tb"}]
+            gui.mark_held(cctx, nodes)
+            self.assertEqual(nodes[0]["held"], [{"task": "tb", "after": "p", "state": "presented",
+                                                 "by": "lead", "worker": "w"}])
+            self.assertEqual(nodes[1]["holding"], [{"node": "a", "after": "p", "signoff": "w"}])
+            q["a"] = [{"task": "tc"}]
+            gui.mark_held(cctx, nodes)
+            self.assertEqual(nodes[0]["held"], [])        # only its own ordering: not held
 
 
 class SessionModel(unittest.TestCase):

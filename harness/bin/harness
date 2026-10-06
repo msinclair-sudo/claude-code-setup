@@ -298,7 +298,7 @@ def stop_detail(row, rows=None, tail=256 * 1024):
             lines = fh.read().decode("utf-8", "replace").splitlines()
     except OSError:
         return None
-    kind, on, said = None, None, ""
+    kind, on, said, messaged, opener = None, None, "", False, None
     for line in reversed(lines):
         try:
             e = json.loads(line)
@@ -324,6 +324,7 @@ def stop_detail(row, rows=None, tail=256 * 1024):
                 if on is None and x.get("name") == "SendMessage":
                     i = x.get("input") or {}
                     on, said = str(i.get("to") or ""), str(i.get("summary") or "")
+                    messaged = True
             continue
         if typ == "user":
             if kind is None:
@@ -331,18 +332,21 @@ def stop_detail(row, rows=None, tail=256 * 1024):
             if isinstance(c, list) and any(isinstance(x, dict) and
                                            x.get("type") == "tool_result" for x in c):
                 continue
+            text = c if isinstance(c, str) else " ".join(
+                x.get("text") or "" for x in c or [] if isinstance(x, dict))
+            hit = FROM_NAME.search(text)
+            if not hit and e.get("isMeta"):
+                continue                   # injected context, not the prompt
+            opener = hit.group(1) if hit else ""
+            if not hit and text.strip() and text.strip() == job_intent(row):
+                # The harness's own launch prompt, not the owner's words: a
+                # lane started by spawn or recycle answers to its lead
+                # (2026-10-05: dev_tests_1 read "waiting on you").
+                opener = LAUNCHED
+            elif not hit and text.lstrip().startswith("<task-notification>"):
+                opener = "@task"           # its own background command ended
             if on is None:
-                text = c if isinstance(c, str) else " ".join(
-                    x.get("text") or "" for x in c or [] if isinstance(x, dict))
-                hit = FROM_NAME.search(text)
-                if not hit and e.get("isMeta"):
-                    continue               # injected context, not the prompt
-                on = hit.group(1) if hit else ""
-                if not hit and text.strip() and text.strip() == job_intent(row):
-                    # The harness's own launch prompt, not the owner's words: a
-                    # lane started by spawn or recycle answers to its lead
-                    # (2026-10-05: dev_tests_1 read "waiting on you").
-                    on = LAUNCHED
+                on = opener
             break
     if kind == "reply" and on is None and not whole:
         # The turn began before the tail: a lane that worked its whole queue in
@@ -359,7 +363,26 @@ def stop_detail(row, rows=None, tail=256 * 1024):
         by_pid = next((r.get("name") for r in rows or []
                        if pid and str(r.get("pid")) == pid.group(1)), None)
         on = hit.group(1) if hit else by_pid or "an exited session"
-    return {"kind": "reply", "on": on or "", "said": said}
+    if on == "@task":
+        on = ""
+    return {"kind": "reply", "on": on or "", "said": said, "messaged": messaged,
+            "opener": opener}
+
+
+def stop_wait_on(st):
+    """Who a finished turn is waiting on, or None when it is not waiting.
+
+    Waiting means it messaged someone and wants an answer (owner, 2026-10-06).
+    A turn that ended without a SendMessage is at rest, whoever opened it; one
+    whose last message went back to whoever opened the turn answered them. The
+    old rule called every finished turn a wait on whoever had spoken last, so a
+    lane that woke for its doorbell, read it and re-armed read as waiting.
+    """
+    if not st or st.get("kind") != "reply" or not st.get("messaged"):
+        return None
+    if st.get("opener") and st.get("on") == st.get("opener"):
+        return None
+    return st.get("on")
 
 
 def self_row(rows):
@@ -972,10 +995,10 @@ def _whoami(a):
                 st = stop_detail(r, _rows)
                 if st and st["kind"] == "reply":
                     # A finished turn: a wait nobody recorded. Yours only when
-                    # its last word went to you.
-                    on = (node if st["on"] == LAUNCHED else
-                          next((_bw.get(x.get("cwd", "")) for x in _rows
-                                if x.get("name") == st["on"]), None))
+                    # it messaged you and you did not open the turn.
+                    w = stop_wait_on(st)
+                    on = w and next((_bw.get(x.get("cwd", "")) for x in _rows
+                                     if x.get("name") == w), None)
                     if on == node:
                         print(f"WAITING  {child} finished its turn and is waiting on "
                               f"you" + (f": {st['said']}" if st["said"] else "")
@@ -2376,8 +2399,7 @@ def cmd_idle(a):
                             "name": r.get("name"), "age": age, "carry": carry,
                             "held": held, "sid": (r.get("sessionId") or "")[:8],
                             "stopped": is_stopped(r) and not reply, "stop": st,
-                            "on": ((ctx_parent(idx, node) or "its lead") if st["on"] == LAUNCHED
-                                   else st["on"] or "you") if reply else None})
+                            "on": stop_wait_on(st) if reply else None})
     if not out:
         print("no idle sessions holding a node"); return
     # Stopped first and unconditionally, whatever their age. Every other row
@@ -12966,8 +12988,8 @@ def waiters_on(ctx, node, rows):
         st = stop_detail(r, rows)
         if not st or st["kind"] != "reply":
             continue
-        on = ((idx.get("nodes") or {}).get(w) or {}).get("parent") if st["on"] == LAUNCHED else \
-            next((bw.get(x.get("cwd", "")) for x in rows if x.get("name") == st["on"]), None)
+        to = stop_wait_on(st)
+        on = to and next((bw.get(x.get("cwd", "")) for x in rows if x.get("name") == to), None)
         if on != node:
             continue
         age, _ = last_turn(r.get("sessionId") or "")
@@ -13076,8 +13098,12 @@ def cmd_ring(a):
     if a.node not in ctx.tree["nodes"]:
         die(REFUSED, f"'{a.node}' is not a node")
     text = " ".join(a.text).strip()
+    if text == "-":
+        # Prose goes in on stdin (the harness skill). A ring of "-" arrived as a
+        # bare dash (dev, 2026-10-06).
+        text = sys.stdin.read().strip()
     if not text:
-        die(REFUSED, 'say why: harness ring <node> "..."')
+        die(REFUSED, 'say why: harness ring <node> "..."  (or - and the text on stdin)')
     me = None
     try:
         me, _ = ctx.node()

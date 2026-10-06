@@ -212,15 +212,37 @@ def mark_held(cctx, nodes):
         if not q or CLI.startable(cctx, n["name"]):
             continue
         for r in CLI.waits_on(cctx, q[0]):
-            m = re.match(r"after (\S+) \(([\w ]+) on ([^)]+)\)", r)
-            if m:
-                n["held"].append({"task": q[0]["task"], "after": m.group(1),
-                                  "state": m.group(2), "by": m.group(3)})
-                if m.group(3) in by_name:
-                    by_name[m.group(3)]["holding"].append({"node": n["name"],
-                                                           "after": m.group(1)})
-            elif r.startswith("until "):
+            if r.startswith("until "):
                 n["held"].append({"task": q[0]["task"], "until": r[6:]})
+                continue
+            for h in held_by(cctx, n["name"], r, set()):
+                n["held"].append(dict(h, task=q[0]["task"]))
+                if h["by"] in by_name:
+                    by_name[h["by"]]["holding"].append(dict(
+                        {"node": n["name"], "after": h["after"]},
+                        **({"signoff": h["worker"]} if h.get("worker") else {})))
+
+
+def held_by(cctx, me, reason, seen):
+    """Who must act before `me` can start, from one `waits_on` reason: always
+    another node (owner, 2026-10-06: held by means another node has to do
+    something first). A gate on `me`'s own task is followed to whatever holds
+    that task, and dropped if nothing outside `me` does. A gate on presented
+    work names the worker's lead, who has to sign it off."""
+    m = re.match(r"after (\S+) \(([\w ]+) on ([^)]+)\)", reason)
+    if not m or m.group(1) in seen:
+        return []
+    after, state, worker = m.groups()
+    seen.add(after)
+    if worker == me:
+        b = CLI.load_brief(cctx, after)[1] or {}
+        return [h for r in CLI.waits_on(cctx, b) if not r.startswith("until ")
+                for h in held_by(cctx, me, r, seen)]
+    if state == "presented":
+        lead = (cctx.tree["nodes"].get(worker) or {}).get("parent")
+        if lead and lead != me:
+            return [{"after": after, "state": state, "by": lead, "worker": worker}]
+    return [{"after": after, "state": state, "by": worker}]
 
 
 def cli_ctx(pdir, repo, tree):
@@ -584,10 +606,12 @@ def read_state():
         by_name = {n["name"]: n for n in nodes}
         for n in nodes:
             st = next((s["stop"] for s in n["sessions"] or [] if s.get("stop")), None)
-            if n["waiting"] or not st or st["kind"] != "reply":
+            # Waiting means it messaged someone and wants an answer; a turn
+            # that just ended is at rest (CLI.stop_wait_on).
+            to = CLI.stop_wait_on(st)
+            if n["waiting"] or not to:
                 continue
-            on = (n.get("parent") if st["on"] == CLI.LAUNCHED
-                  else node_of.get(st["on"], st["on"]))
+            on = node_of.get(to, to)
             idle = next((s.get("idle") for s in n["sessions"] if s.get("stop")), None)
             n["waiting"] = {"parent": on or "you", "asked": st.get("said") or "",
                             "inferred": True,
@@ -1427,11 +1451,16 @@ function card(n) {
   const held = (n.held || []).map(h => h.by
       ? '<span class="hto" hidden data-on="' + esc(h.by) + '"></span>' +
         '<div class="hd">held by <b>' + esc(h.by) + '</b> &middot; ' + esc(h.task) +
-        ' starts after its <b>' + esc(h.after) + '</b> (' + esc(h.state) + ')</div>'
+        (h.worker
+          ? ' starts after ' + esc(h.worker) + '&rsquo;s <b>' + esc(h.after) +
+            '</b>, presented and waiting on ' + esc(h.by) + '&rsquo;s sign-off</div>'
+          : ' starts after its <b>' + esc(h.after) + '</b> (' + esc(h.state) + ')</div>')
       : '<div class="hd">held until <b>' + esc(h.until) + '</b> &middot; ' + esc(h.task) + '</div>'
     ).join('');
   const holding = (n.holding || []).map(h => '<div class="hd o"><b>' + esc(h.node) +
-      '</b> held on <b>' + esc(n.name) + '</b>\'s ' + esc(h.after) + '</div>').join('');
+      '</b> held on <b>' + esc(n.name) + '</b>' + (h.signoff
+        ? ' signing off ' + esc(h.signoff) + '&rsquo;s ' + esc(h.after)
+        : '\'s ' + esc(h.after)) + '</div>').join('');
   const owes = ((n.awaited_by || []).map(c => '<div class="wt o"><b>' + esc(c) +
         '</b> waiting on <b>' + esc(n.name) + '</b></div>').join('')) +
       ((n.chains || []).map(path => '<div class="wt o">' +

@@ -826,7 +826,9 @@ class LeadContext(unittest.TestCase):
     def test_launch_sets_autocompact_by_rank_and_tree(self):
         cmd = hz.launch_cmd(self.ctx, "dev", "p-dev", [], "opus", "medium", "go")
         self.assertEqual(cmd[cmd.index("--autocompact") + 1], "350k")
-        self.assertEqual(cmd[-1], "go")
+        # The first prompt carries the project's scope, then the start (owner, 2026-10-06).
+        self.assertTrue(cmd[-1].startswith("# Project scope"))
+        self.assertTrue(cmd[-1].endswith("# Your start\ngo"))
         self.assertNotIn("--autocompact", hz.launch_cmd(self.ctx, "dev_1", "p", [], None, None, "go"))
         self.ctx.tree["nodes"]["dev"]["autocompact"] = "600k"
         cmd = hz.launch_cmd(self.ctx, "dev", "p-dev", [], None, None, "go")
@@ -1352,6 +1354,90 @@ class Ask(unittest.TestCase):
                          ("redo it", [{"id": "s1-1"}], {"dev": OLD}))
 
 
+class ScopeFrame(unittest.TestCase):
+    """Owner, 2026-10-06: scope comes from the charter, then the docs, and is in
+    every session's first prompt; every task traces to a charter feature."""
+
+    CHARTER = {"description": {"text": "biblion joins papers to samples."},
+               "features": {"the_sample_join": {"name": "the sample join", "text": "Follow each "
+                                                "paper to its samples.", "seq": 1, "parent": None},
+                            "sample_maps": {"name": "sample maps", "text": "Maps of them.",
+                                            "seq": 1, "parent": "the_sample_join"}}}
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev"})
+        self.ctx.repo = self.ctx.worktree = self.ctx.dir
+        (self.ctx.dir / "charter.json").write_text(json.dumps(self.CHARTER))
+        (self.ctx.dir / "briefs").mkdir()
+        self.err = mock.patch("sys.stderr", new_callable=io.StringIO)
+        self.err.start(); self.addCleanup(self.err.stop)
+
+    def brief(self, *argv, me="dev"):
+        self.ctx.me, self.ctx.branch = me, me
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "s" * 36}), \
+             mock.patch("sys.argv", ["harness", "brief", *argv]), \
+             redirect_stdout(io.StringIO()) as o:
+            try:
+                hz.main(); return 0, o.getvalue()
+            except SystemExit as e:
+                return e.code, o.getvalue()
+
+    def test_the_scope_block_is_the_charter_in_full_then_the_docs(self):
+        with mock.patch.object(hz, "doc_files", return_value=["README.md", "provenance/x/y.md"]):
+            (self.ctx.dir / "README.md").write_text("# Read me first\nbody")
+            b = hz.scope_block(self.ctx)
+        self.assertIn("biblion joins papers to samples.", b)
+        self.assertIn("1. **the sample join** — Follow each paper to its samples.", b)
+        self.assertIn("   1.1 **sample maps** — Maps of them.", b)
+        self.assertIn("- `README.md` — Read me first", b)
+        self.assertNotIn("provenance/x/y.md", b)
+        (self.ctx.dir / "charter.json").unlink()
+        self.assertIn("No charter is written", hz.scope_block(self.ctx, docs=False))
+
+    def test_every_first_prompt_carries_it(self):
+        with mock.patch.object(hz, "context_limits", return_value=(None, None)):
+            cmd = hz.launch_cmd(self.ctx, "dev_1", "p-dev_1", [], None, None, "go")
+        self.assertIn("**the sample join**", cmd[-1])
+        home = Path(tempfile.mkdtemp())
+        (home / ".claude" / "skills" / "harness-intermediary").mkdir(parents=True)
+        (home / ".claude" / "skills" / "harness-intermediary" / "SKILL.md").write_text("skill")
+        (home / ".claude" / "skills" / "harness-documenter").mkdir(parents=True)
+        (home / ".claude" / "skills" / "harness-documenter" / "SKILL.md").write_text("skill")
+        with mock.patch.object(hz.Path, "home", return_value=home), \
+             mock.patch.object(hz, "doc_files", return_value=[]):
+            for f in (hz.intermediary_prompt(self.ctx.dir, str(self.ctx.repo)),
+                      hz.documenter_prompt(self.ctx.dir, str(self.ctx.repo))):
+                self.assertIn("**the sample join**", f.read_text())
+
+    def test_a_new_brief_names_its_feature_or_is_refused(self):
+        code, _ = self.brief("t1", "--for", "dev_1", "--write", "do it")
+        self.assertNotEqual(code, 0)
+        self.assertIn("names no charter feature", sys.stderr.getvalue())
+        code, _ = self.brief("t1", "--for", "dev_1", "--feature", "nope", "--write", "do it")
+        self.assertNotEqual(code, 0)
+        code, _ = self.brief("t1", "--for", "dev_1", "--feature", "the sample join", "--write", "do it")
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads((self.ctx.dir / "briefs" / "t1.json").read_text())["feature"],
+                         "the_sample_join")
+        self.assertEqual(self.brief("t1", "--write", "redo it")[0], 0)        # a rewrite keeps it
+        self.assertEqual(json.loads((self.ctx.dir / "briefs" / "t1.json").read_text())["feature"],
+                         "the_sample_join")
+
+    def test_untraced_work_is_rank_0_s_until_mapped(self):
+        (self.ctx.dir / "briefs" / "old.json").write_text(json.dumps(
+            {"task": "old", "node": "dev_1", "text": "x"}))
+        with mock.patch.object(hz, "task_state", return_value="briefed"), \
+             mock.patch.object(hz, "lead_owes", return_value=[]), \
+             mock.patch.object(hz, "rank0_owes", return_value=[]):
+            items = hz.queue_items(self.ctx, "main")
+            self.assertIn("untraced:old", items)
+            self.assertTrue(hz.is_debt("untraced:old"))
+            self.assertNotEqual(self.brief("old", "--feature", "sample maps", me="dev_1")[0], 0)
+            self.assertEqual(self.brief("old", "--feature", "sample maps", me="main")[0], 0)
+            self.assertNotIn("untraced:old", hz.queue_items(self.ctx, "main"))
+
+
 class Intermediary(unittest.TestCase):
     """T17: one intermediary per project, its reach that project only."""
 
@@ -1381,7 +1467,7 @@ class Intermediary(unittest.TestCase):
             {"id": "u-1", "task": "u", "state": "ready", "asked_at": OLD}))
         for m in (mock.patch.object(hz, "HOME_STATE", self.home),
                   mock.patch.object(hz, "intermediary_prompt",
-                                    side_effect=lambda pd: Path(pd) / "intermediary" / "prompt.md")):
+                                    side_effect=lambda pd, *r: Path(pd) / "intermediary" / "prompt.md")):
             m.start()
             self.addCleanup(m.stop)
 

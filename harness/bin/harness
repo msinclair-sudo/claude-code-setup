@@ -1241,14 +1241,22 @@ def _whoami(a):
         # purpose to execute a complete brief, so this is one line and a pointer,
         # never a demand to go and read. Rank 0 with no charter is the one case
         # that is a problem, and it is told plainly.
+        # The scope in full (owner, 2026-10-06): this runs at every start,
+        # resume and compaction, so no session works without it, attended ones
+        # included. It replaces a 64-character line and a pointer.
         _, ch = load_charter(ctx)
         txt = ((ch.get("description") or {}).get("text") or "").strip()
-        if txt:
-            head = txt.splitlines()[0]
-            n = len(charter_features(ch))
-            print(f"charter  {head[:64]}{'…' if len(head) > 64 else ''}"
-                  + (f"  ({n} feature(s))" if n else "")
-                  + "  — harness charter")
+        if txt or ch.get("features"):
+            print(scope_block(ctx))
+            # What this node's own open work is for, so it is one line away.
+            for t, r in open_marks(ctx).items():
+                if r.get("_node") != node:
+                    continue
+                fk = (load_brief(ctx, t)[1] or {}).get("feature")
+                print(f"\nyour task {t} serves: "
+                      + (f"'{feature_name(ctx, fk)}'" if fk else
+                         "NO charter feature — it is untraced; tell your lead, who maps it "
+                         "or drops it"))
         elif ctx.rank(node) == 0:
             print("charter  none written — nothing states what this project is for, "
                   "so the only\n         work visible from here is whatever happens to "
@@ -2927,6 +2935,15 @@ def queue_items(ctx, node):
     — which is correct: it is news the second time too.
     """
     out = {}
+    # Work that serves no charter feature is drift until rank 0 maps it or drops
+    # it (owner, 2026-10-06: tasks created out of nothing).
+    try:
+        if ctx.rank(node) == 0:
+            for t, n in untraced_briefs(ctx):
+                out[f"untraced:{t}"] = (f"'{t}' ({n}) serves no charter feature — harness brief "
+                                        f"{t} --feature <name>, or drop it as out of scope")
+    except Exception:
+        pass
     # An old hold is its placer's (and rank 0's) to confirm or release: every
     # check that reads the path skips those arms while it stands (log 92).
     try:
@@ -3057,7 +3074,7 @@ def queue_items(ctx, node):
 # a debt costs one line every DEBT_RENAG, not one line every turn.
 DEBT_RENAG = 10 * 60
 DEBT_KINDS = ("sign off:", "start:", "down:", "orphan:", "stuck:", "heavy:", "approve:", "task:", "asked:", "handed:",
-              "sweep:", "hold old:")
+              "sweep:", "hold old:", "untraced:")
 HOLD_OLD = 30 * 60      # a hold this old is asked about (log 92: one stood three hours over nothing)
 
 
@@ -6393,6 +6410,10 @@ def launch_cmd(ctx, node, name, grants, model, effort, prompt):
     ac = context_limits(ctx, node)[1]
     if ac:
         cmd += ["--autocompact", str(ac)]
+    try:
+        prompt = scope_block(ctx) + "\n\n# Your start\n" + prompt
+    except Exception:
+        pass
     return cmd + [prompt]
 
 
@@ -6559,6 +6580,60 @@ def charter_normalise(c):
         if p is not None and (p not in feats or feats[p].get("parent")):
             v["parent"] = None; changed = True
     return changed
+
+
+def scope_block(ctx, docs=True):
+    """The project's scope, as every session's first prompt carries it (owner,
+    2026-10-06): first the harness charter (what the project is for, and every
+    feature in full, in the owner's order), then the project's documentation, as
+    an index of the docs to read for what a task touches. Work that traces to
+    none of it is out of scope, and saying so is a valid answer."""
+    _, ch = load_charter(ctx)
+    charter_normalise(ch)
+    desc = ((ch.get("description") or {}).get("text") or "").strip()
+    out = ["# Project scope",
+           "Injected by the harness: first the charter, then the project's documentation. "
+           "Everything in this tree serves it. Work that traces to none of it is out of "
+           "scope: say so, and never invent tasks to fill a gap."]
+    if not desc and not ch.get("features"):
+        out.append("\nNo charter is written, so scope can't be judged. Rank 0 writes one with "
+                   "the owner: harness charter.")
+    if desc:
+        out += ["", "## What this project is for", desc]
+    order = charter_order(ch)
+    if order:
+        out += ["", "## Features, in the owner's order"]
+        n = [0, 0]
+        for key, f, depth in order:
+            if depth == 0:
+                n[0] += 1; n[1] = 0; num = f"{n[0]}."
+            else:
+                n[1] += 1; num = f"{n[0]}.{n[1]}"
+            text = " ".join((f.get("text") or "").split())
+            out.append(("   " if depth else "") + f"{num} **{f.get('name') or key}** — {text}")
+    if docs:
+        try:
+            files = [d for d in doc_files(ctx) if not is_provenance(d)]
+        except Exception:
+            files = []
+        if files:
+            areas = {}
+            for a_, d in (docs_areas(ctx) or {}).items():
+                areas.setdefault(d, []).append(a_)
+            out += ["", "## The documentation, the second source of scope",
+                    "Read the docs your work touches before you act on it; their history is in "
+                    "provenance/, not here."]
+            for d in files:
+                head = ""
+                try:
+                    for line in (ctx.repo / d).read_text(errors="replace").splitlines():
+                        if line.startswith("#"):
+                            head = line.lstrip("# ").strip(); break
+                except OSError:
+                    pass
+                out.append(f"- `{d}`" + (f" — {head[:90]}" if head else "")
+                           + (f"  (governs {', '.join(sorted(areas[d]))})" if d in areas else ""))
+    return "\n".join(out)
 
 
 def charter_order(c):
@@ -8059,11 +8134,54 @@ def unread_brief_comments(ctx, who):
     return out
 
 
+def untraced_briefs(ctx):
+    """Open briefs that name no charter feature: [(task, node)]. Empty while the
+    charter has no features, since then nothing could be traced."""
+    _, ch = load_charter(ctx)
+    if not ch.get("features"):
+        return []
+    out = []
+    for k, b in all_briefs(ctx).items():
+        t = b.get("task") or k
+        if b.get("feature") or superseded(b) or b.get("out_of_scope"):
+            continue
+        if task_state(ctx, t) in ("closed", "superseded"):
+            continue
+        out.append((t, b.get("node")))
+    return sorted(out)
+
+
+def resolve_feature(ctx, name):
+    """A charter feature's key from its key or its name, or None."""
+    _, ch = load_charter(ctx)
+    feats = ch.get("features") or {}
+    if not name:
+        return None
+    k = tkey(name)
+    if k in feats:
+        return k
+    for key, f in feats.items():
+        if tkey(f.get("name") or "") == k:
+            return key
+    return None
+
+
+def feature_name(ctx, key):
+    _, ch = load_charter(ctx)
+    return ((ch.get("features") or {}).get(key) or {}).get("name") or key
+
+
+UNTRACED_HINT = ("every task traces to a charter feature (owner, 2026-10-06). None fits? Then "
+                 "it is out of scope:\n           drop the work, or ask the owner whether the "
+                 "charter is missing one:\n           harness ask <task> --kind scope "
+                 "--question \"...\"")
+
+
 def brief_carry(rec, b):
     """What a rewrite keeps that the writer did not write: the owner's rulings
     (T17), and who has read it, which the ruling notices are timed against."""
     for k in ("rulings", "read", "close_after", "close_after_by", "not_before",
-              "requires"):
+              "requires", "feature"):
         if k not in rec and (b or {}).get(k):
             rec[k] = b[k]
     for k in ("not_before", "requires"):
@@ -8107,6 +8225,22 @@ def cmd_brief(a):
             "when\n           the plan does and the revision counter has to see it. "
             f"Rewrite it:\n           harness brief {a.task} --write - --band {a.band.upper()}")
 
+    if a.feature and a.write is None:
+        # Mapping a brief to the feature it serves, without rewriting the plan:
+        # how rank 0 clears the untraced backlog (owner, 2026-10-06).
+        if b is None:
+            die(REFUSED, f"no brief '{a.task}' to map. Write it with --feature: "
+                         f"harness brief {a.task} --for <node> --feature <name> --write -")
+        if not (ctx.rank(me) == 0 or ctx.children(me)):
+            die(REFUSED, "a lane doesn't change what a task is for; its lead or rank 0 does")
+        key = resolve_feature(ctx, a.feature)
+        if key is None:
+            die(REFUSED, f"no charter feature '{a.feature}'. harness charter lists them. "
+                         + UNTRACED_HINT)
+        b["feature"] = key
+        f.write_text(json.dumps(b, indent=2) + "\n")
+        print(f"{a.task} serves '{feature_name(ctx, key)}'")
+        return
     if a.write is None and (a.with_task or a.why):
         die(REFUSED, "--with and --why describe a brief being written. Add --write "
                      "\"...\" —\n           coupling two tasks does not write the "
@@ -8220,6 +8354,22 @@ def cmd_brief(a):
             if band not in BANDS:
                 die(REFUSED, f"band must be one of {', '.join(BANDS)} "
                              f"({', '.join(f'{k} < {tok(v[1])}' for k, v in BANDS.items())})")
+        # What the task is for. A new brief names its charter feature, or a part
+        # inherits its segment's; a brief that can't is out of scope.
+        feature = resolve_feature(ctx, a.feature) if a.feature else None
+        if a.feature and feature is None:
+            die(REFUSED, f"no charter feature '{a.feature}'. harness charter lists them. "
+                         + UNTRACED_HINT)
+        if feature is None and parent_task:
+            feature = (load_brief(ctx, parent_task)[1] or {}).get("feature")
+        feature = feature or (b or {}).get("feature")
+        _, _ch = load_charter(ctx)
+        if feature is None and _ch.get("features") and b is None:
+            die(REFUSED, f"'{a.task}' names no charter feature: --feature <name>. " + UNTRACED_HINT)
+        if feature is None and not _ch.get("features"):
+            print("  note: no charter features are written, so this brief can't name what it "
+                  "serves. Rank 0 writes the charter with the owner: harness charter",
+                  file=sys.stderr)
         coupled = a.with_task or (b or {}).get("coupled_to")
         rev = (b or {}).get("revision", 0) + 1
         rec = {"task": a.task, "node": target, "text": a.write, "revision": rev,
@@ -8230,6 +8380,8 @@ def cmd_brief(a):
                # make the append-only channel append-until-the-next-rewrite,
                # which is the property it exists to have.
                "comments": (b or {}).get("comments", [])}
+        if feature:
+            rec["feature"] = feature
         # One brief was destroyed by a write onto a colliding name and there was
         # nothing to recover from: `revision` counts, it does not chain, and no
         # store here kept a prior copy. It was recovered only because a session
@@ -11990,7 +12142,7 @@ INTERMEDIARY_GIT = ("log", "show", "diff", "status")
 INTERMEDIARY_WRITING = ("humanizer", "sentence-prose", "de-densify", "google-devdocs-style")
 
 
-def intermediary_prompt(pdir):
+def intermediary_prompt(pdir, repo=None):
     """Its system prompt: its skill, then the owner's own Voice section from the
     global CLAUDE.md, so it writes in the register the owner asked for. Written
     into the project's state, beside the session it starts."""
@@ -12001,6 +12153,14 @@ def intermediary_prompt(pdir):
         m = re.search(r"^## Voice\n(.*?)(?=^## |\Z)", g, re.S | re.M)
         if m:
             parts.append("# The owner's voice (from their CLAUDE.md)\n" + m.group(1).strip())
+    except Exception:
+        pass
+    # Scope first: the charter, then the docs (owner, 2026-10-06). Rebuilt at
+    # every start and wake, so an item is judged against the scope as it is now.
+    try:
+        repo = repo or json.loads((Path(pdir) / "binding.json").read_text()).get("repo")
+        if repo:
+            parts.append(scope_block(ProjCtx(pdir, repo)))
     except Exception:
         pass
     out = Path(pdir) / "intermediary" / "prompt.md"
@@ -12071,7 +12231,7 @@ def intermediary_cmd(pdir, repo, model=None, effort=None, bg=False, start=None, 
     for d in repos:
         for q in ('"', "'") + (("",) if " " not in d else ()):
             allow += [f"Bash(git -C {q}{d}{q} {g} *)" for g in INTERMEDIARY_GIT]
-    skill = intermediary_prompt(pdir)
+    skill = intermediary_prompt(pdir, repo)
     # --strict-mcp-config: no MCP servers or connectors, which could write outside.
     name = item_name(repo, ask_id) if ask_id else intermediary_name(repo)
     cmd = ["claude", "-n", name, "--restricted", "--strict-mcp-config"]
@@ -12192,8 +12352,9 @@ def item_sessions(repo, rows):
 
 def item_start(repo, rec):
     return (f"You are the harness intermediary for ask {rec['id']} in {Path(repo).name}, and "
-            f"for that ask only; your instructions are in your system prompt. Start: "
-            f"`harness ask {rec['id']} --show`.")
+            f"for that ask only; your instructions are in your system prompt. Scope first: "
+            f"the project's charter and documentation are there too, and an ask that serves "
+            f"none of it is out of scope. Start: `harness ask {rec['id']} --show`.")
 
 
 def _open_ask(pdir, ask_id):
@@ -13315,7 +13476,7 @@ def docs_trigger(ctx):
     return True
 
 
-def documenter_prompt(pdir):
+def documenter_prompt(pdir, repo=None):
     """Its system prompt: its skill, the owner's Voice section, and the two
     writing skills' own SKILL.md (--restricted loads no user skills)."""
     home = Path.home() / ".claude"
@@ -13332,6 +13493,13 @@ def documenter_prompt(pdir):
         if f.exists():
             parts.append(f"# Writing skill: {sk} (its other files are in {f.parent})\n"
                          + f.read_text())
+    # The scope the docs must stay within: the charter, then the doc set itself.
+    try:
+        repo = repo or json.loads((Path(pdir) / "binding.json").read_text()).get("repo")
+        if repo:
+            parts.append(scope_block(ProjCtx(pdir, repo)))
+    except Exception:
+        pass
     out = Path(pdir) / "documenter" / "prompt.md"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n\n".join(parts) + "\n")
@@ -13380,7 +13548,7 @@ def documenter_cmd(pdir, repo, job="auto", model=None, effort=None, why=None):
            "--tools", *INTERMEDIARY_TOOLS, "Write",
            "--allowedTools", *allow,
            "--permission-mode", "dontAsk",
-           "--append-system-prompt-file", str(documenter_prompt(pdir)),
+           "--append-system-prompt-file", str(documenter_prompt(pdir, repo)),
            "--model", model, "--effort", effort]
     return cmd + [documenter_start(repo, job, why)]
 
@@ -13949,6 +14117,8 @@ def main():
     bk.add_argument("--list", action="store_true", help="every open block")
     br = add("brief", cmd_brief, force=True)
     br.add_argument("task", help="task id")
+    br.add_argument("--feature", metavar="NAME",
+                    help="the charter feature this task serves (required on a new brief)")
     br.add_argument("--for", dest="for_node", metavar="NODE",
                     help="which node the brief is for (needed on the first write)")
     br.add_argument("--write", metavar="TEXT",

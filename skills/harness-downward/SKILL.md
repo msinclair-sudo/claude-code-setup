@@ -12,7 +12,7 @@ Spec, on demand only: `~/.claude/skills/harness/ref/spec.md`.
 A task carries id, lane, path scope, intent, checks, band, and the seams you hold for it. Write all of it down at once, as one brief, before the child starts. Planning is your work; a stub followed by answers is the failure.
 
 ```bash
-harness brief <task> --for <child> --write "..."   # write or rewrite (stdin: --write -)
+harness brief <task> --for <child> --feature "<name>" --write "..."   # write or rewrite (stdin: --write -)
 harness brief <task>                               # read it back, with suggestions
 harness brief <task> --resolve N                   # mark suggestion N addressed
 harness brief <task> --history                     # last five revisions
@@ -214,6 +214,13 @@ harness finding <name> --ruled "<commit or doc ref>"  # answered by a document: 
 ```
 
 A brief from a finding is gated on approval, unless rank 0 handed the finding down (that was the approval): `mark` refuses it and `recycle` skips it until approved. You cannot approve it; rank 0 sees it at orientation. Decline what you would not spend a session on. `--needs-approval` puts the same gate on any brief.
+
+## Every task serves a feature
+
+Write every brief with the charter feature it serves: `--feature "<name>"` (the charter is in your
+first prompt). A part split with `--from` inherits its segment's. If the work you were about to
+brief serves no feature, it is out of scope: don't brief it; tell your lead or rank 0 why it came
+up.
 
 ## Asking the owner (`T17`)
 

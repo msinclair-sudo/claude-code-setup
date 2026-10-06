@@ -76,6 +76,6 @@ No exit code at all, with the tool call *blocked by the auto-mode classifier*, m
 
 ## If you need to ask why
 
-`harness charter [--feature <name>]` — optional; read it when a brief seems to point away from the project's purpose. Only rank 0 and the operator write it.
+**The project's scope is in your first prompt**, and again at every resume and compaction: the charter (what the project is for, every feature in full), then the index of its documentation. Your task names the feature it serves (`whoami` says which). Work that traces to none of it is out of scope: say so to your lead rather than doing it, and never invent a task to fill a gap. `harness charter --full` reads it again; only rank 0 and the owner write it.
 
 Why each rule exists: `ref/why.md` — read only when you need the reason.

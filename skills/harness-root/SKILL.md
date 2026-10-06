@@ -22,6 +22,19 @@ Prose: what the project is for, who its output is for, what each feature is. It 
 
 Draft it from what the operator told you, mark what you inferred or guessed, and let them correct it in `harness gui`. Never draft it from the state of the repository. A feature that leaves scope is deleted outright. Order features in the order someone should meet them, two levels at most.
 
+**Every brief names the feature it serves:** `harness brief <task> --for <node> --feature
+"<name>" --write -`. The harness refuses a new brief without one once the charter has features;
+parts split from a segment inherit it. Open briefs written before this rule show in your
+orientation as `untraced:` until you map them (`harness brief <task> --feature "<name>"`) or drop
+them. A task you can't map is out of scope: drop it, or ask the owner whether the charter is
+missing a feature (`harness ask <task> --kind scope`). Two nodes ringing each other back and forth
+show as a loop: read both nodes' notes and stop it if nothing is landing.
+
+**The owner can halt the tree** (`harness halt --why`, from a shell or an out-of-scope item):
+nothing new starts, every node writes down what it holds and waits, until `harness resume`. An
+out-of-scope item the owner drops marks the task where the chain left the charter as out of
+scope; close it, and don't brief it again.
+
 ## Focus
 
 When the operator names a priority, set it: `harness focus <task>... --why "…"` (several tasks, or a quoted glob such as `'enrich*'`; split parts follow their segment). `--add`/`--remove` edit it, `harness focus` shows it, `--clear` ends it. Nags about other work fold into one line; queues are labelled, never filtered, so there is no need to list a lane's out-of-focus tasks in it. Setting it prints the queued work it leaves out.

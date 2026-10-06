@@ -1518,6 +1518,49 @@ class Halt(unittest.TestCase):
             self.assertTrue(any(k.startswith("loop:dev:main") for k in hz.queue_items(self.ctx, "main")))
 
 
+class AskChain(unittest.TestCase):
+    """Owner, 2026-10-06: every ask carries how it reached the owner, read off the
+    transcripts back to the owner's own words."""
+
+    def test_the_chain_runs_from_the_owner_through_each_session(self):
+        ctx = FakeCtx({"main": None, "dev": "main"})
+        proj = Path(tempfile.mkdtemp()) / "p"
+        proj.mkdir(parents=True)
+        A = lambda *c: {"type": "assistant", "timestamp": "2026-10-06T09:39:00Z",
+                        "message": {"content": list(c)}}
+        U = lambda t, ts="2026-10-06T09:37:00Z": {"type": "user", "timestamp": ts,
+                                                   "message": {"content": t}}
+        txt = lambda t: {"type": "text", "text": t}
+        tool = lambda n, i: {"type": "tool_use", "name": n, "input": i}
+        res = {"type": "user", "message": {"content": [{"type": "tool_result", "content": "ok"}]}}
+        report = "dev: incident, the hook and spawn disagree about dev_1"
+        (proj / "sa.jsonl").write_text("\n".join(json.dumps(r) for r in (
+            U("always tell main about harness errors"),
+            A(txt("Checking it."), tool("Bash", {"command": "harness spawn dev_1 --dry-run"})), res,
+            A(txt("Reporting it to main."), tool("SendMessage", {"to": "p-main", "message": report})),
+            res)))
+        (proj / "sb.jsonl").write_text("\n".join(json.dumps(r) for r in (
+            U('<cross-session-message from="uds:/r/1.sock" from-name="p-dev">' + report +
+              '</cross-session-message>', "2026-10-06T09:39:30Z"),
+            A(txt("Both clean. Filing it."), tool("Bash", {"command": "harness ask owner --kind action"})))))
+        for n, sid in (("dev", "sa"), ("main", "sb")):
+            ctx.lock_path(n).parent.mkdir(parents=True, exist_ok=True)
+            ctx.lock_path(n).write_text(json.dumps({"node": n, "session_id": sid}))
+        with mock.patch.object(hz, "PROJECTS", proj.parent), \
+             mock.patch.object(hz, "agents_json", return_value=[]), \
+             mock.patch.object(hz, "open_marks", return_value={"t1": {"_node": "dev"}}), \
+             mock.patch.object(hz, "load_brief", return_value=(None, {"task": "t1"})):
+            ch = hz.ask_chain(ctx, "sb")
+        self.assertEqual([(h["node"], h["from"]) for h in ch], [("dev", "owner"), ("main", "p-dev")])
+        self.assertEqual(ch[0]["received"], "always tell main about harness errors")
+        self.assertIn("hook and spawn disagree", ch[1]["received"])
+        self.assertEqual(ch[1]["concluded"], "Both clean. Filing it.")
+        self.assertTrue(ch[0]["untraced"])                         # t1 serves no feature
+        lines = "\n".join(hz.render_chain(ch))
+        self.assertIn("UNTRACED", lines)
+        self.assertIn('received from owner: "always tell main', lines)
+
+
 class Intermediary(unittest.TestCase):
     """T17: one intermediary per project, its reach that project only."""
 

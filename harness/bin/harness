@@ -11441,6 +11441,220 @@ def ask_next_id(state, task):
     return f"{k}-{max(ns, default=0) + 1}"
 
 
+# ── the chain: how a request reached the owner (owner, 2026-10-06) ──────────
+#
+# An ask names its asker and nothing of why. owner-7 reached the owner as one
+# line, from main, about a defect dev had hit after the owner told dev to report
+# it; nothing on the item said so. So the harness reads the chain itself, from
+# the transcripts: the turn in which the asker ran `harness ask`, what opened
+# that turn, and, when another session's message opened it, that session's turn
+# in turn, back to the owner's own words, a task's launch brief, or six hops.
+
+CHAIN_HOPS = 6
+_CHAIN_QUOTE = 600
+
+
+def _transcript_recs(sid, tail=4 * 1024 * 1024):
+    t = transcript_for(sid) if sid else None
+    if t is None:
+        return []
+    try:
+        with open(t, "rb") as fh:
+            fh.seek(0, 2)
+            fh.seek(max(0, fh.tell() - tail))
+            lines = fh.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return []
+    out = []
+    for line in lines:
+        try:
+            out.append(json.loads(line))
+        except Exception:
+            pass
+    return out
+
+
+def _rec_text(r):
+    c = (r.get("message") or {}).get("content")
+    if isinstance(c, str):
+        return c
+    return " ".join(x.get("text") or "" for x in c or [] if isinstance(x, dict)
+                    and x.get("type") == "text")
+
+
+def _is_tool_result(r):
+    c = (r.get("message") or {}).get("content")
+    return isinstance(c, list) and any(isinstance(x, dict) and x.get("type") == "tool_result"
+                                       for x in c)
+
+
+def session_node(ctx, sid):
+    """The node whose lock names this session, or None."""
+    d = Path(ctx.state) / "locks"
+    for f in d.glob("*.lock") if d.is_dir() else []:
+        try:
+            if json.loads(f.read_text()).get("session_id") == sid:
+                return f.stem
+        except Exception:
+            pass
+    return None
+
+
+def node_session(ctx, name):
+    """A sender's session id from its session name (newest live row), or its
+    node's lock."""
+    try:
+        rows = [r for r in agents_json() if r.get("name") == name and r.get("sessionId")]
+        if rows:
+            return sorted(rows, key=lambda r: r.get("startedAt") or 0)[-1]["sessionId"]
+    except Exception:
+        pass
+    node = name.split("-", 1)[1] if "-" in name else name
+    for n in (node, name):
+        try:
+            sid = json.loads(ctx.lock_path(n).read_text()).get("session_id")
+            if sid:
+                return sid
+        except Exception:
+            pass
+    return None
+
+
+def _node_task(ctx, node):
+    """The node's open task and the feature it serves: (task, feature)."""
+    try:
+        for t, r in open_marks(ctx).items():
+            if r.get("_node") == node:
+                return t, (load_brief(ctx, t)[1] or {}).get("feature")
+    except Exception:
+        pass
+    return None, None
+
+
+def _closing(recs, lo, hi):
+    """The last paragraph an assistant wrote in recs[lo:hi]."""
+    for r in reversed(recs[lo:hi]):
+        if r.get("type") == "assistant":
+            t = _rec_text(r).strip()
+            if t:
+                return [p for p in re.split(r"\n\s*\n", t) if p.strip()][-1][-_CHAIN_QUOTE:]
+    return ""
+
+
+def _find_send(recs, text):
+    """Index of the SendMessage or `harness ring` whose text this message is."""
+    key = " ".join((text or "").split())[:80]
+    for i in range(len(recs) - 1, -1, -1):
+        r = recs[i]
+        if r.get("type") != "assistant":
+            continue
+        for x in (r.get("message") or {}).get("content") or []:
+            if not isinstance(x, dict) or x.get("type") != "tool_use":
+                continue
+            inp = x.get("input") or {}
+            body = " ".join(str(inp.get("message") or inp.get("command") or "").split())
+            if key and key[:60] in body:
+                return i
+    return None
+
+
+def ask_chain(ctx, sid, at_index=None, hops=None, seen=None):
+    """[hop, ...] from the origin to the asker. Each hop: {node, session, at, task,
+    feature, untraced, received, from, concluded}. Never raises; a chain that
+    cannot be read is shorter, not wrong."""
+    hops, seen = hops if hops is not None else [], seen or set()
+    try:
+        if not sid or sid in seen or len(hops) >= CHAIN_HOPS:
+            return hops
+        seen.add(sid)
+        recs = _transcript_recs(sid)
+        if not recs:
+            return hops
+        hi = at_index if at_index is not None else len(recs)
+        # back to the record that opened this turn
+        i = hi - 1
+        while i >= 0:
+            r = recs[i]
+            if r.get("type") == "user" and not _is_tool_result(r):
+                txt = _rec_text(r)
+                if not r.get("isMeta") or FROM_NAME.search(txt):
+                    break
+            i -= 1
+        node = session_node(ctx, sid)
+        task, feat = _node_task(ctx, node) if node else (None, None)
+        hop = {"node": node or f"session {sid[:8]}", "session": sid, "task": task,
+               "feature": feat, "untraced": bool(task) and not feat,
+               "at": (recs[i].get("timestamp") if i >= 0 else "") or "",
+               "concluded": _closing(recs, max(i, 0), hi)}
+        if i < 0:
+            hop.update({"from": "?", "received": ""})
+            hops.insert(0, hop); return hops
+        txt = _rec_text(recs[i])
+        m = FROM_NAME.search(txt)
+        upstream = None
+        if m:
+            body = re.sub(r"<[^>]+>", "", txt).strip()
+            hop.update({"from": m.group(1), "received": body[:_CHAIN_QUOTE]})
+            usid = node_session(ctx, m.group(1))
+            if usid:
+                urecs = _transcript_recs(usid)
+                j = _find_send(urecs, body)
+                if j is not None:
+                    upstream = (usid, j + 1)
+        elif txt.lstrip().startswith("<task-notification>") or txt.lstrip().startswith("# Project scope") \
+                or txt.strip().startswith("Use the harness skill"):
+            if "<task-notification>" in txt:
+                # a doorbell exit: the mail it delivered in this turn opened it
+                mail = []
+                f = Path(ctx.state) / "doorbell" / (node or "?") / "delivered.jsonl"
+                t0 = _epoch(recs[i].get("timestamp")) or 0
+                t1 = _epoch(recs[hi - 1].get("timestamp")) if hi - 1 >= 0 else time.time()
+                try:
+                    for line in f.read_text().splitlines()[-200:]:
+                        mm = json.loads(line)
+                        if (t0 - 120) <= (_epoch(mm.get("delivered")) or 0) <= (t1 or time.time()) + 5:
+                            mail.append(mm)
+                except Exception:
+                    pass
+                if mail:
+                    mm = mail[-1]
+                    hop.update({"from": mm.get("from"), "received": (mm.get("text") or "")[:_CHAIN_QUOTE]})
+                    usid = mm.get("session") or node_session(ctx, mm.get("from") or "")
+                    if usid:
+                        urecs = _transcript_recs(usid)
+                        j = _find_send(urecs, mm.get("text") or "")
+                        if j is not None:
+                            upstream = (usid, j + 1)
+                else:
+                    hop.update({"from": "its own background command", "received": txt[:200]})
+            else:
+                hop.update({"from": "its launch (the brief)", "received": (task or "")})
+        else:
+            hop.update({"from": "owner", "received": txt.strip()[:_CHAIN_QUOTE]})
+        hops.insert(0, hop)
+        if upstream:
+            ask_chain(ctx, upstream[0], upstream[1], hops, seen)
+        return hops
+    except Exception:
+        return hops
+
+
+def render_chain(chain):
+    if not chain:
+        return ["  (no chain could be read from the transcripts)"]
+    out = []
+    for h in chain:
+        scope = (f"task {h['task']} → feature {h['feature']}" if h.get("feature") else
+                 f"task {h['task']} — UNTRACED: serves no charter feature" if h.get("task") else
+                 "no open task")
+        out.append(f"  {(h.get('at') or '')[11:16]}  {h.get('node')}  ({scope})")
+        if h.get("received"):
+            out.append(f"      received from {h.get('from')}: \"{h['received'][:300]}\"")
+        if h.get("concluded"):
+            out.append(f"      concluded: \"{h['concluded'][:300]}\"")
+    return out
+
+
 def ask_open(ctx, task, kind, question, me, sid, runs=None):
     """`ask <task>`: rank 0 or a lead opens one; a lane goes through its lead.
     `runs`: commands for the owner to run (an `action` ask)."""
@@ -11508,6 +11722,8 @@ def ask_open(ctx, task, kind, question, me, sid, runs=None):
            "history": [{"at": _now(), "by": who, "what": "asked"}]}
     if runs:
         rec["runs"], rec["thread"] = runs, []
+    rec["chain"] = ask_chain(ctx, sid) if sid else [
+        {"node": me, "from": "owner", "received": "(opened from a shell)", "at": _now()}]
     _save(Path(ctx.state) / "asks" / f"{rec['id']}.json", rec)
     return rec
 
@@ -12021,6 +12237,10 @@ def ask_show(pdir, repo, rec):
     print(f"  asked by {rec.get('asked_by')} on {rec.get('task')} "
           f"({rec.get('node')}'s brief), {_ago(rec.get('asked_at'))}")
     print(f"  question  {rec.get('question')}")
+    # How it got here, before anything the asker wrote about it.
+    print("  how this reached the owner (from the transcripts, origin first):")
+    for line in render_chain(rec.get("chain")):
+        print(line)
     br = rec.get("brief") or {}
     for h, k, _ in ASK_SECTIONS:
         if k in br and k != "question":
@@ -14007,7 +14227,9 @@ def ring_inbox(state, node, frm, text):
     d = Path(state) / "doorbell" / node / "inbox"
     d.mkdir(parents=True, exist_ok=True)
     (d / f"{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}-{time.time_ns() % 10**6}.json"
-     ).write_text(json.dumps({"from": frm, "text": text, "at": _now()}))
+     ).write_text(json.dumps({"from": frm, "text": text, "at": _now(),
+                              # who sent it, so an ask's chain can follow it upstream
+                              "session": os.environ.get("CLAUDE_CODE_SESSION_ID", "")}))
 
 
 def cmd_ring(a):

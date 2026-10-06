@@ -807,6 +807,10 @@ border-left:1px solid var(--line);width:0;height:22px}
 .waits path.held{stroke:var(--held);stroke-dasharray:6 4}
 .waits path.msg{stroke:var(--wait);stroke-width:1.6;stroke-dasharray:2 4;stroke-linecap:round}
 .ln.mail{color:var(--warn)}
+.achain{margin:4px 0 8px;font-size:11px}.achain summary{cursor:pointer;color:var(--dim)}
+.ahop{border-left:2px solid var(--line);padding:3px 0 3px 8px;margin:4px 0}
+.ahq,.ahc{white-space:pre-wrap;color:var(--ink);margin-top:2px}.ahc{color:var(--dim)}
+.untr{color:var(--warn)}
 .halt{border:1px solid var(--warn);background:var(--warnbg);color:var(--warn);border-radius:8px;
 padding:8px 12px;margin:6px 0 10px;font-weight:600}
 .waits path.test{stroke:var(--busy);stroke-width:1.6;stroke-dasharray:2 4;stroke-linecap:round}
@@ -1947,6 +1951,24 @@ function chatRow(k) {
     '</textarea><button data-amsg="' + esc(k) + '">Send</button></div>';
 }
 
+// How a request reached the owner, read by the harness off the transcripts,
+// origin first (owner, 2026-10-06): each session, what it was working on and for
+// which feature, what reached it and what it concluded.
+function chainBlock(a) {
+  const ch = a.chain || [];
+  if (!ch.length) return '';
+  return '<details class="achain"' + (a.kind === 'action' ? ' open' : '') + '><summary>How this ' +
+    'reached you &middot; ' + ch.length + ' step' + (ch.length > 1 ? 's' : '') + ' from ' +
+    esc(ch[0].from || '?') + '</summary>' + ch.map(h =>
+      '<div class="ahop"><b>' + esc(h.node || '?') + '</b> <span class="q">' +
+      esc((h.at || '').slice(11, 16)) + ' &middot; ' + (h.task ? esc(h.task) + (h.feature
+        ? ' &rarr; ' + esc(h.feature) : ' <span class="untr">untraced</span>') : 'no open task') +
+      '</span>' + (h.received ? '<div class="ahq">from ' + esc(h.from || '?') + ': &ldquo;' +
+        esc(h.received) + '&rdquo;</div>' : '') +
+      (h.concluded ? '<div class="ahc">concluded: &ldquo;' + esc(h.concluded) + '&rdquo;</div>' : '') +
+      '</div>').join('') + '</details>';
+}
+
 function askItem(slug, a) {
   const k = akey(slug, a.id);
   const open = OPENA.has(k);
@@ -2026,7 +2048,7 @@ function askItem(slug, a) {
         '<button class="rej" data-arej="' + esc(k) + '">Reject</button>' + msg + '</div>';
     }
     // Every item: its session, everything said about it, and a box to add to it.
-    body = '<div class="abody">' + itemSession(slug, a) + body +
+    body = '<div class="abody">' + chainBlock(a) + itemSession(slug, a) + body +
       '<div data-live="thread:' + esc(k) + '">' + threadOf(a) +
       (a.query_open ? '<div class="ln q">the intermediary is looking into it&hellip;</div>' : '') +
       '</div>' + chatRow(k) + '</div>';

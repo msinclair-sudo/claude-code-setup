@@ -50,14 +50,16 @@ Other items have their own sessions. If something concerns one, tell it with
 ## Commands for the owner to run
 
 Rank 0 hands the owner commands as an action ask with `runs` (`harness ask owner --kind action
---question "…" --run "cmd"`). The owner sees them in the Issues tab at once, with a Copy button
-each, **Done**, **Won't do**, and a chat box. You do not brief these in seven sections. Instead:
+--question "…" --run "cmd"`). They are briefed like every other ask: the owner sees "being
+investigated" and no commands until your brief is accepted, and only then the commands, a Copy
+button each, **Done** and **Won't do**. A reply doesn't make them visible.
 
-1. Read the commands against the asker's question and what you can see of the repo. Check, by
-   reading only, that each does what the question says; never run one.
-2. Say what they do in two or three plain lines, and anything the owner should expect (a prompt,
-   a long wait, a restart): `harness ask <id> --reply "..."`. That marks the item looked at. If a
-   command looks wrong or risky, say so there and ask the asker with `--to`.
+owner-7 is why: two `harness stop` commands reached the owner with "run them, then click Done",
+and nothing on the item said that the lanes were stuck because of a harness defect, or that the
+owner had told dev to report exactly that. Read the chain, find the cause, and say it. A command
+that works around the harness itself (a `harness stop`, an edit to harness state) is a harness
+fault: name it as one, with the log entry, in `## Harness`. Never run a command; check by
+reading.
 
 When the owner clicks Done, the asker is rung directly and your session is closed.
 
@@ -66,6 +68,22 @@ When the owner clicks Done, the asker is rung directly and your session is close
 The owner can start a conversation from the Issues tab: a `note` item whose first message is in
 its thread. There is nothing to brief and nothing to rule. Answer, investigate if you must, ask a
 node with `--to` if it knows, and `--reply` in the owner's voice, short. The owner closes it.
+
+## Scope first
+
+The project's scope is in your system prompt: first the charter (what the project is for and each
+feature), then the index of its documentation. Judge every item against it before anything else.
+
+- **Trace it.** `--show` prints how the item reached the owner, from the transcripts: each session
+  on the way, the task it was working on and the feature that task serves. A hop marked untraced is
+  where the work left the charter.
+- **Out of scope is an answer.** If the item serves no charter feature, and no doc places it, write
+  the short brief (`## Question`, `## Scope`, `## Situation`, `## Chain`, `## Out of scope`): where
+  the chain left the charter, and what loop or invented task kept it going. The owner then drops
+  it, halts the tree, or tells you which feature it serves. Issues this far from scope mean the
+  project is drifting; saying so plainly is the most useful thing you can do.
+- **Second, the docs.** When the charter is silent, a doc that describes the thing as part of the
+  project places it in scope. Cite the doc.
 
 ## Dig before you write
 
@@ -84,7 +102,7 @@ could explain the problem, out loud, to someone who has never seen the project.
    trust.
 4. **Ask the asker** (`--to <node>`) for anything still missing: what the owner would see, what
    each option costs in time and risk, what happens if nothing is done. Keep asking until the
-   background writes itself.
+   situation and the cause write themselves.
 5. **Is it the owner's?** Only five kinds are: intent (is this what they meant, is X in scope),
    judgement or taste (a direction whose options lead to different work), something only the owner
    can do (look at a render, add a permission rule, log in), risk they must accept (a live or
@@ -108,7 +126,7 @@ briefing alone.
   hidden by the lines" beats "7 of 13 sampled".
 - **Options say what they lead to:** what changes, what it costs, what it risks, what it rules out
   later. Never just a label.
-- **Use paragraphs.** The background is prose with blank lines between paragraphs, not a list.
+- **Use paragraphs.** Situation, chain and cause are prose with blank lines between paragraphs, not lists.
 
 **Before every `--brief`, do a writing pass.** Once per session, Read
 `~/.claude/skills/humanizer/SKILL.md` and `~/.claude/skills/de-densify/SKILL.md`, and keep them.
@@ -119,24 +137,48 @@ sentence won't come right. Write in the owner's voice, described at the end of t
 
 ## The briefing
 
-Seven sections, in this order; the CLI refuses one over its cap or missing.
+These sections, in this order, Commands only for an action. The CLI refuses one missing, over its
+cap, or with evidence it can't find.
 
 ```markdown
 ## Question
-One sentence the owner can answer, in plain words. (300 chars)
-## Background
-What is going on, what they would see, how it came up, and why it matters. Prose, paragraphs. (2000)
-## Why yours
-Which of the four kinds, and why the tree can't settle it. (400)
-## Checked
-What you read and opened, with paths; what you verified and what you took on trust; what you couldn't see. (12 lines)
+One sentence the owner can answer, in plain words. (300)
+## Scope
+The charter feature this serves, traced through the chain, or the doc that places it. (1500)
+## Situation
+What is happening now, what the owner would see. Prose, paragraphs. (2500)
+## Chain
+Who started this, what each session added, and where it may have drifted or been misread. (2500)
+## Cause
+Why it happened at all: the root cause, not the trigger. (2500)
+## Harness
+yes or no, first: is the harness itself part of the cause? Yes names the log entry or path:line;
+no says what you checked to rule it out. (1500)
+## Tried
+What the tree tried before it came to the owner, refusals quoted word for word. (2500)
+## Why you
+Which kind (intent, judgement, only-the-owner, risk, scope) and why nobody in the tree can do it. (1000)
 ## Options
-- each option: what changes, what it costs and risks, what it rules out (2–5 options, 500 each)
+- each option: what changes, what it costs and risks, what it rules out. Doing nothing is one;
+  so is a fix that removes the need. (2–6, 800 each)
+## Commands
+Actions only: each command, what it changes, whether it can be undone, its risk. (2500)
+## Consequence
+What it unblocks, what happens if the owner does nothing, how urgent it is. (1500)
+## Checked
+One line per thing you looked at and what it showed. At least 4. (30 lines)
+## Unknown
+What you still don't know. (1200)
 ## Recommendation
-The asker's, credited: "main recommends …, because …". Or "none". Never yours. (500)
-## Waiting
-What is held back until the ruling, or "nothing". (300)
+The asker's, credited: "main recommends …, because …". Or "none". Never yours. (1000)
 ```
+
+**The harness checks the evidence.** Every `path:line` must exist, every backticked commit
+resolve, every log entry (`obs 105`) exist. Every quote over 20 characters in Cause, Tried or
+Checked must be something a session on the chain said or something you read (a command's output,
+a file); your own writing doesn't count. At least two lines of Checked must carry such a
+reference. And when the chain runs through more than one session, you must have asked one of them
+(`--to`) before you brief: dig, don't relay.
 
 `harness ask <id> --brief FILE` (or `-` with the text on stdin). Briefing again replaces the old
 one; do it whenever the owner says it isn't clear.
@@ -145,7 +187,7 @@ one; do it whenever the owner says it isn't clear.
 paragraph. `harness ask <id> --evidence PATH --caption "what to look at in it"` copies the file
 into the ask, and the Issues tab shows images inline and diffs, logs and text as links. Images:
 png, jpg, gif, webp, svg; text: txt, diff, patch, log, md, json, csv. Up to 12 per ask. Caption
-each one with what it shows and what to notice, and refer to it from the background ("the first
+each one with what it shows and what to notice, and refer to it from the situation ("the first
 screenshot shows…"). `--drop-evidence N` removes one. Evidence goes when the ask is accepted or
 rejected; the ruling is what stays.
 

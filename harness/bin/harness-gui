@@ -807,6 +807,7 @@ border-left:1px solid var(--line);width:0;height:22px}
 .waits path.held{stroke:var(--held);stroke-dasharray:6 4}
 .waits path.msg{stroke:var(--wait);stroke-width:1.6;stroke-dasharray:2 4;stroke-linecap:round}
 .ln.mail{color:var(--warn)}
+.oos{color:var(--warn);font-weight:700;letter-spacing:.06em;margin:4px 0}
 .achain{margin:4px 0 8px;font-size:11px}.achain summary{cursor:pointer;color:var(--dim)}
 .ahop{border-left:2px solid var(--line);padding:3px 0 3px 8px;margin:4px 0}
 .ahq,.ahc{white-space:pre-wrap;color:var(--ink);margin-top:2px}.ahc{color:var(--dim)}
@@ -1977,7 +1978,10 @@ function askItem(slug, a) {
   const note = a.kind === 'note';
   const move = a.query_open ? 'intermediary looking'
     : a.waiting_on ? 'asking ' + a.waiting_on
-    : note ? 'conversation' : runs ? 'yours to run' : (mine ? 'yours' : 'being briefed');
+    : note ? 'conversation'
+    : (a.brief || {}).out_of_scope ? 'out of scope'
+    : runs ? (a.state === 'ready' || a.state === 'drafted' ? 'yours to run' : 'being investigated')
+    : (mine ? 'yours' : 'being briefed');
   const row = '<div class="arow" data-atog="' + esc(k) + '">' +
     '<span class="akind ' + esc(a.kind || '') + '">' + esc(a.kind || '?') + '</span>' +
     '<span class="aq" title="' + esc(a.question) + '">' + esc(a.question) + '</span>' +
@@ -2012,11 +2016,37 @@ function askItem(slug, a) {
     const meta = '<div class="ln q">task ' + esc(a.task || '?') +
       (a.node ? ' &middot; node ' + esc(a.node) : '') +
       ' &middot; asked by ' + esc(a.asked_by || '?') + ' &middot; ' + esc(a.state) + '</div>';
-    if (runs) {
+    // The brief, in the order it is written: scope first (owner, 2026-10-06).
+    const briefDl = () => '<dl>' +
+        sec('Scope', b.scope) + sec('Situation', b.situation) + sec('Chain', b.chain) +
+        sec('Cause', b.cause) + sec('Harness', b.harness) + sec('Tried', b.tried) +
+        sec('Why you', b.why) + '<dt>Options</dt><dd>' + opts + '</dd>' +
+        (b.commands ? sec('Commands', b.commands) : '') + sec('Consequence', b.consequence) +
+        sec('Checked', lines(b.checked)) + sec('Unknown', b.unknown) +
+        sec('Recommendation', b.recommendation) +
+        (evs ? '<dt>Evidence</dt><dd style="white-space:normal">' + evs + '</dd>' : '') + '</dl>';
+    if (b.out_of_scope) {
+      // Out of scope is an answer. The owner drops it, halts the tree, or says it's in.
+      body = meta + '<div class="oos">OUT OF SCOPE</div><dl>' + sec('Scope', b.scope) +
+        sec('Situation', b.situation) + sec('Chain', b.chain) +
+        sec('Out of scope', b.out_of_scope) + '</dl>' +
+        '<div class="row"><input class="anote" data-akey="' + esc(k) + '" ' +
+          'placeholder="why (or, for In scope, which feature it serves)">' +
+        '<button data-adrop="' + esc(k) + '">Drop it</button>' +
+        '<button class="rej" data-ahalt="' + esc(k) + '">Halt the tree</button>' +
+        '<button data-ainscope="' + esc(k) + '">It&rsquo;s in scope</button>' + msg + '</div>';
+    } else if (runs && !(a.state === 'ready' || a.state === 'drafted')) {
+      // Not briefed: the commands stay hidden until the intermediary has dug in.
+      body = meta + '<div class="ln q" style="margin-top:6px">being investigated by its ' +
+        'intermediary &middot; ' + esc(a.age || '') + '. Its commands show once it has ' +
+        'written the brief.</div>' +
+        '<div class="row"><button class="rej" data-arej="' + esc(k) + '">Won&rsquo;t do</button>' +
+        msg + '</div>';
+    } else if (runs) {
       // Commands to run: copy, run, click Done. Or ask the intermediary first.
       const cmds = runs.map((c, i) => '<div class="arun"><pre>' + esc(c) + '</pre>' +
         '<button class="cp" data-acopy="' + esc(c) + '">Copy</button></div>').join('');
-      body = meta + cmds + (evs ? '<div style="margin-top:6px">' + evs + '</div>' : '') +
+      body = meta + briefDl() + cmds +
         '<div class="row"><input class="anote" data-akey="' + esc(k) + '" ' +
           'placeholder="note for the asker (optional)">' +
         '<button data-adone="' + esc(k) + '">Done</button>' +
@@ -2029,15 +2059,7 @@ function askItem(slug, a) {
         '<div class="row"><button class="rej" data-arej="' + esc(k) + '">Reject</button>' +
         msg + '</div>';
     } else {
-      body = meta + '<dl>' +
-        sec('Question', b.question || a.question) +
-        sec('Background', b.background) +
-        sec('Why yours', b.why) +
-        sec('Checked', lines(b.checked)) +
-        '<dt>Options</dt><dd>' + opts + '</dd>' +
-        (evs ? '<dt>Evidence</dt><dd style="white-space:normal">' + evs + '</dd>' : '') +
-        sec('Recommendation', b.recommendation) +
-        sec('Waiting', b.waiting) +
+      body = meta + briefDl() + '<dl>' +
         '<dt>Draft ruling</dt><dd style="white-space:normal">' +
         '<textarea class="adraft" rows="1" readonly data-akey="' + esc(k) + '" data-raw="' +
         esc(a.draft || '') + '" placeholder="no draft yet &mdash; Edit to write your own">' +
@@ -2214,6 +2236,17 @@ document.addEventListener('click', e => {
       getSelection().removeAllRanges(); getSelection().addRange(r);
     }
     return;
+  }
+  for (const [attr, act] of [['adrop', 'drop'], ['ahalt', 'halt'], ['ainscope', 'inscope']]) {
+    const bt = e.target.closest('[data-' + attr + ']');
+    if (bt) {
+      const n = bt.closest('.abody').querySelector('.anote');
+      if (act === 'halt' && !confirm('Halt the whole tree? Nothing new starts until you resume it.'))
+        return;
+      bt.disabled = true;
+      ruleAsk(bt.dataset[attr], act, n ? n.value.trim() : '');
+      return;
+    }
   }
   const dn = e.target.closest('[data-adone]');
   if (dn) {
@@ -2508,7 +2541,7 @@ def save_charter(slug, feature, text):
                         ["--write", text])
 
 
-def _ask_cli(slug, args):
+def _ask_cli(slug, args, sub="ask"):
     """Sign or reject an ask — delegated, like every other write.
 
     The CLI refuses `--accept` from inside a session, as it does `sweep`, so the
@@ -2526,7 +2559,7 @@ def _ask_cli(slug, args):
     exe = Path(__file__).resolve().with_name("harness")
     env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
     try:
-        r = subprocess.run([sys.executable, str(exe), "ask"] + args, cwd=repo,
+        r = subprocess.run([sys.executable, str(exe), sub] + args, cwd=repo,
                            capture_output=True, text=True, timeout=20, env=env)
     except Exception as e:
         return False, f"{type(e).__name__}: {e}"[:300]
@@ -2613,6 +2646,18 @@ def rule_ask(slug, ask_id, action, text):
         if not (text or "").strip():
             return False, "say something"
         return _ask_cli(slug, [ask_id, "--msg", text])
+    # Out of scope (owner, 2026-10-06): drop it, halt the tree, or say it's in.
+    if action == "drop":
+        return _ask_cli(slug, [ask_id, "--drop", (text or "").strip() or "out of scope"])
+    if action == "halt":
+        ok, out = _ask_cli(slug, ["--why", (text or "").strip() or f"{ask_id} is out of scope: "
+                                  "the work has left the charter", "--ask", ask_id], sub="halt")
+        return ok, out
+    if action == "inscope":
+        if not (text or "").strip():
+            return False, "say which feature it serves"
+        return _ask_cli(slug, [ask_id, "--msg", f"The owner says this IS in scope: {text.strip()}. "
+                               "Write the full brief against that feature."])
     return False, f"unknown action {action!r}"
 
 

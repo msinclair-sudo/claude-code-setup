@@ -7738,6 +7738,7 @@ def queue(ctx, node):
     rows = [b for k, b in briefs.items()
             if b.get("node") == node and k not in derived
             and not awaiting(b) and not refused(b) and not superseded(b)
+            and not b.get("out_of_scope")
             and not ctx.state_file("marks", k, ".json").exists()]
     rows.sort(key=lambda b: (b.get("seq") if b.get("seq") is not None else 10**6,
                              b.get("written_at") or ""))
@@ -11366,10 +11367,30 @@ INTERMEDIARY = "harness-intermediary"          # its skill; a session's name add
 # The seven sections, in order: heading, key, cap. A cap is chars unless noted.
 # Raised 2026-10-05 after the first real briefing: at 120 chars an option was a
 # label, and with no background the owner could not tell what it was about.
-ASK_SECTIONS = (("question", "question", 300), ("background", "background", 2000),
-                ("why yours", "why", 400), ("checked", "checked", 12),
-                ("options", "options", 500), ("recommendation", "recommendation", 500),
-                ("waiting", "waiting", 300))
+# The brief an intermediary writes before anything reaches the owner (owner,
+# 2026-10-06: owner-7 arrived as one line and a "run them, then click Done").
+# Scope first, then what is happening, how it got here, why it happened and
+# what was tried, each with evidence the harness checks (ask_verify).
+ASK_SECTIONS = (("question", "question", 300),
+                ("scope", "scope", 1500),
+                ("situation", "situation", 2500),
+                ("chain", "chain", 2500),
+                ("cause", "cause", 2500),
+                ("harness", "harness", 1500),
+                ("tried", "tried", 2500),
+                ("why you", "why", 1000),
+                ("options", "options", 800),
+                ("commands", "commands", 2500),
+                ("consequence", "consequence", 1500),
+                ("checked", "checked", 30),
+                ("unknown", "unknown", 1200),
+                ("recommendation", "recommendation", 1000))
+# Out of scope is a complete answer: the work serves no charter feature, so the
+# rest of the brief would only describe something that should not exist.
+ASK_OOS_SECTIONS = (("question", "question", 300), ("scope", "scope", 1500),
+                    ("situation", "situation", 2500), ("chain", "chain", 2500),
+                    ("out of scope", "out_of_scope", 2500))
+ASK_CHECKED_MIN = 4
 ASK_ID_RE = re.compile(r"^[A-Za-z0-9_]+-\d+$")
 # Commands rank 0 hands the owner to run: an `action` ask carrying them, on the
 # standing task `owner` (no brief) or any task. The owner clicks Done, or asks.
@@ -11759,27 +11780,33 @@ def ask_find(ident, project=None):
     return hits[0]
 
 
-def parse_ask_brief(text):
+def parse_ask_brief(text, kind=None):
     """The `## ` sections, each under its cap -> (brief, []), or (None, every fault).
-    Prose keeps its paragraphs: lines join with a space, blank lines stay."""
-    names = {h: k for h, k, _ in ASK_SECTIONS}
+    Prose keeps its paragraphs: lines join with a space, blank lines stay. A brief
+    with `## Out of scope` is the short form (ASK_OOS_SECTIONS); otherwise every
+    section is required, Commands only for an action ask."""
+    every = {h: (k, cap) for h, k, cap in ASK_SECTIONS + ASK_OOS_SECTIONS}
     secs, cur, errs = {}, None, []
     for line in (text or "").splitlines():
         m = re.match(r"^##\s+(.+?)\s*$", line)
         if m:
             h = m.group(1).strip().lower()
-            if h not in names:
+            if h not in every:
                 errs.append(f"'{m.group(1).strip()}': not a section "
-                            f"(they are {', '.join(h for h, _, _ in ASK_SECTIONS)})")
+                            f"(they are {', '.join(h for h, _, _ in ASK_SECTIONS)}; or the "
+                            f"short form ending in '## Out of scope')")
                 cur = None
-            elif names[h] in secs:
+            elif every[h][0] in secs:
                 errs.append(f"{h}: given twice"); cur = None
             else:
-                cur = names[h]; secs[cur] = []
+                cur = every[h][0]; secs[cur] = []
         elif cur:
             secs[cur].append(line)
+    oos = "out_of_scope" in secs
+    want = ASK_OOS_SECTIONS if oos else tuple(
+        x for x in ASK_SECTIONS if x[1] != "commands" or kind == "action")
     out = {}
-    for h, k, cap in ASK_SECTIONS:
+    for h, k, cap in want:
         if k not in secs:
             errs.append(f"{h}: missing"); continue
         lines = [l.strip() for l in secs[k] if l.strip()]
@@ -11789,6 +11816,9 @@ def parse_ask_brief(text):
         if k == "checked":
             if len(lines) > cap:
                 errs.append(f"{h}: {len(lines)} lines, cap {cap}")
+            if len(lines) < ASK_CHECKED_MIN:
+                errs.append(f"{h}: {len(lines)} line(s); at least {ASK_CHECKED_MIN}, each a thing "
+                            f"you looked at and what it showed")
             out[k] = "\n".join(lines)
         elif k == "options":
             items = []
@@ -11800,18 +11830,153 @@ def parse_ask_brief(text):
                     items[-1] += " " + l           # a wrapped item
                 else:
                     errs.append(f"{h}: '{l[:40]}' is not a list item (- or 1.)")
-            if not 2 <= len(items) <= 5:
-                errs.append(f"{h}: {len(items)} item(s), need 2–5")
-            for i, it in enumerate(items, 1):
+            if not 2 <= len(items) <= 6:
+                errs.append(f"{h}: {len(items)} item(s), need 2–6 (doing nothing is one)")
+            for i_, it in enumerate(items, 1):
                 if len(it) > cap:
-                    errs.append(f"{h} #{i}: {len(it)} chars, cap {cap}")
+                    errs.append(f"{h} #{i_}: {len(it)} chars, cap {cap}")
             out[k] = items
         else:
             v = "\n\n".join(x for x in paras if x)
             if len(v) > cap:
                 errs.append(f"{h}: {len(v)} chars, cap {cap}")
             out[k] = v
+    if not oos and "harness" in out and not re.match(r"^\s*(yes|no)\b", out["harness"], re.I):
+        errs.append("harness: start with yes or no — is the harness itself part of the cause?")
     return (None, errs) if errs else (out, [])
+
+
+_REF_LINE = re.compile(r"`?([\w./~-]+\.[A-Za-z0-9]+):(\d+)(?:-\d+)?`?")
+_REF_SHA = re.compile(r"`([0-9a-f]{7,40})`")
+_REF_OBS = re.compile(r"\b(?:obs(?:ervation)?|log(?: entry)?|entry)\s+(\d{1,4})\b", re.I)
+_REF_QUOTE = re.compile(r"[\"“]([^\"”]{20,})[\"”]")
+
+
+def _norm(t):
+    return " ".join((t or "").replace("\\n", " ").split()).lower()
+
+
+def _session_corpus(sid, reads_only=False):
+    """Everything a session read, wrote and was told, as one normalised text.
+    `reads_only`: only what came back to it (tool output, messages to it), never
+    what it wrote itself, so an intermediary can't quote its own brief."""
+    out = []
+    for r in _transcript_recs(sid):
+        c = (r.get("message") or {}).get("content")
+        if isinstance(c, str):
+            if r.get("type") == "user" or not reads_only:
+                out.append(c)
+            continue
+        for x in c or []:
+            if not isinstance(x, dict):
+                continue
+            if x.get("type") == "text":
+                if r.get("type") == "user" or not reads_only:
+                    out.append(x.get("text") or "")
+            elif x.get("type") == "tool_use":
+                if not reads_only:
+                    out.append(json.dumps(x.get("input") or {}))
+            elif x.get("type") == "tool_result":
+                v = x.get("content")
+                out.append(v if isinstance(v, str) else " ".join(
+                    y.get("text") or "" for y in v or [] if isinstance(y, dict)))
+    return _norm("\n".join(out))
+
+
+def ask_verify(path, rec, brief):
+    """Faults in a brief's evidence, [] when every reference checks out (owner,
+    2026-10-06: the questions must make the session dig). A path:line must exist,
+    a backticked sha resolve, a log entry exist, and a quote over 20 characters
+    in Cause, Tried or Checked appear in a transcript on the chain, the
+    intermediary's own, or the item's thread. Checked needs two verified lines."""
+    pdir = Path(path).parent.parent
+    errs = []
+    try:
+        repo = Path(json.loads((pdir / "binding.json").read_text()).get("repo"))
+    except Exception:
+        repo = None
+    roots = [r for r in [repo] if r]
+    try:
+        for sp in (json.loads((pdir / "index.json").read_text()).get("nodes") or {}).values():
+            if sp.get("worktree"):
+                roots.append(Path(sp["worktree"]))
+    except Exception:
+        pass
+
+    def line_ok(f, n):
+        cands = [Path(f).expanduser()] if f.startswith(("/", "~")) else [r / f for r in roots]
+        for c in cands:
+            try:
+                if c.is_file() and n <= sum(1 for _ in open(c, errors="replace")):
+                    return True
+            except OSError:
+                pass
+        return False
+
+    def sha_ok(h):
+        return any(git("cat-file", "-e", f"{h}^{{commit}}", cwd=r)[0] == 0 for r in roots if r.is_dir())
+
+    obs_text = ""
+    try:
+        obs_text = (HOME_STATE / "OBSERVATIONS.md").read_text(errors="replace")
+    except OSError:
+        pass
+    corpus = None
+
+    def quote_ok(q):
+        nonlocal corpus
+        if corpus is None:
+            sids = {h.get("session") for h in rec.get("chain") or [] if h.get("session")}
+            me = os.environ.get("CLAUDE_CODE_SESSION_ID")
+            corpus = " ".join(_session_corpus(x) for x in sids if x != me) + " " + (
+                _session_corpus(me, reads_only=True) if me else "") + " " + _norm(
+                json.dumps(rec.get("thread") or []) + " " + json.dumps(rec.get("chain") or []))
+        return _norm(q) in corpus
+
+    verified_lines = 0
+    for k, v in brief.items():
+        text = "\n".join(v) if isinstance(v, list) else str(v)
+        for ln in text.splitlines():
+            good = 0
+            for m in _REF_LINE.finditer(ln):
+                if line_ok(m.group(1), int(m.group(2))):
+                    good += 1
+                else:
+                    errs.append(f"{k}: {m.group(1)}:{m.group(2)} is not there")
+            for m in _REF_SHA.finditer(ln):
+                if sha_ok(m.group(1)):
+                    good += 1
+                else:
+                    errs.append(f"{k}: `{m.group(1)}` is no commit in the project")
+            for m in _REF_OBS.finditer(ln):
+                if re.search(rf"^### {m.group(1)}\.", obs_text, re.M):
+                    good += 1
+                else:
+                    errs.append(f"{k}: log entry {m.group(1)} doesn't exist")
+            if k in ("cause", "tried", "checked"):
+                for m in _REF_QUOTE.finditer(ln):
+                    if quote_ok(m.group(1)):
+                        good += 1
+                    else:
+                        errs.append(f"{k}: the quote \"{m.group(1)[:60]}…\" is in no transcript on "
+                                    f"the chain, your own, or the thread — quote what you read")
+            if k == "checked" and good:
+                verified_lines += 1
+    if "checked" in brief and verified_lines < 2:
+        errs.append(f"checked: {verified_lines} line(s) carry a reference the harness could verify "
+                    f"(path:line, a `sha`, a log entry, or a quote you read); at least 2")
+    h = brief.get("harness") or ""
+    if re.match(r"^\s*yes\b", h, re.I) and not (_REF_OBS.search(h) or _REF_LINE.search(h)):
+        errs.append("harness: yes needs the log entry or the path:line where it goes wrong")
+    # Dig, don't relay: a chain through more than one session means asking one
+    # of them before the owner reads a word.
+    nodes = {x.get("node") for x in rec.get("chain") or [] if x.get("node")}
+    if not brief.get("out_of_scope") and len(nodes) > 1 and not any(
+            t.get("to") for t in rec.get("thread") or []):
+        errs.append(f"the chain runs through {len(nodes)} sessions ({', '.join(sorted(nodes))}) and "
+                    f"you have asked none of them: harness ask {rec['id']} --to <node> --text "
+                    f"\"...\" first")
+    return errs
 
 
 def _ask_log(rec, by, what):
@@ -11821,12 +11986,17 @@ def _ask_log(rec, by, what):
 def ask_set_brief(path, rec, text, by="intermediary"):
     if rec.get("state") not in ASK_OPEN:
         die(REFUSED, f"{rec['id']} is {rec.get('state')}; it takes no brief")
-    brief, errs = parse_ask_brief(text)
+    brief, errs = parse_ask_brief(text, rec.get("kind"))
+    if not errs:
+        errs = ask_verify(path, rec, brief)
     if errs:
         die(REFUSED, f"brief refused — {len(errs)} fault(s):\n"
                      + "\n".join(f"             {e}" for e in errs)
                      + "\n           Sections, in order: "
-                     + ", ".join("## " + h.capitalize() for h, _, _ in ASK_SECTIONS))
+                     + ", ".join("## " + h.capitalize() for h, _, _ in ASK_SECTIONS
+                                 if h != "commands" or rec.get("kind") == "action")
+                     + "\n           Or, if it serves no charter feature: ## Question, ## Scope, "
+                       "## Situation, ## Chain, ## Out of scope")
     rec["brief"], rec["state"] = brief, "ready"
     _ask_log(rec, by, "briefed")
     _save(path, rec)
@@ -12012,6 +12182,46 @@ def ask_accept(pdir, path, rec, text=None, by="operator"):
     return r
 
 
+def ask_drop(pdir, path, rec, why):
+    """The owner rules an item out of scope (owner, 2026-10-06). The ask closes,
+    and the task where its chain left the charter (its first untraced hop, else
+    the task it sits on) is marked out of scope on its brief, so it leaves every
+    queue and is not rewritten. Its node and that node's lead are told to stop it
+    and close it."""
+    why = (why or "").strip()
+    if not why:
+        die(REFUSED, 'say why: harness ask <id> --drop "this serves no charter feature: ..."')
+    hops = rec.get("chain") or []
+    task = next((h.get("task") for h in hops if h.get("untraced") and h.get("task")), None)
+    if not task and tkey(rec.get("task") or "") not in (OWNER_TASK, "docs"):
+        task = rec.get("task")
+    told = []
+    if task:
+        f = Path(pdir) / "briefs" / f"{re.sub(r'[^A-Za-z0-9]', '_', task)}.json"
+        try:
+            b = json.loads(f.read_text())
+            b["out_of_scope"] = {"why": why, "at": _now(), "ask": rec["id"], "by": "owner"}
+            b.setdefault("rulings", []).append({"id": rec["id"], "answer": f"out of scope: {why}",
+                                                "at": _now()})
+            f.write_text(json.dumps(b, indent=2) + "\n")
+            node = b.get("node")
+            try:
+                tree = json.loads((Path(json.loads((Path(pdir) / "binding.json").read_text())
+                                        .get("repo")) / ".harness" / "tree.json").read_text())
+                lead = (tree.get("nodes", {}).get(node) or {}).get("parent")
+            except Exception:
+                lead = None
+            for n in [x for x in (node, lead) if x]:
+                ring_inbox(pdir, n, "owner", f"the owner ruled '{task}' out of scope ({rec['id']}): "
+                           f"{why}. Stop it and close it: harness mark {task} --close --force. Do "
+                           f"not brief it again.")
+                told.append(n)
+        except Exception:
+            task = None
+    ask_reject(path, rec)
+    return task, told
+
+
 def ask_reject(path, rec):
     stub = {"id": rec["id"], "task": rec.get("task"), "asker_node": rec.get("asker_node"),
             "state": "rejected", "at": _now()}
@@ -12150,8 +12360,8 @@ def ask_reply(path, rec, text, by="intermediary"):
         die(REFUSED, f"the reply is {len(text)} chars; the cap is 2000")
     rec.setdefault("thread", []).append({"by": by, "at": _now(), "text": text})
     rec["query_open"] = False
-    if rec.get("runs") and rec.get("state") == "asked":
-        rec["state"] = "ready"
+    # An action is ready only when briefed (owner, 2026-10-06): a reply is a
+    # message, and owner-7 reached the owner as one.
     _ask_log(rec, by, "replied")
     _save(path, rec)
 
@@ -12320,7 +12530,7 @@ def cmd_ask(a):
         a.msg, a.query = a.query, None
     verbs = [v for v in ("brief", "amend", "draft", "return_why", "merge", "accept",
                          "reject", "show", "evidence", "drop_evidence", "done", "msg", "to",
-                         "reply", "withdraw")
+                         "reply", "withdraw", "drop")
              if getattr(a, v) is not None and getattr(a, v) is not False]
     flag = lambda v: "--" + {"return_why": "return"}.get(v, v).replace("_", "-")
     if a.caption is not None and not a.evidence:
@@ -12394,12 +12604,19 @@ def cmd_ask(a):
                      f"something: harness ask {a.target} --msg \"...\"")
     if v == "msg" and os.environ.get("HARNESS_INTERMEDIARY") == "1" and a.target == mine:
         die(REFUSED, "that is your own ask: --reply to the owner, --to <node> to a node")
-    if v in ("accept", "reject", "done") and sid:
+    if v in ("accept", "reject", "done", "drop") and sid:
         die(REFUSED, "only the owner signs a ruling or marks an action done — the GUI's "
                      "Issues tab, or a shell")
     pdir, repo, path, rec = ask_find(a.target, a.project)
     if v == "show":
         ask_show(pdir, repo, rec); return
+    if v == "drop":
+        task, told = ask_drop(pdir, path, rec, a.drop)
+        item_close_detached(pdir, rec["id"])
+        print(f"dropped {rec['id']} as out of scope"
+              + (f"; '{task}' is marked out of scope and {', '.join(told)} told to close it"
+                 if task else "; no task to mark (it sits on the owner's standing task)"))
+        return
     if v == "withdraw":
         ask_withdraw(pdir, path, rec, a.withdraw, sid)
         item_close_detached(pdir, rec["id"])
@@ -12641,7 +12858,7 @@ CHAT_CAP = 4000                 # chars in one message, either way
 # No SendMessage: a message to a sleeping session is lost. It talks through
 # `harness ask`, which logs, rings and wakes.
 ITEM_TOOLS = ("Read", "Grep", "Glob", "Bash")
-ITEM_MODEL = {"action": ("sonnet", "medium"), "note": ("sonnet", "medium"),
+ITEM_MODEL = {"action": ("opus", "high"), "note": ("sonnet", "medium"),
               "intent": ("opus", "high"), "judgement": ("opus", "high"),
               "risk": ("opus", "high"), "scope": ("opus", "high")}
 
@@ -14682,6 +14899,8 @@ def main():
     ak.add_argument("--query", metavar="TEXT", help=argparse.SUPPRESS)
     ak.add_argument("--to", metavar="NODE",
                     help="intermediary: ask a node about this item, with --text")
+    ak.add_argument("--drop", metavar="WHY",
+                    help="owner: out of scope; closes the ask and marks the untraced task")
     ak.add_argument("--withdraw", metavar="WHY",
                     help="the asker (or rank 0, or the owner) takes the ask back")
     ak.add_argument("--reply", metavar="TEXT",

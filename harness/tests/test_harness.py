@@ -1180,9 +1180,13 @@ if __name__ == "__main__":
 class Ask(unittest.TestCase):
     """T17: asks are opened by leads, briefed by the intermediary, signed by the owner."""
 
-    BRIEF = ("## Question\nShip X or Y?\n## Background\nX ships the map.\n\nY waits a cycle.\n## Why yours\nintent: scope is the owner's\n"
-             "## Checked\nbriefs/s1.json\n## Options\n- X: faster\n- Y: safer\n"
-             "## Recommendation\nX (dev)\n## Waiting\nnothing")
+    BRIEF = ("## Question\nShip X or Y?\n## Scope\nthe sample join: maps are its output.\n"
+             "## Situation\nX ships the map.\n\nY waits a cycle.\n## Chain\nmain asked; owner set the cut.\n"
+             "## Cause\nThe cut leaves room for one.\n## Harness\nno: the queue and briefs are clean.\n"
+             "## Tried\nnothing; it is a choice.\n## Why you\nintent: scope is the owner's\n"
+             "## Options\n- X: faster\n- Y: safer\n## Consequence\nthe map waits a cycle.\n"
+             "## Checked\nbriefs/s1.json\nthe charter\nthe queue\nthe cut\n"
+             "## Unknown\nnothing material\n## Recommendation\nX (dev)")
 
 
     def test_id_not_reused_after_accept(self):
@@ -1191,6 +1195,8 @@ class Ask(unittest.TestCase):
         (d / "briefs" / "t.json").write_text(json.dumps({"task": "t", "rulings": [{"id": "t-1"}]}))
         self.assertEqual(hz.ask_next_id(d, "t"), "t-2")
     def setUp(self):
+        _v = mock.patch.object(hz, "ask_verify", return_value=[])
+        _v.start(); self.addCleanup(_v.stop)
         self.ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev"})
         (self.ctx.dir / "briefs").mkdir()
         self.bf = self.ctx.dir / "briefs" / "s1.json"
@@ -1228,18 +1234,28 @@ class Ask(unittest.TestCase):
         b, errs = hz.parse_ask_brief(self.BRIEF)
         self.assertEqual(errs, [])
         self.assertEqual(b["options"], ["X: faster", "Y: safer"])
-        _, errs = hz.parse_ask_brief(self.BRIEF.replace("## Waiting\nnothing", ""))
-        self.assertEqual(errs, ["waiting: missing"])
-        self.assertEqual(b["background"], "X ships the map.\n\nY waits a cycle.")
+        _, errs = hz.parse_ask_brief(self.BRIEF.replace("## Recommendation\nX (dev)", ""))
+        self.assertEqual(errs, ["recommendation: missing"])
+        self.assertEqual(b["situation"], "X ships the map.\n\nY waits a cycle.")
+        self.assertIn("commands: missing", hz.parse_ask_brief(self.BRIEF, "action")[1])
         bad = (self.BRIEF.replace("Ship X or Y?", "q" * 350)
                .replace("- Y: safer", "")
-               .replace("briefs/s1.json", "\n".join("l" * 3 for _ in range(13))))
+               .replace("no: the queue", "the queue")
+               .replace("the queue\nthe cut\n", ""))
         _, errs = hz.parse_ask_brief(bad)
         self.assertIn("question: 350 chars, cap 300", errs)
-        self.assertIn("checked: 13 lines, cap 12", errs)
-        self.assertIn("options: 1 item(s), need 2–5", errs)
-        _, errs = hz.parse_ask_brief(self.BRIEF.replace("X: faster", "x" * 501))
-        self.assertEqual(errs, ["options #1: 501 chars, cap 500"])
+        self.assertTrue(any(e.startswith("checked: 2 line(s); at least 4") for e in errs))
+        self.assertTrue(any(e.startswith("options: 1 item(s)") for e in errs))
+        self.assertTrue(any(e.startswith("harness: start with yes or no") for e in errs))
+        # out of scope is a complete answer in five sections
+        oos = ("## Question\nStop two sessions?\n## Scope\nnone: harness upkeep, no feature.\n"
+               "## Situation\nlanes stuck.\n## Chain\ndev to main to here.\n"
+               "## Out of scope\nIt serves no charter feature; the loop is dev and main.")
+        b, errs = hz.parse_ask_brief(oos, "action")
+        self.assertEqual(errs, [])
+        self.assertIn("out_of_scope", b)
+        _, errs = hz.parse_ask_brief(self.BRIEF.replace("X: faster", "x" * 801))
+        self.assertEqual(errs, ["options #1: 801 chars, cap 800"])
 
     def test_draft_needs_ready_and_accept_attaches(self):
         r = self.open()
@@ -1561,6 +1577,80 @@ class AskChain(unittest.TestCase):
         self.assertIn('received from owner: "always tell main', lines)
 
 
+class AskEvidence2(unittest.TestCase):
+    """Owner, 2026-10-06: the brief's evidence is checked, so it can only be
+    written by looking."""
+
+    def setUp(self):
+        import subprocess as sp
+        self.root = Path(tempfile.mkdtemp())
+        self.repo = self.root / "repo"; self.repo.mkdir()
+        g = lambda *a: sp.run(["git", "-C", str(self.repo), *a], capture_output=True, text=True)
+        g("init", "-q"); g("config", "user.email", "t@t"); g("config", "user.name", "t")
+        (self.repo / "loader.py").write_text("a\nb\nc\n")
+        g("add", "-A"); g("commit", "-qm", "x")
+        self.sha = g("rev-parse", "--short", "HEAD").stdout.strip()
+        self.pdir = self.root / "state"; (self.pdir / "asks").mkdir(parents=True)
+        (self.pdir / "binding.json").write_text(json.dumps({"repo": str(self.repo)}))
+        self.path = self.pdir / "asks" / "owner-7.json"
+        self.rec = {"id": "owner-7", "kind": "action", "state": "asked",
+                    "chain": [{"node": "dev", "received": "the hook and spawn disagree about dev_1"},
+                              {"node": "main", "received": "x"}],
+                    "thread": []}
+        self.obs = mock.patch.object(hz, "HOME_STATE", self.root)
+        self.obs.start(); self.addCleanup(self.obs.stop)
+        (self.root / "OBSERVATIONS.md").write_text("### 105. Two predicates for running\n")
+        e = mock.patch.dict(os.environ, {}); e.start(); self.addCleanup(e.stop)
+        os.environ.pop("CLAUDE_CODE_SESSION_ID", None)     # the test runner's own session
+
+    def brief(self, checked, harness="yes: obs 105", cause="x"):
+        return {"scope": "s", "cause": cause, "harness": harness, "checked": checked}
+
+    def test_references_must_exist(self):
+        good = "\n".join(["loader.py:2 holds the reader", f"`{self.sha}` is the reviewed commit",
+                          "obs 105 names it", "the queue"])
+        self.rec["thread"] = [{"to": "dev", "text": "which commit?"}]
+        self.assertEqual(hz.ask_verify(self.path, self.rec, self.brief(good)), [])
+        bad = "\n".join(["loader.py:99 holds it", "`deadbee` is it", "obs 999", "x"])
+        errs = hz.ask_verify(self.path, self.rec, self.brief(bad))
+        self.assertTrue(any("loader.py:99 is not there" in e for e in errs))
+        self.assertTrue(any("`deadbee` is no commit" in e for e in errs))
+        self.assertTrue(any("log entry 999 doesn't exist" in e for e in errs))
+        self.assertTrue(any(e.startswith("checked: 0 line(s)") for e in errs))
+
+    def test_quotes_must_be_read_and_yes_needs_a_place(self):
+        self.rec["thread"] = [{"to": "dev", "text": "?"}]
+        b = self.brief("\n".join(['dev said "the hook and spawn disagree about dev_1"',
+                                  "loader.py:1", "a", "b"]),
+                       harness="yes, the harness is at fault",
+                       cause='"spawn is never consulted by the orientation hook here"')
+        errs = hz.ask_verify(self.path, self.rec, b)
+        self.assertTrue(any("cause: the quote" in e for e in errs))           # invented
+        self.assertFalse(any("checked: the quote" in e for e in errs))       # read on the chain
+        self.assertTrue(any("harness: yes needs" in e for e in errs))
+
+    def test_a_multi_session_chain_needs_a_question_first(self):
+        b = self.brief("\n".join(["loader.py:1", "loader.py:2", "a", "b"]))
+        self.assertTrue(any("asked none of them" in e for e in hz.ask_verify(self.path, self.rec, b)))
+        self.rec["thread"] = [{"by": "intermediary", "to": "dev", "text": "why occupied?"}]
+        self.assertEqual(hz.ask_verify(self.path, self.rec, b), [])
+
+    def test_drop_marks_the_untraced_task_and_tells_its_node_and_lead(self):
+        repo = self.repo
+        (repo / ".harness").mkdir()
+        (repo / ".harness" / "tree.json").write_text(json.dumps(
+            {"nodes": {"main": {}, "dev": {"parent": "main"}, "dev_1": {"parent": "dev"}}}))
+        (self.pdir / "briefs").mkdir()
+        (self.pdir / "briefs" / "fix_it.json").write_text(json.dumps({"task": "fix-it", "node": "dev_1"}))
+        self.rec.update(task="owner", chain=[{"node": "dev_1", "task": "fix-it", "untraced": True}])
+        self.path.write_text(json.dumps(self.rec))
+        task, told = hz.ask_drop(self.pdir, self.path, self.rec, "harness upkeep, no feature")
+        self.assertEqual((task, told), ("fix-it", ["dev_1", "dev"]))
+        b = json.loads((self.pdir / "briefs" / "fix_it.json").read_text())
+        self.assertEqual(b["out_of_scope"]["ask"], "owner-7")
+        self.assertEqual(json.loads(self.path.read_text())["state"], "rejected")
+
+
 class Intermediary(unittest.TestCase):
     """T17: one intermediary per project, its reach that project only."""
 
@@ -1667,6 +1757,8 @@ class AskEvidence(unittest.TestCase):
     goes when the ask does."""
 
     def setUp(self):
+        _v = mock.patch.object(hz, "ask_verify", return_value=[])
+        _v.start(); self.addCleanup(_v.stop)
         self.ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev"})
         (self.ctx.dir / "briefs").mkdir()
         (self.ctx.dir / "briefs" / "s1.json").write_text(
@@ -2824,7 +2916,7 @@ class OwnerActions(unittest.TestCase):
         saved = json.loads(self.path(r).read_text())
         self.assertEqual([t["by"] for t in saved["thread"]], ["owner", "intermediary"])
         self.assertFalse(saved["query_open"])
-        self.assertEqual(saved["state"], "ready")            # looked at
+        self.assertEqual(saved["state"], "asked")            # a reply is not a brief
 
     def test_note_is_the_owners_alone(self):
         with self.assertRaises(SystemExit):
@@ -2890,7 +2982,7 @@ class ItemSessions(unittest.TestCase):
         ok, _, calls = self.wake([], ask="t-2")
         self.assertEqual(calls[0][:5], ["claude", "--bg", "FRESH", "opus", "t-2"])
         ok, _, calls = self.wake([], ask="t-1")
-        self.assertEqual(calls[0][3], "sonnet")
+        self.assertEqual(calls[0][3], "opus")               # an action is dug into too
 
     def test_cap_queues_the_fourth(self):
         rows = [self.row(f"x-{i}") for i in range(3)]

@@ -2040,8 +2040,10 @@ def cmd_doctor(a):
     gone = session_hooks_missing(ctx.repo)
     arm("session hooks registered in .claude/settings.json", not gone,
         "" if not gone else "absent: " + ", ".join(gone)
-        + (f"  — re-scaffold: harness scaffold --force {ctx.repo}, then commit "
-           f".claude/settings.json" if mine else "  — NOT yours to fix: report it to your lead"))
+        + (f"  — the owner runs harness scaffold --force {ctx.repo} from a shell and "
+           f"commits .claude/settings.json (a session is refused it as self-modification, "
+           f"log 95): ask them with harness ask owner --kind action --run ..."
+           if mine else "  — NOT yours to fix: report it to your lead"))
 
     if fails and not (guard and guard.exists()):
         die(UNGUARDED, "hooksPath does not contain a usable _guard — this worktree "
@@ -6656,7 +6658,9 @@ def all_facts(ctx):
 
 
 def latest(fact):
-    obs = fact.get("observations") or []
+    """The last observation that measured something. A recheck that failed is
+    kept beside it, never in its place (log 101)."""
+    obs = [o for o in fact.get("observations") or [] if not o.get("failed")]
     return obs[-1] if obs else None
 
 
@@ -6782,6 +6786,12 @@ def cmd_fact(a):
                 "figure attached,\n           and the next session either believes it "
                 "or pays the whole derivation\n           again. That cost is the "
                 "reason this command exists.")
+        # A command that can't even parse can never recheck (log 101: a quoting
+        # slip recorded, then a recheck overwrote the value with nothing).
+        syn = subprocess.run(["bash", "-n", "-c", a.from_], capture_output=True, text=True)
+        if syn.returncode:
+            die(REFUSED, f"--from is not valid shell: {syn.stderr.strip()[:200]}\n"
+                         f"           Fix the quoting; a recheck runs it exactly as written.")
         head = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
         r = r or {"name": a.name, "observations": []}
         if a.what:
@@ -6831,6 +6841,16 @@ def cmd_fact(a):
         if err:
             for line in err.splitlines()[:5]:
                 print(f"  ! {line}")
+        if rc != 0 or not out.strip():
+            why = f"exit {rc}" if rc != 0 else "printed nothing"
+            r["observations"].append(
+                {"failed": why, "command": o["command"], "node": node,
+                 "worktree": str(cwd), "sha": head, "by": who, "exit": rc,
+                 "rechecked": True, "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")})
+            f.write_text(json.dumps(r, indent=2) + "\n")
+            print(f"\n  recheck FAILED ({why}); the value stays {o.get('value')} from "
+                  f"{_ago(o.get('at'))}. The failure is recorded beside it.")
+            return
         r["observations"].append(
             {"value": out, "command": o["command"], "node": node,
              "worktree": str(cwd), "sha": head, "by": who, "exit": rc,
@@ -8634,6 +8654,12 @@ def cmd_note(a):
     #
     # The brief already carries `comments`; the viewer has been reading them all
     # along. Nothing needed inventing, only writing to.
+    if not f.exists() and b is None and tkey(a.task) == OWNER_TASK:
+        # Nothing reads a note here: the owner task's items are its asks (log 102).
+        die(REFUSED, f"'{OWNER_TASK}' holds the owner's items, and a note on it reaches "
+                     f"nobody.\n           Write on the item: harness ask <id> --msg - "
+                     f"(harness ask --list names them),\n           or withdraw it: "
+                     f"harness ask <id> --withdraw \"why\"")
     if not f.exists() and b is None:
         die(REFUSED, f"no task '{a.task}' — neither a brief nor a task record.\n"
                      f"           `harness status` lists the open ones, `harness "
@@ -10668,13 +10694,15 @@ def cited(ctx, paths):
     out = {}
     for p in paths:
         ab, forms = path_forms(ctx, p)
-        base = Path(ab).name
+        # Its folder and name, never the name alone (log 102, obs 78: a fact
+        # naming scratch/held-edge-cost/live-copy.db protected every live-copy.db).
+        tail = "/".join(Path(ab).parts[-2:])
         hits = []
         for who, t in texts:
             if any(f in t for f in forms):
                 hits.append((who, "names it"))
-            elif len(base) >= 8 and base in t:
-                hits.append((who, f"names {base}"))
+            elif len(Path(ab).parts) >= 2 and tail in t:
+                hits.append((who, f"names {tail}"))
         out[p] = hits
     return out
 
@@ -11303,6 +11331,40 @@ def owner_done(pdir):
     return out
 
 
+def ask_withdraw(pdir, path, rec, why, sid):
+    """The asker takes an ask back (log 101b: main could neither change an ask's
+    commands nor withdraw one, so the owner saw four items for two writes). From
+    a session: the asking node, or rank 0. From a shell: the owner."""
+    why = (why or "").strip()
+    if not why:
+        die(REFUSED, 'say why: harness ask <id> --withdraw "replaced by ..."')
+    if os.environ.get("HARNESS_INTERMEDIARY") == "1":
+        die(REFUSED, "an intermediary returns an ask (--return), it doesn't withdraw it")
+    if rec.get("state") not in ASK_OPEN:
+        die(REFUSED, f"{rec['id']} is {rec.get('state')}; only an open ask can be withdrawn")
+    by = "owner"
+    if sid:
+        try:
+            c = Ctx(); c.require_enrolled()
+            by, _ = c.node()
+            root = c.rank(by) == 0
+        except (SystemExit, Exception):
+            by, root = f"session {sid[:8]}", False
+        if by != rec.get("asker_node") and not root:
+            die(REFUSED, f"{rec['id']} is {rec.get('asker_node')}'s ask. Tell it, or rank 0, "
+                         f"to withdraw it.")
+    d = {"id": rec["id"], "task": rec.get("task"), "kind": rec.get("kind"),
+         "question": rec.get("question"), "runs": rec.get("runs") or [],
+         "asker_node": rec.get("asker_node"), "by": by, "why": why, "at": _now()}
+    f = Path(pdir) / "owner" / "withdrawn.jsonl"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    with open(f, "a") as fh:
+        fh.write(json.dumps(d) + "\n")
+    evidence_clear(path, rec["id"])
+    Path(path).unlink(missing_ok=True)
+    return d
+
+
 def ask_done(pdir, path, rec, note=None):
     """The owner ran an action ask's commands. Logged, left as a stub the asker
     is told of once, and rung through the asker's doorbell now."""
@@ -11550,7 +11612,7 @@ def cmd_ask(a):
         a.msg, a.query = a.query, None
     verbs = [v for v in ("brief", "amend", "draft", "return_why", "merge", "accept",
                          "reject", "show", "evidence", "drop_evidence", "done", "msg", "to",
-                         "reply")
+                         "reply", "withdraw")
              if getattr(a, v) is not None and getattr(a, v) is not False]
     flag = lambda v: "--" + {"return_why": "return"}.get(v, v).replace("_", "-")
     if a.caption is not None and not a.evidence:
@@ -11630,6 +11692,12 @@ def cmd_ask(a):
     pdir, repo, path, rec = ask_find(a.target, a.project)
     if v == "show":
         ask_show(pdir, repo, rec); return
+    if v == "withdraw":
+        ask_withdraw(pdir, path, rec, a.withdraw, sid)
+        item_close_detached(pdir, rec["id"])
+        print(f"withdrew {rec['id']}; it leaves the owner's Issues tab and its session "
+              f"closes shortly")
+        return
     if v == "brief":
         src = a.brief
         if "\n" not in src and not src.lstrip().startswith("#"):
@@ -13267,6 +13335,7 @@ def cmd_documenter(a):
 # arms it again.
 
 DOORBELL_TICK = 10              # seconds between inbox checks
+RANG_FRESH = 120                # a waiter that rang this recently has a wake on its way
 NUDGE_AFTER = 300               # a wait, and the waited-on node's quiet, before a nudge
 
 
@@ -13422,6 +13491,8 @@ def cmd_doorbell(a):
                 n = 1
         if n:
             (d / "armed.json").unlink(missing_ok=True)
+            # A wake is now on its way; ring_report says so (log 100).
+            (d / "rang.json").write_text(json.dumps({"at": time.time()}))
             print("rang: mail is waiting. Read it: harness doorbell --read")
             return
         time.sleep(DOORBELL_TICK)
@@ -13462,6 +13533,14 @@ def ring_report(ctx, node):
     or not anything would read it, and a ring to rank 0 sat unread (2026-10-06)."""
     if bell_armed(ctx, node):
         return "its doorbell is armed, so it wakes now"
+    # Between its waiter going off and the session re-arming, nothing is armed
+    # but a wake is on its way (log 100: "nothing wakes it" while one was).
+    try:
+        rang = json.loads((bell_dir(ctx, node) / "rang.json").read_text()).get("at") or 0
+    except Exception:
+        rang = 0
+    if time.time() - rang < RANG_FRESH:
+        return "its doorbell just rang, so it wakes within a minute"
     sid = MAIL().owner(ctx.state, node)
     try:
         row = next((r for r in cached_roster(ctx) if sid and r.get("sessionId") == sid), None)
@@ -13866,6 +13945,8 @@ def main():
     ak.add_argument("--query", metavar="TEXT", help=argparse.SUPPRESS)
     ak.add_argument("--to", metavar="NODE",
                     help="intermediary: ask a node about this item, with --text")
+    ak.add_argument("--withdraw", metavar="WHY",
+                    help="the asker (or rank 0, or the owner) takes the ask back")
     ak.add_argument("--reply", metavar="TEXT",
                     help="intermediary: answer the owner under the ask")
     ak.add_argument("--idle", action="store_true",

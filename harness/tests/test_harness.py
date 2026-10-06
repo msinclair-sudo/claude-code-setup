@@ -560,15 +560,21 @@ class Cited(unittest.TestCase):
         ctx.repo = Path("/r")
         home = str(Path.home())
         texts = [("brief open", f'{{"text": "replay from ~/data/backup-2026.db"}}'),
-                 ("fact f", '{"command": "ls scratch/run.py"}')]
+                 ("fact f", '{"command": "ls scratch/run.py"}'),
+                 ("fact held", '{"command": "sqlite3 scratch/held-edge-cost/live-copy.db"}')]
         with mock.patch.object(hz, "open_record_texts", return_value=texts), \
              mock.patch.object(hz, "load_index", return_value={"byWorktree": {"/r-dev": "dev"}}):
             got = hz.cited(ctx, [f"{home}/data/backup-2026.db", "/r-dev/scratch/run.py",
-                                 "/elsewhere/backup-2026.db", f"{home}/data/other.bin"])
+                                 "/elsewhere/backup-2026.db", f"{home}/data/other.bin",
+                                 "/r/scratch/test-modules/hec-reaim/live-copy.db",
+                                 "/x/y/held-edge-cost/live-copy.db"])
         self.assertEqual(got[f"{home}/data/backup-2026.db"], [("brief open", "names it")])
         self.assertEqual(got["/r-dev/scratch/run.py"], [("fact f", "names it")])
-        self.assertEqual(got["/elsewhere/backup-2026.db"],
-                         [("brief open", "names backup-2026.db")])     # by name: careful
+        # Log 102 / obs 78: the same file name in another folder is another file.
+        self.assertEqual(got["/elsewhere/backup-2026.db"], [])
+        self.assertEqual(got["/r/scratch/test-modules/hec-reaim/live-copy.db"], [])
+        self.assertEqual(got["/x/y/held-edge-cost/live-copy.db"],
+                         [("fact held", "names held-edge-cost/live-copy.db")])
         self.assertEqual(got[f"{home}/data/other.bin"], [])
 
 

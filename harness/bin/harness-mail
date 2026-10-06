@@ -83,10 +83,25 @@ def take(state, node, how):
     return msgs
 
 
+def _ago(at):
+    """'(1h05m ago)' for a message's timestamp, so a stale one reads as stale
+    (log 94: a request to re-file work the owner had already run)."""
+    try:
+        import datetime
+        t = datetime.datetime.strptime(at, "%Y-%m-%dT%H:%M:%S%z").timestamp()
+    except Exception:
+        return ""
+    s = max(0, int(time.time() - t))
+    if s < 60:
+        return ""
+    return f" ({s // 3600}h{s % 3600 // 60:02d}m ago)" if s >= 3600 else f" ({s // 60}m ago)"
+
+
 def render(msgs):
     lines = [f"Doorbell — {len(msgs)} message(s) for you:"]
     for m in msgs:
-        lines.append(f"  {(m.get('at') or '')[11:16]}  from {m.get('from') or '?'}: {m.get('text')}")
+        lines.append(f"  {(m.get('at') or '')[11:16]}{_ago(m.get('at') or '')}  "
+                     f"from {m.get('from') or '?'}: {m.get('text')}")
     lines.append("They are marked read: act on them now, or say on the record why not.")
     return "\n".join(lines)
 

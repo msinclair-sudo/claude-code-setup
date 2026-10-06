@@ -3268,6 +3268,14 @@ def cmd_hook_stop(a):
                 "Run `harness doorbell` with run_in_background, then end your turn. "
                 "When it finishes, run `harness doorbell --read` and act on what it says.")
             return
+        if sid and handoff_unasked(ctx, node, turn_texts(sid)):
+            stop_block(
+                "You ended saying this waits on the owner, but no ask of yours is open. "
+                "The owner reads the Issues tab, not your transcript, notes or todo list: "
+                "`harness ask <task> --kind action --run \"...\"` for something they must run "
+                "or approve, `--kind intent|judgement|risk` for a question. A refused command "
+                "is a reason to ask, not a standing belief. If nothing waits on them, carry on.")
+            return
         # Downward first: what this node owes the rank below. It applies to rank
         # 0 as much as anyone — main is dev's lead — which is why every row is
         # aged past a threshold, so a design conversation is not interrupted over
@@ -3347,6 +3355,82 @@ def cmd_hook_stop(a):
         stop_block(reason)
     except (Exception, SystemExit):
         return
+
+
+def turn_texts(sid, tail=256 * 1024):
+    """Every assistant text block of the session's last turn, in order: back to
+    the prompt that opened it. A hand-off is said anywhere in a turn, not only
+    in its last message (log 97: "I'll record the review and leave landing to
+    you" came mid-turn)."""
+    t = transcript_for(sid)
+    if t is None:
+        return []
+    try:
+        with open(t, "rb") as fh:
+            fh.seek(0, 2)
+            fh.seek(max(0, fh.tell() - tail))
+            lines = fh.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return []
+    out = []
+    for line in reversed(lines):
+        try:
+            r = json.loads(line)
+        except Exception:
+            continue
+        c = (r.get("message") or {}).get("content")
+        if r.get("type") == "user" and not r.get("isMeta") and not (
+                isinstance(c, list) and any(isinstance(x, dict) and x.get("type") == "tool_result"
+                                            for x in c)):
+            break                           # the prompt that opened the turn
+        if r.get("type") != "assistant":
+            continue
+        txt = c if isinstance(c, str) else " ".join(
+            x.get("text") or "" for x in c or [] if isinstance(x, dict) and x.get("type") == "text")
+        if txt.strip():
+            out.append(txt)
+    return out[::-1]
+
+
+# A turn ending on a hand-off to the owner that no ask carries (log 97: a lead
+# "handed to the operator" in a note and its own todo list; nobody saw it, and
+# every lane went idle).
+_HANDOFF = re.compile(
+    r"\b(?:operator|owner)\b.{0,60}\b(?:wait|await|hand(?:ed|ing)?|leave|leaving|land|run|"
+    r"approv\w*|decid\w*)\b"
+    r"|\b(?:wait\w*|await\w*|hand\w*\b.{0,50}\b(?:to|over)|leav\w*\b.{0,40}\bto|"
+    r"needs?|for)\b.{0,30}\b(?:the )?(?:operator|owner)\b", re.I | re.S)
+# Below rank 0 a session's closing words to the owner say "you": rank 0 talks to
+# the owner in every turn, so this form is for the others only.
+_HANDOFF_YOU = re.compile(r"\b(?:leave|leaving)\b.{0,40}\bto you\b|\bover to you\b", re.I | re.S)
+
+
+def handoff_unasked(ctx, node, texts):
+    """True when a turn hands something to the owner that no open ask carries:
+    none of this node's asks is open, and the turn names no open ask. Rank 0 and
+    leads only; a lane hands up to its lead, rightly. `texts`: the turn's
+    assistant messages (turn_texts)."""
+    if isinstance(texts, str):
+        texts = [texts]
+    if not texts or not (ctx.rank(node) == 0 or ctx.children(node)):
+        return False
+    # Each message's closing paragraph, where it says what it is leaving and to
+    # whom; a status summary mentions the owner in passing all through its body.
+    ends = [[p for p in re.split(r"\n\s*\n", t.strip()) if p.strip()][-1][-500:]
+            for t in texts if t.strip()]
+    if not any(_HANDOFF.search(e) or (ctx.rank(node) > 0 and _HANDOFF_YOU.search(e))
+               for e in ends):
+        return False
+    said = "\n".join(texts)
+    d = Path(ctx.state) / "asks"
+    for f in d.glob("*.json") if d.is_dir() else []:
+        try:
+            r = json.loads(f.read_text())
+        except Exception:
+            continue
+        if r.get("state") in ASK_OPEN and (r.get("asker_node") == node or r.get("id", "@") in said):
+            return False
+    return True
 
 
 def stop_block(reason):
@@ -10055,9 +10139,42 @@ def pairs_apply(ctx, node, spec, task, rec, f, auto=False):
         docs_decided(ctx, rec)
 
 
+_RISKY_WORD = re.compile(
+    r"\b20\d\d-\d\d-\d\d\b|\b(?:fixed|closed|resolved|solved|done|guaranteed|guards?|"
+    r"prevents?|ensures?|all|every|always|never|none|live|subset|only)\b", re.I)
+
+
+def pairs_new_wording(rec):
+    """Sentences a batch writes that appear in none of the text it replaces or
+    moves: [(file, sentence, flagged)]. Moves verify verbatim; the error is in
+    the new stub (log 99: a dated figure lost its date, "the remedy is a guard"
+    became "is fixed by a guard"). Flagged: a date, a status verb or a
+    population word, the usual casualties."""
+    norm = lambda t: re.sub(r"\s+", " ", t or "").strip()
+    old = " ".join(norm(p.get("old")) for p in rec.get("pairs") or [])
+    out = []
+    for p in rec.get("pairs") or []:
+        for field in ("new", "pointer"):
+            for sent in re.split(r"(?<=[.!?])\s+|\n{2,}", p.get(field) or ""):
+                s = norm(sent).strip("#*- ")
+                if len(s) < 12 or s in old:
+                    continue
+                out.append((p.get("file"), s, bool(_RISKY_WORD.search(s))))
+    return sorted(out, key=lambda x: not x[2])
+
+
 def pairs_review(ctx, rec, read, full=False):
-    """What a batch would do, for the reviewer: a diff per changed file, capped
-    unless --full, and CLAUDE.md's words before and after."""
+    """What a batch would do, for the reviewer: the wording it introduces, first;
+    then a diff per changed file, capped unless --full, and CLAUDE.md's words
+    before and after."""
+    nw = pairs_new_wording(rec)
+    if nw:
+        print(f"\nCheck these first: {len(nw)} sentence(s) not in the text they replace "
+              f"(! = a date, status or scope word)")
+        for f, s, flag in nw[:40 if not full else None]:
+            print(f"  {'!' if flag else ' '} {f}: {s[:220]}")
+        if not full and len(nw) > 40:
+            print(f"    … {len(nw) - 40} more — --full")
     rows, texts = pair_report(rec["pairs"], read)
     cap = None if full else 200
     for path in sorted(texts):

@@ -85,6 +85,14 @@ It holds what every session needs at start, and pointers to everything else. Use
 in `schema/`? read `schema/SCHEMA.md` first". It has a hard word budget: a batch that leaves it over
 budget and larger is refused, whoever sends it. Cutting it down always passes.
 
+## Pointers and new wording
+
+A move verifies verbatim; the error is always in the new text around it. Keep a pointer or a rewritten
+sentence to what the moved text supports: keep its dates, don't upgrade a status ("the remedy is a
+guard" is not "fixed by a guard"), and don't widen a population ("this subset" is not "live"). Rank 0's
+review lists every sentence you wrote that isn't in the text it replaces, flagged when it carries a date,
+a status word or a scope word, and reads those first.
+
 ## Pairs
 
 Write the batch with the Write tool to `<name>.json` in your batch folder (named in your opening

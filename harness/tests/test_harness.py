@@ -2854,6 +2854,37 @@ class TestQueue(unittest.TestCase):
         with mock.patch("sys.stdout", io.StringIO()), mock.patch("signal.signal"):
             hz.testd(self.state, self.repo)
 
+    def test_rank_0_or_a_lead_promotes_and_a_lane_touches_only_its_own(self):
+        # Log 98: the critical-path job sat two hours behind full checks.
+        tree = {"main": None, "dev": "main", "dev_1": "dev", "dev_2": "dev"}
+        c = self.ctx
+        c.require_enrolled = lambda: None
+        c.children = lambda n: [k for k, p in tree.items() if p == n]
+        c.rank = lambda n: 0 if n == "main" else 1 if n == "dev" else 2
+        a, _ = hz.testq_submit(c, "cmd", self.sha, "dev_2", "s", command="echo a")
+        b, _ = hz.testq_submit(c, "cmd", self.sha, "dev_1", "s", command="echo b")
+        args = lambda **k: mock.Mock(**dict(dict(command=[], cancel=None, log=None,
+                                                 promote=None, why=None), **k))
+        def as_node(n, **k):
+            c.node = lambda: (n, {})
+            with mock.patch.object(hz, "Ctx", return_value=c), \
+                 mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "s" * 36}), \
+                 redirect_stdout(io.StringIO()) as o:
+                try:
+                    hz.cmd_test(args(**k)); return 0, o.getvalue()
+                except SystemExit as e:
+                    return e.code, o.getvalue()
+        self.assertNotEqual(as_node("dev_1", promote=b["id"], why="mine")[0], 0)   # a lane
+        self.assertNotEqual(as_node("dev_1", cancel=a["id"])[0], 0)                # not its job
+        self.assertEqual(as_node("dev", promote=b["id"], why="gates svi-ddl")[0], 0)
+        q = hz.testq_order(hz.testq_jobs(c, ("queued",)))
+        self.assertEqual([j["id"] for j in q], [b["id"], a["id"]])
+        self.assertEqual(q[0]["queue"], "priority")
+        rung = list((self.state / "doorbell" / "dev_1" / "inbox").glob("*.json"))
+        self.assertIn("front of the queue", json.loads(rung[0].read_text())["text"])
+        self.assertEqual(as_node("dev_1", cancel="all")[0], 0)                     # its own only
+        self.assertEqual([j["id"] for j in hz.testq_jobs(c, ("queued",))], [a["id"]])
+
     def test_same_commit_joins_but_a_finished_one_is_never_reused(self):
         j1, how1 = hz.testq_submit(self.ctx, "check", self.sha, "dev_1", "s1")
         j2, how2 = hz.testq_submit(self.ctx, "check", self.sha, "dev", "s2")
@@ -3011,6 +3042,146 @@ class StopKillsWork(unittest.TestCase):
         self.assertIn("killed", out.getvalue())
         self.assertEqual([p for p in tree if p != sess.pid and hz._pid_exists(p)], [])
 
+
+
+class LogEntries92to102(unittest.TestCase):
+    """Log 92-102 (2026-10-06): what should reach the owner or a node does, and
+    nothing reads as more certain than it is."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev"})
+        self.err = mock.patch("sys.stderr", new_callable=io.StringIO)
+        self.err.start(); self.addCleanup(self.err.stop)
+
+    def out(self, f, *args):
+        o = io.StringIO()
+        with redirect_stdout(o):
+            f(*args)
+        return o.getvalue()
+
+    # 97: a hand-off to the owner with no ask is blocked once
+    def test_a_handoff_with_no_ask_is_caught_for_leads_only(self):
+        (self.ctx.dir / "asks").mkdir()
+        said = ["Reviewed svi-ddl.", "Same as with dev_1, I'll record the review and leave "
+                                     "landing to you."]
+        self.assertTrue(hz.handoff_unasked(self.ctx, "dev", said))
+        self.assertTrue(hz.handoff_unasked(self.ctx, "dev", ["Awaiting operator: integrate it."]))
+        self.assertFalse(hz.handoff_unasked(self.ctx, "dev_1", said))          # a lane
+        self.assertFalse(hz.handoff_unasked(self.ctx, "main", said))           # "you": rank 0
+        self.assertFalse(hz.handoff_unasked(self.ctx, "dev", ["Signed off and integrated."]))
+        # buried in a summary's body, not its closing words
+        self.assertFalse(hz.handoff_unasked(self.ctx, "dev", [
+            "The owner is waiting on nothing here.\n\nNext: tfm-store. The doorbell is armed."]))
+        (self.ctx.dir / "asks" / "owner-4.json").write_text(json.dumps(
+            {"id": "owner-4", "asker_node": "main", "state": "asked"}))
+        self.assertFalse(hz.handoff_unasked(self.ctx, "dev", [
+            "The rebuild is owner-4; I'll leave landing to you."]))                # names an open ask
+        (self.ctx.dir / "asks" / "s-1.json").write_text(json.dumps(
+            {"id": "s-1", "asker_node": "dev", "state": "ready"}))
+        self.assertFalse(hz.handoff_unasked(self.ctx, "dev", said))            # its own ask is open
+
+    def test_turn_texts_reads_the_whole_last_turn(self):
+        f = Path(tempfile.mkdtemp()) / "s.jsonl"
+        A = lambda t: {"type": "assistant", "message": {"content": [{"type": "text", "text": t}]}}
+        f.write_text("\n".join(json.dumps(r) for r in (
+            {"type": "user", "message": {"content": "old prompt"}}, A("old turn"),
+            {"type": "user", "message": {"content": "go"}}, A("first"),
+            {"type": "user", "message": {"content": [{"type": "tool_result"}]}}, A("second"),
+            {"type": "system", "subtype": "turn_duration"})))
+        with mock.patch.object(hz, "transcript_for", return_value=f):
+            self.assertEqual(hz.turn_texts("s"), ["first", "second"])
+
+    # 101b: the asker withdraws; the owner task takes no notes
+    def test_withdraw_by_the_asker_and_rank_0_only(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "asks").mkdir()
+        p = d / "asks" / "owner-2.json"
+        rec = {"id": "owner-2", "asker_node": "dev", "state": "asked", "kind": "action",
+               "question": "Run x?", "runs": ["x"]}
+        p.write_text(json.dumps(rec))
+        class C:
+            me = "dev_1"
+            def require_enrolled(self): pass
+            def node(self): return C.me, {}
+            def rank(self, n): return {"main": 0, "dev": 1, "dev_1": 2}[n]
+        with mock.patch.object(hz, "Ctx", C):
+            with self.assertRaises(SystemExit):
+                hz.ask_withdraw(d, p, rec, "replaced", "s" * 36)                # someone else's
+            with self.assertRaises(SystemExit):
+                hz.ask_withdraw(d, p, rec, "", None)                            # no why
+            C.me = "main"
+            hz.ask_withdraw(d, p, rec, "replaced by owner-4", "s" * 36)         # rank 0 may
+        self.assertFalse(p.exists())
+        log = json.loads((d / "owner" / "withdrawn.jsonl").read_text())
+        self.assertEqual((log["id"], log["by"], log["why"]), ("owner-2", "main", "replaced by owner-4"))
+
+    # 100: a waiter that has just rung has a wake on its way
+    def test_ring_report_knows_a_wake_is_on_its_way(self):
+        with mock.patch.object(hz, "bell_armed", return_value=None), \
+             mock.patch.object(hz, "cached_roster", return_value=[]):
+            (hz.bell_dir(self.ctx, "dev") / "rang.json").write_text(json.dumps({"at": time.time() - 30}))
+            self.assertIn("just rang", hz.ring_report(self.ctx, "dev"))
+            (hz.bell_dir(self.ctx, "dev") / "rang.json").write_text(json.dumps({"at": time.time() - 600}))
+            self.assertNotIn("just rang", hz.ring_report(self.ctx, "dev"))
+
+    # 94: delivered mail says how old it is
+    def test_mail_shows_its_age(self):
+        at = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() - 3900))
+        self.assertIn("(1h05m ago)", hz.MAIL().render([{"at": at, "from": "main", "text": "x"}]))
+
+    # 92: partial reports and old holds
+    def test_a_partial_report_says_so_and_cannot_be_a_baseline(self):
+        rows = [{"name": "a", "exit": 0}] + [{"name": f"h{i}", "exit": None, "held": "subset.db by dev"}
+                                              for i in range(8)]
+        rep = hz.make_check_report("dev", "abc", rows, 0, None)
+        self.assertEqual(hz.partial_line(rep),
+                         "PARTIAL: 1 of 9 arms ran; 8 NOT RUN (held: subset.db by dev x8)")
+        self.assertIn("PARTIAL: 1 of 9", self.out(hz.print_check_report, rep, None))
+        self.ctx.worktree = self.ctx.dir
+        with mock.patch.object(hz, "git", return_value=(0, "abc", "")), \
+             mock.patch.object(hz, "read_check_report", return_value=rep), \
+             self.assertRaises(SystemExit):
+            hz.set_baseline(self.ctx, "dev", "start")
+        self.assertIn("A baseline needs every arm run", sys.stderr.getvalue())
+
+    def test_an_old_hold_is_asked_about(self):
+        (self.ctx.dir / "holds").mkdir()
+        old = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() - 2 * 3600))
+        (self.ctx.dir / "holds" / "x.json").write_text(json.dumps(
+            {"path": "subset.db", "why": "delete", "by": "dev", "until": "", "at": old}))
+        with mock.patch.object(hz, "lead_owes", return_value=[]), \
+             mock.patch.object(hz, "rank0_owes", return_value=[]):
+            items = hz.queue_items(self.ctx, "dev")
+            self.assertIn("hold old:subset.db", items)
+            self.assertIn("harness hold subset.db --release", items["hold old:subset.db"])
+            self.assertTrue(hz.is_debt("hold old:subset.db"))                   # re-reported
+            self.assertNotIn("hold old:subset.db", hz.queue_items(self.ctx, "dev_1"))
+
+    # 99: the documenter's new wording, flagged
+    def test_new_wording_is_listed_and_risky_words_flagged(self):
+        rec = {"pairs": [
+            {"op": "move", "file": "M.md", "old": "The remedy is a guard. Measured 2026-10-01: 41 rows.",
+             "to": "provenance/M/x.md", "pointer": "History: provenance/M/x.md. This is fixed by a guard."},
+            {"file": "M.md", "old": "Loads take 3s.", "new": "Loads take 3s."}]}
+        nw = hz.pairs_new_wording(rec)
+        self.assertEqual([(s, f) for _, s, f in nw],
+                         [("This is fixed by a guard.", True), ("History: provenance/M/x.md.", False)])
+
+    # 101: a failed recheck leaves the value standing
+    def test_a_failed_observation_is_never_the_latest(self):
+        fact = {"observations": [{"value": "41", "at": "x"},
+                                 {"failed": "exit 2", "command": "c", "at": "y"}]}
+        self.assertEqual(hz.latest(fact)["value"], "41")
+
+    def test_from_must_parse(self):
+        self.ctx.worktree = self.ctx.dir
+        a = mock.Mock(list=False, name="n", is_="41", from_="echo 'unclosed", what=None,
+                      recheck=False)
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.object(hz, "load_fact", return_value=(self.ctx.dir / "f.json", None)), \
+             self.assertRaises(SystemExit):
+            hz.cmd_fact(a)
+        self.assertIn("--from is not valid shell", sys.stderr.getvalue())
 
 
 class LogEntries88to91(unittest.TestCase):

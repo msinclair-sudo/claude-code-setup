@@ -219,6 +219,10 @@ A brief from a finding is gated on approval, unless rank 0 handed the finding do
 
 Only for what the tree can't settle: intent, judgement, something only the owner can do, or risk they must accept. `harness ask <task> --kind intent|judgement|action|risk --question "..."` (the task needs a brief), and carry on: the item gets its own intermediary session, started for it. It may question you through your doorbell; answer with `harness ask <id> --msg "..."` (not `SendMessage`: its session may be asleep), which is also how you add to the item later. The ruling lands on the task's brief (`harness brief <task>`) and orientation tells you; a rejected or returned ask is said once. Lanes ask you, not the owner. A list of files for the owner to delete goes through `harness cited <path>...` first; `--deletable` prints only what no open record needs.
 
+**Anything the owner must run, approve or answer is an ask, never a note, a ring or a todo.** The owner reads the Issues tab, not your notes or transcript: a hand-off written anywhere else sits unseen while the tree waits on it. A command the permission checker refused is a reason to ask, not a standing belief that the owner must do that kind of thing. The Stop hook stops a turn that ends handing work to the owner with no ask open. Change your mind with `harness ask <id> --withdraw "why"`, and add to an open ask with `harness ask <id> --msg -`.
+
+A ring about live work says what would make it moot ("unless you've already run it"): mail is read later, sometimes after the thing has happened.
+
 ## You are also somebody's child
 
 Your own task closes the same way: `harness mark <task> --done`, then your lead signs it off. Read your brief and act; it is an instruction, not a proposal (`T15`). An empty queue is your lead's to fix: say so in your report and stop. Do not ask the operator what to do next, and do not hand finished work to them.

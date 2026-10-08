@@ -1058,7 +1058,6 @@ color:var(--s-idle);opacity:0;animation:sti-z 2.7s ease-out infinite}
 @keyframes sti-pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.25);opacity:.7}}
 @keyframes sti-z{0%{transform:translateY(2px);opacity:0}25%{opacity:.95}
 80%{opacity:.4}100%{transform:translateY(-9px);opacity:0}}
-@media (prefers-reduced-motion:reduce){.sti,.sti.zz i{animation:none!important;opacity:1}}
 .card.interm .kd{margin-left:auto}
 .v2 .bd{padding:7px 13px 10px}
 .v2 .md2{font-size:10.5px;color:var(--dim)}
@@ -1382,6 +1381,8 @@ function modelName(m) {
 // over while waiting, a pause sign while held, a pulse when it needs you. The
 // word is the hover. Each moving one carries its period (data-p) so phase()
 // can keep it in step with the clock and a repaint never restarts it mid-turn.
+// They move whatever the OS's reduce-motion setting says: the owner has
+// Windows' animation effects off and still wants these.
 const STICON = {
   busy: '<span class="sti spin" data-p="3000">&#9881;&#65039;</span>',
   idle: '<span class="sti zz" data-p="2700"><i>z</i><i>z</i><i>Z</i></span>',
@@ -2445,7 +2446,12 @@ function paint(h) {
     const cur = root.querySelector('[data-live="' + fresh.dataset.live + '"]');
     if (!cur) return;
     if (cur.className !== fresh.className) cur.className = fresh.className;
-    if (cur.innerHTML !== fresh.innerHTML) cur.innerHTML = fresh.innerHTML;
+    // Against what was last drawn, not the live markup: phase() writes timing
+    // onto each icon, and comparing with that redrew every card every poll.
+    if ((cur._src ?? cur.innerHTML) !== fresh.innerHTML) {
+      cur.innerHTML = fresh.innerHTML;
+      cur._src = fresh.innerHTML;
+    }
   });
   drawWaits(); fitDrafts(); phase();
 }

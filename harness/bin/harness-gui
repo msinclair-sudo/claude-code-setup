@@ -1039,9 +1039,26 @@ color:var(--ink);letter-spacing:.005em}
 .card.interm .nm{font-size:17px}
 .v2 .rl,.card.interm .kd{font-family:var(--serif);font-size:12px;font-style:italic;
 color:var(--dim);text-transform:none;letter-spacing:0}
-.v2 .stw{margin-left:auto;font-family:var(--serif);font-size:12.5px;font-weight:700;
-letter-spacing:.06em;text-transform:uppercase;white-space:nowrap;
-color:color-mix(in srgb,var(--s) 85%,var(--ink))}
+.v2 .stw{margin-left:auto;display:flex;align-items:center;gap:5px;white-space:nowrap;
+align-self:center;cursor:default}
+.v2 .sta{font-size:11px;color:color-mix(in srgb,var(--s) 85%,var(--ink))}
+.sti{display:inline-block;font-size:15px;line-height:1;--ph:0ms}
+.sti.off{color:var(--mute);font-size:13px}
+.sti.spin{animation:sti-spin 3s linear infinite;animation-delay:var(--ph)}
+.sti.flip{animation:sti-flip 2.4s ease-in-out infinite;animation-delay:var(--ph)}
+.sti.pulse{animation:sti-pulse 1.4s ease-in-out infinite;animation-delay:var(--ph)}
+.sti.zz{position:relative;width:26px;height:18px}
+.sti.zz i{position:absolute;bottom:0;font-family:var(--serif);font-weight:700;
+color:var(--s-idle);opacity:0;animation:sti-z 2.7s ease-out infinite}
+.sti.zz i:nth-child(1){left:0;font-size:11px;animation-delay:var(--ph)}
+.sti.zz i:nth-child(2){left:7px;font-size:14px;animation-delay:calc(var(--ph) + .9s)}
+.sti.zz i:nth-child(3){left:15px;font-size:17px;animation-delay:calc(var(--ph) + 1.8s)}
+@keyframes sti-spin{to{transform:rotate(360deg)}}
+@keyframes sti-flip{0%,40%{transform:rotate(0)}50%,90%{transform:rotate(180deg)}100%{transform:rotate(360deg)}}
+@keyframes sti-pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.25);opacity:.7}}
+@keyframes sti-z{0%{transform:translateY(2px);opacity:0}25%{opacity:.95}
+80%{opacity:.4}100%{transform:translateY(-9px);opacity:0}}
+@media (prefers-reduced-motion:reduce){.sti,.sti.zz i{animation:none!important;opacity:1}}
 .card.interm .kd{margin-left:auto}
 .v2 .bd{padding:7px 13px 10px}
 .v2 .md2{font-size:10.5px;color:var(--dim)}
@@ -1360,6 +1377,28 @@ function modelName(m) {
   return k ? k[1] + ' ' + k[2] + '.' + k[3] : x;
 }
 
+// The state, as a picture in the banner's corner (owner, 2026-10-08): a gear
+// that turns while busy, z's rising off an idle node, an hourglass that turns
+// over while waiting, a pause sign while held, a pulse when it needs you. The
+// word is the hover. Each moving one carries its period (data-p) so phase()
+// can keep it in step with the clock and a repaint never restarts it mid-turn.
+const STICON = {
+  busy: '<span class="sti spin" data-p="3000">&#9881;&#65039;</span>',
+  idle: '<span class="sti zz" data-p="2700"><i>z</i><i>z</i><i>Z</i></span>',
+  wait: '<span class="sti flip" data-p="2400">&#8987;</span>',
+  held: '<span class="sti">&#9208;&#65039;</span>',
+  need: '<span class="sti pulse" data-p="1400">&#10071;</span>',
+  none: '<span class="sti off">&#11096;</span>',
+  unk:  '<span class="sti">&#10067;</span>',
+};
+function phase() {
+  const now = performance.now();
+  document.querySelectorAll('.sti[data-p]:not([data-ph])').forEach(el => {
+    el.style.setProperty('--ph', -(now % Number(el.dataset.p)) + 'ms');
+    el.dataset.ph = '1';
+  });
+}
+
 // Folds a card holds open across repaints: its wait detail, its gone tasks.
 const OPENV = new Set();
 document.addEventListener('click', e => {
@@ -1383,15 +1422,15 @@ function card(n) {
   const busy = ss.some(x => x.status === 'busy');
   const w = n.waiting, held = n.held || [];
   const idleT = s && s.idle && !busy ? hm(s.idle) : '';
-  let st, word;
-  if (unknown)                    { st = 'unk';  word = '? unknown'; }
+  let st, word, age = '';
+  if (unknown)                    { st = 'unk';  word = 'unknown'; }
   else if (ss.length > 1)         { st = 'need'; word = ss.length + ' sessions'; }
   else if (halted)                { st = 'need'; word = 'needs you'; }
   else if (!ss.length)            { st = 'none'; word = n.claimed ? 'no session' : 'free'; }
-  else if (w)                     { st = 'wait'; word = 'waiting ' + esc(w.age || ''); }
+  else if (w)                     { st = 'wait'; word = 'waiting'; age = esc(w.age || ''); }
   else if (busy)                  { st = 'busy'; word = 'busy'; }
   else if (held.length)           { st = 'held'; word = 'held'; }
-  else                            { st = 'idle'; word = 'idle ' + idleT; }
+  else                            { st = 'idle'; word = 'idle'; age = idleT; }
 
   // Under the name: the model, and the one sentence a stopped card needs.
   const a = n.assigned || [];
@@ -1497,7 +1536,8 @@ function card(n) {
 
   return '<div class="card v2 st-' + st + ' r-' + esc(n.role || 'worker') + '" data-live="card:' + esc(key) + '">' +
     '<div class="bn"><span class="nm">' + esc(n.name) + '</span><span class="rl">' +
-    esc(n.role || '') + '</span><span class="stw">' + word + '</span></div>' +
+    esc(n.role || '') + '</span><span class="stw" title="' + word + (age ? ' ' + age : '') + '">' +
+    STICON[st] + (age ? '<span class="sta">' + age + '</span>' : '') + '</span></div>' +
     '<div class="bd">' + (model ? '<div class="md2">' + model + '</div>' : '') +
     (n.branch && n.branch !== n.name || !n.indexed ? '<div class="md2">' +
       (n.branch && n.branch !== n.name ? 'branch ' + esc(n.branch) : '') +
@@ -2398,7 +2438,7 @@ function paint(h) {
   // to patch into. This is the only path that rebuilds, and it is rare.
   if (keys(tpl) !== keys(root)) {
     root.innerHTML = h;
-    drawWaits(); fitDrafts();
+    drawWaits(); fitDrafts(); phase();
     return;
   }
   Array.prototype.forEach.call(tpl.querySelectorAll('[data-live]'), fresh => {
@@ -2407,7 +2447,7 @@ function paint(h) {
     if (cur.className !== fresh.className) cur.className = fresh.className;
     if (cur.innerHTML !== fresh.innerHTML) cur.innerHTML = fresh.innerHTML;
   });
-  drawWaits(); fitDrafts();
+  drawWaits(); fitDrafts(); phase();
 }
 tick(); setInterval(tick, 3000);
 </script></body></html>"""

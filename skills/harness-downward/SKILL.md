@@ -215,6 +215,8 @@ harness finding <name> --ruled "<commit or doc ref>"  # answered by a document: 
 
 A brief from a finding is gated on approval, unless rank 0 handed the finding down (that was the approval): `mark` refuses it and `recycle` skips it until approved. You cannot approve it; rank 0 sees it at orientation. Decline what you would not spend a session on. `--needs-approval` puts the same gate on any brief.
 
+Once rank 0 approves a finding-born brief, you get a carrier, `<task>.up-<you>`, if nobody above briefed you that work (log 106). It opens when the task below it is signed off. Then `harness mark <task>.up-<you>` and `--done` it, so your lead can integrate. Don't `--close` it: closing presents nothing.
+
 ## Every task serves a feature
 
 Write every brief with the charter feature it serves: `--feature "<name>"` (the charter is in your

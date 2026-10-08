@@ -7954,7 +7954,16 @@ def next_start(ctx, node):
     if waiting:
         return {"line": "", "skip": "every queued task waits: " + "; ".join(
             f"{b['task']} {waits_on(ctx, b)[0]}" for b in waiting[:2])}
-    return {"line": "nothing queued — the fresh session will have no task to open",
+    # Say what to do about it (log 96 note): the plan for a restart went by ring
+    # because a brief must name a charter feature, and nothing said so.
+    try:
+        feats = bool((load_charter(ctx)[1] or {}).get("features"))
+    except Exception:
+        feats = False
+    return {"line": "nothing queued — the fresh session will have no task to open. "
+                    f"Brief it one (harness brief <task> --for {node}"
+                    + (" --feature <f>" if feats else "") + " --write \"...\"), "
+                    f"or tell it what to do: harness ring {node} -",
             "skip": None}
 
 
@@ -8474,6 +8483,71 @@ def brief_carry(rec, b):
     return rec
 
 
+def ancestors(ctx, node):
+    """The nodes above `node`, nearest first, ending at rank 0."""
+    out, seen = [], {node}
+    p = ctx.tree["nodes"].get(node, {}).get("parent")
+    while p and p not in seen:
+        out.append(p); seen.add(p)
+        p = ctx.tree["nodes"].get(p, {}).get("parent")
+    return out
+
+
+def carrier_task(task, node):
+    return f"{task}.up-{node}"
+
+
+def finding_carriers(ctx, task, b, decider):
+    """Finding-born work approved at rank 0 gets a way up (log 106). A node can
+    present only a task it was briefed, and nobody between the lane and rank 0
+    briefed this one, so `integrate` found nothing presented and refused. Each
+    node from the brief's writer up to (not including) rank 0 gets a carrier
+    brief, `<task>.up-<node>`, that waits on the task below it, so it opens once
+    that is signed off and is then presented like any other. A brief that is
+    already a part of a segment (`from`) has its way up, and gets none. Returns
+    the carriers written; one that exists is left alone."""
+    if not b or not b.get("from_finding") or b.get("from"):
+        return []
+    lead = ctx.tree["nodes"].get(b.get("node"), {}).get("parent")
+    if not lead or ctx.rank(lead) == 0:
+        return []
+    chain = [lead] + [n for n in ancestors(ctx, lead) if ctx.rank(n) > 0]
+    made, below = [], task
+    now = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    for n in chain:
+        ct = carrier_task(task, n)
+        f, have = load_brief(ctx, ct)
+        if have is None:
+            parent = ctx.tree["nodes"].get(n, {}).get("parent")
+            rec = {"task": ct, "node": n, "revision": 1,
+                   "text": (f"Carry {task} up to {parent}: it was briefed from the finding "
+                            f"'{b['from_finding']}', which {decider} approved, and nobody "
+                            f"issued it to you. Once {below} is signed off here, "
+                            f"harness mark {ct}, then harness mark {ct} --done."),
+                   "written_by": f"harness (carrier for {task})", "written_at": now,
+                   "suggestions": [], "comments": [], "history": [],
+                   "carries": task, "from_finding": b["from_finding"], "after": [below],
+                   "approval": {"state": "approved", "decided_by": decider,
+                                "decided_at": now,
+                                "why": f"carries finding-born {task} up"}}
+            if b.get("feature"):
+                rec["feature"] = b["feature"]
+            rec.update(next_seq(ctx, n))
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(json.dumps(rec, indent=2) + "\n")
+            ring_inbox(ctx.state, n, "harness",
+                       f"{task} was approved from a finding; you carry it up to {parent} "
+                       f"as {ct}. It opens once {below} is signed off.")
+            made.append((ct, n))
+        below = ct
+    return made
+
+
+def print_carriers(made):
+    for ct, n in made:
+        print(f"  carrier {ct} for {n}: it presents this work one rank up (log 106)")
+
+
 def cmd_brief(a):
     """The task description: written by the lead, for its children.
 
@@ -8828,6 +8902,9 @@ def cmd_brief(a):
                 json.dumps(fnd, indent=2) + "\n")
             print(f"  from {fnd.get('from')}'s finding '{a.from_finding}' — it stops "
                   f"asking you for a decision")
+            if (rec.get("approval") or {}).get("state") == "approved":
+                print_carriers(finding_carriers(ctx, a.task, rec,
+                                                rec["approval"].get("decided_by") or _fa))
         if (rec.get("approval") or {}).get("state") == "pending":
             print(f"  NOT STAFFABLE until it is approved. It is queued nowhere and\n"
                   f"  `harness mark {a.task}` is refused until then.")
@@ -9114,6 +9191,7 @@ def cmd_brief(a):
                   f"queue.")
             print(f"  Nothing starts by itself: its lead recycles or spawns "
                   f"{b.get('node')} when ready.")
+            print_carriers(finding_carriers(ctx, a.task, b, me if sid else who))
         else:
             print(f"declined {a.task}: {a.decline}")
             print(f"  The brief stays. It is not queued and cannot be marked.")
@@ -12333,7 +12411,30 @@ def ask_accept(pdir, path, rec, text=None, by="operator"):
     _save(bf, b)
     path.unlink()
     evidence_clear(path, rec["id"])
+    # Ring the asker and the brief's lead now (log 108). The ruling used to wait
+    # for their next prompt, so a rank 0 parked on its doorbell sat on two
+    # rulings, one of which changed a lane's work, until the owner said "look".
+    # The orientation line stays as the backstop until they read the brief.
+    first = (answer.splitlines() or [""])[0]
+    first = first[:200] + ("…" if len(first) > 200 else "")
+    told = []
+    for n in (rec.get("asker_node"), ask_lead(pdir, b.get("node"))):
+        if n and n not in told and n not in ("documenter", "operator", "owner"):
+            ring_inbox(pdir, n, "owner", f"the owner ruled on {rec['id']} ({rec.get('task')}): "
+                       f"{first} The full ruling is on the brief: harness brief {rec.get('task')}")
+            told.append(n)
+    r["rung"] = told
     return r
+
+
+def ask_lead(pdir, node):
+    """The parent of `node` in the project's role tree, or None."""
+    try:
+        tree = json.loads((Path(json.loads((Path(pdir) / "binding.json").read_text())
+                                .get("repo")) / ".harness" / "tree.json").read_text())
+        return (tree.get("nodes", {}).get(node) or {}).get("parent")
+    except Exception:
+        return None
 
 
 def ask_drop(pdir, path, rec, why):
@@ -12359,12 +12460,7 @@ def ask_drop(pdir, path, rec, why):
                                                 "at": _now()})
             f.write_text(json.dumps(b, indent=2) + "\n")
             node = b.get("node")
-            try:
-                tree = json.loads((Path(json.loads((Path(pdir) / "binding.json").read_text())
-                                        .get("repo")) / ".harness" / "tree.json").read_text())
-                lead = (tree.get("nodes", {}).get(node) or {}).get("parent")
-            except Exception:
-                lead = None
+            lead = ask_lead(pdir, node)
             for n in [x for x in (node, lead) if x]:
                 ring_inbox(pdir, n, "owner", f"the owner ruled '{task}' out of scope ({rec['id']}): "
                            f"{why}. Stop it and close it: harness mark {task} --close --force. Do "
@@ -12745,7 +12841,8 @@ def cmd_ask(a):
                   "Done you are\n  rung (harness doorbell); carry on with other work meanwhile.")
         elif a.kind != "note":
             print(f"  Carry on with other work. The ruling lands on {rec['task']}'s brief and "
-                  f"you are told. To add\n  to it later: harness ask {rec['id']} --msg \"...\"")
+                  f"your doorbell\n  rings when the owner rules. To add to it later: "
+                  f"harness ask {rec['id']} --msg \"...\"")
         return
     v = verbs[0]
     im_verbs = ("brief", "amend", "draft", "return_why", "merge", "evidence", "drop_evidence",
@@ -12815,8 +12912,10 @@ def cmd_ask(a):
         r = ask_accept(pdir, path, rec, a.text)
         item_close_detached(pdir, rec["id"])
         print(f"ruled {rec['id']} on {rec.get('task')}: {r['answer']}")
-        print(f"  {rec.get('asker_node')} and {rec.get('task')}'s lead are told when they "
-              f"next orient.")
+        if r.get("rung"):
+            print(f"  rang {' and '.join(r['rung'])}; it is on {rec.get('task')}'s brief too.")
+        else:
+            print(f"  nobody to ring; it is on {rec.get('task')}'s brief.")
     elif v == "reject":
         ask_reject(path, rec)
         item_close_detached(pdir, rec["id"])
@@ -14640,10 +14739,20 @@ def ring_report(ctx, node):
         return "its doorbell just rang, so it wakes within a minute"
     sid = MAIL().owner(ctx.state, node)
     try:
-        row = next((r for r in cached_roster(ctx) if sid and r.get("sessionId") == sid), None)
+        rows = cached_roster(ctx)
     except Exception:
-        row = None
+        rows = []
+    row = next((r for r in rows if sid and r.get("sessionId") == sid), None)
     if not row:
+        # The same reading of "running" as orientation, spawn and integrate
+        # (log 105). A session `recycle` started seconds ago is alive but has
+        # not claimed yet, and was reported as "no live session" (log 96 note).
+        how, _d = node_running(ctx, node, rows)
+        if how == "unclaimed":
+            return ("it has a live session that hasn't claimed the node yet; it gets "
+                    "this when it claims, at its first prompt")
+        if how == "claimed":
+            return "it is running; it gets this at its next tool call or prompt"
         return "it has no live session; its next session gets this at its first prompt"
     if row.get("status") == "busy":
         return "it is mid-turn and gets this after its next tool call"

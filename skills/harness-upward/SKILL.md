@@ -94,6 +94,8 @@ harness finding pixel-depth \
 
 `--how` is required. If a number sits behind it, record the fact first and cite it.
 
+If your lead briefs work from a finding rank 0 approved, the lead gets a carrier brief (`<task>.up-<lead>`) to present it upward. You present your own task as usual.
+
 ## Write down what you measure, with the command
 
 ```bash

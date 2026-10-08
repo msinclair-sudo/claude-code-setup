@@ -1662,6 +1662,75 @@ class AskEvidence2(unittest.TestCase):
         self.assertEqual(json.loads(self.path.read_text())["state"], "rejected")
 
 
+class Log106(unittest.TestCase):
+    """Log 106: finding-born work approved at rank 0 gets a carrier brief at
+    every level between the lane and rank 0, so each lead can present it."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_tests": "dev",
+                            "dev_tests_1": "dev_tests"})
+        nodes = self.ctx.tree["nodes"]
+
+        def rank(n, r=0):
+            while nodes[n].get("parent"):
+                n, r = nodes[n]["parent"], r + 1
+            return r
+        self.ctx.rank = rank
+        (self.ctx.dir / "briefs").mkdir()
+
+    def brief(self, task, **kw):
+        b = {"task": task, "node": "dev_tests_1", "text": "t", "from_finding": "typing-gap"}
+        b.update(kw)
+        (self.ctx.dir / "briefs" / f"{task}.json").write_text(json.dumps(b))
+        return b
+
+    def load(self, task):
+        p = self.ctx.dir / "briefs" / f"{task}.json"
+        return json.loads(p.read_text()) if p.exists() else None
+
+    def carriers(self, b, decider="main"):
+        with mock.patch.object(hz, "queue", return_value=[]):
+            return hz.finding_carriers(self.ctx, b["task"], b, decider)
+
+    def test_each_level_below_rank_0_gets_a_carrier_that_waits_on_the_one_below(self):
+        made = self.carriers(self.brief("dtf"))
+        self.assertEqual(made, [("dtf.up-dev_tests", "dev_tests"), ("dtf.up-dev", "dev")])
+        lo, hi = self.load("dtf.up-dev_tests"), self.load("dtf.up-dev")
+        self.assertEqual((lo["node"], lo["after"], lo["carries"]), ("dev_tests", ["dtf"], "dtf"))
+        self.assertEqual((hi["node"], hi["after"]), ("dev", ["dtf.up-dev_tests"]))
+        self.assertEqual(hi["approval"]["state"], "approved")
+        self.assertFalse(hz.awaiting(hi))
+        rung = sorted(p.parent.parent.name for p in self.ctx.dir.glob("doorbell/*/inbox/*.json"))
+        self.assertEqual(rung, ["dev", "dev_tests"])
+
+    def test_running_again_writes_nothing_new(self):
+        b = self.brief("dtf")
+        self.carriers(b)
+        self.assertEqual(self.carriers(b), [])
+
+    def test_near_rank_0_one_carrier_at_rank_0_none(self):
+        self.assertEqual(self.carriers(self.brief("a", node="dev_tests")),
+                         [("a.up-dev", "dev")])
+        self.assertEqual(self.carriers(self.brief("b", node="dev")), [])
+
+    def test_a_carrier_opens_only_once_the_task_below_is_signed_off(self):
+        self.carriers(self.brief("dtf"))
+        lo = self.load("dtf.up-dev_tests")
+        (self.ctx.dir / "marks").mkdir()
+        m = self.ctx.dir / "marks" / "dtf.json"
+        m.write_text(json.dumps({"_node": "dev_tests_1", "_task": "dtf",
+                                 "_presented_at": "2026-10-08T13:00:00"}))
+        self.assertTrue(hz.waits_on(self.ctx, lo))
+        m.write_text(json.dumps({"_node": "dev_tests_1", "_task": "dtf",
+                                 "_presented_at": "2026-10-08T13:00:00",
+                                 "_closed_at": "2026-10-08T13:05:00"}))
+        self.assertEqual(hz.waits_on(self.ctx, lo), [])
+
+    def test_a_part_of_a_segment_or_a_plain_brief_gets_none(self):
+        self.assertEqual(self.carriers(self.brief("p", **{"from": "seg"})), [])
+        self.assertEqual(self.carriers(self.brief("q", from_finding="")), [])
+
+
 class Log105(unittest.TestCase):
     """Log 105: one answer for "running", and a finished lane's lingering session
     never deadlocks its lead."""
@@ -2873,6 +2942,25 @@ class DoorbellHooks(unittest.TestCase):
                                    return_value=[{"sessionId": "sess-main", "status": "idle"}]):
                 self.assertIn("next prompt", hz.ring_report(self.ctx, "main"))
 
+    def test_ring_knows_a_session_that_has_not_claimed_yet(self):
+        # Log 96 note: `ring` said "no live session" about a node `recycle` had
+        # just started; it reads "running" as orientation does (log 105).
+        with mock.patch.object(hz, "bell_armed", return_value=None), \
+             mock.patch.object(hz, "cached_roster", return_value=[]), \
+             mock.patch.object(hz, "node_running", return_value=("unclaimed", {"cwd": "/w"})):
+            r = hz.ring_report(self.ctx, "main")
+        self.assertNotIn("no live session", r)
+        self.assertIn("hasn't claimed", r)
+
+    def test_recycle_says_what_to_do_when_nothing_is_queued(self):
+        with mock.patch.object(hz, "open_marks", return_value={}), \
+             mock.patch.object(hz, "startable", return_value=[]), \
+             mock.patch.object(hz, "queue", return_value=[]), \
+             mock.patch.object(hz, "load_charter", return_value=(None, {"features": [{"name": "f"}]})):
+            line = hz.next_start(self.ctx, "dev")["line"]
+        self.assertIn("harness ring dev -", line)
+        self.assertIn("--feature <f>", line)
+
     def test_a_waiting_doorbell_does_not_make_an_idle_session_busy(self):
         # Claude Code calls a session with a background command busy.
         t = self.ctx.dir / "t.jsonl"
@@ -2902,6 +2990,54 @@ class DoorbellHooks(unittest.TestCase):
         conf["hooks"]["PostToolUse"] = [dict(hz.SESSION_HOOKS[-1][1])]
         (repo / ".claude" / "settings.json").write_text(json.dumps(conf))
         self.assertEqual(hz.session_hooks_missing(repo), [])
+
+
+class Log108(unittest.TestCase):
+    """Log 108: a signed ruling rings the asker and the brief's lead now, not at
+    their next prompt."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev"})
+        (self.ctx.dir / "briefs").mkdir()
+        (self.ctx.dir / "asks").mkdir()
+        (self.ctx.dir / "briefs" / "s1.json").write_text(json.dumps({"task": "s1", "node": "dev_1"}))
+
+    def accept(self, asker, answer="Use the local model.\nMore detail."):
+        rec = {"id": "s1-1", "task": "s1", "node": "dev_1", "kind": "judgement",
+               "question": "Which model?", "asker_node": asker, "state": "drafted",
+               "draft": answer}
+        path = self.ctx.dir / "asks" / "s1-1.json"
+        path.write_text(json.dumps(rec))
+        with mock.patch.object(hz, "ask_lead", return_value="dev"):
+            return hz.ask_accept(self.ctx.dir, path, rec)
+
+    def inbox(self, n):
+        return [json.loads(p.read_text())
+                for p in (self.ctx.dir / "doorbell" / n / "inbox").glob("*.json")]
+
+    def test_ruling_rings_the_asker_and_the_lead_with_its_first_line(self):
+        r = self.accept("main")
+        self.assertEqual(r["rung"], ["main", "dev"])
+        for n in ("main", "dev"):
+            [m] = self.inbox(n)
+            self.assertEqual(m["from"], "owner")
+            self.assertIn("Use the local model.", m["text"])
+            self.assertNotIn("More detail", m["text"])
+            self.assertIn("harness brief s1", m["text"])
+        # the orientation line stays as the backstop until the brief is read
+        self.assertTrue(any(k.startswith("ruled:") for k in hz.ask_notices(self.ctx, "main")))
+
+    def test_an_asker_that_is_the_lead_is_rung_once(self):
+        self.assertEqual(self.accept("dev")["rung"], ["dev"])
+        self.assertEqual(len(self.inbox("dev")), 1)
+
+    def test_the_owner_and_operator_are_not_rung(self):
+        self.assertEqual(self.accept("operator")["rung"], ["dev"])
+
+    def test_a_documenter_ruling_rings_nobody(self):
+        self.accept("documenter")
+        self.assertEqual(list(self.ctx.dir.glob("doorbell/*/inbox/*.json")), [])
+        self.assertTrue((self.ctx.dir / "docs" / "rulings.json").exists())
 
 
 class OwnerActions(unittest.TestCase):

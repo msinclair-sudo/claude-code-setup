@@ -737,9 +737,16 @@ def read_state():
 
 PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <title>harness</title><style>
-:root{--bg:#12150f;--panel:#1a1e16;--line:#333b28;--ink:#e8ece0;--dim:#98a288;
---busy:#8fbf5f;--idle:#6aa3c8;--none:#5a6350;--unk:#8a7fb0;
---warn:#e0894a;--warnbg:#3a2313;--wait:#5fb3a1;--held:#a59be8}
+/* Slate, softened (owner, 2026-10-08). Each colour has one meaning: six
+   states, and neutral ink for everything else. */
+:root{--bg:#0e1319;--panel:#161d26;--line:#263240;--line2:#3a4a5c;--field:#0b1016;
+--ink:#e6edf3;--dim:#93a3b3;--mute:#5d6c80;
+--s-idle:#8cc4ea;--s-busy:#a9d67a;--s-wait:#72cfd2;--s-held:#b5a8f0;--s-need:#efa772;
+--s-none:#3a4654;--s-unk:#7d8996;
+--busy:var(--s-busy);--idle:var(--s-idle);--wait:var(--s-wait);--held:var(--s-held);
+--warn:var(--s-need);--unk:var(--s-unk);--none:var(--mute);
+--warnbg:color-mix(in srgb,var(--s-need) 14%,var(--panel));
+--serif:"Times New Roman",Tinos,Times,serif}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.45 ui-monospace,
 SFMono-Regular,Menlo,Consolas,monospace}
@@ -767,9 +774,9 @@ border-bottom:1px dotted var(--none);text-transform:none;letter-spacing:0}
 .fname{color:var(--busy);display:flex;align-items:baseline;gap:8px}
 .frow{display:flex;gap:9px;margin:2px 0 1px 13px}
 .ftext{color:var(--dim);white-space:pre-wrap;word-wrap:break-word;margin-top:2px}
-.cta{width:100%;min-height:150px;background:#0e1109;color:var(--ink);
+.cta{width:100%;min-height:150px;background:var(--field);color:var(--ink);
 border:1px solid var(--line);padding:7px;font:inherit;resize:vertical}
-.cname{width:100%;background:#0e1109;color:var(--ink);border:1px solid var(--line);
+.cname{width:100%;background:var(--field);color:var(--ink);border:1px solid var(--line);
 padding:5px 7px;font:inherit;margin-bottom:5px}
 .crow{display:flex;gap:9px;align-items:center;margin-top:5px}
 .cbtn{font-size:11px;color:var(--dim);cursor:pointer;
@@ -777,10 +784,6 @@ border-bottom:1px dotted var(--none)}
 .cbtn:hover{color:var(--ink)}
 .cmsg{font-size:11px;color:var(--dim)}
 .editing{outline:1px solid var(--warn)}
-.chip.coupled{border-style:dashed}
-.cold{color:var(--warn)}
-.card.coldc{border-color:#6b4526}
-.nextlbl{color:var(--busy);font-size:10px;letter-spacing:.05em;text-transform:uppercase}
 .proj{margin-bottom:34px}
 .proj>h2{font-size:14px;margin:0 0 2px}
 .proj>.repo{color:var(--none);font-size:11px;margin-bottom:6px;word-break:break-all}
@@ -812,7 +815,6 @@ border-left:1px solid var(--line);width:0;height:22px}
 .waits path{fill:none;stroke:var(--wait);stroke-width:2.5}
 .waits path.held{stroke:var(--held);stroke-dasharray:6 4}
 .waits path.msg{stroke:var(--wait);stroke-width:1.6;stroke-dasharray:2 4;stroke-linecap:round}
-.ln.mail{color:var(--warn)}
 .oos{color:var(--warn);font-weight:700;letter-spacing:.06em;margin:4px 0}
 .achain{margin:4px 0 8px;font-size:11px}.achain summary{cursor:pointer;color:var(--dim)}
 .ahop{border-left:2px solid var(--line);padding:3px 0 3px 8px;margin:4px 0}
@@ -826,24 +828,8 @@ padding:8px 12px;margin:6px 0 10px;font-weight:600}
 .tqn{display:inline-block;min-width:14px;color:var(--dim)}
 
 .card{display:inline-block;min-width:158px;max-width:300px;background:var(--panel);
-border:1px solid var(--line);border-radius:9px;padding:8px 11px;text-align:left;
+border:none;border-radius:14px;padding:8px 11px;text-align:left;
 overflow-wrap:anywhere}
-.card.busy{border-color:#4a6b30}
-/* Its own colour, because it is its own state. A stopped node is not idle and
-   not blocked: idle means free, blocked means the operator, and this means a
-   lead owes it an answer. */
-.card.waitc{border-color:#2f6157;background:#101f1c}
-/* Held: gated by the lead on another node's task or a clock. Its own colour,
-   violet, because it is neither a wait nor a fault. */
-.ln.md{color:var(--ink);font-size:11px;letter-spacing:.02em}
-.card.heldc{border-color:#4d4782;background:#16152a}
-.hd{color:var(--held);font-size:11px;margin-top:4px;line-height:1.45;overflow-wrap:anywhere}
-.hd.o{border-top:1px dotted #4d4782;padding-top:3px}
-.wt{color:var(--wait);font-size:11px;margin-top:4px;line-height:1.45;
-overflow-wrap:anywhere}
-.wt.q{color:var(--dim);font-style:italic}
-.wt.s{color:var(--dim);font-style:normal}
-.wt.o{color:var(--wait);border-top:1px dotted #2f6157;padding-top:3px}
 /* Traffic between nodes. Teal and small, deliberately NOT --warn: a pending
    approval and a lane stopped on its lead are the tree working, not faults.
    The line says direction, then the point, in that order. */
@@ -857,10 +843,6 @@ white-space:nowrap;min-width:0}
 cursor:pointer;border-bottom:1px dotted var(--none)}
 .sig .act:hover{color:var(--dim)}
 .hdr{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
-.dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--none)}
-.busy .dot{background:var(--busy);box-shadow:0 0 0 3px #8fbf5f26}
-.idle .dot{background:var(--idle)}
-.unknown .dot{background:var(--unk)}
 .nm{font-weight:600}
 .kd{margin-left:auto;color:var(--none);font-size:10px;text-transform:uppercase}
 .ln{color:var(--dim);font-size:11px;margin-top:3px;line-height:1.5;
@@ -868,7 +850,7 @@ overflow-wrap:anywhere}
 .ln.q{color:var(--none);font-style:italic}
 /* Context and uptime: the numbers a reader scans for, so not muted. */
 .ln.mt{color:var(--ink);font-size:12px}
-.ln.mt b{color:#cfe8a8;font-weight:600}
+.ln.mt b{color:var(--ink);font-weight:600}
 .ln.u{color:var(--unk)}
 .dup{color:var(--warn)}
 
@@ -885,15 +867,9 @@ border-radius:6px;padding:3px 9px;font:inherit;font-size:11px;cursor:pointer}
 .chip{display:inline-block;background:#00000038;border:1px solid var(--line);
 border-radius:5px;padding:0 6px;margin:1px 2px 1px 0;cursor:pointer;
 max-width:100%;overflow-wrap:anywhere}
-.chip:hover{border-color:var(--busy);color:var(--busy);background:#1c2614}
+.chip:hover{border-color:var(--busy);color:var(--busy);background:color-mix(in srgb,var(--s-busy) 10%,var(--panel))}
 .chip.pending{border-style:dashed;color:var(--dim)}
-.splitlbl{color:var(--none);font-size:10px;letter-spacing:.06em;text-transform:uppercase}
-.chip.sp{border-style:dotted;color:var(--none)}
-.chip.sp b{color:var(--dim);font-weight:400}
-.chip.sp.ready{color:var(--busy);border-color:#40562e;background:#1c2614}
-.chip.sp.ready b{color:var(--busy)}
 .chip.out{border-style:dotted;color:var(--none);text-decoration:line-through}
-.chip.presented{border-color:#40562e;color:var(--busy);background:#1c2614}
 .veil{position:fixed;inset:0;background:#000000b0;display:flex;align-items:flex-start;
 justify-content:center;padding:60px 16px;z-index:20;overflow-y:auto}
 .sheet{background:var(--panel);border:1px solid var(--line);border-radius:12px;
@@ -912,9 +888,9 @@ padding:7px 10px;border-radius:0 7px 7px 0}
 #cbox{width:100%;min-height:74px;background:var(--bg);color:var(--ink);
 border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit;resize:vertical}
 .row{display:flex;align-items:center;gap:10px;margin-top:8px}
-.row button{background:#24301a;color:var(--busy);border:1px solid #40562e;
+.row button{background:color-mix(in srgb,var(--s-busy) 14%,var(--panel));color:var(--busy);border:1px solid color-mix(in srgb,var(--s-busy) 35%,var(--line));
 border-radius:7px;padding:5px 13px;font:inherit;cursor:pointer}
-.row button:hover{background:#2c3b20}
+.row button:hover{background:color-mix(in srgb,var(--s-busy) 22%,var(--panel))}
 
 /* The charter is an outline: features carry an order the operator set and may
    sit under one another. Same controls as the tree it describes. */
@@ -957,24 +933,22 @@ border:1px solid var(--line);border-radius:3px;letter-spacing:.06em;text-transfo
   min-width:100%}
 .tspace>.tree{flex:1}
 .sidecol{width:240px;flex:none;padding-top:22px}
-.card.interm{display:block;max-width:none;border-style:dashed;border-color:#4a5536}
-.card.interm.busy{border-color:#4a6b30}
-.card.interm.dup{border-color:var(--warn)}
+.card.interm{display:block;max-width:none}
 .card.interm code{color:var(--busy);overflow-wrap:anywhere}
 .card.doc{margin-top:10px}
 .card.doc b.over{color:var(--warn)}
 .card .prio{color:var(--warn);font-weight:400}
-.dbar{height:4px;background:#2a2f22;border-radius:2px;margin:2px 0 6px;overflow:hidden}
+.dbar{height:4px;background:var(--line);border-radius:2px;margin:2px 0 6px;overflow:hidden}
 .dbar i{display:block;height:100%;background:var(--busy)}
 .dbar i.over{background:var(--warn)}
-.docctl select,.docctl button{background:var(--panel);color:var(--fg,#ddd);border:1px solid var(--line);
+.docctl select,.docctl button{background:var(--panel);color:var(--ink);border:1px solid var(--line);
 border-radius:5px;font:inherit;font-size:11px;padding:2px 6px}
 .docctl button{cursor:pointer}
 .docctl button:disabled{opacity:.4;cursor:default}
 .imctl code{color:var(--busy);user-select:all}
 .ichat{border:1px solid var(--line);border-top:none;padding:6px 13px 8px;margin-bottom:10px}
 .ichat [data-live]{max-height:320px;overflow-y:auto}
-.ichatin{flex:1;min-height:40px;background:#0e1109;color:var(--ink);border:1px solid var(--line);
+.ichatin{flex:1;min-height:40px;background:var(--field);color:var(--ink);border:1px solid var(--line);
   padding:4px 7px;font:inherit}
 .ohead .imctl{display:inline-flex;gap:6px;align-items:center;margin-left:12px}
 .card.doc .act{cursor:pointer;border-bottom:1px dotted currentColor}
@@ -993,13 +967,13 @@ margin:0 0 7px}
 .oproj{margin-bottom:18px}
 .oproj>h2{font-size:13px;margin:0 0 5px;color:var(--ink)}
 .ask{background:var(--panel);border:1px solid var(--line);margin-bottom:4px}
-.ask.open{border-color:#4a5536}
+.ask.open{border-color:var(--line2)}
 .arow{display:flex;gap:10px;align-items:baseline;padding:5px 11px;cursor:pointer}
 .arow:hover{background:#00000030}
 .akind{flex:none;font-size:10px;letter-spacing:.05em;text-transform:uppercase;
-color:var(--wait);border:1px solid #2f6157;border-radius:4px;padding:0 5px;
+color:var(--wait);border:1px solid color-mix(in srgb,var(--s-wait) 40%,var(--line));border-radius:4px;padding:0 5px;
 min-width:76px;text-align:center}
-.akind.risk{color:var(--warn);border-color:#6b4526}
+.akind.risk{color:var(--warn);border-color:color-mix(in srgb,var(--s-need) 40%,var(--line))}
 .aq{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ameta{flex:none;color:var(--none);font-size:11px}
 .amove{flex:none;font-size:11px;color:var(--dim);min-width:90px;text-align:right}
@@ -1010,34 +984,34 @@ min-width:76px;text-align:center}
 .abody ol{margin:0;padding-left:20px}
 /* The draft is as tall as its text, always (owner, 2026-10-06): field-sizing
    where the browser has it, fitDrafts() where it does not. */
-.adraft{width:100%;box-sizing:border-box;min-height:calc(1.5em + 16px);background:#0e1109;
+.adraft{width:100%;box-sizing:border-box;min-height:calc(1.5em + 16px);background:var(--field);
 color:var(--ink);border:1px solid var(--line);padding:7px;font:inherit;line-height:1.5;
 resize:none;overflow:hidden;field-sizing:content}
 .adraft[readonly]{color:var(--dim)}
 .arun{display:flex;gap:8px;align-items:flex-start;margin:4px 0}
 .arun button.cp{margin-top:0;padding:5px 10px}
-.arun pre{flex:1;margin:0;padding:6px 9px;background:#0e1109;border:1px solid var(--line);
+.arun pre{flex:1;margin:0;padding:6px 9px;background:var(--field);border:1px solid var(--line);
   white-space:pre-wrap;word-break:break-all;color:var(--ink)}
 .athr{margin:5px 0;padding-left:8px;border-left:2px solid var(--line);white-space:pre-wrap}
 .athr.im{border-left-color:var(--busy)}
 .athr.nd{border-left-color:var(--wait)}
 .isess{margin:2px 0 6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .athr b{font-weight:400;color:var(--dim);font-size:11px}
-.anote{flex:1;background:#0e1109;color:var(--ink);border:1px solid var(--line);padding:4px 7px}
-.achat{flex:1;min-height:44px;background:#0e1109;color:var(--ink);border:1px solid var(--line);
+.anote{flex:1;background:var(--field);color:var(--ink);border:1px solid var(--line);padding:4px 7px}
+.achat{flex:1;min-height:44px;background:var(--field);color:var(--ink);border:1px solid var(--line);
   padding:4px 7px;font:inherit}
 .adraft:not([readonly]){border-color:var(--warn)}
 .row button:disabled{opacity:.35;cursor:default}
-.row button.rej{background:#2a1a12;color:var(--warn);border-color:#6b4526}
+.row button.rej{background:color-mix(in srgb,var(--s-need) 12%,var(--panel));color:var(--warn);border-color:color-mix(in srgb,var(--s-need) 40%,var(--line))}
 .amsg{color:var(--warn);font-size:11px}
 .aev{font-size:10px;color:var(--none)}
 .evimg{margin:4px 0 9px}
 .evimg img{display:block;max-width:100%;max-height:360px;object-fit:contain;
-background:#0e1109;border:1px solid var(--line);padding:3px}
+background:var(--field);border:1px solid var(--line);padding:3px}
 .evcap{color:var(--dim);font-size:11px;margin-top:2px}
 .evtxt{margin:2px 0}
 .evtxt a,.evimg a{color:var(--idle)}
-.ofilter{background:#0e1109;color:var(--ink);border:1px solid var(--line);
+.ofilter{background:var(--field);color:var(--ink);border:1px solid var(--line);
 padding:3px 7px;font:inherit;font-size:12px;width:260px;margin-left:10px;
 text-transform:none;letter-spacing:0}
 .rul{border-left:2px solid var(--line);padding:2px 0 2px 9px;margin:0 0 9px}
@@ -1045,51 +1019,31 @@ text-transform:none;letter-spacing:0}
 .rul .rq{color:var(--dim);white-space:pre-wrap}
 .rul .ra{white-space:pre-wrap}
 
-/* ── Look trial (2026-10-08): four colour schemes x three card layouts,
-   picked in the header, so the owner can judge them on the live tree. The
-   picked one becomes the only look and the rest is deleted. ──────────────
-   Each scheme gives each colour one meaning: six states, and neutral ink for
-   everything else. The classic variables are remapped so the other pages
-   follow the scheme too. */
-body[class*="theme-"]{--busy:var(--s-busy);--idle:var(--s-idle);--wait:var(--s-wait);
---held:var(--s-held);--warn:var(--s-need);--unk:var(--s-unk);--none:var(--mute);
---warnbg:color-mix(in srgb,var(--s-need) 18%,var(--bg))}
-body.theme-moss{--bg:#12150f;--panel:#1a1e16;--line:#333b28;--line2:#56624a;--ink:#eceee4;
---dim:#a3ab95;--mute:#68725c;--s-idle:#72b6e2;--s-busy:#93d05c;--s-wait:#4fc6ad;
---s-held:#a993f2;--s-need:#ec9a50;--s-none:#4b5444;--s-unk:#80887a}
-body.theme-slate{--bg:#0e1319;--panel:#151c24;--line:#263240;--line2:#435468;--ink:#e6edf3;
---dim:#93a3b3;--mute:#5d6c80;--s-idle:#7cc4f5;--s-busy:#b8e35c;--s-wait:#3fd4d8;
---s-held:#bba6ff;--s-need:#ff9d55;--s-none:#3a4654;--s-unk:#7d8996}
-body.theme-graphite{--bg:#111111;--panel:#1b1b1b;--line:#2f2f2f;--line2:#4d4d4d;--ink:#f2f2f2;
---dim:#a6a6a6;--mute:#6b6b6b;--s-idle:#5b8cff;--s-busy:#4ade60;--s-wait:#1fd6e6;
---s-held:#c58bff;--s-need:#ffb224;--s-none:#3c3c3c;--s-unk:#8a8a8a}
-body.theme-dusk{--bg:#121120;--panel:#1a1931;--line:#2d2b4c;--line2:#4a4675;--ink:#eeedf8;
---dim:#a6a3c6;--mute:#6b688f;--s-idle:#8aa8ff;--s-busy:#a6e868;--s-wait:#5adcf2;
---s-held:#f59cc4;--s-need:#f7c655;--s-none:#3d3b62;--s-unk:#8c8aa9}
-#look{display:flex;gap:6px;align-items:center;font-size:11px;color:var(--mute,var(--none))}
-#look select{background:var(--panel);color:var(--dim);border:1px solid var(--line);
-border-radius:4px;font:inherit;font-size:11px;padding:1px 4px}
-body.sans .card .nm,body.sans .card .stw,body.sans .card .tgl,body.sans .card .rl,
-body.sans h1,body.sans .proj>h2{font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
-body.sans .card .nm{letter-spacing:-.01em}
-
-/* The new card. One state per card (st-*), carried by the header, not a dot. */
-.card.v2{--s:var(--s-none,#5a6350);min-width:190px;max-width:320px;padding:0;
-overflow:hidden;border-color:var(--line);font-variant-numeric:tabular-nums}
-.card.v2.st-busy{--s:var(--s-busy,#8fbf5f)}
-.card.v2.st-idle{--s:var(--s-idle,#6aa3c8)}
-.card.v2.st-wait{--s:var(--s-wait,#5fb3a1)}
-.card.v2.st-held{--s:var(--s-held,#a59be8)}
-.card.v2.st-need{--s:var(--s-need,#e0894a)}
-.card.v2.st-unk{--s:var(--s-unk,#8a7fb0)}
-.card.v2.r-root{border-width:2px}
-.card.v2.r-worker{border-color:color-mix(in srgb,var(--line) 70%,var(--bg))}
-.v2 .bn{display:flex;align-items:center;gap:8px;padding:7px 11px 6px}
-.v2 .nm{font-size:16px;font-weight:600;line-height:1.2;color:var(--ink)}
-.v2 .rl{font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim)}
-.v2 .stw{margin-left:auto;font-size:10.5px;font-weight:600;letter-spacing:.07em;
-text-transform:uppercase;white-space:nowrap;color:var(--s)}
-.v2 .bd{padding:6px 11px 9px}
+/* The cards (owner, 2026-10-08: Slate, banner, soft, no outline, round). One
+   state per card, carried by a softly tinted header band, never a dot. */
+.card{--s:var(--s-none)}
+.card.st-busy,.card.interm.busy{--s:var(--s-busy)}
+.card.st-idle,.card.interm.idle{--s:var(--s-idle)}
+.card.st-wait,.card.interm.waitc{--s:var(--s-wait)}
+.card.st-held{--s:var(--s-held)}
+.card.st-need,.card.interm.dup{--s:var(--s-need)}
+.card.st-unk,.card.interm.unknown{--s:var(--s-unk)}
+.card.v2{min-width:190px;max-width:320px;padding:0;overflow:hidden;
+font-variant-numeric:tabular-nums}
+.v2 .bn,.card.interm .hdr{display:flex;align-items:baseline;gap:8px;
+background:color-mix(in srgb,var(--s) 20%,var(--panel))}
+.v2 .bn{padding:8px 13px 7px}
+.card.interm .hdr{margin:-8px -11px 7px;padding:8px 13px 7px}
+.card .nm{font-family:var(--serif);font-size:19px;font-weight:700;line-height:1.15;
+color:var(--ink);letter-spacing:.005em}
+.card.interm .nm{font-size:17px}
+.v2 .rl,.card.interm .kd{font-family:var(--serif);font-size:12px;font-style:italic;
+color:var(--dim);text-transform:none;letter-spacing:0}
+.v2 .stw{margin-left:auto;font-family:var(--serif);font-size:12.5px;font-weight:700;
+letter-spacing:.06em;text-transform:uppercase;white-space:nowrap;
+color:color-mix(in srgb,var(--s) 85%,var(--ink))}
+.card.interm .kd{margin-left:auto}
+.v2 .bd{padding:7px 13px 10px}
 .v2 .md2{font-size:10.5px;color:var(--dim)}
 .v2 .md2 .n{color:var(--ink)}
 .v2 .why{font-size:11px;color:var(--s);margin-top:3px;line-height:1.4}
@@ -1098,68 +1052,34 @@ text-transform:uppercase;white-space:nowrap;color:var(--s)}
 color:var(--dim);align-items:baseline}
 .v2 .sym .g{cursor:default;white-space:nowrap}
 .v2 .sym .g[data-tog]{cursor:pointer;border-bottom:1px dotted currentColor}
-.v2 .sym .mail{color:var(--s-need,var(--warn))}
-.v2 .sym .wt2{color:var(--s-wait,var(--wait))}
-.v2 .sym .hd2{color:var(--s-held,var(--held))}
-.v2 .sym .cold2{color:var(--s-need,var(--warn))}
+.v2 .sym .mail,.v2 .sym .cold2{color:var(--s-need)}
+.v2 .sym .wt2{color:var(--s-wait)}
+.v2 .sym .hd2{color:var(--s-held)}
 .v2 .sym .num{color:var(--ink)}
 .v2 .det{font-size:11px;color:var(--dim);border-left:2px solid var(--line);
 padding:1px 0 1px 7px;margin-top:5px;line-height:1.45}
 .v2 .det b{color:var(--ink);font-weight:400}
-.v2 .tg{display:grid;grid-template-columns:36px 1fr;gap:3px 6px;margin-top:7px;
+.v2 .tg{display:grid;grid-template-columns:38px 1fr;gap:3px 6px;margin-top:8px;
 align-items:baseline}
-.v2 .tgl{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute,var(--none));
-padding-top:2px}
+.v2 .tgl{font-family:var(--serif);font-size:11.5px;font-style:italic;color:var(--mute);
+padding-top:1px}
 .v2 .tgc{min-width:0}
-.v2 .chip{font-size:12px;background:transparent;color:var(--ink);border-color:var(--line2,var(--line))}
+.v2 .chip{font-size:12px;background:transparent;color:var(--ink);border-color:var(--line2);
+border-radius:7px}
 .v2 .chip:hover{border-color:var(--ink);color:var(--ink);background:transparent}
 .v2 .chip.pending{color:var(--dim);border-style:dashed}
 .v2 .chip.dn{color:var(--dim);border-color:var(--line)}
-.v2 .chip.out{color:var(--mute,var(--none));border-style:dotted}
+.v2 .chip.out{color:var(--mute);border-style:dotted}
 .v2 .chip .k{color:var(--dim);font-size:10.5px}
-.v2 .more{font-size:10.5px;color:var(--mute,var(--none));cursor:pointer;
-border-bottom:1px dotted currentColor}
-.v2 .tsum{display:none;gap:12px;margin-top:7px;font-size:12px;color:var(--dim);cursor:pointer}
-.v2 .tsum b{color:var(--ink);font-weight:600}
+.v2 .more{font-size:10.5px;color:var(--mute);cursor:pointer;border-bottom:1px dotted currentColor}
 .v2 .sig{margin-top:5px}
-
-/* A. Banner: the header is a band in the state colour. */
-.lay-banner .v2 .bn,.lay-tile .v2 .bn{background:color-mix(in srgb,var(--s) 36%,var(--panel));
-border-bottom:1px solid color-mix(in srgb,var(--s) 60%,var(--panel))}
-.lay-banner .v2 .stw,.lay-tile .v2 .stw{color:var(--ink)}
-.lay-banner .v2 .rl,.lay-tile .v2 .rl{color:color-mix(in srgb,var(--ink) 70%,var(--s))}
-.lay-banner .card.v2,.lay-tile .card.v2{border-color:color-mix(in srgb,var(--s) 45%,var(--line))}
-/* B. Edge: a quiet card, a strip down the left, a filled state pill. */
-.lay-edge .card.v2{border-left:5px solid var(--s)}
-.lay-edge .v2 .stw{background:color-mix(in srgb,var(--s) 22%,transparent);color:var(--s);
-padding:1px 7px;border-radius:9px}
-.lay-edge .v2 .bn{padding-bottom:2px}
-/* C. Tile: tasks folded to counts until clicked. */
-.lay-tile .v2 .tsum{display:flex}
-.lay-tile .v2:not(.topen) .tg{display:none}
-.lay-tile .card.v2{min-width:170px;max-width:250px}
-.lay-tile .v2 .nm{font-size:15px}
-
-/* The tree's own lines, a step brighter under the new looks. */
-body[class*="lay-"] .tree li::before,body[class*="lay-"] .tree li::after,
-body[class*="lay-"] .tree ul ul::before{border-color:var(--line2,#4a5638)}
-
-/* Side cards keep their markup; the header turns into the same band. */
-body:is(.lay-banner,.lay-tile,.lay-edge) .card.interm .dot{display:none}
-body:is(.lay-banner,.lay-tile,.lay-edge) .card.interm{--s:var(--s-none,#5a6350);border-style:solid}
-body:is(.lay-banner,.lay-tile,.lay-edge) .card.interm.busy{--s:var(--s-busy,#8fbf5f)}
-body:is(.lay-banner,.lay-tile,.lay-edge) .card.interm.idle{--s:var(--s-idle,#6aa3c8)}
-body:is(.lay-banner,.lay-tile,.lay-edge) .card.interm.waitc{--s:var(--s-wait,#5fb3a1)}
-body:is(.lay-banner,.lay-tile,.lay-edge) .card.interm.unknown{--s:var(--s-unk,#8a7fb0)}
-body:is(.lay-banner,.lay-tile,.lay-edge) .card.interm .nm{font-size:15px}
-body:is(.lay-banner,.lay-tile) .card.interm .hdr{margin:-8px -11px 7px;padding:7px 11px 6px;
-background:color-mix(in srgb,var(--s) 36%,var(--panel));
-border-bottom:1px solid color-mix(in srgb,var(--s) 60%,var(--panel))}
-body:is(.lay-banner,.lay-tile) .card.interm .kd{color:var(--ink)}
-.lay-edge .card.interm{border-left:5px solid var(--s)}
-.lay-edge .card.interm .kd{color:var(--s)}
+h1,.proj>h2{font-family:var(--serif)}
+.proj>h2{font-size:19px}
+h1{font-size:16px}
+/* The tree's own lines, a step brighter than the card edges used to be. */
+.tree li::before,.tree li::after,.tree ul ul::before{border-color:var(--line2)}
 </style></head><body>
-<header><h1>harness</h1><span id="age"></span><span id="look"></span><nav id="tabs"></nav></header>
+<header><h1>harness</h1><span id="age"></span><nav id="tabs"></nav></header>
 <main id="root"><div class="empty">loading...</div></main>
 <div id="modal"></div>
 <script>
@@ -1420,87 +1340,16 @@ async function sendComment() {
   } catch (e) { msg.textContent = 'failed: ' + e; }
 }
 
-// null sessions means the roster could not be read. That is a THIRD state, and
-// rendering it as an empty node is the bug this view had.
-// Briefed but not marked: work its lead has handed down that it has not picked
-// up. A separate line, because "assigned" and "under way" are different facts.
-// The queue in the lead's order, with the head named. A coupled task is drawn
-// hanging off the one it runs with rather than as a queue position of its own,
-// because it has none: it is reached through its predecessor or not at all.
-function briefedChips(n) {
-  if (!n.briefed || !n.briefed.length) return '';
-  const head = n.briefed.filter(b => !b.coupled_to);
-  const chip = (b, cls) =>
-    '<span class="chip ' + cls + '" data-task="' + esc(b.task) + '" data-slug="' +
-    esc(n._slug) + '" title="' + esc(b.coupled_why || '') + '">' + esc(b.label || b.task) +
-    (b.open_suggestions ? ' <b class="dup">!' + b.open_suggestions + '</b>' : '') +
-    '</span>';
-  const chain = t => n.briefed.filter(b => b.coupled_to === t)
-    .map(b => ' <span class="q">+</span> ' + chip(b, 'pending coupled')).join('');
-  const open = (n.tasks || []).some(t => !t.presented);
-  return '<div class="ln q">' +
-    head.map((b, i) => (i === 0 && !open ? '<b class="nextlbl">next</b> ' : '') +
-                       chip(b, 'pending') + chain(b.task)).join(' ') +
-    '</div>';
-}
-
-// Segments this node broke up. Drawn apart from the queue and never as a
-// pending chip, because they are opposite facts: a queued task is work about to
-// happen and a split one is work that already left. Ticked when every part has
-// come back, which is the moment it can finally be marked off.
-// Withdrawn, and kept visible. A brief that disappeared entirely has the next
-// lead propose the same thing and get the same silence back.
-function goneChips(n) {
-  if (!n.gone || !n.gone.length) return '';
-  return '<div class="ln q"><span class="splitlbl">gone</span> ' +
-    n.gone.map(g =>
-      '<span class="chip out" data-task="' + esc(g.task) + '" data-slug="' +
-      esc(n._slug) + '" title="' + esc('superseded: ' + (g.gone || '') +
-        (g.gone_for ? '\nreplaced by ' + g.gone_for : '')) + '">' +
-      esc(g.label || g.task) + '</span>').join(' ') + '</div>';
-}
-
-function splitChips(n) {
-  if (!n.split || !n.split.length) return '';
-  return '<div class="ln q"><span class="splitlbl">split</span> ' +
-    n.split.map(s =>
-      '<span class="chip sp' + (s.ready ? ' ready' : '') + '" data-task="' +
-      esc(s.task) + '" data-slug="' + esc(n._slug) + '" title="' +
-      esc(s.ready
-          ? 'every part closed — harness mark ' + s.task + ' --close'
-          : s.children.map(c => c.task + ' (' + c.node + ') ' + c.state).join('\n')) +
-      '">' + (s.ready ? '&#10003; ' : '') + esc(s.task) +
-      ' <b>' + s.done + '/' + s.total + '</b></span>').join(' ') + '</div>';
-}
-
-// How long since this session did anything, and what picking it back up would
-// cost. Idle is free; RESUMING is not. Past the cache lifetime the next turn
-// re-reads the whole conversation at full rate, so a cold node carrying 340k is
-// a bill waiting for you to say hello to it.
+// 340123 -> '340k'. Context carried, which a cold session re-reads in full.
 function tokf(n) {
   if (!n) return '';
   return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : n;
 }
-function age(s) {
-  if (s.status === 'busy' || !s.idle) return '';
-  const m = Math.floor(s.idle / 60);
-  const t = m < 60 ? m + 'm' : Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0');
-  return s.cold
-    ? ' &middot; <span class="cold">idle ' + t + ' &middot; COLD' +
-      (s.carry ? ' &middot; ' + tokf(s.carry) + ' to re-read' : '') + '</span>'
-    : ' &middot; idle ' + t;
-}
 
-// Context and uptime, one line per running session.
+// Seconds -> '7m' or '1h40', for idle time and uptime.
 function hm(sec) {
   const m = Math.floor(sec / 60);
   return m < 60 ? m + 'm' : Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0');
-}
-function meter(s) {
-  const bits = [];
-  if (s.carry) bits.push('context <b>' + tokf(s.carry) + '</b>');
-  if (s.up != null) bits.push('up <b>' + hm(s.up) + '</b>');
-  return bits.length ? '<div class="ln mt">' + bits.join(' &middot; ') + '</div>' : '';
 }
 
 // 'claude-opus-5-5[1m]' -> 'opus 5.5'; 'claude-haiku-4-5-20251001' -> 'haiku 4.5'.
@@ -1510,155 +1359,8 @@ function modelName(m) {
   const k = x.match(/^([a-z]+)-(\d+)-(\d+)$/);
   return k ? k[1] + ' ' + k[2] + '.' + k[3] : x;
 }
-// What runs the node: the live session's model, else the assignment, dimmed.
-function modelLine(n, s) {
-  const a = n.assigned || [];
-  const eff = a[1] ? ' &middot; ' + esc(a[1]) : '';
-  if (s && s.model) return '<div class="ln md" title="assigned ' + esc((a[0] || '?') + ' ' +
-      (a[1] || '')) + '">' + esc(modelName(s.model)) + eff + '</div>';
-  return a[0] ? '<div class="ln q">assigned ' + esc(a[0]) + eff + '</div>' : '';
-}
 
-function card(n) {
-  const unknown = n.sessions === null;
-  const ss = n.sessions || [];
-  // A stopped session outranks every other class here. It reports status 'idle',
-  // so without this the one card that needs a human is painted the same as the
-  // cards that need nobody — which is how a lead sat halted for forty minutes on
-  // a board that was open the whole time.
-  // Most stops are a finished turn waiting on someone; those are drawn as a
-  // wait, below. Only a permission prompt, or a stop the transcript can't
-  // place, needs the keyboard.
-  const halted = ss.some(s => s.stopped && !(s.stop && s.stop.kind === 'reply'));
-  const cls = unknown ? 'unknown'
-            : halted ? 'dup'
-            : (ss.some(s => s.status === 'busy') ? 'busy' : (ss.length ? 'idle' : ''));
-  let who;
-  if (unknown)            who = '<div class="ln u">occupancy unknown</div>';
-  else if (ss.length > 1) who = '<div class="ln dup">' + ss.length +
-      ' sessions in one worktree</div>';
-  else if (halted)        who = modelLine(n, ss[0]) + '<div class="ln dup">' + (ss[0].stop
-      ? 'permission prompt &middot; ' + esc(ss[0].stop.tool) + '</div>' +
-        (ss[0].stop.what ? '<div class="ln q">' + esc(ss[0].stop.what) + '</div>' : '')
-      : 'stopped &mdash; a prompt or a reply</div>') +
-      '<div class="ln q">claude attach ' + esc(ss[0].id) + '</div>' + meter(ss[0]);
-  else if (ss.length)     who = modelLine(n, ss[0]) +
-      '<div class="ln" title="session ' + esc(ss[0].name) + '">' +
-      // "idle · idle 5m" said it twice: the age already says idle.
-      (ss[0].status === 'idle' && age(ss[0])
-        ? age(ss[0]).replace(/^ &middot; /, '') : esc(ss[0].status) + age(ss[0])) +
-      '</div>' + meter(ss[0]);
-  else if (n.claimed)     who = '<div class="ln dup">claimed, no session</div>' + modelLine(n);
-  else                    who = '<div class="ln q">no session</div>' + modelLine(n);
-  // "unassigned" read as "nothing is there", which is the opposite of what it
-  // means: the session is working, the HARNESS just has no record of on what.
-  const task = n.tasks.length ? '<div class="ln">' + n.tasks.map(x =>
-                 '<span class="chip' + (x.presented ? ' presented' : '') +
-                 '" data-task="' + esc(x.task) + '" data-slug="' + esc(n._slug) +
-                 '" title="' + (x.presented ? 'presented — waiting on its lead to sign off'
-                                            : 'open') + '">' +
-                 (x.presented ? '&#10003; ' : '') + esc(x.task) + '</span>').join(' ') +
-                 '</div>' + briefedChips(n)
-             : (!unknown && ss.length
-                ? '<div class="ln q" title="no harness mark — run harness mark ' +
-                  '&lt;task&gt; in that session">no task record</div>' + briefedChips(n)
-                : briefedChips(n));
-  const coldc = ss.some(s => s.cold) ? ' coldc' : '';
-  // Asked and stopped. Drawn on the node because it is the node's state and
-  // its lead's to clear. The count of children stopped on THIS node
-  // sits on the same card, so a lead can see what it owes without reading its
-  // children's cards one at a time.
-  const w = n.waiting;
-  const wait = w
-    ? '<span class="wto" hidden data-on="' + esc(w.parent || '') + '"></span>' +
-      '<div class="wt"' + (w.inferred ? ' title="read off its transcript: it finished ' +
-        'its turn and no harness waiting record says on what"' : '') +
-      '>waiting on ' + ((w.chain && w.chain.length ? w.chain : [w.parent || 'its lead'])
-        .map(x => '<b>' + esc(x) + '</b>').join(' &rarr; ')) + ' &middot; ' +
-      esc(w.age || '') + '</div>' +
-      '<div class="wt q">' + esc(w.asked || (w.inferred ? 'finished its turn'
-                                                        : 'nothing recorded')) + '</div>' +
-      (w.still_moving ? '<div class="wt s">still moving: ' + esc(w.still_moving) +
-                        '</div>' : '')
-    : '';
-  // Direct waiters, then the longer paths that end here, as a ← b ← c.
-  // Held: its next task is gated on another node's task, or a clock. Violet,
-  // dashed: not a wait (nobody owes it an answer) and not a warning.
-  const held = (n.held || []).map(h => h.by
-      ? '<span class="hto" hidden data-on="' + esc(h.by) + '"></span>' +
-        '<div class="hd">held by <b>' + esc(h.by) + '</b> &middot; ' + esc(h.task) +
-        (h.worker
-          ? ' starts after ' + esc(h.worker) + '&rsquo;s <b>' + esc(h.after) +
-            '</b>, presented and waiting on ' + esc(h.by) + '&rsquo;s sign-off</div>'
-          : ' starts after its <b>' + esc(h.after) + '</b> (' + esc(h.state) + ')</div>')
-      : '<div class="hd">held until <b>' + esc(h.until) + '</b> &middot; ' + esc(h.task) + '</div>'
-    ).join('');
-  const holding = (n.holding || []).map(h => '<div class="hd o"><b>' + esc(h.node) +
-      '</b> held on <b>' + esc(n.name) + '</b>' + (h.signoff
-        ? ' signing off ' + esc(h.signoff) + '&rsquo;s ' + esc(h.after)
-        : '\'s ' + esc(h.after)) + '</div>').join('');
-  const owes = ((n.awaited_by || []).map(c => '<div class="wt o"><b>' + esc(c) +
-        '</b> waiting on <b>' + esc(n.name) + '</b></div>').join('')) +
-      ((n.chains || []).map(path => '<div class="wt o">' +
-        path.slice().reverse().map(x => '<b>' + esc(x) + '</b>').join(' &larr; ') +
-        ' waiting on <b>' + esc(n.name) + '</b></div>').join(''));
-  // Beside the node it is directed AT, naming where it came FROM. One line, the
-  // point first, the command behind a click -- rich about what it is, short
-  // about saying it.
-  const VERB = {approval: 'approve', unanswered: 'spawn'};
-  const sigs = (n.signals || []).map(g =>
-    '<div class="sig" title="' + esc(g.do) + '">' +
-      '<span class="frm">&larr; ' + esc(g.frm || '?') + '</span>' +
-      '<span class="kind">' + esc(g.kind) + '</span>' +
-      '<span class="txt">' + esc(g.text) + '</span>' +
-      '<span class="act cp" data-copy="' + esc(g.do) + '">' +
-        esc(VERB[g.kind] || 'copy') + '</span>' +
-    '</div>').join('');
-  return '<div class="card ' + cls + coldc + (w ? ' waitc' : (n.held || []).length ? ' heldc' : '') +
-    '" data-live="card:' + esc(n._slug + ':' + n.name) + '">' +
-    '<div class="hdr"><span class="dot"></span><span class="nm">' + esc(n.name) +
-    '</span><span class="kd">' + esc(n.role || '') +
-    '</span></div>' +
-    (n.branch && n.branch !== n.name || !n.indexed
-      ? '<div class="ln q">' + (n.branch && n.branch !== n.name ? 'branch ' + esc(n.branch) : '') +
-        (n.indexed ? '' : ' (not indexed)') + '</div>' : '') +
-    who + mailLine(n, ss) + wait + held + owes + holding + sigs + task + splitChips(n) +
-    goneChips(n) + '</div>';
-}
-
-// ── Look trial (2026-10-08) ─────────────────────────────────────────────────
-// The scheme and layout are picked in the header and kept in localStorage; a
-// URL's ?theme=&lay=&font= wins, so a screenshot can ask for one directly.
-// "current" is today's look, untouched.
-const LOOKS = {theme: ['current', 'moss', 'slate', 'graphite', 'dusk'],
-               lay: ['current', 'banner', 'edge', 'tile'], font: ['mono', 'sans']};
-const LOOK = {};
-(function () {
-  const q = new URLSearchParams(location.search);
-  for (const k in LOOKS) {
-    const v = q.get(k) || localStorage.getItem('harness.look.' + k);
-    LOOK[k] = LOOKS[k].includes(v) ? v : LOOKS[k][0];
-  }
-})();
-function applyLook() {
-  document.body.className = document.body.className.split(' ')
-    .filter(c => c && !/^(theme|lay)-|^sans$/.test(c)).join(' ');
-  if (LOOK.theme !== 'current') document.body.classList.add('theme-' + LOOK.theme);
-  if (LOOK.lay !== 'current') document.body.classList.add('lay-' + LOOK.lay);
-  if (LOOK.font === 'sans') document.body.classList.add('sans');
-  document.getElementById('look').innerHTML = 'look ' + Object.keys(LOOKS).map(k =>
-    '<select data-look="' + k + '">' + LOOKS[k].map(v => '<option' +
-      (v === LOOK[k] ? ' selected' : '') + '>' + v + '</option>').join('') + '</select>').join('');
-}
-document.addEventListener('change', e => {
-  const k = e.target.dataset && e.target.dataset.look;
-  if (!k) return;
-  LOOK[k] = e.target.value;
-  try { localStorage.setItem('harness.look.' + k, LOOK[k]); } catch (x) {}
-  applyLook(); LAST = ''; document.getElementById('root').innerHTML = ''; tick();
-});
-// Folds a card holds open across repaints: its wait detail, its task list.
-applyLook();
+// Folds a card holds open across repaints: its wait detail, its gone tasks.
 const OPENV = new Set();
 document.addEventListener('click', e => {
   const t = e.target.closest('[data-tog]');
@@ -1668,10 +1370,11 @@ document.addEventListener('click', e => {
   LAST = ''; tick();
 });
 
-// The node card under the new looks. Same facts as card(), ranked: the state
-// is the header, the name is the biggest thing on it, and what used to be a
-// sentence is a symbol whose sentence is one hover or click away.
-function card2(n) {
+// A node's card (owner, 2026-10-08: Slate, banner). The state is the header
+// band, the name is the biggest thing on it, and what used to be a sentence is
+// a symbol whose sentence is one hover or click away. Tasks sit in three
+// groups, now, next and done, with superseded ones folded to a count.
+function card(n) {
   const unknown = n.sessions === null;
   const ss = n.sessions || [];
   const s = ss[0];
@@ -1791,14 +1494,8 @@ function card2(n) {
   if (!tg && ss.length && !unknown)
     tg = '<span class="tgl">now</span><span class="tgc"><span class="why q" title="no harness ' +
          'mark — run harness mark &lt;task&gt; in that session">no task record</span></span>';
-  const cnt = (g, k) => k ? '<span>' + g + ' <b>' + k + '</b></span>' : '';
-  const tsum = (now.length + next.length + done.length + gone.length)
-    ? '<div class="tsum" data-tog="t:' + esc(key) + '" title="now · next · done">' +
-      cnt('&#9656;', now.length) + cnt('&#8943;', next.length) + cnt('&#10003;', done.length) +
-      (gone.length ? '<span>+' + gone.length + ' gone</span>' : '') + '</div>' : '';
 
-  return '<div class="card v2 st-' + st + ' r-' + esc(n.role || 'worker') +
-    (OPENV.has('t:' + key) ? ' topen' : '') + '" data-live="card:' + esc(key) + '">' +
+  return '<div class="card v2 st-' + st + ' r-' + esc(n.role || 'worker') + '" data-live="card:' + esc(key) + '">' +
     '<div class="bn"><span class="nm">' + esc(n.name) + '</span><span class="rl">' +
     esc(n.role || '') + '</span><span class="stw">' + word + '</span></div>' +
     '<div class="bd">' + (model ? '<div class="md2">' + model + '</div>' : '') +
@@ -1806,20 +1503,9 @@ function card2(n) {
       (n.branch && n.branch !== n.name ? 'branch ' + esc(n.branch) : '') +
       (n.indexed ? '' : ' (not indexed)') + '</div>' : '') +
     why + (sym.length ? '<div class="sym">' + sym.join('') + '</div>' : '') + det + sigs +
-    tsum + (tg ? '<div class="tg">' + tg + '</div>' : '') + '</div></div>';
+    (tg ? '<div class="tg">' + tg + '</div>' : '') + '</div></div>';
 }
 
-// Doorbell mail waiting for the node's session. Hooks hand it over at its next
-// tool call, turn end or prompt; an idle session wakes for it only if its
-// doorbell is armed, so say when nothing will wake it.
-function mailLine(n, ss) {
-  if (!n.mail) return '';
-  const idle = !ss.some(s => s.status === 'busy');
-  return '<div class="ln mail">&#9993; ' + n.mail + ' unread' +
-    (!ss.length ? ' &middot; no session' :
-     !idle ? ' &middot; at its next tool call' :
-     n.bell ? ' &middot; waking it' : ' &middot; nothing armed to wake it') + '</div>';
-}
 
 // The project's intermediary, as a card off to the side of its tree. Not a
 // tree node: nothing in the tree reports to it, and drawing it under the root
@@ -1949,7 +1635,7 @@ function docCard(p) {
       (busy ? 'queue after this' : 'start') + '</button></div>' + left;
   const msg = DOCMSG[p.slug] ? '<div class="ln q">' + esc(DOCMSG[p.slug]) + '</div>' : '';
   return '<div class="card interm doc ' + cls + '" data-live="doc:' + esc(p.slug) + '">' +
-    '<div class="hdr"><span class="dot"></span><span class="nm">' + esc(p.project) +
+    '<div class="hdr"><span class="nm">' + esc(p.project) +
     '</span><span class="kd">documenter</span></div>' +
     '<div class="ln">' + status + '</div>' + budget + last + ak + ctl + msg + '</div>';
 }
@@ -1995,7 +1681,7 @@ function testCard(p) {
     esc(t.last.state) + (t.last.at ? ' at ' + esc(t.last.at) : '') + '</div>' : '';
   return '<div class="card interm doc ' + (run || (t.slots || []).length ? 'busy' : '') +
     '" data-live="tests:' +
-    esc(p.slug) + '"><div class="hdr"><span class="dot"></span><span class="nm">' +
+    esc(p.slug) + '"><div class="hdr"><span class="nm">' +
     esc(p.project) + '</span><span class="kd">tests</span></div>' + head + slots + list + last +
     '</div>';
 }
@@ -2029,7 +1715,7 @@ function intermCard(p) {
          '<span class="' + (yours ? 'yours' : '') + '">' + yours + ' yours</span>'
        : 'no open items') + '</a></div>';
   return '<div class="card interm ' + cls + '" data-live="interm:' + esc(p.slug) + '">' +
-    '<div class="hdr"><span class="dot"></span><span class="nm">' + esc(p.project) +
+    '<div class="hdr"><span class="nm">' + esc(p.project) +
     '</span><span class="kd">intermediary</span></div>' + who + ask + '</div>';
 }
 
@@ -2040,7 +1726,7 @@ function tree(nodes, side) {
     if (n.parent && by[n.parent]) (kids[n.parent] = kids[n.parent] || []).push(n);
     else roots.push(n);
   });
-  const li = n => '<li>' + (LOOK.lay === 'current' ? card(n) : card2(n)) +
+  const li = n => '<li>' + card(n) +
     (kids[n.name] ? '<ul>' + kids[n.name].map(li).join('') + '</ul>' : '') + '</li>';
   // The side cards share the tree's scrolling space, on its left, so a line
   // from one to a node is drawn in the same coordinates as the tree's own.

@@ -2937,7 +2937,7 @@ def rank0_owes(ctx, node):
         except Exception:
             continue
         ap = b.get("approval") or {}
-        if ap.get("state") != "pending" or b.get("superseded_at"):
+        if ap.get("state") != "pending" or b.get("superseded_at") or parked(b):
             continue
         then = _epoch(ap.get("asked_at"))
         if then and time.time() - then > STALLED_APPROVAL:
@@ -3444,6 +3444,27 @@ def cmd_hook_stop(a):
                 "or approve, `--kind intent|judgement|risk` for a question. A refused command "
                 "is a reason to ask, not a standing belief. If nothing waits on them, carry on.")
             return
+        # Back from the wait pool (log 109; owner, 2026-10-08): a wait runs out
+        # after WAIT_FOR and the task returns to the normal pool. Said once, as a
+        # block, to the node that parked it; keeping it waiting takes a new --wait.
+        try:
+            expire_waits(ctx)
+            back = returned_for(ctx, node)
+        except Exception:
+            back = []
+        if back:
+            nl = chr(10)
+            for f, b in back:
+                b.pop("returned", None)
+                f.write_text(json.dumps(b, indent=2) + nl)
+            stop_block(
+                f"Back from the wait pool after {human_age(WAIT_FOR)}, and in the normal "
+                f"pool again:{nl}"
+                + nl.join(f"  '{b.get('task')}' was waiting: {(b.get('wait_history') or [{}])[-1].get('why')}"
+                          for f, b in back[:6])
+                + f"{nl}Still waiting? Park it again: harness brief <task> --wait \"<condition>\". "
+                  f"Otherwise act on it as you would any task (approve, brief, start, or supersede).")
+            return
         # Downward first: what this node owes the rank below. It applies to rank
         # 0 as much as anyone — main is dev's lead — which is why every row is
         # aged past a threshold, so a design conversation is not interrupted over
@@ -3833,6 +3854,9 @@ def cmd_mark(a):
         if _rep is None:
             print(f"  NOT CHECKED at {_sha[:8]} — nothing has run the check set against "
                   f"this commit.\n  Your lead will see that too:  harness check")
+        elif _rep.get("scoped") and ctx.children(node):
+            print(f"  CHECKS at {_sha[:8]} were scoped to the arms one change touches. You "
+                  f"merged work below you,\n  so present on the full set:  harness check --all")
         elif partial_line(_rep):
             print(f"  CHECKS at {_sha[:8]}: {partial_line(_rep)}. The arms that didn't run "
                   f"are not a pass;\n  say so in your report, and rerun once the hold is "
@@ -4279,6 +4303,53 @@ def load_checks(ctx):
     return checks
 
 
+def changed_arms(ctx, node, checks):
+    """The arms this node's change touches (owner, 2026-10-08: a worker ran the
+    full set, then its lead ran it again after merging). The change is the diff
+    from the merge-base with the lead's branch to HEAD. An arm with `paths`
+    (globs) runs when a changed file matches one; an arm without runs whenever
+    anything testable changed. Files matching the manifest's `checks_ignore` need
+    no check. A changed file no scoped arm claims runs EVERY arm: an unmapped
+    change is the one nobody has said is safe. -> (arm names | None for all, info)."""
+    import fnmatch
+    parent = ctx.tree["nodes"].get(node, {}).get("parent")
+    pb = (ctx.tree["nodes"].get(parent) or {}).get("branch") or parent
+    info = {"base": pb}
+    if not pb:
+        return None, dict(info, why="no lead to diff against")
+    rc, out, _ = git("merge-base", "--all", "HEAD", pb, cwd=ctx.worktree)
+    bases = out.split() if rc == 0 else []
+    if not bases:
+        return None, dict(info, why=f"no merge-base with {pb}")
+    files = set()
+    for mb in bases:
+        rc, out, _ = git("diff", "--name-only", mb, "HEAD", cwd=ctx.worktree)
+        if rc:
+            return None, dict(info, why=f"could not diff against {pb}")
+        files.update(x for x in out.splitlines() if x.strip())
+    try:
+        ignore = json.loads((ctx.repo / ".harness" / "manifest.json").read_text()).get(
+            "checks_ignore") or []
+    except Exception:
+        ignore = []
+    hit = lambda f, globs: any(fnmatch.fnmatch(f, g) for g in globs)
+    live = sorted(f for f in files if not hit(f, ignore))
+    info.update(files=len(files), ignored=len(files) - len(live))
+    if not live:
+        return [], dict(info, why="nothing testable changed")
+    scoped = [c for c in checks if c.get("paths")]
+    unmapped = [f for f in live if not any(hit(f, c["paths"]) for c in scoped)]
+    if unmapped and scoped:
+        return None, dict(info, why=f"{len(unmapped)} changed file(s) no arm claims, e.g. "
+                                    f"{unmapped[0]}", unmapped=unmapped[:20])
+    arms = [c["name"] for c in checks
+            if not c.get("paths") or any(hit(f, c["paths"]) for f in live)]
+    if len(arms) == len(checks):
+        return None, dict(info, why="the change touches every arm")
+    return arms, dict(info, why=f"{len(live)} changed file(s) touch {len(arms)} of "
+                                f"{len(checks)} arm(s)")
+
+
 def check_report_path(ctx, node, sha):
     return ctx.state_file("checks", f"{node}-{sha}", ".json")
 
@@ -4659,6 +4730,10 @@ def print_check_report(rep, base):
         print(line)
     if rep.get("partial"):
         print(f"  partial: only {', '.join(rep.get('arms') or [])} ran; this is not the full set")
+    if rep.get("scoped"):
+        sc = rep["scoped"]
+        print(f"  scoped: {', '.join(rep.get('arms') or []) or 'no arm'} — {sc.get('why')} "
+              f"since {sc.get('base')}; the full set runs at the lead's merge")
 
 
 def make_check_report(node, sha, rows, failed, base, **extra):
@@ -4727,9 +4802,29 @@ def cmd_check(a):
     if dirt.strip():
         die(REFUSED, f"{len(dirt.splitlines())} uncommitted change(s). The queue runs a copy of "
                      f"the commit, so commit first (a WIP commit is fine), then harness check.")
+    # One full run per change, at the lead (owner, 2026-10-08): a worker checks
+    # only the arms its change touches, a lead runs the full set after merging.
+    scope = None
+    if not a.arms and (a.changed or (not a.all and role_of(ctx, node) == "member")):
+        sel, scope = changed_arms(ctx, node, checks)
+        if sel == []:
+            rep = make_check_report(node, sha, [], 0, None, arms=[], scoped=scope)
+            f = check_report_path(ctx, node, sha)
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(json.dumps(rep, indent=2) + "\n")
+            print(f"nothing to check at {sha[:8]}: {scope['why']} since {scope['base']} "
+                  f"({scope['files']} file(s), {scope['ignored']} in checks_ignore). Recorded.")
+            return
+        if sel is None:
+            print(f"every arm: {scope['why']}")
+            scope = None
+        else:
+            arms = sel
+            print(f"scoped to {', '.join(arms)}: {scope['why']} since {scope['base']}."
+                  f"\n  Your lead runs the full set after merging; --all runs it here.")
     sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     job, how = testq_submit(ctx, "check", sha, node, sid, timeout=a.timeout, arms=arms,
-                            queue=queue, origin=str(ctx.worktree))
+                            queue=queue, origin=str(ctx.worktree), scope=scope)
     print(f"{how} {job['id']} — {'check' if not arms else 'arms ' + ', '.join(arms)} of "
           f"{sha[:8]}, {job['queue']} queue" + testq_wait_phrase(ctx, job))
     if not a.wait:
@@ -4830,7 +4925,7 @@ def testq_describe(j):
 
 
 def testq_submit(ctx, kind, sha, node, sid, command=None, timeout=None, arms=None,
-                 queue="normal", origin=None):
+                 queue="normal", origin=None, scope=None):
     """Queue a job, or join an identical one (same commit and arms) still queued
     or running: that is one run, not a guess about a result. A finished report is
     never reused; whether an old result still holds is the project's to say (obs
@@ -4851,6 +4946,8 @@ def testq_submit(ctx, kind, sha, node, sid, command=None, timeout=None, arms=Non
            "kind": kind, "sha": sha, "command": command, "requested_by": [req],
            "state": "queued", "at": _now(), "timeout": timeout, "arms": arms,
            "queue": queue, "origin": origin}
+    if scope:
+        job["scope"] = scope
     testq_save(ctx, job)
     testq_ensure_runner(ctx)
     return job, "queued"
@@ -5135,7 +5232,9 @@ def testq_check(ctx, job, wt, env):
         return None
     rep = make_check_report(node, sha, rows, failed, base,
                             job=job["id"], requested_by=[r.get("node") for r in job["requested_by"]],
-                            arms=job.get("arms"), partial=bool(job.get("arms")))
+                            arms=job.get("arms"),
+                            partial=bool(job.get("arms")) and not job.get("scope"),
+                            **({"scoped": job["scope"]} if job.get("scope") else {}))
     shared.parent.mkdir(parents=True, exist_ok=True)
     shared.write_text(json.dumps(rep, indent=2) + "\n")
     # Requesters who joined while it ran are read fresh from the job file.
@@ -7827,6 +7926,57 @@ def briefed_unstarted(ctx, node):
     return out
 
 
+WAIT_FOR = 12 * 3600
+
+
+def parked(b):
+    """In the wait pool (log 109): parked on a condition, for WAIT_FOR at most.
+    A parked task starts nowhere and nags nobody until it comes back."""
+    w = (b or {}).get("wait")
+    return bool(w) and time.time() < (w.get("until") or 0)
+
+
+def expire_waits(ctx):
+    """Move every wait that has run out back to the normal pool (owner,
+    2026-10-08): it is not renewed by itself, so a wait can't fade into a
+    footnote. The brief keeps `returned` until the node that parked it is told."""
+    out = []
+    bd = ctx.state / "briefs"
+    for f in (sorted(bd.glob("*.json")) if bd.is_dir() else []):
+        try:
+            b = json.loads(f.read_text())
+        except Exception:
+            continue
+        w = b.get("wait")
+        if not w or time.time() < (w.get("until") or 0):
+            continue
+        b.setdefault("wait_history", []).append(dict(w, expired_at=_now()))
+        b["returned"] = {"why": w.get("why"), "by_node": w.get("by_node"), "at": _now()}
+        del b["wait"]
+        f.write_text(json.dumps(b, indent=2) + "\n")
+        out.append(b)
+    return out
+
+
+def returned_for(ctx, node):
+    """Briefs back from the wait pool that `node` has not been told of: the
+    node that parked them, or rank 0 when that node is gone."""
+    out = []
+    bd = ctx.state / "briefs"
+    for f in (sorted(bd.glob("*.json")) if bd.is_dir() else []):
+        try:
+            b = json.loads(f.read_text())
+        except Exception:
+            continue
+        r = b.get("returned")
+        if not r:
+            continue
+        by = r.get("by_node")
+        if by == node or (ctx.rank(node) == 0 and by not in ctx.tree["nodes"]):
+            out.append((f, b))
+    return out
+
+
 def awaiting(b):
     """A brief written, visible, and not staffable until the operator says so.
 
@@ -7887,7 +8037,7 @@ def queue(ctx, node):
     rows = [b for k, b in briefs.items()
             if b.get("node") == node and k not in derived
             and not awaiting(b) and not refused(b) and not superseded(b)
-            and not b.get("out_of_scope")
+            and not b.get("out_of_scope") and not parked(b)
             and not ctx.state_file("marks", k, ".json").exists()]
     rows.sort(key=lambda b: (b.get("seq") if b.get("seq") is not None else 10**6,
                              b.get("written_at") or ""))
@@ -9006,6 +9156,33 @@ def cmd_brief(a):
                   f"by {h.get('written_by')} at {str(h.get('written_at'))[:19]}")
             for line in (h.get("text") or "").splitlines():
                 print(f"      {line}")
+        return
+
+    if a.wait is not None and a.write is None:
+        if b is None:
+            die(REFUSED, f"no brief for '{a.task}'")
+        target = b.get("node")
+        parent = ctx.tree["nodes"].get(target, {}).get("parent")
+        if sid and parent != me and ctx.rank(me) != 0:
+            die(REFUSED, f"'{a.task}' is {target}'s; it is parked by '{parent}' or rank 0")
+        if a.wait.strip().lower() == "none":
+            w = b.pop("wait", None)
+            if w:
+                b.setdefault("wait_history", []).append(dict(w, released_at=_now(), released_by=who))
+            f.write_text(json.dumps(b, indent=2) + "\n")
+            print(f"'{a.task}' is out of the wait pool" if w else f"'{a.task}' was not waiting")
+            return
+        if not a.wait.strip():
+            die(REFUSED, 'say what it waits on: harness brief <task> --wait "until ..."')
+        until = time.time() + WAIT_FOR
+        b["wait"] = {"why": a.wait.strip(), "by": who, "by_node": me, "at": _now(), "until": until}
+        b.pop("returned", None)
+        f.write_text(json.dumps(b, indent=2) + "\n")
+        print(f"parked '{a.task}' in the wait pool: {a.wait.strip()}")
+        print(f"  Nothing starts it and nothing nags about it until "
+              f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(until))} ({human_age(WAIT_FOR)}).")
+        print(f"  Then it returns to the normal pool and your stop hook says so; to keep it "
+              f"waiting, park it again.")
         return
 
     if a.write is None and (a.not_before or a.requires):
@@ -12418,7 +12595,12 @@ def ask_accept(pdir, path, rec, text=None, by="operator"):
     first = (answer.splitlines() or [""])[0]
     first = first[:200] + ("…" if len(first) > 200 else "")
     told = []
-    for n in (rec.get("asker_node"), ask_lead(pdir, b.get("node"))):
+    # A ruling can give the action to a node that neither asked nor leads the
+    # task ("authorised by a grant from main to dev_1"); it rings that node too
+    # (log 108, second instance).
+    named = [n for n in ask_nodes(pdir)
+             if re.search(r"(?<![\w-])" + re.escape(n) + r"(?![\w-])", answer)]
+    for n in [rec.get("asker_node"), ask_lead(pdir, b.get("node"))] + named:
         if n and n not in told and n not in ("documenter", "operator", "owner"):
             ring_inbox(pdir, n, "owner", f"the owner ruled on {rec['id']} ({rec.get('task')}): "
                        f"{first} The full ruling is on the brief: harness brief {rec.get('task')}")
@@ -12427,14 +12609,23 @@ def ask_accept(pdir, path, rec, text=None, by="operator"):
     return r
 
 
+def ask_tree(pdir):
+    """The project's role tree's nodes, read through its binding; {} if unreadable."""
+    try:
+        return json.loads((Path(json.loads((Path(pdir) / "binding.json").read_text())
+                                .get("repo")) / ".harness" / "tree.json").read_text()
+                          ).get("nodes", {}) or {}
+    except Exception:
+        return {}
+
+
+def ask_nodes(pdir):
+    return list(ask_tree(pdir))
+
+
 def ask_lead(pdir, node):
     """The parent of `node` in the project's role tree, or None."""
-    try:
-        tree = json.loads((Path(json.loads((Path(pdir) / "binding.json").read_text())
-                                .get("repo")) / ".harness" / "tree.json").read_text())
-        return (tree.get("nodes", {}).get(node) or {}).get("parent")
-    except Exception:
-        return None
+    return (ask_tree(pdir).get(node) or {}).get("parent")
 
 
 def ask_drop(pdir, path, rec, why):
@@ -14980,9 +15171,15 @@ def main():
     br.add_argument("--needs-approval", dest="needs_approval", action="store_true",
                     help="write it, but do not let it be staffed until the operator agrees")
     br.add_argument("--approve", action="store_true",
-                    help="operator only: release a gated task into its node's queue")
+                    help="the operator, or rank 0 on their behalf: release a gated task "
+                         "into its node's queue")
     br.add_argument("--decline", metavar="WHY",
-                    help="operator only: refuse a gated task, on the record")
+                    help="the operator, or rank 0 on their behalf: refuse a gated task, "
+                         "on the record")
+    br.add_argument("--wait", metavar="CONDITION",
+                    help="park the task in the wait pool on a condition (log 109): it starts "
+                         "nowhere and nags nobody for 12h, then returns to the normal pool "
+                         "and the stop hook says so; 'none' takes it out now")
     br.add_argument("--not-before", metavar="UTC",
                     help="the task starts no earlier than this UTC time: 00:05Z (the next "
                          "one) or 2026-10-05T00:05Z; 'none' clears (obs 70)")
@@ -15085,6 +15282,11 @@ def main():
     ck.add_argument("--arms", metavar="A,B",
                     help="run only these arms (names from the manifest); your project says "
                          "which a change needs. The report is marked partial")
+    ck.add_argument("--changed", action="store_true",
+                    help="only the arms this change touches, by each arm's `paths` (the "
+                         "default for a worker): the full set runs at the lead's merge")
+    ck.add_argument("--all", action="store_true",
+                    help="every arm, even on a worker (the default for leads and rank 0)")
     ck.add_argument("--priority", action="store_true",
                     help="the priority queue (the default for leads and rank 0: integration)")
     ck.add_argument("--normal", action="store_true",

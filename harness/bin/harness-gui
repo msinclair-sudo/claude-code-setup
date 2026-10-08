@@ -427,6 +427,9 @@ def read_state():
                      "from": r.get("from") or None,
                      "gone": r.get("superseded_why") or None,
                      "gone_for": r.get("superseded_for") or None,
+                     # In the wait pool (log 109): its condition and when it returns.
+                     "wait": ({"why": r["wait"].get("why"), "until": r["wait"].get("until")}
+                              if CLI.parked(r) else None),
                      "open_suggestions": sum(1 for x in (r.get("suggestions") or [])
                                              if not x.get("resolved_at"))})
         suggestions = {}
@@ -527,7 +530,7 @@ def read_state():
             except Exception:
                 continue
             ap = r.get("approval") or {}
-            if ap.get("state") != "pending" or r.get("superseded_at"):
+            if ap.get("state") != "pending" or r.get("superseded_at") or CLI.parked(r):
                 continue
             frm = str(ap.get("asked_by") or "").split(" ")[0] or "its lead"
             first = (r.get("text") or "").strip().splitlines()
@@ -1105,6 +1108,7 @@ border-radius:7px}
 .v2 .chip.pending{color:var(--dim);border-style:dashed}
 .v2 .chip.dn{color:var(--dim);border-color:var(--line)}
 .v2 .chip.out{color:var(--mute);border-style:dotted}
+.v2 .chip.wtg{color:var(--s-held);border-color:color-mix(in srgb,var(--s-held) 45%,var(--line))}
 .v2 .chip .k{color:var(--dim);font-size:10.5px}
 .v2 .more{font-size:10.5px;color:var(--mute);cursor:pointer;border-bottom:1px dotted currentColor}
 .v2 .sig{margin-top:5px}
@@ -1537,7 +1541,13 @@ function card(n) {
     .concat((n.split || []).filter(x => !x.ready).map(x => chip(x.task, '&#8916; ' + esc(x.task) +
       ' <span class="k">' + x.done + '/' + x.total + '</span>', 'pending',
       x.children.map(c => c.task + ' (' + c.node + ') ' + c.state).join('\n'))));
-  const head = (n.briefed || []).filter(b => !b.coupled_to);
+  const head = (n.briefed || []).filter(b => !b.coupled_to && !b.wait);
+  // The wait pool (log 109): parked on a condition, back in the normal pool
+  // when its 12 hours run out.
+  const waits = (n.briefed || []).filter(b => b.wait).map(b => chip(b.task,
+      '&#9208;&#65039; ' + esc(b.label || b.task), 'pending wtg',
+      'waiting: ' + (b.wait.why || '') + '\nback in the normal pool at ' +
+      new Date((b.wait.until || 0) * 1000).toLocaleString()));
   const next = head.map(b =>
       chip(b.task, esc(b.label || b.task) + (b.open_suggestions ? ' <b class="dup">!' +
         b.open_suggestions + '</b>' : ''), 'pending', b.coupled_why) +
@@ -1556,7 +1566,7 @@ function card(n) {
         g.gone_for : ''))).join(' ') : '') : '';
   const row = (l, xs, extra) => xs.length || extra ? '<span class="tgl">' + l +
       '</span><span class="tgc">' + xs.join(' ') + (extra || '') + '</span>' : '';
-  let tg = row('now', now) + row('next', next) + row('done', done, goneHtml);
+  let tg = row('now', now) + row('next', next) + row('wait', waits) + row('done', done, goneHtml);
   if (!tg && ss.length && !unknown)
     tg = '<span class="tgl">now</span><span class="tgc"><span class="why q" title="no harness ' +
          'mark — run harness mark &lt;task&gt; in that session">no task record</span></span>';

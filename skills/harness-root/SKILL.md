@@ -52,7 +52,7 @@ A brief is rewritten in place; `harness note` is the append-only half. Write a s
 
 ## Approving briefs
 
-`harness brief <task> --approve`, or `--decline "why"` (the why is required). Orientation lists pending approvals; they are yours. Decide sparingly; declining costs one line. Approving a brief you asked for records `self_approved`. When one matters, put it to the owner instead.
+`harness brief <task> --approve`, or `--decline "why"` (the why is required). Orientation lists pending approvals; they are yours. One that must wait on something neither of those fits (an owner's ruling that it waits for a design, say) goes in the wait pool: `harness brief <task> --wait "until ..."`. It is quiet for 12 hours, then comes back and your stop hook says so; park it again if it still waits. Decide sparingly; declining costs one line. Approving a brief you asked for records `self_approved`. When one matters, put it to the owner instead.
 
 ## Priority
 

@@ -5,6 +5,7 @@ import io
 import json
 import os
 import socket
+import subprocess
 import sys
 import tempfile
 import time
@@ -3034,10 +3035,131 @@ class Log108(unittest.TestCase):
     def test_the_owner_and_operator_are_not_rung(self):
         self.assertEqual(self.accept("operator")["rung"], ["dev"])
 
+    def test_a_node_the_ruling_names_is_rung_too(self):
+        with mock.patch.object(hz, "ask_nodes", return_value=["main", "dev", "dev_1"]):
+            r = self.accept("dev", answer="Authorised by a grant from main to dev_1.")
+        self.assertEqual(r["rung"], ["dev", "main", "dev_1"])
+
     def test_a_documenter_ruling_rings_nobody(self):
         self.accept("documenter")
         self.assertEqual(list(self.ctx.dir.glob("doorbell/*/inbox/*.json")), [])
         self.assertTrue((self.ctx.dir / "docs" / "rulings.json").exists())
+
+
+class ChangedArms(unittest.TestCase):
+    """Owner, 2026-10-08: a worker checks only the arms its change touches; the
+    lead runs the full set after merging."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"dev": None, "w": "dev"})
+        self.ctx.tree["nodes"]["dev"]["branch"] = "dev"
+        self.ctx.tree["nodes"]["w"]["branch"] = "w"
+        r = self.ctx.dir / "repo"
+        r.mkdir()
+        self.ctx.repo = self.ctx.worktree = r
+        g = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a],
+                                      cwd=r, check=True, capture_output=True)
+        self.g = g
+        g("init", "-q", "-b", "dev")
+        for f in ("src/surface/a.js", "src/enrich/b.py", "docs/x.md", "README.md"):
+            (r / f).parent.mkdir(parents=True, exist_ok=True)
+            (r / f).write_text("1")
+        (r / ".harness").mkdir()
+        self.man({})
+        g("add", "-A"); g("commit", "-qm", "base"); g("checkout", "-qb", "w")
+        self.checks = [{"name": "surface", "paths": ["src/surface/*"]},
+                       {"name": "enrich", "paths": ["src/enrich/*"]}]
+
+    def man(self, m):
+        (self.ctx.repo / ".harness" / "manifest.json").write_text(json.dumps(m))
+
+    def change(self, *files):
+        for f in files:
+            p = self.ctx.repo / f
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("2")
+        self.g("add", "-A"); self.g("commit", "-qm", "c")
+
+    def arms(self, checks=None):
+        return hz.changed_arms(self.ctx, "w", checks or self.checks)
+
+    def test_only_the_arm_a_change_touches(self):
+        self.change("src/enrich/b.py")
+        sel, info = self.arms()
+        self.assertEqual(sel, ["enrich"])
+        self.assertEqual(info["base"], "dev")
+
+    def test_an_unclaimed_file_runs_every_arm(self):
+        self.change("src/enrich/b.py", "setup.cfg")
+        sel, info = self.arms()
+        self.assertIsNone(sel)
+        self.assertIn("setup.cfg", info["why"])
+
+    def test_ignored_files_need_no_check(self):
+        self.man({"checks_ignore": ["docs/*", "*.md"]})
+        self.g("add", "-A"); self.g("commit", "-qm", "m")
+        self.change("docs/x.md", "README.md")
+        sel, info = self.arms()
+        self.assertIsNone(sel)                     # the manifest itself is unclaimed
+        self.man({"checks_ignore": ["docs/*", "*.md", ".harness/*"]})
+        self.g("add", "-A"); self.g("commit", "-qm", "m2")
+        self.assertEqual(self.arms()[0], [])
+
+    def test_an_arm_without_paths_always_runs(self):
+        self.change("src/enrich/b.py")
+        sel, _ = self.arms(self.checks + [{"name": "guard"}])
+        self.assertEqual(sel, ["enrich", "guard"])
+
+
+class WaitPool(unittest.TestCase):
+    """Log 109: a parked task starts nowhere and nags nobody for 12 hours, then
+    returns to the normal pool by itself and its parker is told once."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main"})
+        (self.ctx.dir / "briefs").mkdir()
+
+    def brief(self, task, **kw):
+        b = {"task": task, "node": "dev", "text": "t"}
+        b.update(kw)
+        (self.ctx.dir / "briefs" / f"{task}.json").write_text(json.dumps(b))
+
+    def load(self, task):
+        return json.loads((self.ctx.dir / "briefs" / f"{task}.json").read_text())
+
+    def wait(self, left):
+        return {"why": "until the design session", "by_node": "main", "at": "x",
+                "until": time.time() + left}
+
+    def test_parked_leaves_the_queue_and_the_approval_nag(self):
+        old = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() - 7200))
+        self.brief("dag", approval={"state": "pending", "asked_at": old}, wait=self.wait(3600))
+        self.brief("q", wait=self.wait(3600))
+        self.assertEqual(hz.queue(self.ctx, "dev"), [])
+        with mock.patch.object(hz, "docs_pending", return_value=[]), \
+             mock.patch.object(hz, "decided_blocks", return_value={}), \
+             mock.patch.object(hz, "completed_units", return_value=[]), \
+             mock.patch.object(hz, "stale_records", return_value=([], [])), \
+             mock.patch.object(hz, "ended_count", return_value=0):
+            self.assertEqual([o for o in hz.rank0_owes(self.ctx, "main") if o[0] == "approve"], [])
+
+    def test_an_expired_wait_returns_to_the_pool_and_is_told_once(self):
+        self.brief("q", wait=self.wait(-1))
+        self.assertFalse(hz.parked(self.load("q")))
+        self.assertEqual(len(hz.expire_waits(self.ctx)), 1)
+        b = self.load("q")
+        self.assertNotIn("wait", b)
+        self.assertEqual(b["returned"]["why"], "until the design session")
+        self.assertEqual(b["wait_history"][0]["why"], "until the design session")
+        self.assertEqual([x[1]["task"] for x in hz.returned_for(self.ctx, "main")], ["q"])
+        self.assertEqual(hz.returned_for(self.ctx, "dev"), [])
+        self.assertEqual([x["task"] for x in hz.queue(self.ctx, "dev")], ["q"])
+        self.assertEqual(hz.expire_waits(self.ctx), [])        # nothing left to move
+
+    def test_a_live_wait_is_left_alone(self):
+        self.brief("q", wait=self.wait(600))
+        self.assertTrue(hz.parked(self.load("q")))
+        self.assertEqual(hz.expire_waits(self.ctx), [])
 
 
 class OwnerActions(unittest.TestCase):

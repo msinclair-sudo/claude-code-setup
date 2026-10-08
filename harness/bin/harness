@@ -4982,11 +4982,66 @@ def testq_order(jobs):
     return run + q
 
 
+_ARM_SECONDS = {}
+
+
+def arm_seconds(ctx):
+    """{arm: median seconds of its last five runs}, from the check reports.
+    A timed-out row is a cap, not a time, and is skipped. Kept a minute: the
+    GUI asks on every poll and `harness test` once per listed job."""
+    key = str(ctx.state)
+    if time.time() - _ARM_SECONDS.get(key, (0, None))[0] > 60:
+        runs = {}
+        d = Path(ctx.state) / "checks"
+        files = sorted(d.glob("*.json"), key=lambda f: f.stat().st_mtime,
+                       reverse=True) if d.is_dir() else []
+        for f in files:
+            if f.name.endswith(".running.json"):
+                continue
+            rep = _read_json(f) or {}
+            for r in rep.get("checks") or []:
+                if (isinstance(r, dict) and r.get("seconds") and not r.get("timedOut")
+                        and len(runs.setdefault(r.get("name"), [])) < 5):
+                    runs[r["name"]].append(float(r["seconds"]))
+        _ARM_SECONDS[key] = (time.time(), {n: sorted(v)[len(v) // 2]
+                                           for n, v in runs.items() if v})
+    return _ARM_SECONDS[key][1]
+
+
+def job_arm_names(ctx, arms):
+    """The arms a check runs, in run order: the named ones, else the manifest's."""
+    try:
+        names = [c["name"] for c in json.loads(
+            (Path(ctx.repo) / ".harness" / "manifest.json").read_text()).get("checks") or []]
+    except Exception:
+        names = []
+    return [n for n in names if n in arms] if arms and names else list(arms or names)
+
+
+def arm_estimate(ctx, arms, skip=0, current_ran=None):
+    """Seconds for a check from its arms' own times (log 111: a one-arm job was
+    estimated as a full check), or None when any arm has no time yet. `skip`
+    arms are done; the next one has run `current_ran` seconds."""
+    names = job_arm_names(ctx, arms)
+    t = arm_seconds(ctx)
+    if not names or any(n not in t for n in names):
+        return None
+    rest = names[skip:]
+    total = sum(t[n] for n in rest)
+    if rest and current_ran is not None:
+        total -= min(t[rest[0]], current_ran)
+    return total
+
+
 def testq_duration(ctx, kind, arms, command=None):
-    """The median seconds of the last five finished jobs like this one, or None.
-    A check: same arms, else any check. A command: the same command only (log
-    103: a timing job was estimated from short probes, "done in under a minute"
-    27 minutes in)."""
+    """Seconds a job like this takes, or None. A check: the sum of its arms' own
+    recent times, else the median of the last five finished jobs with the same
+    arms, else any check. A command: the same command only (log 103: a timing
+    job was estimated from short probes, "done in under a minute" 27 minutes in)."""
+    if kind == "check":
+        est = arm_estimate(ctx, arms)
+        if est is not None:
+            return est
     done = [j for j in testq_jobs(ctx, ("done",)) if j.get("kind") == kind
             and _epoch(j.get("started")) and _epoch(j.get("finished"))]
     if kind == "cmd":
@@ -5003,11 +5058,16 @@ def testq_wait_estimate(ctx, job):
     None when no job like one of them has finished yet."""
     total = 0
     for j in testq_ahead(ctx, job) + [job]:
-        d = testq_duration(ctx, j.get("kind"), j.get("arms"), j.get("command"))
+        d = None
+        if j.get("state") == "running" and j.get("kind") == "check" and j.get("arm_started"):
+            d = arm_estimate(ctx, j.get("arms"), j.get("done_arms") or 0,
+                             time.time() - (_epoch(j["arm_started"]) or time.time()))
         if d is None:
-            return None
-        if j.get("state") == "running":
-            d = max(0, d - (time.time() - (_epoch(j.get("started")) or time.time())))
+            d = testq_duration(ctx, j.get("kind"), j.get("arms"), j.get("command"))
+            if d is None:
+                return None
+            if j.get("state") == "running":
+                d = max(0, d - (time.time() - (_epoch(j.get("started")) or time.time())))
         total += d
     return total
 
@@ -9638,7 +9698,9 @@ def cmd_grant(a):
         for n, r in rows:
             state = f"revoked {r['revoked_at'][:10]}" if r.get("revoked_at") else "live"
             by = r.get("granted_by") or "?"
-            print(f"  {n:<12} {state:<18} {r.get('rule') or r.get('path')}")
+            print(f"  {n:<12} {state:<18} {r.get('rule') or r.get('path')}"
+                  + ("  (writes still face the classifier)"
+                     if r.get("path") and not r.get("revoked_at") else ""))
             print(f"  {'':<12} by {by}   {r.get('reason') or '(no reason recorded)'}")
         return
 
@@ -9707,6 +9769,12 @@ def cmd_grant(a):
     print(f"granted {key}\n  to {a.node}, by {rec['granted_by']}"
           + (f"\n  reason: {rec['reason']}" if rec["reason"] else ""))
     print("  applies at the next spawn or recycle; a running session keeps what it had")
+    if rec.get("path"):
+        # Log 112: a granted fixture write was refused anyway ("Modify Shared Resources").
+        print("  Under auto mode, Claude Code's classifier still decides each write here, and "
+              "it refuses\n  writes to shared paths. Plan the write as an owner action ask "
+              "(harness ask <task>\n  --kind action --run \"...\"), or have the owner add a "
+              "project permission rule for it.")
     if closed:
         print(f"  closed {closed} block(s) this answers")
 

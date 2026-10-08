@@ -3128,6 +3128,34 @@ class ChangedArms(unittest.TestCase):
         self.assertNotIn("nopaths", info)
 
 
+class GrantWording(unittest.TestCase):
+    """Log 112: a granted path still meets Claude Code's classifier under auto
+    mode, so the grant says so where it is made."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main"})
+        self.ctx.tree_path = self.ctx.dir / "tree.json"
+
+    def grant(self, *argv):
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.dict(os.environ, {}, clear=False), \
+             mock.patch("sys.argv", ["harness", "grant", *argv]), \
+             redirect_stdout(io.StringIO()) as o:
+            os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
+            hz.main()
+        return o.getvalue()
+
+    def test_a_path_grant_names_the_classifier_and_the_action_ask(self):
+        out = self.grant("dev", str(self.ctx.dir / "fixture"), "--reason", "x")
+        self.assertIn("classifier", out)
+        self.assertIn("--kind action", out)
+        self.assertIn("writes still face the classifier", self.grant("--list"))
+
+    def test_a_rule_grant_does_not(self):
+        out = self.grant("dev", "Bash(make *)", "--reason", "x")
+        self.assertNotIn("classifier", out)
+
+
 class WaitPool(unittest.TestCase):
     """Log 109: a parked task starts nowhere and nags nobody for 12 hours, then
     returns to the normal pool by itself and its parker is told once."""
@@ -3680,6 +3708,37 @@ class TestQueue(unittest.TestCase):
         job = {"id": "new", "kind": "check", "arms": None, "state": "queued", "at": stamp(now)}
         hz.testq_save(self.ctx, dict(job, requested_by=[]))
         self.assertAlmostEqual(hz.testq_wait_estimate(self.ctx, job), 150, delta=3)
+
+    def arm_reports(self):
+        """good ran 10s, 20s, 30s; bad 100s (a timed-out bad row is a cap, not a time)."""
+        hz._ARM_SECONDS.clear()
+        d = self.state / "checks"
+        d.mkdir(exist_ok=True)
+        for k, (g, b) in enumerate(((10, 100), (20, 900), (30, 100))):
+            (d / f"s{k}.json").write_text(json.dumps({"checks": [
+                {"name": "good", "seconds": g},
+                {"name": "bad", "seconds": b, "timedOut": b == 900}]}))
+        self.addCleanup(hz._ARM_SECONDS.clear)
+
+    def test_a_check_is_estimated_from_its_arms_own_times(self):
+        # Log 111: a one-arm job read as a full check, "done in about 42m".
+        self.arm_reports()
+        self.assertEqual(hz.testq_duration(self.ctx, "check", ["good"]), 20)
+        self.assertEqual(hz.testq_duration(self.ctx, "check", None), 120)
+        self.assertIsNone(hz.testq_duration(self.ctx, "check", ["new-arm"]))
+
+    def test_a_running_check_counts_down_by_arm(self):
+        self.arm_reports()
+        now = time.time()
+        stamp = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(t))
+        hz.testq_save(self.ctx, {"id": "r", "kind": "check", "sha": "y", "state": "running",
+                                 "arms": None, "requested_by": [], "at": stamp(now - 100),
+                                 "started": stamp(now - 90), "done_arms": 1, "arm": "bad",
+                                 "arm_started": stamp(now - 40), "pid": os.getpid()})
+        job = {"id": "new", "kind": "check", "arms": ["good"], "state": "queued",
+               "at": stamp(now)}
+        hz.testq_save(self.ctx, dict(job, requested_by=[]))
+        self.assertAlmostEqual(hz.testq_wait_estimate(self.ctx, job), 60 + 20, delta=3)
 
     def test_arms_run_only_the_named_and_the_report_says_partial(self):
         hz.testq_submit(self.ctx, "check", self.sha, "dev", "s", arms=["good"])

@@ -1044,8 +1044,122 @@ text-transform:none;letter-spacing:0}
 .rul .rh{color:var(--none);font-size:11px}
 .rul .rq{color:var(--dim);white-space:pre-wrap}
 .rul .ra{white-space:pre-wrap}
+
+/* ── Look trial (2026-10-08): four colour schemes x three card layouts,
+   picked in the header, so the owner can judge them on the live tree. The
+   picked one becomes the only look and the rest is deleted. ──────────────
+   Each scheme gives each colour one meaning: six states, and neutral ink for
+   everything else. The classic variables are remapped so the other pages
+   follow the scheme too. */
+body[class*="theme-"]{--busy:var(--s-busy);--idle:var(--s-idle);--wait:var(--s-wait);
+--held:var(--s-held);--warn:var(--s-need);--unk:var(--s-unk);--none:var(--mute);
+--warnbg:color-mix(in srgb,var(--s-need) 18%,var(--bg))}
+body.theme-moss{--bg:#12150f;--panel:#1a1e16;--line:#333b28;--line2:#56624a;--ink:#eceee4;
+--dim:#a3ab95;--mute:#68725c;--s-idle:#72b6e2;--s-busy:#93d05c;--s-wait:#4fc6ad;
+--s-held:#a993f2;--s-need:#ec9a50;--s-none:#4b5444;--s-unk:#80887a}
+body.theme-slate{--bg:#0e1319;--panel:#151c24;--line:#263240;--line2:#435468;--ink:#e6edf3;
+--dim:#93a3b3;--mute:#5d6c80;--s-idle:#7cc4f5;--s-busy:#b8e35c;--s-wait:#3fd4d8;
+--s-held:#bba6ff;--s-need:#ff9d55;--s-none:#3a4654;--s-unk:#7d8996}
+body.theme-graphite{--bg:#111111;--panel:#1b1b1b;--line:#2f2f2f;--line2:#4d4d4d;--ink:#f2f2f2;
+--dim:#a6a6a6;--mute:#6b6b6b;--s-idle:#5b8cff;--s-busy:#4ade60;--s-wait:#1fd6e6;
+--s-held:#c58bff;--s-need:#ffb224;--s-none:#3c3c3c;--s-unk:#8a8a8a}
+body.theme-dusk{--bg:#121120;--panel:#1a1931;--line:#2d2b4c;--line2:#4a4675;--ink:#eeedf8;
+--dim:#a6a3c6;--mute:#6b688f;--s-idle:#8aa8ff;--s-busy:#a6e868;--s-wait:#5adcf2;
+--s-held:#f59cc4;--s-need:#f7c655;--s-none:#3d3b62;--s-unk:#8c8aa9}
+#look{display:flex;gap:6px;align-items:center;font-size:11px;color:var(--mute,var(--none))}
+#look select{background:var(--panel);color:var(--dim);border:1px solid var(--line);
+border-radius:4px;font:inherit;font-size:11px;padding:1px 4px}
+body.sans .card .nm,body.sans .card .stw,body.sans .card .tgl,body.sans .card .rl,
+body.sans h1,body.sans .proj>h2{font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+body.sans .card .nm{letter-spacing:-.01em}
+
+/* The new card. One state per card (st-*), carried by the header, not a dot. */
+.card.v2{--s:var(--s-none,#5a6350);min-width:190px;max-width:320px;padding:0;
+overflow:hidden;border-color:var(--line);font-variant-numeric:tabular-nums}
+.card.v2.st-busy{--s:var(--s-busy,#8fbf5f)}
+.card.v2.st-idle{--s:var(--s-idle,#6aa3c8)}
+.card.v2.st-wait{--s:var(--s-wait,#5fb3a1)}
+.card.v2.st-held{--s:var(--s-held,#a59be8)}
+.card.v2.st-need{--s:var(--s-need,#e0894a)}
+.card.v2.st-unk{--s:var(--s-unk,#8a7fb0)}
+.card.v2.r-root{border-width:2px}
+.card.v2.r-worker{border-color:color-mix(in srgb,var(--line) 70%,var(--bg))}
+.v2 .bn{display:flex;align-items:center;gap:8px;padding:7px 11px 6px}
+.v2 .nm{font-size:16px;font-weight:600;line-height:1.2;color:var(--ink)}
+.v2 .rl{font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim)}
+.v2 .stw{margin-left:auto;font-size:10.5px;font-weight:600;letter-spacing:.07em;
+text-transform:uppercase;white-space:nowrap;color:var(--s)}
+.v2 .bd{padding:6px 11px 9px}
+.v2 .md2{font-size:10.5px;color:var(--dim)}
+.v2 .md2 .n{color:var(--ink)}
+.v2 .why{font-size:11px;color:var(--s);margin-top:3px;line-height:1.4}
+.v2 .why.q{color:var(--dim);font-style:italic}
+.v2 .sym{display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:5px;font-size:11.5px;
+color:var(--dim);align-items:baseline}
+.v2 .sym .g{cursor:default;white-space:nowrap}
+.v2 .sym .g[data-tog]{cursor:pointer;border-bottom:1px dotted currentColor}
+.v2 .sym .mail{color:var(--s-need,var(--warn))}
+.v2 .sym .wt2{color:var(--s-wait,var(--wait))}
+.v2 .sym .hd2{color:var(--s-held,var(--held))}
+.v2 .sym .cold2{color:var(--s-need,var(--warn))}
+.v2 .sym .num{color:var(--ink)}
+.v2 .det{font-size:11px;color:var(--dim);border-left:2px solid var(--line);
+padding:1px 0 1px 7px;margin-top:5px;line-height:1.45}
+.v2 .det b{color:var(--ink);font-weight:400}
+.v2 .tg{display:grid;grid-template-columns:36px 1fr;gap:3px 6px;margin-top:7px;
+align-items:baseline}
+.v2 .tgl{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute,var(--none));
+padding-top:2px}
+.v2 .tgc{min-width:0}
+.v2 .chip{font-size:12px;background:transparent;color:var(--ink);border-color:var(--line2,var(--line))}
+.v2 .chip:hover{border-color:var(--ink);color:var(--ink);background:transparent}
+.v2 .chip.pending{color:var(--dim);border-style:dashed}
+.v2 .chip.dn{color:var(--dim);border-color:var(--line)}
+.v2 .chip.out{color:var(--mute,var(--none));border-style:dotted}
+.v2 .chip .k{color:var(--dim);font-size:10.5px}
+.v2 .more{font-size:10.5px;color:var(--mute,var(--none));cursor:pointer;
+border-bottom:1px dotted currentColor}
+.v2 .tsum{display:none;gap:12px;margin-top:7px;font-size:12px;color:var(--dim);cursor:pointer}
+.v2 .tsum b{color:var(--ink);font-weight:600}
+.v2 .sig{margin-top:5px}
+
+/* A. Banner: the header is a band in the state colour. */
+.lay-banner .v2 .bn,.lay-tile .v2 .bn{background:color-mix(in srgb,var(--s) 36%,var(--panel));
+border-bottom:1px solid color-mix(in srgb,var(--s) 60%,var(--panel))}
+.lay-banner .v2 .stw,.lay-tile .v2 .stw{color:var(--ink)}
+.lay-banner .v2 .rl,.lay-tile .v2 .rl{color:color-mix(in srgb,var(--ink) 70%,var(--s))}
+.lay-banner .card.v2,.lay-tile .card.v2{border-color:color-mix(in srgb,var(--s) 45%,var(--line))}
+/* B. Edge: a quiet card, a strip down the left, a filled state pill. */
+.lay-edge .card.v2{border-left:5px solid var(--s)}
+.lay-edge .v2 .stw{background:color-mix(in srgb,var(--s) 22%,transparent);color:var(--s);
+padding:1px 7px;border-radius:9px}
+.lay-edge .v2 .bn{padding-bottom:2px}
+/* C. Tile: tasks folded to counts until clicked. */
+.lay-tile .v2 .tsum{display:flex}
+.lay-tile .v2:not(.topen) .tg{display:none}
+.lay-tile .card.v2{min-width:170px;max-width:250px}
+.lay-tile .v2 .nm{font-size:15px}
+
+/* The tree's own lines, a step brighter under the new looks. */
+body[class*="lay-"] .tree li::before,body[class*="lay-"] .tree li::after,
+body[class*="lay-"] .tree ul ul::before{border-color:var(--line2,#4a5638)}
+
+/* Side cards keep their markup; the header turns into the same band. */
+body:is(.lay-banner,.lay-tile,.lay-edge) .card.interm .dot{display:none}
+body:is(.lay-banner,.lay-tile,.lay-edge) .card.interm{--s:var(--s-none,#5a6350);border-style:solid}
+body:is(.lay-banner,.lay-tile,.lay-edge) .card.interm.busy{--s:var(--s-busy,#8fbf5f)}
+body:is(.lay-banner,.lay-tile,.lay-edge) .card.interm.idle{--s:var(--s-idle,#6aa3c8)}
+body:is(.lay-banner,.lay-tile,.lay-edge) .card.interm.waitc{--s:var(--s-wait,#5fb3a1)}
+body:is(.lay-banner,.lay-tile,.lay-edge) .card.interm.unknown{--s:var(--s-unk,#8a7fb0)}
+body:is(.lay-banner,.lay-tile,.lay-edge) .card.interm .nm{font-size:15px}
+body:is(.lay-banner,.lay-tile) .card.interm .hdr{margin:-8px -11px 7px;padding:7px 11px 6px;
+background:color-mix(in srgb,var(--s) 36%,var(--panel));
+border-bottom:1px solid color-mix(in srgb,var(--s) 60%,var(--panel))}
+body:is(.lay-banner,.lay-tile) .card.interm .kd{color:var(--ink)}
+.lay-edge .card.interm{border-left:5px solid var(--s)}
+.lay-edge .card.interm .kd{color:var(--s)}
 </style></head><body>
-<header><h1>harness</h1><span id="age"></span><nav id="tabs"></nav></header>
+<header><h1>harness</h1><span id="age"></span><span id="look"></span><nav id="tabs"></nav></header>
 <main id="root"><div class="empty">loading...</div></main>
 <div id="modal"></div>
 <script>
@@ -1512,6 +1626,189 @@ function card(n) {
     goneChips(n) + '</div>';
 }
 
+// ── Look trial (2026-10-08) ─────────────────────────────────────────────────
+// The scheme and layout are picked in the header and kept in localStorage; a
+// URL's ?theme=&lay=&font= wins, so a screenshot can ask for one directly.
+// "current" is today's look, untouched.
+const LOOKS = {theme: ['current', 'moss', 'slate', 'graphite', 'dusk'],
+               lay: ['current', 'banner', 'edge', 'tile'], font: ['mono', 'sans']};
+const LOOK = {};
+(function () {
+  const q = new URLSearchParams(location.search);
+  for (const k in LOOKS) {
+    const v = q.get(k) || localStorage.getItem('harness.look.' + k);
+    LOOK[k] = LOOKS[k].includes(v) ? v : LOOKS[k][0];
+  }
+})();
+function applyLook() {
+  document.body.className = document.body.className.split(' ')
+    .filter(c => c && !/^(theme|lay)-|^sans$/.test(c)).join(' ');
+  if (LOOK.theme !== 'current') document.body.classList.add('theme-' + LOOK.theme);
+  if (LOOK.lay !== 'current') document.body.classList.add('lay-' + LOOK.lay);
+  if (LOOK.font === 'sans') document.body.classList.add('sans');
+  document.getElementById('look').innerHTML = 'look ' + Object.keys(LOOKS).map(k =>
+    '<select data-look="' + k + '">' + LOOKS[k].map(v => '<option' +
+      (v === LOOK[k] ? ' selected' : '') + '>' + v + '</option>').join('') + '</select>').join('');
+}
+document.addEventListener('change', e => {
+  const k = e.target.dataset && e.target.dataset.look;
+  if (!k) return;
+  LOOK[k] = e.target.value;
+  try { localStorage.setItem('harness.look.' + k, LOOK[k]); } catch (x) {}
+  applyLook(); LAST = ''; document.getElementById('root').innerHTML = ''; tick();
+});
+// Folds a card holds open across repaints: its wait detail, its task list.
+applyLook();
+const OPENV = new Set();
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-tog]');
+  if (!t) return;
+  const k = t.dataset.tog;
+  OPENV.has(k) ? OPENV.delete(k) : OPENV.add(k);
+  LAST = ''; tick();
+});
+
+// The node card under the new looks. Same facts as card(), ranked: the state
+// is the header, the name is the biggest thing on it, and what used to be a
+// sentence is a symbol whose sentence is one hover or click away.
+function card2(n) {
+  const unknown = n.sessions === null;
+  const ss = n.sessions || [];
+  const s = ss[0];
+  const key = n._slug + ':' + n.name;
+  const halted = ss.some(x => x.stopped && !(x.stop && x.stop.kind === 'reply'));
+  const busy = ss.some(x => x.status === 'busy');
+  const w = n.waiting, held = n.held || [];
+  const idleT = s && s.idle && !busy ? hm(s.idle) : '';
+  let st, word;
+  if (unknown)                    { st = 'unk';  word = '? unknown'; }
+  else if (ss.length > 1)         { st = 'need'; word = ss.length + ' sessions'; }
+  else if (halted)                { st = 'need'; word = 'needs you'; }
+  else if (!ss.length)            { st = 'none'; word = n.claimed ? 'no session' : 'free'; }
+  else if (w)                     { st = 'wait'; word = 'waiting ' + esc(w.age || ''); }
+  else if (busy)                  { st = 'busy'; word = 'busy'; }
+  else if (held.length)           { st = 'held'; word = 'held'; }
+  else                            { st = 'idle'; word = 'idle ' + idleT; }
+
+  // Under the name: the model, and the one sentence a stopped card needs.
+  const a = n.assigned || [];
+  const model = s && s.model ? '<span class="n">' + esc(modelName(s.model)) + '</span>' +
+      (a[1] ? ' &middot; ' + esc(a[1]) : '')
+    : a[0] ? 'assigned ' + esc(a[0]) + (a[1] ? ' &middot; ' + esc(a[1]) : '') : '';
+  let why = '';
+  if (unknown) why = '<div class="why">occupancy unknown</div>';
+  else if (ss.length > 1) why = '<div class="why">' + ss.length + ' sessions in one worktree</div>';
+  else if (halted) why = '<div class="why">' + (s.stop ? 'permission prompt &middot; ' +
+      esc(s.stop.tool) : 'stopped &mdash; a prompt or a reply') + '</div>' +
+      (s.stop && s.stop.what ? '<div class="why q">' + esc(s.stop.what) + '</div>' : '') +
+      '<div class="why q">claude attach ' + esc(s.id) + '</div>';
+
+  // The symbol row. Each mark's sentence is its title; waiting and held open
+  // their full wording on click.
+  const sym = [];
+  if (n.mail) {
+    const idle = !busy;
+    sym.push('<span class="g mail" title="' + n.mail + ' unread &middot; ' +
+      (!ss.length ? 'no session' : !idle ? 'delivered at its next tool call'
+       : n.bell ? 'its doorbell is waking it' : 'nothing armed to wake it') + '">&#9993; ' +
+      n.mail + (ss.length && idle && !n.bell ? ' !' : '') + '</span>');
+  }
+  if (w) {
+    const chain = (w.chain && w.chain.length ? w.chain : [w.parent || 'its lead']);
+    sym.push('<span class="wto" hidden data-on="' + esc(w.parent || '') + '"></span>' +
+      '<span class="g wt2" data-tog="w:' + esc(key) + '" title="waiting on ' +
+      esc(chain.join(' → ')) + ' · ' + esc(w.age || '') + '\n' +
+      esc(w.asked || (w.inferred ? 'finished its turn' : 'nothing recorded')) + '">&#8987; ' +
+      esc(chain[chain.length - 1]) + '</span>');
+  }
+  held.forEach(h => sym.push((h.by ? '<span class="hto" hidden data-on="' + esc(h.by) +
+      '"></span>' : '') + '<span class="g hd2" data-tog="h:' + esc(key) + '" title="' + esc(h.by
+      ? 'held by ' + h.by + ' · ' + h.task + ' starts after ' + (h.worker ? h.worker + '’s ' : 'its ') +
+        h.after : 'held until ' + h.until + ' · ' + h.task) + '">&#9939; ' +
+      esc(h.by || h.until) + '</span>'));
+  const owed = (n.awaited_by || []).concat((n.chains || []).map(p => p[0]));
+  if (owed.length) sym.push('<span class="g wt2" title="' + esc(owed.join(', ')) +
+      ' waiting on ' + esc(n.name) + '">&#8672; ' + owed.length + '</span>');
+  if ((n.holding || []).length) sym.push('<span class="g hd2" title="' +
+      esc(n.holding.map(h => h.node + ' held on ' + n.name).join('\n')) + '">&#9939;&#8672; ' +
+      n.holding.length + '</span>');
+  if (s && s.cold) sym.push('<span class="g cold2" title="idle past the cache lifetime; ' +
+      'the next turn re-reads ' + tokf(s.carry) + '">&#10052; cold</span>');
+  if (s && s.carry) sym.push('<span class="g" title="context carried">ctx <span class="num">' +
+      tokf(s.carry) + '</span></span>');
+  if (s && s.up != null) sym.push('<span class="g" title="session uptime">up <span class="num">' +
+      hm(s.up) + '</span></span>');
+
+  let det = '';
+  if (w && OPENV.has('w:' + key)) det += '<div class="det">waiting on ' +
+      (w.chain && w.chain.length ? w.chain : [w.parent || 'its lead']).map(x => '<b>' + esc(x) +
+      '</b>').join(' &rarr; ') + ' &middot; ' + esc(w.age || '') + '<br>' +
+      esc(w.asked || (w.inferred ? 'finished its turn' : 'nothing recorded')) +
+      (w.still_moving ? '<br>still moving: ' + esc(w.still_moving) : '') + '</div>';
+  if (held.length && OPENV.has('h:' + key)) det += held.map(h => '<div class="det">' + (h.by
+      ? 'held by <b>' + esc(h.by) + '</b> &middot; ' + esc(h.task) + (h.worker
+        ? ' starts after ' + esc(h.worker) + '&rsquo;s <b>' + esc(h.after) +
+          '</b>, presented and waiting on ' + esc(h.by) + '&rsquo;s sign-off'
+        : ' starts after its <b>' + esc(h.after) + '</b> (' + esc(h.state) + ')')
+      : 'held until <b>' + esc(h.until) + '</b> &middot; ' + esc(h.task)) + '</div>').join('');
+
+  // Signals keep their row: each carries an action.
+  const VERB = {approval: 'approve', unanswered: 'spawn'};
+  const sigs = (n.signals || []).map(g =>
+    '<div class="sig" title="' + esc(g.do) + '"><span class="frm">&larr; ' + esc(g.frm || '?') +
+    '</span><span class="kind">' + esc(g.kind) + '</span><span class="txt">' + esc(g.text) +
+    '</span><span class="act cp" data-copy="' + esc(g.do) + '">' +
+    esc(VERB[g.kind] || 'copy') + '</span></div>').join('');
+
+  // Three task groups: now, next, done. Gone folds to a count.
+  const chip = (task, label, cls, title) => '<span class="chip ' + cls + '" data-task="' +
+      esc(task) + '" data-slug="' + esc(n._slug) + '" title="' + esc(title || '') + '">' +
+      label + '</span>';
+  const now = n.tasks.filter(t => !t.presented).map(t => chip(t.task, esc(t.task), '', 'open'))
+    .concat((n.split || []).filter(x => !x.ready).map(x => chip(x.task, '&#8916; ' + esc(x.task) +
+      ' <span class="k">' + x.done + '/' + x.total + '</span>', 'pending',
+      x.children.map(c => c.task + ' (' + c.node + ') ' + c.state).join('\n'))));
+  const head = (n.briefed || []).filter(b => !b.coupled_to);
+  const next = head.map(b =>
+      chip(b.task, esc(b.label || b.task) + (b.open_suggestions ? ' <b class="dup">!' +
+        b.open_suggestions + '</b>' : ''), 'pending', b.coupled_why) +
+      n.briefed.filter(c => c.coupled_to === b.task).map(c => ' + ' +
+        chip(c.task, esc(c.label || c.task), 'pending', c.coupled_why)).join(''));
+  const done = n.tasks.filter(t => t.presented).map(t => chip(t.task, '&#10003; ' + esc(t.task),
+      'dn', 'presented — waiting on its lead to sign off'))
+    .concat((n.split || []).filter(x => x.ready).map(x => chip(x.task, '&#10003; ' +
+      esc(x.task) + ' <span class="k">' + x.done + '/' + x.total + '</span>', 'dn',
+      'every part closed — harness mark ' + x.task + ' --close')));
+  const gone = n.gone || [];
+  const gopen = OPENV.has('g:' + key);
+  const goneHtml = gone.length ? ' <span class="more" data-tog="g:' + esc(key) + '">+' +
+      gone.length + ' gone</span>' + (gopen ? ' ' + gone.map(g => chip(g.task, esc(g.label ||
+        g.task), 'out', 'superseded: ' + (g.gone || '') + (g.gone_for ? '\nreplaced by ' +
+        g.gone_for : ''))).join(' ') : '') : '';
+  const row = (l, xs, extra) => xs.length || extra ? '<span class="tgl">' + l +
+      '</span><span class="tgc">' + xs.join(' ') + (extra || '') + '</span>' : '';
+  let tg = row('now', now) + row('next', next) + row('done', done, goneHtml);
+  if (!tg && ss.length && !unknown)
+    tg = '<span class="tgl">now</span><span class="tgc"><span class="why q" title="no harness ' +
+         'mark — run harness mark &lt;task&gt; in that session">no task record</span></span>';
+  const cnt = (g, k) => k ? '<span>' + g + ' <b>' + k + '</b></span>' : '';
+  const tsum = (now.length + next.length + done.length + gone.length)
+    ? '<div class="tsum" data-tog="t:' + esc(key) + '" title="now · next · done">' +
+      cnt('&#9656;', now.length) + cnt('&#8943;', next.length) + cnt('&#10003;', done.length) +
+      (gone.length ? '<span>+' + gone.length + ' gone</span>' : '') + '</div>' : '';
+
+  return '<div class="card v2 st-' + st + ' r-' + esc(n.role || 'worker') +
+    (OPENV.has('t:' + key) ? ' topen' : '') + '" data-live="card:' + esc(key) + '">' +
+    '<div class="bn"><span class="nm">' + esc(n.name) + '</span><span class="rl">' +
+    esc(n.role || '') + '</span><span class="stw">' + word + '</span></div>' +
+    '<div class="bd">' + (model ? '<div class="md2">' + model + '</div>' : '') +
+    (n.branch && n.branch !== n.name || !n.indexed ? '<div class="md2">' +
+      (n.branch && n.branch !== n.name ? 'branch ' + esc(n.branch) : '') +
+      (n.indexed ? '' : ' (not indexed)') + '</div>' : '') +
+    why + (sym.length ? '<div class="sym">' + sym.join('') + '</div>' : '') + det + sigs +
+    tsum + (tg ? '<div class="tg">' + tg + '</div>' : '') + '</div></div>';
+}
+
 // Doorbell mail waiting for the node's session. Hooks hand it over at its next
 // tool call, turn end or prompt; an idle session wakes for it only if its
 // doorbell is armed, so say when nothing will wake it.
@@ -1743,7 +2040,7 @@ function tree(nodes, side) {
     if (n.parent && by[n.parent]) (kids[n.parent] = kids[n.parent] || []).push(n);
     else roots.push(n);
   });
-  const li = n => '<li>' + card(n) +
+  const li = n => '<li>' + (LOOK.lay === 'current' ? card(n) : card2(n)) +
     (kids[n.name] ? '<ul>' + kids[n.name].map(li).join('') + '</ul>' : '') + '</li>';
   // The side cards share the tree's scrolling space, on its left, so a line
   // from one to a node is drawn in the same coordinates as the tree's own.

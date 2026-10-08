@@ -757,7 +757,7 @@ header{display:flex;flex-wrap:wrap;align-items:baseline;gap:1rem;padding:13px 20
 border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:5}
 h1{font-size:14px;margin:0;letter-spacing:.09em;text-transform:uppercase;color:var(--dim)}
 #age{color:var(--none);font-size:12px;margin-left:auto}
-main{padding:16px 20px 70px;max-width:1500px}
+main{padding:16px 20px 70px}
 .cols{display:flex;gap:20px;align-items:flex-start}
 .treecol{flex:1;min-width:0;overflow-x:auto}
 .chartercol{width:min(340px,30%);flex:none}
@@ -1864,11 +1864,11 @@ async function tick() {
     p.nodes.forEach(n => n._slug = p.slug);
     return '<div class="proj"><h2>' + esc(p.project) + '</h2>' +
       '<div class="repo">' + esc(p.repo) + '</div>' + haltBanner(p) +
-      // The charter on the left (owner, 2026-10-08, restoring it): it is the
-      // project's scope, injected into every session's first prompt and read
-      // by the documenter, so the owner keeps it in view and current.
-      '<div class="cols"><div class="chartercol">' + charter(p) + '</div>' +
-      '<div class="treecol">' +
+      // The tree from the left edge, the charter in the one panel, on the right
+      // (owner, 2026-10-09; restored 2026-10-08): it is the project's scope,
+      // injected into every session's first prompt and read by the documenter,
+      // so the owner keeps it in view and current.
+      '<div class="cols"><div class="treecol">' +
       '<div class="ln q" style="margin:0 0 6px">click a task chip to read its brief ' +
       'and comment on it</div>' +
       (p.orphan_marks.length ? '<div class="ln dup">' + p.orphan_marks.length +
@@ -1879,7 +1879,8 @@ async function tick() {
                    : ' <span class="q">names no node</span>') +
           (o.at ? ' <span class="q">&middot; ' + esc(o.at) + '</span>' : '') +
           '</li>').join('') + '</ul>' : '') +
-      tree(p.nodes, intermCard(p) + docCard(p) + testCard(p)) + '</div></div></div>';
+      tree(p.nodes, intermCard(p) + docCard(p) + testCard(p)) + '</div>' +
+      '<div class="chartercol">' + charter(p) + '</div></div></div>';
   }).join('');
   if (!d.projects.length) h += '<div class="empty">no enrolled projects on this machine</div>';
   paint(h);

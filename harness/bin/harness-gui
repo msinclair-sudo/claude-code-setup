@@ -1864,11 +1864,12 @@ async function tick() {
     p.nodes.forEach(n => n._slug = p.slug);
     return '<div class="proj"><h2>' + esc(p.project) + '</h2>' +
       '<div class="repo">' + esc(p.repo) + '</div>' + haltBanner(p) +
-      // The tree from the left edge, the charter in the one panel, on the right
-      // (owner, 2026-10-09; restored 2026-10-08): it is the project's scope,
-      // injected into every session's first prompt and read by the documenter,
-      // so the owner keeps it in view and current.
-      '<div class="cols"><div class="treecol">' +
+      // The charter in the one panel, on the left, and the tree out to the
+      // window's right edge (owner, 2026-10-09; restored 2026-10-08): it is the
+      // project's scope, injected into every session's first prompt and read
+      // by the documenter, so the owner keeps it in view and current.
+      '<div class="cols"><div class="chartercol">' + charter(p) + '</div>' +
+      '<div class="treecol">' +
       '<div class="ln q" style="margin:0 0 6px">click a task chip to read its brief ' +
       'and comment on it</div>' +
       (p.orphan_marks.length ? '<div class="ln dup">' + p.orphan_marks.length +
@@ -1879,8 +1880,7 @@ async function tick() {
                    : ' <span class="q">names no node</span>') +
           (o.at ? ' <span class="q">&middot; ' + esc(o.at) + '</span>' : '') +
           '</li>').join('') + '</ul>' : '') +
-      tree(p.nodes, intermCard(p) + docCard(p) + testCard(p)) + '</div>' +
-      '<div class="chartercol">' + charter(p) + '</div></div></div>';
+      tree(p.nodes, intermCard(p) + docCard(p) + testCard(p)) + '</div></div></div>';
   }).join('');
   if (!d.projects.length) h += '<div class="empty">no enrolled projects on this machine</div>';
   paint(h);

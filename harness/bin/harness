@@ -13880,13 +13880,15 @@ def read_dash_from_stdin(a):
 
 DOCUMENTER = "harness-documenter"
 # A run is one whole document (owner, 2026-10-06): its job is a doc path, or
-# "auto" for the top of `docs measure`'s list. Opus throughout: every run checks
-# a doc's claims against the code.
+# "auto", which draws one at random (docs_pick). Opus throughout: every run
+# checks a doc's claims against the code.
 DOC_DEFAULTS = {}
 DOC_DEFAULT = ("opus", "high")
 DOCUMENTER_WRITING = ("schimel-science-writing", "google-devdocs-style")
 DOC_TRIGGER_GAP = 24 * 3600         # at most one triggered run a day
 DOC_STALE_DAYS = 14
+DOC_REST_RUNS = 5                   # the last N docs run sit out the next draw
+DOC_SKIPS_MAX = 3                   # docs a run may find needing nothing before it ends
 DOC_STOP_AFTER = 90                 # seconds from the closing note to stopping the run
 _DOC_READ_CMD = re.compile(r"\b(?:cat|sed|head|tail|less|grep|rg)\b[^\n]*?([\w./~-]+\.md)\b")
 
@@ -14386,8 +14388,43 @@ def docs_gaps(snap):
             importance = max(importance, snap.get("transcripts") or 1)
         if trouble or stale:
             out.append({"doc": d, "score": round(importance * trouble, 1), "why": why,
-                        "stale": stale, "reads": r["reads"], "words": r["words"]})
+                        "stale": stale, "reads": r["reads"], "words": r["words"],
+                        "trouble": round(trouble, 1)})
     return sorted(out, key=lambda g: (g["stale"], -g["score"]))
+
+
+def docs_recent(ctx, n=DOC_REST_RUNS):
+    """The last n docs runs took, newest last, from `docs begin`'s history."""
+    f = docs_dir(ctx) / "begun.jsonl"
+    out = []
+    for line in (f.read_text().splitlines() if f.exists() else []):
+        try:
+            out.append(json.loads(line)["doc"])
+        except Exception:
+            continue
+    cur = _read_json(docs_dir(ctx) / "current.json") or {}
+    if cur.get("doc") and (not out or out[-1] != cur["doc"]):
+        out.append(cur["doc"])
+    return out[-n:]
+
+
+def docs_pick(ctx, snap=None, rng=None):
+    """The doc an "auto" run takes: drawn at random from every doc that needs a
+    run, weighted gently by how much is wrong with it, with the last few docs
+    run sitting out (owner, 2026-10-09: runs took CLAUDE.md 21 times in 32,
+    because ranking by reads favours the one doc every session loads, and the
+    rest go unread because they go unfixed). Reads play no part.
+    -> (doc | None, how many it was drawn from)."""
+    import math, random
+    snap = snap or docs_measure(ctx)
+    gaps = [g for g in snap["gaps"] if not g["stale"] and g.get("trouble")]
+    rested = set(docs_recent(ctx))
+    pool = [g for g in gaps if g["doc"] not in rested] or gaps
+    if not pool:
+        return None, 0
+    rng = rng or random.SystemRandom()
+    w = [1 + math.log2(1 + g["trouble"]) for g in pool]
+    return rng.choices(pool, weights=w)[0]["doc"], len(pool)
 
 
 def _doc_arg(ctx, doc):
@@ -14418,7 +14455,7 @@ def print_doc_check(ctx, doc, ck, v=None):
 
 
 def cmd_docs(a):
-    """`harness docs measure|check|begin|verified|map|note`: the documenter's
+    """`harness docs measure|check|begin|verified|skip|map|note`: the documenter's
     instruments (T18)."""
     ctx = Ctx(); ctx.require_enrolled()
     if a.verb in ("check", "begin"):
@@ -14440,6 +14477,8 @@ def cmd_docs(a):
             print_doc_check(ctx, d, ck, v or {})
         if a.verb == "begin":
             d = docs[0]
+            with open(docs_dir(ctx) / "begun.jsonl", "a") as fh:
+                fh.write(json.dumps({"doc": d, "at": _now()}) + "\n")
             (docs_dir(ctx) / "current.json").write_text(json.dumps({
                 "doc": d, "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                 "session": os.environ.get("CLAUDE_CODE_SESSION_ID", ""),
@@ -14466,6 +14505,42 @@ def cmd_docs(a):
                   "session": os.environ.get("CLAUDE_CODE_SESSION_ID", "")}
         (docs_dir(ctx) / "verified.json").write_text(json.dumps(ver, indent=1) + "\n")
         print(f"{d} recorded as checked against the code at {sha.strip()[:8]}")
+        return
+    if a.verb == "skip":
+        # The run read its doc and found nothing to change (owner, 2026-10-09):
+        # that is a check, so it is recorded as one, and the run is offered
+        # another doc instead of submitting an empty batch.
+        why = " ".join(a.args).strip()
+        cur = _read_json(docs_dir(ctx) / "current.json") or {}
+        d = cur.get("doc")
+        if not d:
+            die(REFUSED, "no doc begun this run: harness docs begin <doc> first")
+        if not why:
+            die(REFUSED, f'say why {d} needs nothing: harness docs skip "every section matches '
+                         f'the code; the 3 flagged paths are prose"')
+        sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+        _, sha, _ = git("rev-parse", "HEAD", cwd=ctx.repo)
+        ver = docs_verified(ctx)
+        ver[d] = {"sha": sha.strip(), "at": _now(), "note": f"nothing to change: {why}",
+                  "session": sid}
+        (docs_dir(ctx) / "verified.json").write_text(json.dumps(ver, indent=1) + "\n")
+        with open(docs_dir(ctx) / "ledger.jsonl", "a") as fh:
+            fh.write(json.dumps({"at": _now(), "job": os.environ.get("HARNESS_DOCUMENTER_JOB")
+                                 or "auto", "skipped": d, "session": sid,
+                                 "note": f"skipped {d}, nothing to change: {why}"}) + "\n")
+        (docs_dir(ctx) / "current.json").unlink(missing_ok=True)
+        n = sum(1 for e in docs_ledger(ctx) if e.get("skipped") and sid and e.get("session") == sid)
+        print(f"skipped {d}: recorded as checked against the code at {sha.strip()[:8]}")
+        if sid and n >= DOC_SKIPS_MAX:
+            print(f"that is {n} docs this run found needing nothing; end the run: "
+                  f'harness docs note "skipped ..."')
+            return
+        nxt, pool = docs_pick(ctx)
+        if not nxt:
+            print('no other doc needs a run; end the run: harness docs note "skipped ..."')
+            return
+        print(f"your next doc: {nxt}, drawn at random from {pool} that need a run. "
+              f"harness docs begin {nxt}")
         return
     if a.verb == "map":
         m = docs_areas(ctx)
@@ -14550,9 +14625,13 @@ def cmd_docs(a):
                                                    if m["provenance"] else ""))
     gaps = [g for g in snap["gaps"] if not g["stale"]]
     stale = [g for g in snap["gaps"] if g["stale"]]
-    print("docs that need a run, most urgent first (importance x trouble):")
-    for g in gaps[:10] or [{"doc": "none", "score": 0, "why": [], "reads": 0}]:
-        print(f"  {g['score']:>8}  {g['doc']}  (read {g['reads']}x): " + "; ".join(g["why"]))
+    rested = set(docs_recent(ctx))
+    print(f"docs that need a run ({len(gaps)}), most trouble first. An auto run draws one at "
+          f"random, weighted by trouble; the last {DOC_REST_RUNS} run sit out:")
+    for g in sorted(gaps, key=lambda g: -g.get("trouble", 0))[:12] or [
+            {"doc": "none", "trouble": 0, "why": [], "reads": 0}]:
+        print(f"  {g.get('trouble', 0):>6}  {g['doc']}" + ("  (rested)" if g["doc"] in rested else "")
+              + ": " + "; ".join(g["why"]))
     if stale:
         print(f"stale, {len(stale)} doc(s) nothing reads, points to or cites: "
               + ", ".join(g["doc"] for g in stale[:8]) + (" …" if len(stale) > 8 else ""))
@@ -14824,7 +14903,8 @@ def documenter_cmd(pdir, repo, job="auto", model=None, effort=None, why=None):
 
 
 def documenter_start(repo, job, why=None):
-    doc = "the top doc `harness docs measure` lists" if job in (None, "", "auto") else job
+    doc = ("a doc `harness docs measure` lists as needing a run" if job in (None, "", "auto")
+           else job)
     return (f"You are the harness documenter for {Path(repo).name}; your instructions are in "
             f"your system prompt. This run is one document, whole: {doc}"
             + (f" (started because {why})" if why else "") + ". Start now: run "
@@ -14879,11 +14959,19 @@ def documenter_launch(pdir, repo, job, model=None, effort=None, why=None):
     home.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items()
            if k not in ("CLAUDE_CODE_SESSION_ID", "HARNESS_DOCUMENTER", "HARNESS_DOCUMENTER_JOB")}
+    drawn = ""
+    if job in (None, "", "auto"):
+        try:
+            doc, n = docs_pick(ProjCtx(pdir, repo))
+        except Exception:
+            doc, n = None, 0
+        if doc:
+            job, drawn = doc, f", drawn at random from {n} doc(s) that need a run"
     r = subprocess.run(documenter_cmd(pdir, repo, job, model, effort, why), cwd=str(home),
                        env=env, capture_output=True, text=True)
     if r.returncode:
         return False, f"the documenter did not start: {(r.stderr or r.stdout).strip()[:200]}"
-    return True, f"started {name} ({job})"
+    return True, f"started {name} ({job}{drawn})"
 
 
 def documenter_pending(pdir):
@@ -15288,16 +15376,18 @@ def main():
     wk.add_argument("task")
     wk.add_argument("--at", required=True, help=argparse.SUPPRESS)
     dc = add("docs", cmd_docs)
-    dc.add_argument("verb", choices=("measure", "check", "begin", "verified", "map", "note"))
+    dc.add_argument("verb", choices=("measure", "check", "begin", "verified", "skip", "map",
+                                     "note"))
     dc.add_argument("args", nargs="*", help="check: [doc...]; begin: <doc>; verified: <doc> "
-                                            "<what you checked>; map: <area-glob> <doc>; "
+                                            "<what you checked>; skip: why the begun doc needs "
+                                            "nothing; map: <area-glob> <doc>; "
                                             "note: the text")
     dc.add_argument("--json", action="store_true", help="measure: the full snapshot")
     dc.add_argument("--remove", action="store_true", help="map: drop an area")
     dm = add("documenter", cmd_documenter)
     dm.add_argument("--project", help="the repo's directory name or state slug")
     dm.add_argument("--doc", dest="job", default="auto",
-                    help="the doc this run takes, whole; auto: the top of docs measure")
+                    help="the doc this run takes, whole; auto: drawn at random from docs measure")
     dm.add_argument("--job", dest="job", help=argparse.SUPPRESS)
     dm.add_argument("--model")
     dm.add_argument("--effort", choices=list(EFFORTS))

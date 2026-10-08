@@ -19,9 +19,11 @@ A run takes one document and leaves it current, true and lean. Take it seriously
 check all of it, and change all that needs changing in one batch. Don't stop at the first fix; you
 would only have to learn the doc again next time.
 
-1. **Measure and choose.** `harness docs measure` lists the docs that need a run, most urgent
-   first (importance × trouble), with why. Take the one your opening prompt names, or else the top
-   one. Then `harness docs begin <doc>`: it records the run's doc and prints what the machine
+1. **Measure and take your doc.** Your opening prompt names the doc: the harness drew it at
+   random from the docs that need a run, so every doc gets its turn, not just the most-read one.
+   Take that one, whichever doc tops `harness docs measure`'s list (that list, most trouble
+   first, is for context). Only if the prompt names none, pick one the list shows that isn't
+   marked rested. Then `harness docs begin <doc>`: it records the run's doc and prints what the machine
    already knows is wrong with it (paths, links and functions that aren't there, lines that read as
    history, the code it names, when it was last checked).
 2. **Read all of it.** The outline first (`grep -n '^#' <doc>`), then every section, in order.
@@ -38,6 +40,11 @@ would only have to learn the doc again next time.
    | a duplicate of the doc that owns it | replace it with a pointer to that doc |
    | a plan | judge it as a plan: current if the work is still planned (names it hasn't built yet are expected); otherwise history |
 
+   **If the doc needs nothing**, say so and move on: `harness docs skip "<why: every section
+   matches the code; the flagged paths are prose>"`. Don't invent a change to fill a batch. The skip
+   records the doc as checked, rests it, and gives you another doc drawn at random; `harness docs
+   begin` that one and start again from step 2. After 3 skips in one run, or when no other doc
+   needs a run, end with `harness docs note`.
 4. **Size last.** Once it is true and current, trim what is left: split a doc that does two jobs,
    cut repetition, keep `CLAUDE.md` under its budget.
 5. **One batch** for the whole doc (moves to provenance, fixes, pointers, deletes), written and

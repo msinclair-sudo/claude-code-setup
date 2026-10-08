@@ -2472,6 +2472,50 @@ class DocTruth(unittest.TestCase):
              self.assertRaises(SystemExit), mock.patch("sys.stderr", new_callable=io.StringIO):
             hz.cmd_docs(mock.Mock(verb="begin", args=["A.md", "docs/B.md"]))
 
+    SNAP = {"gaps": [{"doc": "CLAUDE.md", "trouble": 50, "stale": False, "reads": 292},
+                     {"doc": "A.md", "trouble": 5, "stale": False, "reads": 0},
+                     {"doc": "docs/B.md", "trouble": 0, "stale": False, "reads": 0},
+                     {"doc": "old.md", "trouble": 9, "stale": True, "reads": 0}]}
+
+    def test_auto_draws_at_random_and_rests_recent_docs(self):
+        # Owner, 2026-10-09: runs took CLAUDE.md 21 times in 32.
+        rng = mock.Mock(choices=lambda pool, weights: (self.seen.append(
+            ([g["doc"] for g in pool], weights)) or [pool[-1]]))
+        self.seen = []
+        self.assertEqual(hz.docs_pick(self.ctx, self.SNAP, rng), ("A.md", 2))
+        pool, w = self.seen[-1]
+        self.assertEqual(pool, ["CLAUDE.md", "A.md"])      # no stale, no trouble-free doc
+        self.assertLess(w[0] / w[1], 3)                     # reads play no part; flat weights
+        with open(hz.docs_dir(self.ctx) / "begun.jsonl", "a") as fh:
+            fh.write(json.dumps({"doc": "CLAUDE.md"}) + "\n")
+        self.assertEqual(hz.docs_pick(self.ctx, self.SNAP, rng), ("A.md", 1))
+        with open(hz.docs_dir(self.ctx) / "begun.jsonl", "a") as fh:
+            fh.write(json.dumps({"doc": "A.md"}) + "\n")
+        self.assertEqual(hz.docs_pick(self.ctx, self.SNAP, rng)[1], 2)  # all rested: all back
+
+    def test_a_doc_that_needs_nothing_is_skipped_and_another_drawn(self):
+        env = {"CLAUDE_CODE_SESSION_ID": "s" * 36}
+        def skip(*why):
+            with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+                 mock.patch.object(hz, "docs_pick", return_value=("docs/B.md", 3)), \
+                 mock.patch.dict(os.environ, env), redirect_stdout(io.StringIO()) as out:
+                hz.cmd_docs(mock.Mock(verb="skip", args=list(why)))
+            return out.getvalue()
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.dict(os.environ, env), \
+             self.assertRaises(SystemExit), mock.patch("sys.stderr", new_callable=io.StringIO):
+            hz.cmd_docs(mock.Mock(verb="skip", args=["fine"]))           # nothing begun
+        for k in range(3):
+            (hz.docs_dir(self.ctx) / "current.json").write_text(json.dumps({"doc": "A.md"}))
+            out = skip("every section matches the code")
+            self.assertIn("skipped A.md", out)
+            if k < 2:
+                self.assertIn("your next doc: docs/B.md", out)
+        self.assertIn("end the run", out)                                 # three is the cap
+        self.assertIn("nothing to change", hz.docs_verified(self.ctx)["A.md"]["note"])
+        self.assertFalse((hz.docs_dir(self.ctx) / "current.json").exists())
+        self.assertEqual(sum(1 for e in hz.docs_ledger(self.ctx) if e.get("skipped")), 3)
+
     def test_no_automatic_runs(self):
         with mock.patch.object(hz, "docs_trigger", return_value=True) as tr, \
              mock.patch.object(hz, "docs_pending", return_value=[]):

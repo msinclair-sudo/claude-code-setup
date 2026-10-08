@@ -954,6 +954,11 @@ border-radius:5px;font:inherit;font-size:11px;padding:2px 6px}
 .card.doc .act{cursor:pointer;border-bottom:1px dotted currentColor}
 .card.interm a{color:var(--dim)}
 .card.interm a:hover{color:var(--ink)}
+.card.interm a.items{display:block;font-family:var(--serif);font-size:16px;font-weight:700;
+color:var(--ink);text-decoration:none;margin:2px 0 6px;padding:5px 9px;border-radius:9px;
+background:color-mix(in srgb,var(--s-idle) 10%,var(--panel))}
+.card.interm a.items:hover{background:color-mix(in srgb,var(--s-idle) 20%,var(--panel))}
+.card.interm a.items.yours{color:#ffd08a;background:color-mix(in srgb,#ffd08a 12%,var(--panel))}
 
 .ohead{background:var(--panel);border:1px solid var(--line);padding:6px 13px;
 margin-bottom:8px;display:flex;gap:14px;align-items:baseline}
@@ -1356,6 +1361,13 @@ async function sendComment() {
   } catch (e) { msg.textContent = 'failed: ' + e; }
 }
 
+// A card's primary label, for reading: 'dev_tests_1' -> 'Dev Tests 1'
+// (owner, 2026-10-08). Only the label; ids everywhere else stay as written,
+// and the real name is the label's hover.
+function title(x) {
+  return String(x ?? '').replace(/_/g, ' ').replace(/(^|\s)(\S)/g, (m, a, c) => a + c.toUpperCase());
+}
+
 // 340123 -> '340k'. Context carried, which a cold session re-reads in full.
 function tokf(n) {
   if (!n) return '';
@@ -1536,7 +1548,7 @@ function card(n) {
          'mark — run harness mark &lt;task&gt; in that session">no task record</span></span>';
 
   return '<div class="card v2 st-' + st + ' r-' + esc(n.role || 'worker') + '" data-live="card:' + esc(key) + '">' +
-    '<div class="bn"><span class="nm">' + esc(n.name) + '</span><span class="rl">' +
+    '<div class="bn"><span class="nm" title="' + esc(n.name) + '">' + esc(title(n.name)) + '</span><span class="rl">' +
     esc(n.role || '') + '</span><span class="stw" title="' + word + (age ? ' ' + age : '') + '">' +
     STICON[st] + (age ? '<span class="sta">' + age + '</span>' : '') + '</span></div>' +
     '<div class="bd">' + (model ? '<div class="md2">' + model + '</div>' : '') +
@@ -1676,7 +1688,7 @@ function docCard(p) {
       (busy ? 'queue after this' : 'start') + '</button></div>' + left;
   const msg = DOCMSG[p.slug] ? '<div class="ln q">' + esc(DOCMSG[p.slug]) + '</div>' : '';
   return '<div class="card interm doc ' + cls + '" data-live="doc:' + esc(p.slug) + '">' +
-    '<div class="hdr"><span class="nm">' + esc(p.project) +
+    '<div class="hdr"><span class="nm" title="' + esc(p.project) + '">' + esc(title(p.project)) +
     '</span><span class="kd">documenter</span></div>' +
     '<div class="ln">' + status + '</div>' + budget + last + ak + ctl + msg + '</div>';
 }
@@ -1722,8 +1734,8 @@ function testCard(p) {
     esc(t.last.state) + (t.last.at ? ' at ' + esc(t.last.at) : '') + '</div>' : '';
   return '<div class="card interm doc ' + (run || (t.slots || []).length ? 'busy' : '') +
     '" data-live="tests:' +
-    esc(p.slug) + '"><div class="hdr"><span class="nm">' +
-    esc(p.project) + '</span><span class="kd">tests</span></div>' + head + slots + list + last +
+    esc(p.slug) + '"><div class="hdr"><span class="nm" title="' + esc(p.project) + '">' +
+    esc(title(p.project)) + '</span><span class="kd">tests</span></div>' + head + slots + list + last +
     '</div>';
 }
 
@@ -1751,13 +1763,14 @@ function intermCard(p) {
         '<span class="ito" data-on="' + esc(a.waiting_on) + '"><b>' + esc(a.waiting_on) +
         '</b></span></div>').join('');
   const n = asks.length;
-  const ask = '<div class="ln"><a href="#issues">' +
-    (n ? n + ' open item' + (n === 1 ? '' : 's') + ' &middot; ' +
-         '<span class="' + (yours ? 'yours' : '') + '">' + yours + ' yours</span>'
-       : 'no open items') + '</a></div>';
+  // The way into the Issues page, first in the box and big enough to hit
+  // (owner, 2026-10-08). Warm when any item waits on the owner; saying
+  // "yours" was redundant, every item on that page is theirs.
+  const ask = '<a class="items' + (yours ? ' yours' : '') + '" href="#issues">' +
+    (n ? n + ' open item' + (n === 1 ? '' : 's') : 'no open items') + ' &rarr;</a>';
   return '<div class="card interm ' + cls + '" data-live="interm:' + esc(p.slug) + '">' +
-    '<div class="hdr"><span class="nm">' + esc(p.project) +
-    '</span><span class="kd">intermediary</span></div>' + who + ask + '</div>';
+    '<div class="hdr"><span class="nm" title="' + esc(p.project) + '">' + esc(title(p.project)) +
+    '</span><span class="kd">intermediary</span></div>' + ask + who + '</div>';
 }
 
 function tree(nodes, side) {

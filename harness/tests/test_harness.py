@@ -1440,6 +1440,17 @@ class ScopeFrame(unittest.TestCase):
         self.assertEqual(json.loads((self.ctx.dir / "briefs" / "t1.json").read_text())["feature"],
                          "the_sample_join")
 
+    def test_a_stored_comment_ends_on_its_confirmation(self):
+        """obs 107: a success that ended on the `--write` hint read as a refusal."""
+        self.brief("t1", "--for", "dev_1", "--feature", "the sample join", "--write", "do it")
+        code, out = self.brief("t1", "--comment", "kept scratch.db", me="dev_1")
+        self.assertEqual(code, 0)
+        lines = out.strip().splitlines()
+        self.assertEqual(lines[-1], "added comment 1 to t1 (brief at revision 1)")
+        self.assertFalse([l for l in lines if l.strip().startswith("harness brief")])
+        rec = json.loads((self.ctx.dir / "briefs" / "t1.json").read_text())
+        self.assertEqual(rec["comments"][0]["on_revision"], 1)
+
     def test_untraced_work_is_rank_0_s_until_mapped(self):
         (self.ctx.dir / "briefs" / "old.json").write_text(json.dumps(
             {"task": "old", "node": "dev_1", "text": "x"}))

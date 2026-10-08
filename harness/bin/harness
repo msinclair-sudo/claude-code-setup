@@ -8882,14 +8882,19 @@ def cmd_brief(a):
         if not a.comment.strip():
             die(REFUSED, "an empty comment says nothing")
         b.setdefault("comments", []).append(
-            {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "by": who, "text": a.comment})
+            {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "by": who, "text": a.comment,
+             "on_revision": b.get("revision")})
         f.write_text(json.dumps(b, indent=2) + "\n")
         lead = ctx.tree["nodes"].get(b.get("node"), {}).get("parent") or "rank 0"
-        print(f"commented on {a.task} ({len(b['comments'])} total)")
+        # The confirmation goes LAST. This used to end on the `--write` command,
+        # the same line the no-brief refusal ends on, so a caller that kept only
+        # the last line read a stored comment as "no brief, write one first".
         print(f"  '{b.get('node')}' and its lead '{lead}' see it at their next "
               f"harness command.")
-        print(f"  It does not change the brief. If it should, {lead} rewrites it:")
-        print(f"    harness brief {a.task} --write \"...\"")
+        print(f"  It does not change the brief. If it should, {lead} rewrites it "
+              f"with --write.")
+        print(f"added comment {len(b['comments'])} to {a.task} "
+              f"(brief at revision {b.get('revision')})")
         return
 
     # Withdrawing a brief you wrote, structurally. The prose form of this —

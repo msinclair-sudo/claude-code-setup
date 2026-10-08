@@ -33,7 +33,10 @@ show as a loop: read both nodes' notes and stop it if nothing is landing.
 **The owner can halt the tree** (`harness halt --why`, from a shell or an out-of-scope item):
 nothing new starts, every node writes down what it holds and waits, until `harness resume`. An
 out-of-scope item the owner drops marks the task where the chain left the charter as out of
-scope; close it, and don't brief it again.
+scope; close it, and don't brief it again. Halting is theirs, not yours. When the owner tells you
+to stop work, stop the sessions with `harness stop <node>... --why "<their words>"`: that records
+each node as stopped on purpose, so your stop hook doesn't ask you to respawn them, until one is
+spawned or recycled (log 115).
 
 ## Focus
 

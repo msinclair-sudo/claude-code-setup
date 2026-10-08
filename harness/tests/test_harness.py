@@ -1001,6 +1001,31 @@ class Covers(unittest.TestCase):
         self.assertEqual(hz.brief_clauses("## Done means\n1. a\n2) b\n## Notes\n3. no"),
                          {1, 2})
 
+    def test_a_bold_label_numbers_its_bullets(self):
+        # Log 116: main writes **DONE.** with "- (1)" bullets; nothing numbered.
+        done = "INTENT. x\n\n**DONE.**\n- (1) a\n- (2) b\n- (3) c\n"
+        self.assertEqual(hz.brief_clauses(done), {1, 2, 3})
+        self.assertEqual(hz.brief_clauses("**CHECKS.** (1) a (2) b\n**NOTES.** (3) no"), {1, 2})
+        self.assertEqual(hz.brief_clauses(self.TEXT), {1, 2, 3})        # plain, unchanged
+
+    def test_writing_an_unnumbered_done_warns(self):
+        def write(text):
+            self.ctx.me, self.ctx.branch = "main", "main"
+            with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+                 mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "s" * 36}), \
+                 mock.patch("sys.argv", ["harness", "brief", "w1", "--for", "dev", "--write",
+                                         text]), \
+                 mock.patch("sys.stderr", io.StringIO()), redirect_stdout(io.StringIO()) as o:
+                try:
+                    hz.main()
+                except SystemExit:
+                    pass
+            return o.getvalue()
+        out = write("INTENT. x\n**DONE.** every check passes and it is presented.")
+        self.assertIn("WROTE", out)
+        self.assertIn("no clauses the harness can number", out)
+        self.assertNotIn("can number", write("INTENT. x\n**DONE.**\n- (1) a\n- (2) b"))
+
     def test_settled_parts_with_an_uncovered_clause_are_not_ready(self):
         self.w("s6a", {"task": "s6a", "node": "dev_1", "from": "s6", "covers": [2]})
         self.w("s6b", {"task": "s6b", "node": "dev_1", "from": "s6", "covers": [3]})
@@ -1157,6 +1182,41 @@ class Orphan(unittest.TestCase):
         with mock.patch.object(hz, "holder_alive", return_value=False), \
              mock.patch.object(hz, "last_write", return_value=time.time() - 30):
             self.assertEqual([r for r in hz.lead_owes(self.ctx, "dev") if r[0] == "orphan"], [])
+
+
+    def stop(self, *argv):
+        """`harness stop` from main's session, with nobody live anywhere."""
+        self.ctx.me, self.ctx.branch = "main", "main"
+        idx = {"byWorktree": {}, "byBranch": {"main": "main"},
+               "nodes": {n: {"children": self.ctx.children(n)} for n in ("main", "dev", "dev_1")}}
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.object(hz, "load_index", return_value=idx), \
+             mock.patch.object(hz, "agents_json", return_value=[]), \
+             mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "s" * 36}), \
+             mock.patch("sys.argv", ["harness", "stop", *argv]), \
+             redirect_stdout(io.StringIO()) as o:
+            hz.main()
+        return o.getvalue()
+
+    def test_a_deliberate_stop_is_not_an_outage(self):
+        # Log 115: after "stop all work" the Stop hook told rank 0 to spawn dev.
+        self.ctx.lock("dev_1", 1)
+        self.ctx.lock("dev", 1)
+        self.stop("dev", "--dry-run")
+        self.assertIsNone(hz.stopped(self.ctx, "dev"))                  # a dry run records nothing
+        out = self.stop("dev", "dev_1", "--why", "owner: stop all work for now")
+        self.assertIn("stopped on purpose", out)
+        self.assertEqual(hz.stopped(self.ctx, "dev")["by"], "main")
+        with mock.patch.object(hz, "holder_alive", return_value=False), \
+             mock.patch.object(hz, "last_write", return_value=time.time() - 600):
+            self.assertEqual([r for r in hz.lead_owes(self.ctx, "dev") if r[0] == "orphan"], [])
+            self.assertEqual([r for r in hz.lead_owes(self.ctx, "main") if r[0] == "down"], [])
+            line = hz.stopped_line(self.ctx)
+            self.assertIn("dev, dev_1", line)
+            self.assertIn("owner: stop all work", line)
+            hz.stopped_path(self.ctx, "dev_1").unlink()                 # as a claim does
+            self.assertEqual([r[0] for r in hz.lead_owes(self.ctx, "dev") if r[0] == "orphan"],
+                             ["orphan"])
 
 
 class Records(unittest.TestCase):
@@ -3359,6 +3419,7 @@ class ItemSessions(unittest.TestCase):
              mock.patch.object(hz, "live_rows", side_effect=lambda rs: [r for r in rs if r.get("pid")]), \
              mock.patch.object(hz, "intermediary_cmd", side_effect=lambda *a, **k:
                                ["claude", "--bg", "FRESH", a[2], k.get("ask_id"), k.get("start")]), \
+             mock.patch.object(hz, "item_profile", return_value="P1"), \
              mock.patch.object(hz.subprocess, "run", side_effect=run):
             ok, msg = hz.item_wake(self.pdir, "/r/proj", ask, why)
         return ok, msg, calls
@@ -3376,13 +3437,35 @@ class ItemSessions(unittest.TestCase):
             self.assertEqual(calls, [])
             self.assertEqual(hz.item_inbox(self.pdir, "t-1", take=True), ["hello"])
 
+    def stamp(self, ask="t-1", profile="P1"):
+        home = hz.item_home(self.pdir, ask)
+        home.mkdir(parents=True, exist_ok=True)
+        (home / "profile").write_text(profile + "\n")
+
     def test_idle_is_stopped_then_resumed_without_flags(self):
         sid = "abcd1234" + "x" * 28
+        self.stamp()
         ok, _, calls = self.wake([self.row("t-1", sid=sid)])
         self.assertEqual(calls[0], ["claude", "stop", "abcd1234"])
         self.assertEqual(calls[1][:4], ["claude", "--bg", "--resume", sid])
         self.assertEqual(len(calls[1]), 5)                   # flags would start a copy
         self.assertIn("harness ask --idle", calls[1][4])
+
+    def test_a_session_from_an_older_profile_is_replaced_not_resumed(self):
+        # Log 114 follow-up: a resumed session kept the tools it started with.
+        sid = "abcd1234" + "x" * 28
+        for stamp in (None, "OLD"):                  # unstamped, then a stale stamp
+            if stamp:
+                self.stamp(profile=stamp)
+            hz.item_inbox(self.pdir, "t-1", f"queued before {stamp}")
+            ok, msg, calls = self.wake([self.row("t-1", sid=sid)])
+            self.assertEqual(calls[0], ["claude", "stop", "abcd1234"])
+            self.assertEqual(calls[1][:3], ["claude", "--bg", "FRESH"])
+            self.assertIn("older permissions", calls[1][5])
+            self.assertIn(f"queued before {stamp}", calls[1][5])     # the inbox carries over
+            self.assertTrue(msg.startswith("restarted"))
+            self.assertEqual((hz.item_home(self.pdir, "t-1") / "profile").read_text().strip(),
+                             "P1")
 
     def test_fresh_start_takes_the_model_for_its_kind(self):
         ok, _, calls = self.wake([], ask="t-2")

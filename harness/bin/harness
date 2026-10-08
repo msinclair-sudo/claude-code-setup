@@ -9,7 +9,7 @@ up holding one node, which is the failure the lock exists to prevent.
 This tool does no reasoning. The agent gathers liveness with ListAgents and
 passes it in; this only asserts, derives and writes atomically.
 """
-import argparse, datetime, difflib, fnmatch, gzip, json, os, re, shlex, shutil, socket, subprocess, sys, time
+import argparse, datetime, difflib, fnmatch, gzip, hashlib, json, os, re, shlex, shutil, socket, subprocess, sys, time
 from pathlib import Path
 
 OK, CONTRACT, NOT_ENROLLED, REFUSED, MISMATCH = 0, 2, 3, 4, 5
@@ -1248,6 +1248,8 @@ def _whoami(a):
             h = halted(ctx)
             print(f"HALTED   by the owner at {h.get('at', '')[11:16]}: {h.get('why')}. Nothing "
                   f"new starts; write what you hold into the records and wait.")
+        if stopped_line(ctx):
+            print(stopped_line(ctx))
         _, ch = load_charter(ctx)
         txt = ((ch.get("description") or {}).get("text") or "").strip()
         if txt or ch.get("features"):
@@ -1448,6 +1450,7 @@ def cmd_claim(a):
         print(f"warning: interactive session {r.get('name') or '?'} "
               f"[{str(r.get('sessionId'))[:8]}] pid {r.get('pid')} is in this worktree "
               f"— two sessions on one index")
+    stopped_path(ctx, node).unlink(missing_ok=True)     # claimed again: not stopped (log 115)
     try:
         fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError:
@@ -1799,6 +1802,29 @@ def halt_path(ctx):
     return Path(ctx.state) / "halt.json"
 
 
+def stopped_path(ctx, node):
+    return Path(ctx.state) / "stopped" / f"{node}.json"
+
+
+def stopped(ctx, node):
+    """A node stopped on purpose by `harness stop` (log 115: after the owner's "stop
+    all work", the Stop hook told rank 0 to spawn dev). Cleared when it is claimed
+    or spawned again. -> {by, at, why} or None."""
+    return _read_json(stopped_path(ctx, node))
+
+
+def stopped_line(ctx):
+    """Orientation's one line for nodes stopped on purpose, or None."""
+    rows = [(n, stopped(ctx, n)) for n in ctx.tree.get("nodes", {})]
+    rows = [(n, r) for n, r in rows if r]
+    if not rows:
+        return None
+    r = rows[0][1]
+    return (f"STOPPED  on purpose: {', '.join(n for n, _ in rows)} (by {r.get('by')} at "
+            f"{(r.get('at') or '')[11:16]}" + (f': "{r["why"]}"' if r.get("why") else "")
+            + ") — harness spawn <node> to restart")
+
+
 def halted(ctx):
     """The halt record, or None."""
     try:
@@ -1974,6 +2000,7 @@ def cmd_spawn(a):
         else:
             subprocess.Popen(cmd, cwd=sp["worktree"],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            stopped_path(ctx, n).unlink(missing_ok=True)
             print(f"  spawned {name:<18} {model}/{effort:<7} in {sp['worktree']}{reach}")
         launched += 1
     verb = "would spawn" if a.dry_run else "spawned"
@@ -2353,7 +2380,7 @@ def cmd_stop(a):
         n = by_wt.get(r.get("cwd", ""))
         if n:
             occ.setdefault(n, []).append(r)
-    stopped = 0
+    stopped_n = 0
     for n in targets:
         if n not in idx["nodes"]:
             print(f"  skip {n:<12} not a node"); continue
@@ -2377,12 +2404,23 @@ def cmd_stop(a):
                     print("  " + line)
                 if not ok:
                     continue
-            stopped += 1
+            stopped_n += 1
     verb = "would stop" if a.dry_run else "stopped"
-    print(f"{verb} {stopped}")
-    if not a.dry_run and stopped:
+    print(f"{verb} {stopped_n}")
+    if not a.dry_run and stopped_n:
         print("  their locks remain until each node is claimed again — "
               "`harness status` shows them as stale")
+    # Recorded, so the hooks don't read a deliberate stop as an outage (log 115).
+    mark = [n for n in targets if n in idx["nodes"] and n != here]
+    if not a.dry_run and mark:
+        rec = {"by": here if mine and here else "shell", "at": _now(),
+               "why": (getattr(a, "why", None) if isinstance(getattr(a, "why", None), str)
+                       else "").strip()}
+        for n in mark:
+            stopped_path(ctx, n).parent.mkdir(parents=True, exist_ok=True)
+            _save(stopped_path(ctx, n), rec)
+        print(f"  recorded {', '.join(mark)} as stopped on purpose; the hooks won't ask to "
+              f"respawn them until one is spawned or recycled")
 
 
 # ── I10: the denominator, measured rather than apportioned ───────────────────
@@ -2816,6 +2854,8 @@ def lead_owes(ctx, node):
                 owed.append(("sign off", r["_node"], mark_label(r, t),
                              time.time() - then))
     for k in kids:
+        if stopped(ctx, k):
+            continue                       # stopped on purpose, not down (log 115)
         try:
             _held = json.loads(ctx.lock_path(k).read_text())
         except Exception:
@@ -7888,14 +7928,18 @@ def stopped_without_asking(ctx, node, live, has_session):
     return not queue(ctx, node)
 
 
-_CLAUSE_PARA = re.compile(r"^\s*(CHECKS|DONE)\b[.:]?(.*?)(?=^\s*[A-Z][A-Z ]{2,}[.:]|\Z)",
-                          re.M | re.S)
+# A label may be bold or italic (log 116: main writes **DONE.**, which matched
+# nothing, so 46 of biblion2's briefs had no clause a split could cover).
+_CLAUSE_PARA = re.compile(r"^\s*[*_]{0,2}(CHECKS|DONE)\b[.:]?[*_]{0,2}[.:]?(.*?)"
+                          r"(?=^\s*[*_]{0,2}[A-Z][A-Z ]{2,}[.:]|\Z)", re.M | re.S)
 
 
 _CLAUSE_HEAD = re.compile(r"^(#{1,6})\s+(.*\b(?:checks?|done)\b.*)$", re.M | re.I)
 _CLAUSE_MARK = re.compile(r"\((\d{1,2})\)|^\s*(\d{1,2})[.)]\s", re.M)
 CLAUSE_FORMS = ("`(n)`, `n.` or `n)` markers, in a paragraph starting CHECKS. or "
-                "DONE., or under a heading naming checks or done")
+                "DONE. (bold is fine), or under a heading naming checks or done")
+_CLAUSE_LABEL = re.compile(r"^\s*[*_]{0,2}(?-i:CHECKS|DONE)\b|^#{1,6}\s.*\b(?:checks?|done)\b",
+                           re.M | re.I)
 
 
 def brief_clauses(text):
@@ -9153,6 +9197,9 @@ def cmd_brief(a):
                       f"`harness blocked --decided` lists them.")
         if rev > 1:
             print("  the previous text is gone — a brief is a plan, not a record")
+        if _CLAUSE_LABEL.search(a.write) and not brief_clauses(a.write):
+            print(f"  WARNING: its DONE has no clauses the harness can number ({CLAUSE_FORMS});"
+                  f"\n  a lead splitting it can't use --covers (log 116)")
         open_s = [i for i, s in enumerate((b or {}).get("suggestions", []), 1)
                   if not s.get("resolved_at")]
         if open_s:
@@ -13460,6 +13507,19 @@ CHAT_CAP = 4000                 # chars in one message, either way
 # No SendMessage: a message to a sleeping session is lost. It talks through
 # `harness ask`, which logs, rings and wakes.
 ITEM_TOOLS = ("Read", "Grep", "Glob", "Bash")
+# What an item session's permissions are made of. A resumed session keeps the
+# tools it started with (log 114, follow-up: two sessions started before the
+# scratch folder existed were still refused after the update), so a session
+# stamped with another profile, or none, is replaced instead of resumed. The
+# profile is the source of intermediary_cmd and the tool lists, so any change
+# to them changes it with no one remembering to.
+def item_profile():
+    import inspect
+    try:
+        src = inspect.getsource(intermediary_cmd)
+    except (OSError, TypeError):
+        src = ""
+    return hashlib.sha1(repr((src, ITEM_TOOLS, INTERMEDIARY_GIT)).encode()).hexdigest()[:10]
 ITEM_MODEL = {"action": ("opus", "high"), "note": ("sonnet", "medium"),
               "intent": ("opus", "high"), "judgement": ("opus", "high"),
               "risk": ("opus", "high"), "scope": ("opus", "high")}
@@ -13609,7 +13669,12 @@ def item_wake(pdir, repo, ask_id, why=None):
                             "HARNESS_ASK")}
         if live:
             subprocess.run(["claude", "stop", live["sessionId"][:8]], capture_output=True)
-        if sid:
+        stamp = home / "profile"
+        stale = bool(sid) and (stamp.read_text().strip() if stamp.exists() else "") != item_profile()
+        if stale:
+            prompt = (f"Your earlier session for this ask ran under older permissions and was "
+                      f"replaced; `harness ask {ask_id} --show` has the whole thread.\n\n" + prompt)
+        if sid and not stale:
             r = subprocess.run(["claude", "--bg", "--resume", sid, prompt], cwd=str(home),
                                env=env, capture_output=True, text=True)
             if not r.returncode:
@@ -13623,7 +13688,9 @@ def item_wake(pdir, repo, ask_id, why=None):
             for w in whys:
                 item_inbox(pdir, ask_id, w)
             return False, f"{name} did not start: {(r.stderr or r.stdout).strip()[:200]}"
-        return True, f"started {name}{_attach_hint(r.stdout)}"
+        stamp.write_text(item_profile() + "\n")
+        return True, (f"restarted {name} (its permissions predate this harness)" if stale
+                      else f"started {name}") + _attach_hint(r.stdout)
     finally:
         lock.unlink(missing_ok=True)
 
@@ -15285,6 +15352,8 @@ def main():
     st = add("stop", cmd_stop)
     st.add_argument("node", nargs="*", help="nodes whose sessions to stop")
     st.add_argument("--children", action="store_true", help="every child of this node")
+    st.add_argument("--why", metavar="TEXT",
+                    help="why, in the owner's words when it is theirs; recorded with the stop")
     st.add_argument("--dry-run", action="store_true")
     sp = add("spawn", cmd_spawn)
     sp.add_argument("node", nargs="*",

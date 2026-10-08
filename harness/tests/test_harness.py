@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -3110,6 +3111,22 @@ class ChangedArms(unittest.TestCase):
         sel, _ = self.arms(self.checks + [{"name": "guard"}])
         self.assertEqual(sel, ["enrich", "guard"])
 
+    def test_no_arm_with_paths_says_so(self):
+        # Log 110: "the change touches every arm" hid that nothing was compared.
+        self.change("src/enrich/b.py")
+        sel, info = self.arms([{"name": "surface"}, {"name": "enrich"}])
+        self.assertIsNone(sel)
+        self.assertTrue(info.get("nopaths"))
+        self.assertIn("no arm declares paths", info["why"])
+
+    def test_no_paths_still_honours_checks_ignore(self):
+        self.man({"checks_ignore": ["docs/*", "*.md", ".harness/*"]})
+        self.g("add", "-A"); self.g("commit", "-qm", "m")
+        self.change("docs/x.md")
+        sel, info = self.arms([{"name": "surface"}])
+        self.assertEqual(sel, [])
+        self.assertNotIn("nopaths", info)
+
 
 class WaitPool(unittest.TestCase):
     """Log 109: a parked task starts nowhere and nags nobody for 12 hours, then
@@ -3225,6 +3242,59 @@ class OwnerActions(unittest.TestCase):
         self.assertFalse(saved["query_open"])
         self.assertEqual(saved["state"], "asked")            # a reply is not a brief
 
+    def add(self, rec, *runs, me="main", sid="s" * 36):
+        """`harness ask <id> --run ...` as `me` (log 113)."""
+        self.ctx.me, self.ctx.branch = me, me
+        env = {"CLAUDE_CODE_SESSION_ID": sid} if sid else {}
+        argv = ["harness", "ask", rec["id"]] + [x for r in runs for x in ("--run", r)]
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.object(hz, "ask_find", side_effect=lambda *a: (
+                 self.ctx.dir, "/r/proj", self.path(rec),
+                 json.loads(self.path(rec).read_text()))), \
+             mock.patch.object(hz, "item_wake_detached") as wake, \
+             mock.patch.dict(os.environ, env), \
+             mock.patch("sys.argv", argv), redirect_stdout(io.StringIO()) as o:
+            if not sid:
+                os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
+            try:
+                hz.main(); code = 0
+            except SystemExit as e:
+                code = e.code
+        return code, o.getvalue(), wake, json.loads(self.path(rec).read_text())
+
+    def test_a_command_joins_a_filed_ask(self):
+        r = self.open(me="dev", task="s1")
+        code, out, wake, saved = self.add(r, "pip install y", me="dev")
+        self.assertEqual(code, 0)
+        self.assertEqual(saved["runs"], ["pip install x", "pip install y"])
+        self.assertEqual(saved["state"], "asked")
+        self.assertIn("added 1 command(s)", out)
+        wake.assert_called_once()
+        self.assertEqual(self.add(r, "z", me="main")[0], 0)        # rank 0 may too
+        self.assertEqual(self.add(r, "w", sid="")[0], 0)           # and a shell
+        self.assertNotEqual(self.add(r, "v", me="dev_1")[0], 0)    # a lane may not
+
+    def test_a_briefed_ask_goes_back_to_be_rebriefed(self):
+        r = self.open()
+        rec = json.loads(self.path(r).read_text())
+        rec.update(state="drafted", brief={"question": "q"}, draft="run it")
+        self.path(r).write_text(json.dumps(rec))
+        code, out, wake, saved = self.add(r, "pip install y")
+        self.assertEqual((saved["state"], saved["draft"]), ("asked", None))
+        self.assertEqual(saved["brief"], {"question": "q"})        # kept, to amend
+        self.assertIn("re-brief", wake.call_args[0][2])
+        self.assertIn("re-briefs", out)
+
+    def test_adding_commands_is_refused_where_it_does_not_fit(self):
+        q = hz.ask_open(self.ctx, "s1", "intent", "Which way?", "dev", "s" * 36)
+        self.assertNotEqual(self.add(q, "x", me="dev")[0], 0)      # not an action ask
+        r = self.open(runs=["x"] * 9)
+        self.assertNotEqual(self.add(r, "y", "z")[0], 0)           # 11 > the cap of 10
+        self.assertEqual(len(json.loads(self.path(r).read_text())["runs"]), 9)
+        rec = json.loads(self.path(r).read_text())
+        self.path(r).write_text(json.dumps(dict(rec, state="done")))
+        self.assertNotEqual(self.add(r, "y")[0], 0)                # closed
+
     def test_note_is_the_owners_alone(self):
         with self.assertRaises(SystemExit):
             hz.ask_open(self.ctx, "owner", "note", "hi", "main", "s" * 36)
@@ -3246,6 +3316,7 @@ class ItemSessions(unittest.TestCase):
         self.err = mock.patch("sys.stderr", new_callable=io.StringIO)
         self.err.start()
         self.addCleanup(self.err.stop)
+        self.scratch_home()                    # never the real ~/.cache
 
     def row(self, ask, status="idle", sid=None, kind="background", t=1):
         return {"name": f"harness-intermediary-proj-{ask}", "sessionId": sid or ask * 12,
@@ -3313,6 +3384,42 @@ class ItemSessions(unittest.TestCase):
         tools = cmd[cmd.index("--tools") + 1:cmd.index("--allowedTools")]
         self.assertNotIn("SendMessage", tools)               # lost on a sleeping session
         self.assertEqual(cmd[-1], "go")
+
+    def test_item_writes_its_scratch_folder_only(self):
+        # Log 114: it had no route to hand over a brief.
+        repo = Path(tempfile.mkdtemp())
+        with mock.patch.object(hz, "intermediary_prompt", return_value=self.pdir / "p.md"):
+            cmd = hz.intermediary_cmd(self.pdir, str(repo), bg=True, ask_id="t-1")
+            whole = hz.intermediary_cmd(self.pdir, str(repo))
+        sc = hz.item_scratch(self.pdir, "t-1")
+        self.assertTrue(sc.is_dir())
+        tools = cmd[cmd.index("--tools") + 1:cmd.index("--allowedTools")]
+        allow = cmd[cmd.index("--allowedTools") + 1:cmd.index("--permission-mode")]
+        self.assertIn("Write", tools)
+        self.assertIn("Edit", tools)
+        self.assertEqual([r for r in allow if not r.startswith("Bash(")], [f"Edit(/{sc}/**)"])
+        self.assertIn(str(sc), cmd[cmd.index("--add-dir") + 1:cmd.index("--tools")])
+        self.assertNotIn(".claude", str(sc))           # Claude Code protects ~/.claude
+        self.assertNotIn("Write", whole[whole.index("--tools"):whole.index("--allowedTools")])
+        self.assertIn(str(sc / "brief.md"), hz.item_start(self.pdir, str(repo), {"id": "t-1"}))
+
+    def scratch_home(self):
+        d = Path(tempfile.mkdtemp())
+        m = mock.patch.object(hz, "ASK_SCRATCH", d / "asks")
+        m.start()
+        self.addCleanup(m.stop)
+        self.addCleanup(shutil.rmtree, d, True)
+
+    def test_scratch_files_are_read_and_other_paths_stay_text(self):
+        sc = hz.item_scratch(self.pdir, "t-1")
+        sc.mkdir(parents=True)
+        (sc / "r.md").write_text("long `reply` with $x")
+        other = self.pdir / "asks" / "t-1.json"
+        self.assertEqual(hz.scratch_text(self.pdir, "t-1", str(sc / "r.md")),
+                         "long `reply` with $x")
+        self.assertEqual(hz.scratch_text(self.pdir, "t-1", str(other)), str(other))
+        self.assertEqual(hz.scratch_text(self.pdir, "t-2", str(sc / "r.md")), str(sc / "r.md"))
+        self.assertEqual(hz.scratch_text(self.pdir, "t-1", "plain words"), "plain words")
 
     def test_idle_prints_inbox_else_schedules_settle(self):
         hz.item_inbox(self.pdir, "t-1", "owner asks")

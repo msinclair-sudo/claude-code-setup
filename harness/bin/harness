@@ -2113,6 +2113,18 @@ def cmd_doctor(a):
     # The session hooks live in the repo's .claude/settings.json, which only
     # scaffold writes; a repo scaffolded before a hook existed lacks it, and
     # nothing else notices (the PostToolUse mail hook, 2026-10-06).
+    # A note, not an arm: missing `paths` costs time, it doesn't unguard (log 110).
+    try:
+        man_checks = json.loads((ctx.repo / ".harness" / "manifest.json").read_text()
+                                ).get("checks") or []
+    except Exception:
+        man_checks = []
+    if man_checks and not any(isinstance(c, dict) and c.get("paths") for c in man_checks):
+        print(f"  note  no check arm declares `paths`, so a worker's harness check runs all "
+              f"{len(man_checks)} arms\n        (spec I5). "
+              + ("Add `paths` globs per arm and a `checks_ignore` list to the manifest."
+                 if mine else "Tell rank 0, which owns the manifest."))
+
     gone = session_hooks_missing(ctx.repo)
     arm("session hooks registered in .claude/settings.json", not gone,
         "" if not gone else "absent: " + ", ".join(gone)
@@ -4338,6 +4350,10 @@ def changed_arms(ctx, node, checks):
     if not live:
         return [], dict(info, why="nothing testable changed")
     scoped = [c for c in checks if c.get("paths")]
+    if not scoped:
+        # Nothing to compare against (log 110): say so, so the fix is findable.
+        return None, dict(info, why="no arm declares paths, so --changed runs every arm",
+                          nopaths=True)
     unmapped = [f for f in live if not any(hit(f, c["paths"]) for c in scoped)]
     if unmapped and scoped:
         return None, dict(info, why=f"{len(unmapped)} changed file(s) no arm claims, e.g. "
@@ -4817,6 +4833,9 @@ def cmd_check(a):
             return
         if sel is None:
             print(f"every arm: {scope['why']}")
+            if scope.get("nopaths"):
+                print("  Add `paths` globs to the manifest's arms to scope lane checks "
+                      "(spec I5); rank 0 owns the manifest.")
             scope = None
         else:
             arms = sel
@@ -4851,6 +4870,7 @@ def cmd_check(a):
 TESTQ_IDLE = 120                # a runner with nothing queued exits after this
 TESTQ_FREE_GB = 5               # the disk a job needs before it copies anything
 RUNS_HOME = Path.home() / ".cache" / "harness" / "runs"
+ASK_SCRATCH = Path.home() / ".cache" / "harness" / "asks"     # item sessions write here (log 114)
 
 
 class ProjCtx:
@@ -12085,6 +12105,42 @@ def render_chain(chain):
     return out
 
 
+def _check_runs(runs, have=0):
+    """Commands for the owner, stripped and capped; `have` already on the ask."""
+    runs = [r.strip() for r in runs or [] if r.strip()]
+    if have + len(runs) > ASK_RUNS_MAX:
+        die(REFUSED, f"{have + len(runs)} commands; the cap is {ASK_RUNS_MAX}. Split them, or "
+                     f"put them in a script the owner runs once.")
+    for i, r in enumerate(runs, have + 1):
+        if len(r) > ASK_RUN_CAP:
+            die(REFUSED, f"command {i} is {len(r)} chars; the cap is {ASK_RUN_CAP}. "
+                         f"Put it in a script and hand the owner that.")
+    return runs
+
+
+def ask_add_runs(path, rec, runs, by):
+    """`ask <id> --run`: a command learned after the ask was filed (log 113). The
+    owner sees commands only once the intermediary has briefed them, so a
+    briefed ask goes back to it to re-brief. -> True when it went back."""
+    if rec.get("state") not in ASK_OPEN:
+        die(REFUSED, f"{rec['id']} is {rec.get('state')}; it takes no commands")
+    if rec.get("kind") != "action":
+        die(REFUSED, f"{rec['id']} is a {rec.get('kind')} ask; commands go on an action ask: "
+                     f"harness ask <task> --kind action --question \"...\" --run \"cmd\"")
+    runs = _check_runs(runs, len(rec.get("runs") or []))
+    if not runs:
+        die(REFUSED, "--run needs a command")
+    rec.setdefault("runs", []).extend(runs)
+    rec.setdefault("thread", [])
+    back = rec.get("state") in ("ready", "drafted")
+    if back:
+        rec["state"], rec["draft"] = "asked", None
+    _ask_log(rec, by, f"added {len(runs)} command(s)"
+                      + ("; back to the intermediary to re-brief" if back else ""))
+    _save(path, rec)
+    return back
+
+
 def ask_open(ctx, task, kind, question, me, sid, runs=None):
     """`ask <task>`: rank 0 or a lead opens one; a lane goes through its lead.
     `runs`: commands for the owner to run (an `action` ask)."""
@@ -12109,7 +12165,7 @@ def ask_open(ctx, task, kind, question, me, sid, runs=None):
     if len(q) > 200:
         die(REFUSED, f"the question is {len(q)} chars; the cap is 200. One sentence the "
                      f"owner can answer —\n           the intermediary gathers the rest.")
-    runs = [r.strip() for r in runs or [] if r.strip()]
+    runs = _check_runs(runs)
     if runs and kind != "action":
         die(REFUSED, "--run is for --kind action: commands the owner runs")
     if kind == "note" and (sid or not owner):
@@ -12118,13 +12174,6 @@ def ask_open(ctx, task, kind, question, me, sid, runs=None):
     if owner and not runs and kind != "note":
         die(REFUSED, f"'{OWNER_TASK}' carries commands: --kind action --run \"cmd\" "
                      f"(repeat --run for each)")
-    if len(runs) > ASK_RUNS_MAX:
-        die(REFUSED, f"{len(runs)} commands; the cap is {ASK_RUNS_MAX}. Split them, or "
-                     f"put them in a script the owner runs once.")
-    for i, r in enumerate(runs, 1):
-        if len(r) > ASK_RUN_CAP:
-            die(REFUSED, f"command {i} is {len(r)} chars; the cap is {ASK_RUN_CAP}. "
-                         f"Put it in a script and hand the owner that.")
     for f in sorted((Path(ctx.state) / "asks").glob("*.json")) \
             if (Path(ctx.state) / "asks").is_dir() else []:
         try:
@@ -12979,7 +13028,8 @@ def cmd_ask(a):
     if len(verbs) > 1:
         die(REFUSED, f"one verb at a time: {', '.join(flag(v) for v in verbs)}")
     if a.run and verbs:
-        die(REFUSED, "--run goes with opening an ask: harness ask <task> --kind action --run ...")
+        die(REFUSED, "--run opens an action ask (harness ask <task> --kind action --run ...) "
+                     "or adds to one (harness ask <id> --run ...), with no other verb")
     mine = os.environ.get("HARNESS_ASK")      # an item session's own ask
     if a.idle:
         if os.environ.get("HARNESS_INTERMEDIARY") != "1" or not mine:
@@ -13004,6 +13054,32 @@ def cmd_ask(a):
     if not a.target:
         die(REFUSED, "harness ask <task> --kind K --question \"...\", or harness ask --list")
     sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if not verbs and a.run and not a.question and not a.kind:
+        # Commands for an ask already filed (log 113): the asker, rank 0, or a shell.
+        pdir, repo, path, rec = ask_find(a.target, a.project)
+        by = "operator"
+        if os.environ.get("HARNESS_DOCUMENTER") == "1":
+            by = "documenter"
+        elif sid:
+            ctx = Ctx(); ctx.require_enrolled()
+            by, _ = ctx.node()
+            if Path(ctx.state) != Path(pdir):
+                die(REFUSED, f"{rec['id']} is another project's ask")
+            if by != rec.get("asker_node") and role_of(ctx, by) != "root":
+                die(REFUSED, f"{rec['id']} is {rec.get('asker_node')}'s ask. Tell it the "
+                             f"command, or tell your lead; the asker or rank 0 adds it.")
+        if by == "documenter" and rec.get("asker_node") != "documenter":
+            die(REFUSED, f"{rec['id']} is {rec.get('asker_node')}'s ask")
+        n = len(_check_runs(a.run))
+        back = ask_add_runs(path, rec, a.run, by)
+        item_wake_detached(pdir, rec["id"], (
+            f"{by} added {n} command(s) to {rec['id']}"
+            + ("; it was briefed, so re-brief with the Commands section covering them"
+               if back else "; brief them with the rest")
+            + f": harness ask {rec['id']} --show"))
+        print(f"added {n} command(s) to {rec['id']}; they show in the owner's Issues tab "
+              f"once its intermediary " + ("re-briefs" if back else "briefs"))
+        return
     if not verbs:
         ctx = Ctx(); ctx.require_enrolled()
         me, _ = ctx.node()
@@ -13050,6 +13126,10 @@ def cmd_ask(a):
         die(REFUSED, "only the owner signs a ruling or marks an action done — the GUI's "
                      "Issues tab, or a shell")
     pdir, repo, path, rec = ask_find(a.target, a.project)
+    # An item session hands long text over as a file in its scratch folder (log 114).
+    for k in ("reply", "text", "draft"):
+        if isinstance(getattr(a, k), str):
+            setattr(a, k, scratch_text(pdir, rec["id"], getattr(a, k)))
     if v == "show":
         ask_show(pdir, repo, rec); return
     if v == "drop":
@@ -13069,7 +13149,9 @@ def cmd_ask(a):
         src = a.brief
         if "\n" not in src and not src.lstrip().startswith("#"):
             if not Path(src).is_file():
-                die(REFUSED, f"no file '{src}'. --brief FILE, or --brief - with a heredoc")
+                die(REFUSED, f"no file '{src}'. Write the brief with the Write tool to "
+                             f"{item_scratch(pdir, rec['id']) / 'brief.md'}, then "
+                             f"--brief <that path> (or --brief - from a shell)")
             src = Path(src).read_text()
         ask_set_brief(path, rec, src)
         print(f"briefed {rec['id']} — ready; it is the owner's move. "
@@ -13244,6 +13326,14 @@ def intermediary_cmd(pdir, repo, model=None, effort=None, bg=False, start=None, 
         if Path(d).is_dir() and d not in dirs:
             dirs.append(d)
     allow = ["Bash(harness ask *)"]
+    tools = INTERMEDIARY_TOOLS
+    if ask_id:
+        # Its scratch folder and nothing else (log 114): dontAsk refuses the rest.
+        sc = item_scratch(pdir, ask_id)
+        sc.mkdir(parents=True, exist_ok=True)
+        tools = ITEM_TOOLS + ("Write", "Edit")
+        dirs.append(str(sc))
+        allow.append(f"Edit(/{sc}/**)")         # Edit rules cover Write; Write(...) is ignored
     for d in repos:
         for q in ('"', "'") + (("",) if " " not in d else ()):
             allow += [f"Bash(git -C {q}{d}{q} {g} *)" for g in INTERMEDIARY_GIT]
@@ -13260,7 +13350,7 @@ def intermediary_cmd(pdir, repo, model=None, effort=None, bg=False, start=None, 
             env["HARNESS_ASK"] = ask_id
         cmd += ["--settings", json.dumps({"env": env})]
     cmd += ["--add-dir", *dirs,
-           "--tools", *(ITEM_TOOLS if ask_id else INTERMEDIARY_TOOLS),
+           "--tools", *tools,
            "--allowedTools", *allow,
            "--permission-mode", "dontAsk",
            "--append-system-prompt-file", str(skill)]
@@ -13315,6 +13405,30 @@ def item_home(pdir, ask_id):
     return Path(pdir) / "intermediary" / ask_id
 
 
+def item_scratch(pdir, ask_id):
+    """The one place an item session may write (log 114): its brief and long
+    replies go here as files, because a heredoc is a redirection and inline text
+    with backticks reads as command substitution, both refused under dontAsk.
+    Outside ~/.claude, which Claude Code protects whatever the allow rules say
+    (measured 2026-10-08: an Edit rule there was refused, the same rule under
+    ~/.cache was not)."""
+    return ASK_SCRATCH / Path(pdir).name / ask_id
+
+
+def scratch_text(pdir, ask_id, arg):
+    """`arg`, or the text of the file it names when that file sits in this
+    ask's scratch folder. Any other path stays literal text."""
+    if not arg or "\n" in arg or not ask_id:
+        return arg
+    try:
+        f = Path(arg).expanduser().resolve()
+        if f.is_file() and f.is_relative_to(item_scratch(pdir, ask_id).resolve()):
+            return f.read_text()
+    except (OSError, ValueError):
+        pass
+    return arg
+
+
 def item_inbox(pdir, ask_id, why=None, take=False):
     """Append a reason to an item session's inbox; with take, empty it and
     return what was there. A queued item is one with an inbox and no session."""
@@ -13366,11 +13480,15 @@ def item_sessions(repo, rows):
     return out
 
 
-def item_start(repo, rec):
+def item_start(pdir, repo, rec):
     return (f"You are the harness intermediary for ask {rec['id']} in {Path(repo).name}, and "
             f"for that ask only; your instructions are in your system prompt. Scope first: "
             f"the project's charter and documentation are there too, and an ask that serves "
-            f"none of it is out of scope. Start: `harness ask {rec['id']} --show`.")
+            f"none of it is out of scope. Write your brief to "
+            f"{item_scratch(pdir, rec['id']) / 'brief.md'} with the Write tool, then "
+            f"`harness ask {rec['id']} --brief <that path>`; a long --reply, --text or "
+            f"--draft goes the same way, as a file in that folder. "
+            f"Start: `harness ask {rec['id']} --show`.")
 
 
 def _open_ask(pdir, ask_id):
@@ -13429,7 +13547,7 @@ def item_wake(pdir, repo, ask_id, why=None):
             if not r.returncode:
                 return True, f"woke {name}{_attach_hint(r.stdout, sid)}"
         model, effort = ITEM_MODEL.get(rec.get("kind"), ("opus", "high"))
-        start = item_start(repo, rec) + "\n\n" + prompt
+        start = item_start(pdir, repo, rec) + "\n\n" + prompt
         r = subprocess.run(intermediary_cmd(pdir, repo, model, effort, bg=True, start=start,
                                             ask_id=ask_id),
                            cwd=str(home), env=env, capture_output=True, text=True)
@@ -13489,6 +13607,7 @@ def item_close(pdir, repo, ask_id):
                 subprocess.run(["claude", "stop", r["sessionId"][:8]], capture_output=True)
             claude_rm(r["sessionId"])
     shutil.rmtree(item_home(pdir, ask_id), ignore_errors=True)
+    shutil.rmtree(item_scratch(pdir, ask_id), ignore_errors=True)
     print(f"closed {name}")
     items_next(pdir, repo)
 
@@ -13560,7 +13679,7 @@ def cmd_intermediary(a):
         rec = _open_ask(pdir, a.ask) or {"id": a.ask}
         m, e = ITEM_MODEL.get(rec.get("kind"), ("opus", "high"))
         print(shlex.join(intermediary_cmd(pdir, repo, a.model or m, a.effort or e, bg=True,
-                                          start=item_start(repo, rec), ask_id=a.ask)))
+                                          start=item_start(pdir, repo, rec), ask_id=a.ask)))
         return
     ok, msg = item_wake(pdir, repo, a.ask, a.wake or (
         "The owner opened you to talk about this ask in a terminal. Read it, then say in a "

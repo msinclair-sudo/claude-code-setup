@@ -73,7 +73,7 @@ harness ask owner --kind action --question "Install the pinned x before the impo
   --run "pip install x==1.2" --run "harness grant ..."
 ```
 
-Each open item gets its own intermediary session, and the commands show in the owner's Issues tab at once. Carry on, or end your turn: when the owner clicks **Done** your doorbell rings with their note. If the intermediary needs something from you it rings your doorbell too (orientation also says so): answer with `harness ask <id> --msg "..."`, never `SendMessage`, because the item's session may be asleep. The same `--msg` adds anything to an open item later.
+Each open item gets its own intermediary session, and the commands show in the owner's Issues tab at once. Carry on, or end your turn: when the owner clicks **Done** your doorbell rings with their note. If the intermediary needs something from you it rings your doorbell too (orientation also says so): answer with `harness ask <id> --msg "..."`, never `SendMessage`, because the item's session may be asleep. The same `--msg` adds anything to an open item later; a command you learn later goes on it with `harness ask <id> --run "cmd"`, not into the thread as text.
 
 ## Blocks: comments and closing them
 

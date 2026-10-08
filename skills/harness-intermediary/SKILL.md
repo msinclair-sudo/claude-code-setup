@@ -180,8 +180,13 @@ a file); your own writing doesn't count. At least two lines of Checked must carr
 reference. And when the chain runs through more than one session, you must have asked one of them
 (`--to`) before you brief: dig, don't relay.
 
-`harness ask <id> --brief FILE` (or `-` with the text on stdin). Briefing again replaces the old
-one; do it whenever the owner says it isn't clear.
+Write the brief with the Write tool to `brief.md` in your scratch folder (your start prompt names
+it; it is the one place you can write), then `harness ask <id> --brief <that path>`. A heredoc is
+a redirection and inline text with backticks reads as command substitution, so your permissions
+refuse both (log 114). A long `--reply`, `--text` or `--draft` goes the same way: write it to a
+file in the scratch folder and pass the path. Briefing again replaces the old one; do it whenever
+the owner says it isn't clear. If an asker adds a command to an action item you have briefed, the
+item comes back to you: re-brief so the Commands section covers it.
 
 **Attach the evidence the owner should look at.** A screenshot is often the briefing's best
 paragraph. `harness ask <id> --evidence PATH --caption "what to look at in it"` copies the file

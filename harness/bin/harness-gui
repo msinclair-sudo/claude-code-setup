@@ -1803,8 +1803,10 @@ async function tick() {
     p.nodes.forEach(n => n._slug = p.slug);
     return '<div class="proj"><h2>' + esc(p.project) + '</h2>' +
       '<div class="repo">' + esc(p.repo) + '</div>' + haltBanner(p) +
-      // No side panel (owner, 2026-10-05): the tree and its side cards take the
-      // width. The charter is still edited with `harness charter`.
+      // The charter on the left (owner, 2026-10-08, restoring it): it is the
+      // project's scope, injected into every session's first prompt and read
+      // by the documenter, so the owner keeps it in view and current.
+      '<div class="cols"><div class="chartercol">' + charter(p) + '</div>' +
       '<div class="treecol">' +
       '<div class="ln q" style="margin:0 0 6px">click a task chip to read its brief ' +
       'and comment on it</div>' +
@@ -1816,7 +1818,7 @@ async function tick() {
                    : ' <span class="q">names no node</span>') +
           (o.at ? ' <span class="q">&middot; ' + esc(o.at) + '</span>' : '') +
           '</li>').join('') + '</ul>' : '') +
-      tree(p.nodes, intermCard(p) + docCard(p) + testCard(p)) + '</div></div>';
+      tree(p.nodes, intermCard(p) + docCard(p) + testCard(p)) + '</div></div></div>';
   }).join('');
   if (!d.projects.length) h += '<div class="empty">no enrolled projects on this machine</div>';
   paint(h);

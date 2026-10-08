@@ -933,7 +933,7 @@ border:1px solid var(--line);border-radius:3px;letter-spacing:.06em;text-transfo
   min-width:100%}
 .tspace>.tree{flex:1}
 .sidecol{width:240px;flex:none;padding-top:22px}
-.card.interm{display:block;max-width:none}
+.card.interm{display:block;max-width:none;overflow:hidden}
 .card.interm code{color:var(--busy);overflow-wrap:anywhere}
 .card.doc{margin-top:10px}
 .card.doc b.over{color:var(--warn)}
@@ -954,11 +954,11 @@ border-radius:5px;font:inherit;font-size:11px;padding:2px 6px}
 .card.doc .act{cursor:pointer;border-bottom:1px dotted currentColor}
 .card.interm a{color:var(--dim)}
 .card.interm a:hover{color:var(--ink)}
-.card.interm a.items{display:block;font-family:var(--serif);font-size:16px;font-weight:700;
-color:var(--ink);text-decoration:none;margin:2px 0 6px;padding:5px 9px;border-radius:9px;
-background:color-mix(in srgb,var(--s-idle) 10%,var(--panel))}
-.card.interm a.items:hover{background:color-mix(in srgb,var(--s-idle) 20%,var(--panel))}
-.card.interm a.items.yours{color:#ffd08a;background:color-mix(in srgb,#ffd08a 12%,var(--panel))}
+.card.interm a.hdr{text-decoration:none}
+.card.interm a.hdr:hover .nm{text-decoration:underline;text-underline-offset:3px}
+.card.interm .kd.items{font-style:normal;font-weight:700;font-size:13px;color:var(--ink)}
+.card.interm.owed .hdr{background:color-mix(in srgb,#ffd08a 22%,var(--panel))}
+.card.interm.owed .kd.items{color:#ffd08a}
 
 .ohead{background:var(--panel);border:1px solid var(--line);padding:6px 13px;
 margin-bottom:8px;display:flex;gap:14px;align-items:baseline}
@@ -1763,14 +1763,14 @@ function intermCard(p) {
         '<span class="ito" data-on="' + esc(a.waiting_on) + '"><b>' + esc(a.waiting_on) +
         '</b></span></div>').join('');
   const n = asks.length;
-  // The way into the Issues page, first in the box and big enough to hit
-  // (owner, 2026-10-08). Warm when any item waits on the owner; saying
-  // "yours" was redundant, every item on that page is theirs.
-  const ask = '<a class="items' + (yours ? ' yours' : '') + '" href="#issues">' +
-    (n ? n + ' open item' + (n === 1 ? '' : 's') : 'no open items') + ' &rarr;</a>';
-  return '<div class="card interm ' + cls + '" data-live="interm:' + esc(p.slug) + '">' +
-    '<div class="hdr"><span class="nm" title="' + esc(p.project) + '">' + esc(title(p.project)) +
-    '</span><span class="kd">intermediary</span></div>' + ask + who + '</div>';
+  // The header is the way into the Issues page (owner, 2026-10-08, option E):
+  // with items open it says how many where "intermediary" stood, and turns
+  // amber while any waits on the owner. No "yours"; every item there is theirs.
+  const kd = n ? n + ' open item' + (n === 1 ? '' : 's') : 'intermediary';
+  return '<div class="card interm ' + cls + (yours ? ' owed' : '') + '" data-live="interm:' +
+    esc(p.slug) + '"><a class="hdr" href="#issues" title="open the Issues page">' +
+    '<span class="nm" title="' + esc(p.project) + '">' + esc(title(p.project)) +
+    '</span><span class="kd' + (n ? ' items' : '') + '">' + kd + '</span></a>' + who + '</div>';
 }
 
 function tree(nodes, side) {

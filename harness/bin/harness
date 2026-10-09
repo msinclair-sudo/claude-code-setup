@@ -5089,6 +5089,16 @@ def baseline_summary(rep, base):
             f" ({known} known)")
 
 
+def code_ancestor(ctx, node):
+    """The nearest node above `node` that holds code, or None: document nodes
+    (`kind: doc`) never receive code, so they are passed over."""
+    nodes = ctx.tree["nodes"]
+    up = (nodes.get(node) or {}).get("parent")
+    while up and (nodes.get(up) or {}).get("kind") == "doc":
+        up = (nodes.get(up) or {}).get("parent")
+    return up
+
+
 def set_baseline(ctx, node, why):
     """Record the baseline from the report already stored at HEAD."""
     if not ctx.children(node):
@@ -5097,15 +5107,18 @@ def set_baseline(ctx, node, why):
         die(REFUSED, 'say why: harness check --set-baseline --why "..."')
     sha = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
     # One baseline serves every review in the tree, so it is set only at a
-    # commit the parent already holds (log 118: a lane-lead's re-baseline at a
-    # commit not in dev turned dev's reds "same" in its reviews of others).
-    parent = ctx.tree["nodes"].get(node, {}).get("parent")
-    if parent and ctx.rank(node) != 0:
-        pb = ctx.tree["nodes"].get(parent, {}).get("branch") or parent
+    # commit the nearest code ancestor already holds (log 118: a lane-lead's
+    # re-baseline at a commit not in dev turned dev's reds "same" in its reviews
+    # of others). A document node never receives code, so it is skipped: under
+    # a document root the highest code node is the code root and sets it at its
+    # own HEAD (log 131: dev could set it nowhere).
+    up = code_ancestor(ctx, node)
+    if up and ctx.rank(node) != 0:
+        pb = ctx.tree["nodes"].get(up, {}).get("branch") or up
         if git("merge-base", "--is-ancestor", sha, pb, cwd=ctx.worktree)[0]:
-            die(REFUSED, f"{sha[:8]} is not in {parent} yet. The baseline is the whole "
-                         f"tree's: set it at a commit {parent} holds\n           (after "
-                         f"it integrates you), or ask {parent} to set it.")
+            die(REFUSED, f"{sha[:8]} is not in {up} yet. The baseline is the whole "
+                         f"tree's: set it at a commit {up} holds\n           (after "
+                         f"it integrates you), or ask {up} to set it.")
     rep = read_check_report(ctx, node, sha)
     if rep is None:
         die(REFUSED, f"no check report at {sha[:8]} — run `harness check` first")
@@ -5294,7 +5307,8 @@ def print_check_report(rep, base):
              "PASS" if r.get("exit") == 0 else "FAIL")
         print(f"  {v}  {r['name']:<18} {r.get('seconds', 0):5.1f}s"
               + (f"   peak {fmt_mem(r['peakMemory'])}"
-                 + (f" of {fmt_mem(r['estimate'])} asked" if r.get("estimate") else "")
+                 + (f" of {fmt_mem(r['estimate'])} asked" if r.get("estimate") else
+                    " (no estimate: ran alone)")
                  + (f" (last runs: {', '.join(fmt_mem(x) for x in r['lastPeaks'] if x)})"
                     if len(r.get("lastPeaks") or []) > 1 else "")
                  if r.get("peakMemory") and not r.get("memoryKilled") else "")
@@ -5423,8 +5437,12 @@ def cmd_check(a):
         die(REFUSED, (f"unreadable --memory part(s): {', '.join(bad)}\n           " if bad else "")
             + (f"{len(missing)} test(s) need a memory estimate, the least each may need: "
                f"{', '.join(missing)}\n" + "\n".join(hist) + "\n" if missing else "")
+            + "           Estimates go on the command line, not in the manifest (its "
+              "`memory` field is retired):\n"
             + f"           e.g. --memory {','.join(sug)}"
-            + ("\n           (? = never run: give your own estimate)" if "?" in ",".join(sug) else ""))
+            + ("\n           arm=? = never run: it runs alone, uncapped, and its peak is "
+               "recorded for next time;\n           or give your own estimate"
+               if "?" in ",".join(sug) else ""))
     tests = {n: test_spec(est[n], (spec.get(n) or {}).get("threads"),
                           (spec.get(n) or {}).get("exclusive")) for n in want}
     sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
@@ -5559,6 +5577,12 @@ def job_tests(job):
 
 
 def test_spec(estimate, threads=1, exclusive=False):
+    """A test's place in the ledger. An estimate of None is a written `?` (log
+    130): never run, so it runs alone and uncapped, and its peak is recorded
+    for the next submission's suggestion."""
+    if estimate is None:
+        return {"estimate": None, "need": None, "ceiling": None,
+                "threads": max(1, int(threads or 1)), "exclusive": True, "state": "queued"}
     return {"estimate": estimate, "need": int(estimate * TEST_NEED),
             "ceiling": int(estimate * TEST_CEILING), "threads": max(1, int(threads or 1)),
             "exclusive": bool(exclusive), "state": "queued"}
@@ -5624,7 +5648,8 @@ def usage_suggest(ctx, key):
 
 
 def parse_estimates(spec, names):
-    """`--memory a=2G,b=500M` (or one SIZE for a single test) -> ({name: bytes}, bad)."""
+    """`--memory a=2G,b=500M` (or one SIZE for a single test) -> ({name: bytes}, bad).
+    `a=?` is a written "unknown": {a: None}, run alone and measured (log 130)."""
     out, bad = {}, []
     for part in [x.strip() for x in (spec or "").split(",") if x.strip()]:
         if "=" in part:
@@ -5633,6 +5658,9 @@ def parse_estimates(spec, names):
             k, v = names[0], part
         else:
             bad.append(part); continue
+        if v.strip() == "?" and k.strip() in names:
+            out[k.strip()] = None
+            continue
         b = parse_mem(v)
         if b is None or b <= 0 or k.strip() not in names:
             bad.append(part); continue
@@ -6169,7 +6197,13 @@ def testd_open(ctx, S, job):
             names = list(job_tests(job))
             o["checks"] = {c["name"]: c for c in checks if c["name"] in names}
             o["base"] = load_baseline(ctx)
-            o["holds"] = live_holds(ctx)
+            o["holds"] = []
+            for h in live_holds(ctx):
+                why = hold_exempt(ctx, job, h)
+                if why:
+                    log.write(f"hold on {h['path']} not applied: {why}\n")
+                else:
+                    o["holds"].append(h)
             job["total"] = len(names)
             log.write(f"{len(names)} check(s) at {job['sha'][:8]} in {o['wt']}\n")
         else:
@@ -6547,13 +6581,15 @@ def cmd_test(a):
         refuse_if_halted(ctx, "a new test job")
         node, _ = ctx.node()
         key = f"cmd:{shlex.join(cmd) if len(cmd) > 1 else cmd[0]}"
-        est = parse_mem(a.memory) if a.memory else None
-        if not est:
+        unknown = (a.memory or "").strip() == "?"
+        est = None if unknown else (parse_mem(a.memory) if a.memory else None)
+        if not est and not unknown:
             h = usage_for(ctx, key)
             die(REFUSED, "say how much memory it needs, the least it may: harness test --memory "
                          "SIZE -- <command>" + (f"\n           its last runs peaked at "
                          + ", ".join(fmt_mem(r.get('peak')) for r in h) if h else
-                         "\n           (never run: estimate it)"))
+                         "\n           (never run: estimate it, or --memory ? to run it alone, "
+                         "uncapped, and record its peak)"))
         sha = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
         rc, dirt, _ = git("status", "--porcelain", "--untracked-files=no", cwd=ctx.worktree)
         if dirt.strip():
@@ -12714,6 +12750,33 @@ def live_holds(ctx):
     return out
 
 
+def hold_exempt(ctx, job, hold):
+    """Why a hold `--until <task>` does not apply to this check job, or None.
+
+    The hold lifts when that task is signed off, and the sign-off rests on the
+    task's own check, so holding that check too was a cycle (log 132: the lane
+    and its lead ran the suite unrecorded to get round it). A job checks the
+    task's work when its commit contains a commit with the task's `Task:`
+    trailer (the lane's, or the lead's after integrating), or when the node
+    doing the task asked for it (a lane whose commits carry no trailer)."""
+    task = hold.get("until")
+    if not task or job.get("kind") != "check" or not job.get("sha"):
+        return None
+    rc, out, _ = git("log", job["sha"], "--fixed-strings", f"--grep=Task: {task}",
+                     "--format=%h%x09%(trailers:key=Task,valueonly,separator=;)",
+                     cwd=ctx.repo)
+    for line in (out.splitlines() if not rc else []):
+        h, _, vals = line.partition("\t")
+        if any(tkey(v.strip()) == tkey(task) for v in vals.split(";") if v.strip()):
+            return f"this commit carries {task} ({h})"
+    marks = open_marks(ctx)
+    rec = marks.get(task) or marks.get(tkey(task))
+    lane = (rec or {}).get("_node") or (load_brief(ctx, task)[1] or {}).get("node")
+    if lane and any((r or {}).get("node") == lane for r in job.get("requested_by") or []):
+        return f"{lane} asked for it, and {task} is its task"
+    return None
+
+
 def hold_catching(check, holds):
     """The hold that stops this check, or None. A check that declares `reads` is
     matched on those paths; one that does not, on its command text."""
@@ -16885,13 +16948,13 @@ def main():
                     help="the normal queue (the default for lanes)")
     ck.add_argument("--report", metavar="SHA", help="print a finished report for a commit")
     ck.add_argument("--memory", metavar="ARM=SIZE,...",
-                    help="each arm's memory estimate, the least it may need (required)")
+                    help="each arm's memory estimate, the least it may need (required; ARM=? for a never-run arm: alone, uncapped, measured)")
     tq = add("test", cmd_test)
     tq.add_argument("command", nargs=argparse.REMAINDER,
                     help="-- <command>: queue it to run in a copy of this commit")
     tq.add_argument("--cancel", metavar="ID|all")
     tq.add_argument("--memory", metavar="SIZE",
-                    help="with a command: its memory estimate, the least it may need (required)")
+                    help="with a command: its memory estimate, the least it may need (required; ? if never run)")
     tq.add_argument("--usage", nargs="?", const="", metavar="TEST",
                     help="the last runs' peak memory per test")
     tq.add_argument("--promote", metavar="ID",

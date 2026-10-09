@@ -573,6 +573,23 @@ class Hold(unittest.TestCase):
         (self.ctx.dir / "marks" / "job.json").write_text(json.dumps({"_node": "dev", "_closed_at": "x"}))
         self.assertEqual(hz.live_holds(self.ctx), [])
 
+    def test_a_hold_never_blocks_its_own_tasks_check(self):
+        # Log 132: a hold until layout-basis-marker skipped that task's own check,
+        # which its sign-off (and so the hold's lifting) rested on.
+        hold = {"path": "/fixture", "until": "layout-basis-marker"}
+        (self.ctx.dir / "marks" / "layout-basis-marker.json").write_text(
+            json.dumps({"_node": "dev_2"}))
+        job = lambda who: {"kind": "check", "sha": "abc", "requested_by": [{"node": who}]}
+        self.ctx.repo = self.ctx.dir
+        with mock.patch.object(hz, "git", return_value=(0, "1a2b\tlayout-basis-marker", "")):
+            self.assertIn("carries layout-basis-marker", hz.hold_exempt(self.ctx, job("dev"), hold))
+        # A trailer that only starts with the name is another task.
+        with mock.patch.object(hz, "git", return_value=(0, "1a2b\tlayout-basis-marker-2", "")):
+            self.assertIn("dev_2 asked", hz.hold_exempt(self.ctx, job("dev_2"), hold))
+            self.assertIsNone(hz.hold_exempt(self.ctx, job("dev_1"), hold))      # a sibling: held
+            self.assertIsNone(hz.hold_exempt(self.ctx, job("dev_2"), {"path": "/f", "until": ""}))
+            self.assertIsNone(hz.hold_exempt(self.ctx, dict(job("dev_2"), kind="cmd"), hold))
+
     def test_check_skips_a_held_arm(self):
         (self.ctx.dir / "holds" / "h.json").write_text(json.dumps(
             {"path": str(self.ctx.dir / "db"), "why": "live merge", "by": "dev", "until": ""}))
@@ -4324,6 +4341,21 @@ class TestQueue(unittest.TestCase):
         self.assertIn("big (jb) has waited", out)
         self.assertEqual(pick(900, 300)[0], ["small"])      # 2.5 against 2 x 1.5: the small goes
 
+    def test_a_never_run_test_runs_alone_uncapped_and_its_peak_is_kept(self):
+        # Log 130: --memory arm=? for an arm with no history.
+        self.needs_cgroups()
+        alloc = "python3 -c 'import time; x = bytearray(80 * 2**20); time.sleep(0.3)'"
+        span, _, jobs = self.ledger([("new", alloc, "?", False), ("old", "sleep 0.5", "64M", False)],
+                                    [["new", "old"]])
+        self.assertFalse(self.overlap(span, "new", "old"))
+        self.assertTrue(all(j["state"] == "done" for j in jobs))
+        rep = json.loads(hz.shared_report_path(self.ctx, self.sha).read_text())
+        r = {x["name"]: x for x in rep["checks"]}
+        self.assertFalse(r["new"]["memoryKilled"])
+        self.assertGreater(r["new"]["peakMemory"], 80 * 2**20)
+        self.assertGreater(hz.usage_for(self.ctx, "new")[-1]["peak"], 80 * 2**20)
+        self.assertEqual(hz.usage_suggest(self.ctx, "new"), hz.fmt_mem(r["new"]["peakMemory"]))
+
     def test_twice_the_estimate_kills_and_spill_below_that_runs_on(self):
         self.needs_cgroups()
         alloc = "python3 -c 'import time; x = bytearray({} * 2**20); time.sleep(0.3)'"
@@ -4364,6 +4396,11 @@ class TestQueue(unittest.TestCase):
         self.assertEqual((est, bad), ({"a": 2 * 2**30, "b": 500 * 2**20}, ["c=x"]))
         self.assertEqual(hz.parse_estimates("1G", ["only"])[0], {"only": 2**30})
         self.assertEqual(hz.parse_estimates("1G", ["a", "b"])[1], ["1G"])
+        # Log 130: a written ? is a never-run arm: alone, uncapped, measured.
+        self.assertEqual(hz.parse_estimates("a=?, b=1G", ["a", "b"]), ({"a": None, "b": 2**30}, []))
+        self.assertEqual(hz.parse_estimates("z=?", ["a"])[1], ["z=?"])
+        u = hz.test_spec(None, 2)
+        self.assertEqual((u["need"], u["ceiling"], u["exclusive"], u["threads"]), (None, None, True, 2))
         t = hz.test_spec(2**30)
         self.assertEqual((t["need"], t["ceiling"]), (int(1.2 * 2**30), 2 * 2**30))
 
@@ -4599,6 +4636,30 @@ class LogEntries92to102(unittest.TestCase):
              self.assertRaises(SystemExit):
             hz.set_baseline(self.ctx, "dev", "start")
         self.assertIn("A baseline needs every arm run", sys.stderr.getvalue())
+
+    def test_the_code_root_under_a_document_main_sets_the_baseline(self):
+        # Log 131: main is kind doc and never holds dev's code, so the 118 guard
+        # (a commit the parent holds) left dev nowhere to set it.
+        ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev", "dev_1a": "dev_1"})
+        ctx.tree["nodes"]["main"]["kind"] = "doc"
+        ctx.worktree = ctx.dir
+        self.assertIsNone(hz.code_ancestor(ctx, "dev"))
+        self.assertEqual(hz.code_ancestor(ctx, "dev_1a"), "dev_1")
+        rep = hz.make_check_report("dev", "abc", [{"name": "a", "exit": 0}], 0, None)
+        calls = []
+
+        def git(*args, **kw):
+            calls.append(args[0])
+            return (1, "", "") if args[0] == "merge-base" else (0, "abc", "")
+        with mock.patch.object(hz, "git", side_effect=git), \
+             mock.patch.object(hz, "read_check_report", return_value=rep), \
+             mock.patch("sys.stdout", io.StringIO()):
+            hz.set_baseline(ctx, "dev", "surface reds fixed")
+            self.assertNotIn("merge-base", calls)                    # no guard at the code root
+            self.assertEqual(hz.load_baseline(ctx)["sha"], "abc")
+            with self.assertRaises(SystemExit):
+                hz.set_baseline(ctx, "dev_1", "not in dev")          # 118 still holds below it
+        self.assertIn("is not in dev yet", sys.stderr.getvalue())
 
     def test_an_old_hold_is_asked_about(self):
         (self.ctx.dir / "holds").mkdir()

@@ -188,6 +188,6 @@ A side card beside the intermediary's shows:
 - Trigger frequency, and the per-pass token cap.
 - Model and effort per job. Clarity likely needs the strongest model; the stale-doc job probably
   doesn't.
-- Whether to bring the harness's own docs (`michaels_setup`) into scope later.
+- Whether to bring the harness's own docs (`setup`) into scope later.
 - Whether orientation should name the governing doc from the area map when a lane's task touches
   that area. This fixes reach directly, instead of relying on someone reading `CLAUDE.md` closely.

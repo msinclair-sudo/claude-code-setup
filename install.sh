@@ -61,7 +61,7 @@ done
 
 show_help() {
     cat <<'EOF'
-Usage: bash michaels_setup/install.sh [OPTIONS]
+Usage: bash setup/install.sh [OPTIONS]
 
 Installs Claude Code configuration: general skills, statusline,
 global permissions, and CLAUDE.md. The Obsidian vault MCP server and its
@@ -110,22 +110,22 @@ Options:
   -h, --help            Show this help message and exit.
 
 Examples:
-  bash michaels_setup/install.sh
+  bash setup/install.sh
       Install general skills + statusline. No vault MCP.
 
-  bash michaels_setup/install.sh --vault_root
+  bash setup/install.sh --vault_root
       Full install. Resolves vault path from config.yaml.
 
-  bash michaels_setup/install.sh --vault_root "/mnt/c/Users/Me/Vault"
+  bash setup/install.sh --vault_root "/mnt/c/Users/Me/Vault"
       Full install using the explicit vault path.
 
-  bash michaels_setup/install.sh --biblion
+  bash setup/install.sh --biblion
       Install skills, then register the biblion MCP server (user scope).
 
-  bash michaels_setup/install.sh --prune
+  bash setup/install.sh --prune
       Install, then remove installer-deployed skills the repo no longer has.
 
-  bash michaels_setup/install.sh --vault_root --prune --yes
+  bash setup/install.sh --vault_root --prune --yes
       Full install, prune retired skills (vault ones included), no prompt.
 
 Requirements:
@@ -178,7 +178,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo "ERROR: Unknown option: $1" >&2
-            echo "Run 'bash michaels_setup/install.sh --help' for usage." >&2
+            echo "Run 'bash setup/install.sh --help' for usage." >&2
             exit 1
             ;;
     esac
@@ -244,7 +244,7 @@ for path in candidates:
         echo "ERROR: A vault root is required to install the MCP, but none was found." >&2
         if [[ ! -f "$CONFIG_FILE" ]]; then
             echo "  config.yaml does not exist, and no path was given to --vault_root." >&2
-            echo "    cp michaels_setup/config.example.yaml michaels_setup/config.yaml  (then edit it)" >&2
+            echo "    cp setup/config.example.yaml setup/config.yaml  (then edit it)" >&2
         else
             echo "  config.yaml specifies no vault_root* path that exists on this machine." >&2
         fi

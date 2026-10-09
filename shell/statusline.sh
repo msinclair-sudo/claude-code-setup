@@ -7,7 +7,7 @@
 # Each row is 50 chars wide (1% per char) so together they give 1%
 # resolution across the full 0-100% range.
 # Line 5: harness tree position (only in an enrolled repo; absent otherwise —
-# see michaels_setup/harness/statusline-snippet.py, inlined here to avoid a
+# see setup/harness/statusline-snippet.py, inlined here to avoid a
 # runtime dependency on the harness CLI being installed).
 input=$(cat)
 

@@ -4287,6 +4287,43 @@ class TestQueue(unittest.TestCase):
         self.assertGreaterEqual(span["s2"][0], span["big"][0])   # it has waited: it goes first
         self.assertIn("nothing else starts until it does", out)
 
+    def test_a_waiting_test_outweighs_a_fitting_one_only_once_it_has_waited_enough(self):
+        # Owner, 2026-10-09: tests keep being added while they fit, weighted by
+        # how long they've waited; sometimes the waiting one goes first even
+        # though a newer one fits.
+        M = 2**20
+        running = {("r", "s1"): {"need": 307 * M, "threads": 1, "alone": False,
+                                 "node": "x", "name": "s1",
+                                 "thread": mock.Mock(is_alive=lambda: True)}}
+
+        def pick(big_wait, small_wait):
+            now = time.time()
+            jobs = [{"id": "jb", "kind": "check", "t": now - big_wait, "requested_by": [],
+                     "tests": {"big": hz.test_spec(500 * M)}},
+                    {"id": "js", "kind": "check", "t": now - small_wait, "requested_by": [],
+                     "tests": {"small": hz.test_spec(256 * M)}}]
+            S = {"open": {}, "running": dict(running), "slot": object(), "said": ""}
+            started = []
+            with mock.patch.object(hz, "testq_jobs", return_value=jobs), \
+                 mock.patch.object(hz, "test_pool", return_value=(700 * M, 8)), \
+                 mock.patch.object(hz, "arm_seconds", return_value={}), \
+                 mock.patch.object(hz, "test_seconds", return_value=None), \
+                 mock.patch.object(hz, "slot_tickets", return_value=[]), \
+                 mock.patch.object(hz, "halted", return_value=False), \
+                 mock.patch.object(hz, "testd_ledger"), \
+                 mock.patch.object(hz, "TEST_STARVE", 600), \
+                 mock.patch.object(hz, "testd_start",
+                                   side_effect=lambda c, S, j, n, *a: started.append(n)), \
+                 mock.patch("sys.stdout", io.StringIO()) as out:
+                hz.testd_tick(self.ctx, S)
+            return started, out.getvalue()
+
+        self.assertEqual(pick(300, 0)[0], ["small"])        # 1.5 against 2 x 1: it fits, it goes
+        started, out = pick(900, 0)                         # 2.5 against 2 x 1: held for big
+        self.assertEqual(started, [])
+        self.assertIn("big (jb) has waited", out)
+        self.assertEqual(pick(900, 300)[0], ["small"])      # 2.5 against 2 x 1.5: the small goes
+
     def test_twice_the_estimate_kills_and_spill_below_that_runs_on(self):
         self.needs_cgroups()
         alloc = "python3 -c 'import time; x = bytearray({} * 2**20); time.sleep(0.3)'"

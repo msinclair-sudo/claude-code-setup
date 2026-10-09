@@ -5460,12 +5460,18 @@ TESTQ_FREE_GB = 5               # the disk a job needs before it copies anything
 # pool of 80% of the memory WSL2 is given. The pool is soft: it counts
 # reservations and never kills, so use may spill over it while reservations
 # keep the total in bounds. Each test is killed only above twice its estimate.
-# Tests from every job are packed into the pool, oldest first, smaller ones
-# backfilling, until the oldest has waited TEST_STARVE without fitting.
+# Tests from every job keep being added while they fit. Which goes next is
+# weighed (owner, 2026-10-09): each queued test scores by how long it has
+# waited, 1 + wait/TEST_STARVE, and one that fits now scores TEST_FIT_BONUS
+# times that. The best score starts. If the best is a test that doesn't fit,
+# nothing passes it and the room drains for it: so a fresh test that fits goes
+# ahead of an old one that doesn't, until the old one has waited long enough
+# (about TEST_STARVE past the newcomer's wait) to be worth more.
 TEST_POOL_SHARE = 0.8
 TEST_NEED = 1.2
 TEST_CEILING = 2.0
 TEST_STARVE = 600
+TEST_FIT_BONUS = 2.0
 TEST_HISTORY = 5                # runs kept per test, shown to its next submitter
 RUNS_HOME = Path.home() / ".cache" / "harness" / "runs"
 ASK_SCRATCH = Path.home() / ".cache" / "harness" / "asks"     # item sessions write here (log 114)
@@ -5986,7 +5992,7 @@ def _testd_loop(ctx):
     except Exception:
         pass
     testq_recover(ctx)
-    S = {"open": {}, "running": {}, "head": (None, 0.0), "slot": None, "told": 0.0,
+    S = {"open": {}, "running": {}, "slot": None, "told": 0.0,
          "said": ""}
 
     def on_term(signum, frame):
@@ -6065,41 +6071,66 @@ def testd_tick(ctx, S):
         j = S["open"][j["id"]]["job"] if j["id"] in S["open"] else j
         if j.get("kind") == "check" and not j.get("tests") and not j.get("arms"):
             j["_names"] = job_arm_names(ctx, None)      # a full check queued before estimates
-        names = [n for n, t in job_tests(j).items() if t.get("state") == "queued"]
-        names.sort(key=lambda n: -(test_seconds(ctx, j, n) or times.get(n) or 0))  # longest first
-        order += [(j, n) for n in names]
-    if not order:
-        return
-    blocked = False
-    for j, name in order:
-        t = job_tests(j)[name]
+        order += [(j, n) for n, t in job_tests(j).items() if t.get("state") == "queued"]
+    now = time.time()
+    while order:
         run = S["running"]
         reserved = sum(r["need"] for r in run.values())
         used = sum(r["threads"] for r in run.values())
-        alone = t.get("need") is None or t.get("exclusive") or t["need"] > pool
-        node = (j.get("requested_by") or [{}])[0].get("node") or "operator"
-        clash = any(r["node"] == node and r["name"] == name for r in run.values())
-        fits = not run or (not alone and not any(r["alone"] for r in run.values())
-                           and not clash and reserved + t["need"] <= pool
-                           and used + t["threads"] <= cores)
-        if fits:
-            if not run and S["slot"] is None:
-                S["slot"] = _flock(testq_dir(ctx) / "slot.lock", block=False)
-                if S["slot"] is None:
-                    _say(S, "waiting for the test slot (harness slot holds it)")
-                    return
-            testd_start(ctx, S, j, name, reserved, pool, used, cores)
-            continue
-        if not blocked:
-            # The oldest test that doesn't fit: once it has waited TEST_STARVE
-            # like this, smaller ones stop backfilling past it.
-            blocked = True
-            if S["head"][0] != (j["id"], name):
-                S["head"] = ((j["id"], name), time.time())
-            if time.time() - S["head"][1] >= TEST_STARVE:
-                _say(S, f"{name} ({j['id']}) has waited {human_age(time.time() - S['head'][1])} "
-                        f"as the oldest that doesn't fit: nothing else starts until it does")
+        best = hold = None
+        for j, name in order:
+            t = job_tests(j)[name]
+            alone = t.get("need") is None or t.get("exclusive") or t["need"] > pool
+            node = (j.get("requested_by") or [{}])[0].get("node") or "operator"
+            clash = any(r["node"] == node and r["name"] == name for r in run.values())
+            fits = not run or (not alone and not any(r["alone"] for r in run.values())
+                               and not clash and reserved + t["need"] <= pool
+                               and used + t["threads"] <= cores)
+            w = test_weight(j, now)
+            # Ties (tests of one job share a wait) go to the best fit, the one
+            # filling most of the room, then the longest-running.
+            key = (w * TEST_FIT_BONUS if fits else w, t.get("need") or 0,
+                   test_seconds(ctx, j, name) or times.get(name) or 0)
+            if fits:
+                if best is None or key > best[0]:
+                    best = (key, j, name)
+            elif not clash and (hold is None or key > hold[0]):
+                # A clash waits on its own earlier run, not on room: holding
+                # the pool for it would gain it nothing.
+                hold = (key, j, name)
+        if hold and (best is None or hold[0] > best[0]):
+            _, j, name = hold
+            if run:
+                _say(S, f"{name} ({j['id']}) has waited "
+                        f"{human_age(now - test_queued_at(j))} and outweighs anything that "
+                        f"fits: nothing else starts until it does")
+            return
+        if best is None:
+            return
+        _, j, name = best
+        if not run and S["slot"] is None:
+            S["slot"] = _flock(testq_dir(ctx) / "slot.lock", block=False)
+            if S["slot"] is None:
+                _say(S, "waiting for the test slot (harness slot holds it)")
                 return
+        testd_start(ctx, S, j, name, reserved, pool, used, cores)
+        order.remove((j, name))
+
+
+def test_queued_at(job):
+    return job.get("t") or _epoch(job.get("at")) or time.time()
+
+
+def test_weight(job, now):
+    """How much a queued test's wait counts: 1, growing by one every
+    TEST_STARVE. An integration job starts TEST_STARVE ahead, so it is drained
+    for sooner, without stopping the pool for it outright."""
+    wait = max(0.0, now - test_queued_at(job))
+    if job.get("queue") == "priority":
+        wait += TEST_STARVE
+    if TEST_STARVE <= 0:
+        return float("inf") if wait > 0 else 1.0
+    return 1 + wait / TEST_STARVE
 
 
 def testd_open(ctx, S, job):

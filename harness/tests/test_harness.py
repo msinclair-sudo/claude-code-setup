@@ -274,6 +274,36 @@ class Reorder(unittest.TestCase):
             hz.cmd_queue(a)
         self.assertEqual(e.exception.code, hz.REFUSED)
 
+    def test_a_lead_orders_anywhere_below_it(self):
+        # Owner, 2026-10-09: dev orders the lanes under its sub-lead dev_tests,
+        # and dev_tests is rung, since its child's order changed under it. A
+        # sibling lead may not.
+        class Deep(FakeCtx):
+            def rank(self, node):
+                p = self.tree["nodes"][node]["parent"]
+                return 0 if not p else 1 + self.rank(p)
+        ctx = Deep({"main": None, "dev": "main", "dev_1": "dev",
+                    "dev_tests": "dev", "dev_tests_1": "dev_tests"})
+        (ctx.dir / "briefs").mkdir()
+        for i, t in enumerate(["a", "b"]):
+            (ctx.dir / "briefs" / f"{t}.json").write_text(json.dumps(
+                {"task": t, "node": "dev_tests_1", "seq": i}))
+        ctx.me = "dev"
+        a = mock.Mock(order="b,a", node="dev_tests_1", why="b unblocks dev_1")
+        with mock.patch.object(hz, "Ctx", return_value=ctx), \
+             mock.patch.object(hz, "ring_report", return_value="r"), \
+             mock.patch("sys.stdout", new_callable=io.StringIO):
+            hz.cmd_queue(a)
+        self.assertEqual([b["task"] for b in hz.queue(ctx, "dev_tests_1")], ["b", "a"])
+        rung = list((ctx.dir / "doorbell" / "dev_tests" / "inbox").glob("*.json"))
+        self.assertEqual(len(rung), 1)
+        self.assertIn("b → a", json.loads(rung[0].read_text())["text"])
+        ctx.me = "dev_1"
+        with mock.patch.object(hz, "Ctx", return_value=ctx), \
+             self.assertRaises(SystemExit) as e:
+            hz.cmd_queue(a)
+        self.assertEqual(e.exception.code, hz.REFUSED)
+
 
 class Reparent(unittest.TestCase):
     def test_moving_a_part_needs_move(self):

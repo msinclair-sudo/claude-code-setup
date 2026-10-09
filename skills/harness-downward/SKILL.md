@@ -86,7 +86,7 @@ harness queue dev_1                 # one node
 harness queue dev_1 --order a,b,c --why "..."   # --why always required; unnamed keep their place behind
 ```
 
-Order briefs deliberately; an unordered backlog makes the member choose its own work. Rank 0 may reorder any queue, with a reason shown in `harness queue`. You may change it back, but must say why.
+Order briefs deliberately; an unordered backlog makes the member choose its own work. You may order any queue below you, including a sub-lead's and its lanes'; ordering past a sub-lead rings it with the new order and your reason. Rank 0, or a lead above you, may reorder your children's queues, with a reason shown in `harness queue`. You may change it back, but must say why.
 
 Couple two tasks into one session only when shared context is the point:
 

@@ -9619,12 +9619,13 @@ def cmd_queue(a):
         # granted where writing a grandchild's brief cannot. A brief written past
         # a lead skips the translation that rank exists to perform, and rebuilds
         # the drip feed one rank down. Reordering changes no brief's text: it
-        # says which of them matters first, and what matters is rank 0's — it
-        # holds the charter and it is the one talking to the operator.
-        if not own and ctx.rank(me) != 0:
-            die(REFUSED, f"'{me}' does not order '{target}'s queue. A lead orders "
-                         f"its CHILDREN's;\n           rank 0 orders anywhere in "
-                         f"the tree.")
+        # says which of them matters first. Rank 0 orders anywhere; any lead
+        # orders anywhere below it, sub-leads' queues and their lanes' included
+        # (owner, 2026-10-09: dev could reorder dev_1 but not dev_tests' lanes).
+        below = target in subtree(ctx, me)
+        if not (own or below or ctx.rank(me) == 0):
+            die(REFUSED, f"'{target}' is not below '{me}'. A lead orders any queue "
+                         f"below it;\n           rank 0 orders anywhere in the tree.")
         # Every reorder says why (obs 21). Once a task opens it leaves the queue
         # and its order record becomes unwritable, so an optional reason is one
         # nobody can add later.
@@ -9683,8 +9684,16 @@ def cmd_queue(a):
             print(f"  overrides {above[0]}'s ordering: {a.why}")
             print(f"  '{above[0]}' reads this queue and will see it.")
         elif not own:
+            # The lead skipped over is told now: it may be about to brief or
+            # reorder that queue on the old understanding.
+            line = " → ".join(b["task"] for b in queue(ctx, target)
+                              if not b.get("coupled_to"))
+            ring_inbox(ctx.state, parent, me,
+                       f"{me} reordered {target}'s queue: {line}. Why: {a.why}. "
+                       f"No brief's text changed; if you know a dependency this "
+                       f"breaks, reorder it back with a reason.")
             print(f"  ordered by {me}, past {parent}: {a.why}")
-            print(f"  '{parent}' sees it at its next `harness queue`. It changes no "
+            print(f"  rang {parent}: {ring_report(ctx, parent)}. It changes no "
                   f"brief's text —\n  if the work itself should change, that is "
                   f"{parent}'s rewrite, not this.")
         return
@@ -16820,7 +16829,7 @@ def main():
     qu.add_argument("--why", metavar="TEXT",
                     help="required when rank 0 reorders past a lead")
     qu.add_argument("--order", metavar="A,B,C",
-                    help="set the order of a child's queue; unnamed keep their place behind")
+                    help="set the order of a queue below you (any depth); unnamed keep their place behind")
     ck = add("check", cmd_check)
     ck.add_argument("--timeout", type=int, default=900, metavar="SEC",
                     help="per-check timeout (default 900); a check's own \"timeout\" key "

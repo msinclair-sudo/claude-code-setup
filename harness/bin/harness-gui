@@ -187,6 +187,9 @@ def tests_queue(pdir, repo):
                     "sha": (j.get("sha") or "")[:8], "command": (j.get("command") or "")[:60],
                     "who": [r.get("node") for r in j.get("requested_by") or []],
                     "arm": j.get("arm"), "done": j.get("done_arms"), "total": j.get("total"),
+                    "running_arms": [dict(r, mem=CLI.fmt_mem(r["mem"]) if r.get("mem") else None,
+                                          cap=CLI.fmt_mem(r["cap"]) if r.get("cap") else None)
+                                     for r in j.get("running_arms") or []],
                     "arms": j.get("arms"), "queue": j.get("queue") or "normal",
                     "eta": CLI.testq_wait_estimate(c, j),
                     "over": CLI.testq_overdue(c, j),
@@ -1735,7 +1738,12 @@ function testCard(p) {
     : esc(n)).join(', ');
   const head = run
     ? '<div class="ln">running: ' + tag(run) + who(run, true) + ' &middot; ' + what(run) +
-      (run.total ? ' &middot; arm ' + ((run.done || 0) + 1) + '/' + run.total +
+      // Arms side by side (2026-10-09): how many, each with its memory and cap.
+      (run.running_arms && (run.running_arms.length > 1 || run.running_arms.some(r => r.cap))
+        ? ' &middot; ' + run.running_arms.length + ' arms side by side, ' + (run.done || 0) + '/' +
+          run.total + ' done <span class="q">' + run.running_arms.map(r => esc(r.arm) +
+            (r.mem ? ' ' + esc(r.mem) : '') + (r.cap ? '/' + esc(r.cap) : '')).join(', ') + '</span>'
+        : run.total ? ' &middot; arm ' + ((run.done || 0) + 1) + '/' + run.total +
         (run.arm ? ' <span class="q">' + esc(run.arm) + '</span>' : '') : '') +
       ' &middot; ' + esc(run.since || '') +
       (run.over ? ' &middot; <b class="over">over its estimate by ' + dur(run.over) + '</b>'

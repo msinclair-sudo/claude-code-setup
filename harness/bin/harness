@@ -9,7 +9,7 @@ up holding one node, which is the failure the lock exists to prevent.
 This tool does no reasoning. The agent gathers liveness with ListAgents and
 passes it in; this only asserts, derives and writes atomically.
 """
-import argparse, datetime, difflib, fnmatch, gzip, hashlib, json, os, re, shlex, shutil, socket, subprocess, sys, time
+import argparse, datetime, difflib, fnmatch, gzip, hashlib, json, os, re, shlex, shutil, socket, subprocess, sys, threading, time
 from pathlib import Path
 
 OK, CONTRACT, NOT_ENROLLED, REFUSED, MISMATCH = 0, 2, 3, 4, 5
@@ -4436,39 +4436,140 @@ def _tail(path, n=2000):
         return ""
 
 
-def run_arm(command, cwd, limit, outf, errf, env=None):
+# Memory caps on test arms (owner, 2026-10-09): every arm runs in its own
+# transient cgroup scope, so the kernel enforces a cap and the harness reads the
+# arm's true peak. systemd's default for a scope is to stop it on an OOM kill and
+# remove it at once, which loses the numbers (measured), so the scope keeps
+# going (OOMPolicy=continue) and a wrapper inside it writes its own cgroup's
+# peak and oom_kill count to a file just before it exits.
+_MEM_UNITS = {"K": 2**10, "M": 2**20, "G": 2**30, "T": 2**40}
+_ARM_WRAP = ('sh -c "$1"; rc=$?; d=/sys/fs/cgroup$(sed -n "s/^0:://p" /proc/$$/cgroup); '
+             '{ cat "$d/memory.peak"; grep "^oom_kill " "$d/memory.events"; } > "$2" '
+             '2>/dev/null; exit $rc')
+_CGROUP = [None]       # (usable, why not), probed once per process
+
+
+def parse_mem(v):
+    """'3G', '512M', '1.5G' or bytes -> bytes; None when absent or unreadable."""
+    if v is None or v == "":
+        return None
+    if isinstance(v, (int, float)):
+        return int(v)
+    m = re.fullmatch(r"\s*([\d.]+)\s*([KMGT])?i?B?\s*", str(v), re.I)
+    if not m:
+        return None
+    return int(float(m.group(1)) * _MEM_UNITS.get((m.group(2) or "").upper(), 1))
+
+
+def fmt_mem(b):
+    if b is None:
+        return "?"
+    return f"{b / 2**30:.1f}G" if b >= 2**30 else f"{max(1, round(b / 2**20))}M"
+
+
+def mem_available():
+    """MemAvailable, in bytes (0 when unreadable)."""
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) * 1024
+    except OSError:
+        pass
+    return 0
+
+
+def cgroup_caps():
+    """Can arms run in their own memory-capped cgroup here? (ok, why not). The
+    runner is detached, so whether it reaches the user's systemd is asked of
+    systemd-run itself, once."""
+    if _CGROUP[0] is None:
+        try:
+            r = subprocess.run(["systemd-run", "--user", "--scope", "-q", "-p", "MemoryMax=64M",
+                                "--", "true"], capture_output=True, text=True, timeout=20)
+            ok = r.returncode == 0
+            why = "" if ok else ((r.stderr or r.stdout).strip()[:160] or f"exit {r.returncode}")
+        except Exception as e:
+            ok, why = False, f"systemd-run: {e}"[:160]
+        _CGROUP[0] = (ok, why)
+    return _CGROUP[0]
+
+
+def _cg_current(pid):
+    try:
+        rel = Path(f"/proc/{pid}/cgroup").read_text().split("::", 1)[1].strip()
+        if rel.endswith(".scope"):
+            return int(Path(f"/sys/fs/cgroup{rel}/memory.current").read_text())
+    except (OSError, IndexError, ValueError):
+        pass
+    return None
+
+
+def run_arm(command, cwd, limit, outf, errf, env=None, cap=None, meter=None):
     """One arm under `sh -c`, streamed to disk so a timeout keeps what it printed.
 
     `subprocess.run(timeout=)` threw the output away with the process, so an arm
     that ran twenty files and hung on the twenty-first reported nothing (obs 69).
     Its own process group, so a timeout kills the whole arm, not just `sh`.
+    Where cgroups can be used it runs in its own scope, capped at `cap` bytes
+    (none: no cap), and `meter` (a dict) gets `current` while it runs, then
+    `peak` and `oom` (killed for going over the cap).
     Returns (exit, stdout tail, stderr tail, timed_out)."""
     outf.parent.mkdir(parents=True, exist_ok=True)
+    meter = meter if meter is not None else {}
+    stats = outf.with_name(outf.name + ".mem")
+    argv = ["sh", "-c", command]
+    if cgroup_caps()[0]:
+        stats.unlink(missing_ok=True)
+        argv = ["systemd-run", "--user", "--scope", "-q",
+                "-p", f"MemoryMax={cap if cap else 'infinity'}", "-p", "MemorySwapMax=0",
+                "-p", "OOMPolicy=continue", "--", "sh", "-c", _ARM_WRAP, "_", command, str(stats)]
     try:
         with open(outf, "wb") as o, open(errf, "wb") as e:
-            pr = subprocess.Popen(["sh", "-c", command], cwd=str(cwd), stdout=o, stderr=e,
+            pr = subprocess.Popen(argv, cwd=str(cwd), stdout=o, stderr=e,
                                   stdin=subprocess.DEVNULL, start_new_session=True, env=env)
-            _ARM[0] = pr.pid
-            if _ARM_HOOK[0]:
-                _ARM_HOOK[0](pr.pid)
+            with _ARMS_LOCK:
+                _ARMS.add(pr.pid)
+                if _ARM_HOOK[0]:
+                    _ARM_HOOK[0](sorted(_ARMS))
+            end = time.time() + limit if limit else None
             try:
-                code = pr.wait(timeout=limit)
-                timed_out = False
-            except subprocess.TimeoutExpired:
-                # The whole tree, not the group: a runner that setsid's its
-                # children leaves them out of the group (obs 80).
-                kill_tree(pr.pid)
-                pr.wait()
-                code, timed_out = 124, True
+                while True:
+                    try:
+                        code = pr.wait(timeout=1 if end is None else max(0.05, min(1, end - time.time())))
+                        timed_out = False
+                        break
+                    except subprocess.TimeoutExpired:
+                        cur = _cg_current(pr.pid)
+                        if cur is not None:
+                            meter["current"] = cur
+                        if end is not None and time.time() >= end:
+                            # The whole tree, not the group: a runner that setsid's
+                            # its children leaves them out of the group (obs 80).
+                            kill_tree(pr.pid)
+                            pr.wait()
+                            code, timed_out = 124, True
+                            break
             finally:
-                _ARM[0] = None
+                with _ARMS_LOCK:
+                    _ARMS.discard(pr.pid)
+                    if _ARM_HOOK[0]:
+                        _ARM_HOOK[0](sorted(_ARMS))
     except Exception as ex:
         return 125, "", str(ex), False
+    try:
+        st = stats.read_text().split()
+        meter["peak"] = int(st[0])
+        meter["oom"] = int(st[st.index("oom_kill") + 1]) > 0
+    except (OSError, ValueError, IndexError):
+        pass
+    stats.unlink(missing_ok=True)
+    meter.pop("current", None)
     return code, _tail(outf), _tail(errf), timed_out
 
 
-_ARM = [None]          # the arm running now, for a signal handler to kill
-_ARM_HOOK = [None]     # told each arm's pid as it starts (the queue records it on the job)
+_ARMS = set()          # the arms running now, for a signal handler to kill
+_ARMS_LOCK = threading.Lock()
+_ARM_HOOK = [None]     # told the running arms' pids whenever they change (the queue records them)
 _CANCEL = [False]      # set by `harness test --cancel` on the running job
 
 
@@ -4651,46 +4752,116 @@ def set_baseline(ctx, node, why):
           f"{sum(v['failed'] for v in base['arms'].values())} arm(s)")
 
 
+TEST_MEMORY_SHARE = 0.6     # of free memory the parallel arms may hold together
+
+
+def test_budget(ctx):
+    """The manifest's parallel budget: (share of MemAvailable, cores)."""
+    try:
+        m = json.loads((Path(ctx.repo) / ".harness" / "manifest.json").read_text())
+    except Exception:
+        m = {}
+    try:
+        share = float(m.get("test_memory_share") or TEST_MEMORY_SHARE)
+    except (TypeError, ValueError):
+        share = TEST_MEMORY_SHARE
+    try:
+        cores = int(m.get("test_cores") or 0)
+    except (TypeError, ValueError):
+        cores = 0
+    return min(max(share, 0.05), 0.95), cores or max(1, (os.cpu_count() or 2) - 2)
+
+
+def _arm_env(env, name):
+    """Each arm its own scratch and TMPDIR, so arms side by side never share a
+    file (parallel arms, owner 2026-10-09). Same variable names as before."""
+    if not env or "HARNESS_TEST_SCRATCH" not in env:
+        return env
+    safe = re.sub(r"[^\w.-]", "_", name)
+    sc, tmp = Path(env["HARNESS_TEST_SCRATCH"]) / safe, Path(env.get("TMPDIR") or
+                                                           env["HARNESS_TEST_SCRATCH"]) / safe
+    sc.mkdir(parents=True, exist_ok=True)
+    tmp.mkdir(parents=True, exist_ok=True)
+    return dict(env, HARNESS_TEST_SCRATCH=str(sc), TMPDIR=str(tmp))
+
+
 def run_arms(ctx, node, sha, cwd, checks, base, timeout, report, env=None, progress=None):
-    """Every arm, in order, never stopping at a failure (I5). Prints as it goes;
-    returns (rows, failed). `progress(i, arm)` is told before each arm."""
+    """Every arm, never stopping at a failure (I5). Prints as each ends; returns
+    (rows in manifest order, failed). `progress(done, arm, running, finished)`
+    is told whenever an arm starts or ends.
+
+    Arms the manifest gives a `memory` cap run side by side (owner, 2026-10-09),
+    longest first, each started only while the caps of the arms running plus its
+    own fit within a share of free memory and their `threads` fit the cores; one
+    larger than the whole budget runs alone. Arms without a cap then run one at
+    a time, alone, as they always did. Every arm runs in its own capped cgroup
+    where that is possible, and its peak memory goes in its row."""
     holds = live_holds(ctx)
-    rows, failed = [], 0
-    for i, c in enumerate(checks):
-        if _CANCEL[0]:
-            print(f"  cancelled before {c['name']}")
-            break
-        limit = c.get("timeout") or timeout             # per-check ceiling (obs 24)
-        outf, errf = check_output_paths(ctx, node, c["name"])
+    rows, failed = {}, 0
+    todo = []
+    for c in checks:
         c = dict(c, reads=check_reads(c, cwd, env))
         h = hold_catching(c, holds)
         if h:
             why = f"{h['why']} — {h['by']}" + (f", until {h['until']}" if h.get("until") else "")
-            rows.append({"name": c["name"], "command": c["command"],
-                         "blindSpot": c["blindSpot"], "exit": None, "held": why,
-                         "seconds": 0, "timedOut": False, "failedFiles": None,
-                         "stdout": "", "stderr": ""})
+            rows[c["name"]] = {"name": c["name"], "command": c["command"],
+                               "blindSpot": c["blindSpot"], "exit": None, "held": why,
+                               "seconds": 0, "timedOut": False, "failedFiles": None,
+                               "stdout": "", "stderr": ""}
             print(f"  NOT RUN (held: {why})  {c['name']}")
             continue
+        todo.append(c)
+    capped = [c for c in todo if parse_mem(c.get("memory"))]
+    ok_cg, why_cg = cgroup_caps() if capped else (True, "")
+    if capped and not ok_cg:
+        print(f"  memory caps can't be enforced here ({why_cg}); every arm runs alone")
+    pool = capped if ok_cg else []
+    solo = [c for c in todo if c not in pool]
+    times = arm_seconds(ctx) if pool else {}
+    pool.sort(key=lambda c: -times.get(c["name"], 0))
+    share, cores = test_budget(ctx)
+    running, results, finished = {}, {}, []
+    told = [0.0]
+
+    def tell():
+        told[0] = time.time()
         if progress:
-            progress(i, c["name"])
-        print(f"  …     {c['name']}")
+            progress(len(finished), ", ".join(running) or None,
+                     [{"arm": n, "started": r["started"], "cap": r["cap"],
+                       "mem": r["meter"].get("current")} for n, r in running.items()],
+                     list(finished))
+
+    def work(c, cap, meter):
+        limit = c.get("timeout") or timeout             # per-check ceiling (obs 24)
+        outf, errf = check_output_paths(ctx, node, c["name"])
         t0 = time.time()
-        code, out, err, timed_out = run_arm(c["command"], cwd, limit, outf, errf, env)
-        dur = time.time() - t0
-        ok = code == 0
+        res = run_arm(c["command"], cwd, limit, outf, errf, _arm_env(env, c["name"]),
+                      cap=cap, meter=meter)
+        results[c["name"]] = res + (time.time() - t0, limit, outf)
+
+    def finish(c, meter):
+        nonlocal failed
+        code, out, err, timed_out, dur, limit, outf = results.pop(c["name"])
+        killed = bool(meter.get("oom"))
+        cap = parse_mem(c.get("memory")) if ok_cg else None
+        ok = code == 0 and not killed
         failed += (not ok)
         last = next((x for x in reversed((out + "\n" + err).splitlines()) if x.strip()), "")
         if timed_out:
             err = (err + f"\ntimed out after {limit}s").lstrip("\n")
-        rows.append({"name": c["name"], "command": c["command"],
-                     "blindSpot": c["blindSpot"], "exit": code,
-                     "seconds": round(dur, 2), "timedOut": timed_out,
-                     "failedFiles": failed_files(out), "lastLine": last[-300:],
-                     "stdout": out[-2000:], "stderr": err[-2000:]})
-        verdict = "NOT RUN (timed out)" if timed_out else "PASS" if ok else "FAIL"
+        rows[c["name"]] = {"name": c["name"], "command": c["command"],
+                           "blindSpot": c["blindSpot"], "exit": code,
+                           "seconds": round(dur, 2), "timedOut": timed_out,
+                           "failedFiles": failed_files(out), "lastLine": last[-300:],
+                           "stdout": out[-2000:], "stderr": err[-2000:],
+                           "peakMemory": meter.get("peak"), "memoryCap": cap,
+                           "memoryKilled": killed}
+        verdict = ("NOT RUN (timed out)" if timed_out else
+                   f"KILLED (over its {fmt_mem(cap)} cap; peak {fmt_mem(meter.get('peak'))})"
+                   if killed else "PASS" if ok else "FAIL")
         print(f"  {verdict}  {c['name']:<18} {dur:5.1f}s of {limit}"
-              + ("" if ok or timed_out else f"   exit {code}"))
+              + (f"   peak {fmt_mem(meter['peak'])}" if meter.get("peak") and not killed else "")
+              + ("" if ok or timed_out or killed else f"   exit {code}"))
         if timed_out and last:
             print(f"        last output: {clip(last)}")
         if not ok and not timed_out:
@@ -4700,19 +4871,65 @@ def run_arms(ctx, node, sha, cwd, checks, base, timeout, report, env=None, progr
             for line in lines[-6:]:
                 print(f"        {clip(line)}")
         if not ok:
-            ff = rows[-1]["failedFiles"]
+            ff = rows[c["name"]]["failedFiles"]
             print(f"        report: {report}"
                   + (f"  ({len(ff)} failed file(s) listed)" if ff else "")
                   + f"\n        output: {outf}")
         if base and not ok:
-            bl = baseline_line(baseline_diff(rows[-1:], base)[c["name"]])
+            bl = baseline_line(baseline_diff([rows[c["name"]]], base)[c["name"]])
             if bl:
                 print(f"        {bl}")
-        # The blind spot is printed beside the RESULT, not filed away in the
-        # manifest, because the moment it matters is the moment somebody is
-        # deciding what a pass means.
         print(f"        cannot see: {c['blindSpot']}")
-    return rows, failed
+
+    # The pool: capped arms side by side, within the budget.
+    while pool or running:
+        if _CANCEL[0] and pool:
+            print(f"  cancelled before {', '.join(c['name'] for c in pool)}")
+            pool = []
+        while pool and not _CANCEL[0]:
+            c = pool[0]
+            cap, th = parse_mem(c["memory"]), max(1, int(c.get("threads") or 1))
+            used = sum(r["meter"].get("current") or 0 for r in running.values())
+            budget = share * (mem_available() + used)
+            held = sum(r["cap"] for r in running.values())
+            busy = sum(r["threads"] for r in running.values())
+            if running and (held + cap > budget or busy + th > cores):
+                break
+            pool.pop(0)
+            meter = {}
+            t = threading.Thread(target=work, args=(c, cap, meter), daemon=True)
+            running[c["name"]] = {"c": c, "cap": cap, "threads": th, "meter": meter,
+                                  "thread": t, "started": _now()}
+            print(f"  …     {c['name']}  (cap {fmt_mem(cap)}; {len(running)} running, caps "
+                  f"{fmt_mem(held + cap)} of {fmt_mem(budget)}, {busy + th}/{cores} cores)")
+            t.start()
+            tell()
+        time.sleep(0.2)
+        for n in [n for n, r in running.items() if not r["thread"].is_alive()]:
+            r = running.pop(n)
+            r["thread"].join()
+            finish(r["c"], r["meter"])
+            finished.append(n)
+            tell()
+        if running and time.time() - told[0] > 5:
+            tell()                               # live memory for `harness test`
+
+    # Then the rest, one at a time and alone.
+    for c in solo:
+        if _CANCEL[0]:
+            print(f"  cancelled before {c['name']}")
+            break
+        meter = {}
+        running[c["name"]] = {"c": c, "cap": None, "threads": 1, "meter": meter,
+                              "started": _now()}
+        tell()
+        print(f"  …     {c['name']}")
+        work(c, None, meter)
+        running.pop(c["name"])
+        finish(c, meter)
+        finished.append(c["name"])
+        tell()
+    return [rows[c["name"]] for c in checks if c["name"] in rows], failed
 
 
 def check_reads(c, cwd, env=None):
@@ -4776,9 +4993,14 @@ def print_check_report(rep, base):
         if r.get("held"):
             print(f"  NOT RUN (held: {r['held']})  {r['name']}"); continue
         v = ("NOT RUN (timed out)" if r.get("timedOut") else
+             f"KILLED (over its {fmt_mem(r.get('memoryCap'))} cap; peak "
+             f"{fmt_mem(r.get('peakMemory'))})" if r.get("memoryKilled") else
              "PASS" if r.get("exit") == 0 else "FAIL")
         print(f"  {v}  {r['name']:<18} {r.get('seconds', 0):5.1f}s"
-              + ("" if r.get("exit") in (0, None) or r.get("timedOut") else f"   exit {r['exit']}"))
+              + (f"   peak {fmt_mem(r['peakMemory'])}" if r.get("peakMemory")
+                 and not r.get("memoryKilled") else "")
+              + ("" if r.get("exit") in (0, None) or r.get("timedOut") or r.get("memoryKilled")
+                 else f"   exit {r['exit']}"))
         if v == "FAIL":
             for line in (r.get("stderr") or r.get("stdout") or "").strip().splitlines()[-6:]:
                 print(f"        {clip(line)}")
@@ -4955,6 +5177,14 @@ def testq_jobs(ctx, states=None):
 def testq_save(ctx, job):
     """Whole-file replace, keeping requesters who joined since `job` was read: a
     node joins a running job while the runner is saving its progress."""
+    with _TESTQ_SAVE:                  # arm threads and the pool loop both save (parallel arms)
+        _testq_save(ctx, job)
+
+
+_TESTQ_SAVE = threading.RLock()
+
+
+def _testq_save(ctx, job):
     f = testq_dir(ctx) / f"{job['id']}.json"
     old = _read_json(f) or {}
     have = {r.get("node") for r in job.get("requested_by") or []}
@@ -4978,6 +5208,14 @@ def testq_describe(j):
             f"arms {', '.join(j['arms'])}" if j.get("kind") == "check" else
             f"`{(j.get('command') or '')[:40]}`")
     if j.get("state") == "running":
+        ra = j.get("running_arms") or []
+        if len(ra) > 1 or any(r.get("cap") for r in ra):
+            # Arms side by side: each with its live memory against its cap.
+            arms = "; ".join(f"{r['arm']} {fmt_mem(r.get('mem')) if r.get('mem') else '…'}"
+                             + (f"/{fmt_mem(r['cap'])}" if r.get("cap") else "") for r in ra)
+            return (f"{who}'s {what}, running {len(ra)} arm(s) side by side ({arms}), "
+                    f"{j.get('done_arms', 0)}/{j.get('total')} done"
+                    f" since {(j.get('started') or '')[11:16]}")
         return (f"{who}'s {what}, running" + (f" arm {j.get('done_arms', 0) + 1}/{j.get('total')}"
                                               if j.get("total") else "")
                 + f" since {(j.get('started') or '')[11:16]}")
@@ -5041,6 +5279,7 @@ def arm_seconds(ctx):
             rep = _read_json(f) or {}
             for r in rep.get("checks") or []:
                 if (isinstance(r, dict) and r.get("seconds") and not r.get("timedOut")
+                        and not r.get("memoryKilled")           # cut short: not its time
                         and len(runs.setdefault(r.get("name"), [])) < 5):
                     runs[r["name"]].append(float(r["seconds"]))
         _ARM_SECONDS[key] = (time.time(), {n: sorted(v)[len(v) // 2]
@@ -5058,19 +5297,58 @@ def job_arm_names(ctx, arms):
     return [n for n in names if n in arms] if arms and names else list(arms or names)
 
 
-def arm_estimate(ctx, arms, skip=0, current_ran=None):
-    """Seconds for a check from its arms' own times (log 111: a one-arm job was
-    estimated as a full check), or None when any arm has no time yet. `skip`
-    arms are done; the next one has run `current_ran` seconds."""
+def _makespan(items, cores, busy=()):
+    """Wall seconds to run `items` [(seconds, threads)] longest first on `cores`,
+    after the running `busy` [(seconds left, threads)]: run_arms' pool, without
+    the memory test (memory isn't known ahead of time)."""
+    run = [(left, th) for left, th in busy]
+    q = sorted(items, key=lambda x: -x[0])
+    now = 0.0
+    while q or run:
+        used = sum(th for _, th in run)
+        while q and (not run or used + q[0][1] <= cores):
+            d, th = q.pop(0)
+            run.append((now + d, th))
+            used += th
+        now = min(e for e, _ in run)
+        run = [(e, th) for e, th in run if e > now]
+    return now
+
+
+def arm_estimate(ctx, arms, skip=0, current_ran=None, job=None):
+    """Seconds left for a check from its arms' own times (log 111: a one-arm job
+    was estimated as a full check), or None when any arm has no time yet.
+    Capped arms run side by side, so they count as the pool's wall time, not
+    their sum (parallel arms, 2026-10-09). For a running job, `job` says what
+    finished and what runs now; an older job only counts arms done (`skip`) and
+    how long the current one has run (`current_ran`)."""
     names = job_arm_names(ctx, arms)
     t = arm_seconds(ctx)
     if not names or any(n not in t for n in names):
         return None
-    rest = names[skip:]
-    total = sum(t[n] for n in rest)
-    if rest and current_ran is not None:
-        total -= min(t[rest[0]], current_ran)
-    return total
+    try:
+        spec = {c["name"]: c for c in json.loads(
+            (Path(ctx.repo) / ".harness" / "manifest.json").read_text()).get("checks") or []}
+    except Exception:
+        spec = {}
+    capped = {n for n in names if parse_mem((spec.get(n) or {}).get("memory"))}
+    th = lambda n: max(1, int((spec.get(n) or {}).get("threads") or 1))
+    now = time.time()
+    if job is not None and job.get("finished_arms") is not None:
+        done = set(job["finished_arms"])
+        ran = {r["arm"]: now - (_epoch(r.get("started")) or now) for r in job.get("running_arms") or []}
+    else:
+        order = [n for n in names if n in capped] + [n for n in names if n not in capped] \
+            if job is not None else names
+        done = set(order[:skip])
+        cur = order[skip] if skip < len(order) and current_ran is not None else None
+        ran = {cur: current_ran} if cur else {}
+    left = lambda n: max(0.0, t[n] - ran.get(n, 0))
+    cores = test_budget(ctx)[1]
+    pool = [(t[n], th(n)) for n in names if n in capped and n not in done and n not in ran]
+    busy = [(left(n), th(n)) for n in ran if n in capped]
+    solo = sum(left(n) for n in names if n not in capped and n not in done)
+    return _makespan(pool, cores, busy) + solo
 
 
 def testq_duration(ctx, kind, arms, command=None):
@@ -5101,7 +5379,7 @@ def testq_wait_estimate(ctx, job):
         d = None
         if j.get("state") == "running" and j.get("kind") == "check" and j.get("arm_started"):
             d = arm_estimate(ctx, j.get("arms"), j.get("done_arms") or 0,
-                             time.time() - (_epoch(j["arm_started"]) or time.time()))
+                             time.time() - (_epoch(j["arm_started"]) or time.time()), job=j)
         if d is None:
             d = testq_duration(ctx, j.get("kind"), j.get("arms"), j.get("command"))
             if d is None:
@@ -5195,8 +5473,8 @@ def _testd_loop(ctx):
     state = {"job": None}
 
     def on_term(signum, frame):
-        if _ARM[0]:
-            kill_tree(_ARM[0])
+        for pid in list(_ARMS):
+            kill_tree(pid)
         j = state["job"]
         if j:
             j.update(state="cancelled", finished=_now(), why="the runner was stopped")
@@ -5206,8 +5484,8 @@ def _testd_loop(ctx):
     def on_cancel(signum, frame):
         # Cancel this job only: kill its arm, and run_arms runs no more arms.
         _CANCEL[0] = True
-        if _ARM[0]:
-            kill_tree(_ARM[0])
+        for pid in list(_ARMS):
+            kill_tree(pid)
     import signal
     signal.signal(signal.SIGTERM, on_term)
     signal.signal(signal.SIGUSR1, on_cancel)
@@ -5239,8 +5517,9 @@ def testq_recover(ctx):
     """A job left `running` by a runner that died: failed, and its copy removed."""
     for j in testq_jobs(ctx, ("running",)):
         if not runner_alive(j.get("pid")):
-            if _pid_exists(j.get("arm_pid")):
-                kill_tree(j["arm_pid"])
+            for pid in j.get("arm_pids") or [j.get("arm_pid")]:
+                if _pid_exists(pid):
+                    kill_tree(pid)
             j.update(state="failed", finished=_now(), why="the runner died mid-job")
             testq_save(ctx, j)
             testq_teardown(ctx, j)
@@ -5276,8 +5555,9 @@ def testq_run(ctx, job):
     sys.stdout = out
     rep, code = None, None
     _CANCEL[0] = False
-    def arm_started(pid):
-        job["arm_pid"] = pid
+    def arm_started(pids):
+        job["arm_pids"] = pids
+        job["arm_pid"] = pids[0] if pids else None
         testq_save(ctx, job)
     _ARM_HOOK[0] = arm_started
     slot = _flock(testq_dir(ctx) / "slot.lock", block=False)
@@ -5340,8 +5620,12 @@ def testq_check(ctx, job, wt, env):
     shared = shared_report_path(ctx, sha)
     job["total"] = len(checks)
 
-    def progress(i, arm):
-        job.update(done_arms=i, arm=arm, arm_started=_now())
+    def progress(i, arm, running=(), finished=()):
+        # One arm or several side by side (parallel arms, 2026-10-09): `arm`
+        # names what runs now, `arm_started` is when the earliest of them began.
+        st = min((r["started"] for r in running), default=_now())
+        job.update(done_arms=i, arm=arm, arm_started=st, running_arms=list(running),
+                   finished_arms=list(finished))
         testq_save(ctx, job)
     node = job["requested_by"][0].get("node") or "operator"
     print(f"{len(checks)} check(s) at {sha[:8]} in {wt}")
@@ -5400,8 +5684,9 @@ def testq_cancel(ctx, job):
         if runner_alive(pid):
             os.kill(pid, 10)        # SIGUSR1: the runner kills the arm's tree, ends the job,
             return "stopped; its copy is being removed"     # tears it down, and goes on
-        if _pid_exists(job.get("arm_pid")):
-            kill_tree(job["arm_pid"])
+        for pid in job.get("arm_pids") or [job.get("arm_pid")]:
+            if _pid_exists(pid):
+                kill_tree(pid)
         job.update(state="failed", finished=_now(), why="runner already gone")
         testq_save(ctx, job)
         testq_teardown(ctx, job)

@@ -2071,6 +2071,11 @@ function askItem(slug, a) {
   const k = akey(slug, a.id);
   const open = OPENA.has(k);
   const runs = Array.isArray(a.runs) && a.runs.length ? a.runs : null;
+  // Log 126: an action with no commands attached, or not yet briefed, had no
+  // Done anywhere, so a thing the owner had already run could never be closed.
+  const doneCtl = a.kind === 'action'
+    ? '<input class="anote" data-akey="' + esc(k) + '" placeholder="what you ran (optional)">' +
+      '<button data-adone="' + esc(k) + '">Done</button>' : '';
   const mine = runs || a.state === 'ready' || a.state === 'drafted';
   const note = a.kind === 'note';
   const move = a.query_open ? 'intermediary looking'
@@ -2137,8 +2142,8 @@ function askItem(slug, a) {
       body = meta + '<div class="ln q" style="margin-top:6px">being investigated by its ' +
         'intermediary &middot; ' + esc(a.age || '') + '. Its commands show once it has ' +
         'written the brief.</div>' +
-        '<div class="row"><button class="rej" data-arej="' + esc(k) + '">Won&rsquo;t do</button>' +
-        msg + '</div>';
+        '<div class="row">' + doneCtl + '<button class="rej" data-arej="' + esc(k) +
+        '">Won&rsquo;t do</button>' + msg + '</div>';
     } else if (runs) {
       // Commands to run: copy, run, click Done. Or ask the intermediary first.
       const cmds = runs.map((c, i) => '<div class="arun"><pre>' + esc(c) + '</pre>' +
@@ -2153,8 +2158,8 @@ function askItem(slug, a) {
     } else if (!mine) {
       body = meta + '<div class="ln q" style="margin-top:6px">being briefed by the ' +
         'intermediary</div>' +
-        '<div class="row"><button class="rej" data-arej="' + esc(k) + '">Reject</button>' +
-        msg + '</div>';
+        '<div class="row">' + doneCtl + '<button class="rej" data-arej="' + esc(k) +
+        '">Reject</button>' + msg + '</div>';
     } else {
       body = meta + briefDl() + '<dl>' +
         '<dt>Draft ruling</dt><dd style="white-space:normal">' +
@@ -2163,7 +2168,7 @@ function askItem(slug, a) {
         esc(a.draft || '') + '</textarea></dd></dl>' +
         '<div class="row"><button data-aacc="' + esc(k) + '"' +
           (a.draft ? '' : ' disabled') + '>Accept</button>' +
-        '<button data-aedit="' + esc(k) + '">Edit</button>' +
+        '<button data-aedit="' + esc(k) + '">Edit</button>' + doneCtl +
         '<button class="rej" data-arej="' + esc(k) + '">Reject</button>' + msg + '</div>';
     }
     // Every item: its session, everything said about it, and a box to add to it.

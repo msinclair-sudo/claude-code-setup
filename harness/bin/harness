@@ -4240,9 +4240,14 @@ def cmd_mark(a):
             # The lead hears now, not from a nag twenty minutes on that its focus
             # may fold away: a lane whose session ends after presenting tells
             # nobody (obs 91: 2h43m).
+            carries = (load_brief(ctx, a.task)[1] or {}).get("carries")
             ring_inbox(ctx.state, parent, node,
                        f"{node} presented '{a.task}' at {rec['_presented_sha'][:8]} — "
-                       f"harness review {node}, then harness mark {a.task} --close")
+                       + (f"it carries finding-born '{carries}' up, already reviewed and "
+                          f"integrated below: sign it off with harness mark {a.task} --close "
+                          f"(harness review {node} --task {a.task} shows only its commits; "
+                          f"never merge {node} for it, log 124)" if carries else
+                          f"harness review {node}, then harness mark {a.task} --close"))
         if rec.get("_model"):
             print(f"ran as {rec['_model']}, effort {rec.get('_effort')}")
         if rec.get("_band") and rec.get("_delta"):
@@ -4433,6 +4438,10 @@ def cmd_mark(a):
         # accumulated context to be rid of. R13 replaces a session that has been
         # working; recycling a lead because it filed a wrapper would throw away
         # the view that made it a lead.
+        # A carrier only carries finding-born work up (log 106): closing it is
+        # bookkeeping too, and the lead that carried it is still at work (log 124).
+        if (load_brief(ctx, a.task)[1] or {}).get("carries"):
+            return
         if rec.get("_delegated"):
             still = [x for x in delegated(ctx, owner) if not x["closed_at"]]
             if still:
@@ -4980,7 +4989,24 @@ def failed_files(out):
     toks = hits[-1].split()
     if toks in ([], ["none"]):
         return []
-    return sorted({re.sub(r"\(\d+\)$", "", t) for t in toks})
+    # A negative code is a signal (-11: SIGSEGV); it is a code, not part of the
+    # name (log 119: `a.py(-11)` read as a new file beside a gone `a.py`).
+    return sorted({re.sub(r"\(-?\d+\)$", "", t) for t in toks})
+
+
+def failed_codes(out):
+    """{file: exit code} from the same line, for the files that carry one."""
+    hits = _FAILED_LINE.findall(out or "")
+    out_ = {}
+    for t in (hits[-1].split() if hits else []):
+        m = re.match(r"^(.*)\((-?\d+)\)$", t)
+        if m:
+            out_[m.group(1)] = int(m.group(2))
+    return out_
+
+
+def code_words(c):
+    return f"signal {-c}" if isinstance(c, int) and c < 0 else f"exit {c}"
 
 
 def baseline_path(ctx):
@@ -5012,9 +5038,31 @@ def baseline_diff(rows, base):
             same = int(failing and bool(b.get("failed")))
         else:
             new, gone = sorted(set(now) - set(was)), sorted(set(was) - set(now))
-            same = len(set(now) & set(was))
+            both = set(now) & set(was)
+            cn, cw = r.get("failedCodes") or {}, b.get("codes") or {}
+            flipped = sorted((f, cw[f], cn[f]) for f in both
+                             if f in cn and f in cw and cn[f] != cw[f])
+            same = len(both) - len(flipped)
+            out[r["name"]] = {"new": new, "gone": gone, "same": same, "notrun": False,
+                              "flipped": flipped}
+            continue
         out[r["name"]] = {"new": new, "gone": gone, "same": same, "notrun": False}
     return out
+
+
+def baseline_at(ctx, sha):
+    """The baseline that was current at `sha` (a report's own), from the record
+    and its history; else today's (log 118: reviews read old reports against a
+    baseline set since)."""
+    cur = load_baseline(ctx)
+    if not cur or not sha:
+        return cur
+    if cur.get("sha") == sha:
+        return cur
+    for old in reversed(cur.get("history") or []):
+        if old and old.get("sha") == sha:
+            return old
+    return cur
 
 
 def baseline_line(d):
@@ -5023,6 +5071,9 @@ def baseline_line(d):
         return "vs baseline: NOT RUN"
     bits = ([f"new {', '.join(d['new'])}"] if d["new"] else []) + \
            ([f"gone {', '.join(d['gone'])}"] if d["gone"] else []) + \
+           ([f"same file, changed: " + ", ".join(f"{f} {code_words(w)} → {code_words(n)}"
+                                                for f, w, n in d["flipped"])]
+            if d.get("flipped") else []) + \
            ([f"{d['same']} same"] if d["same"] else [])
     return "vs baseline: " + " · ".join(bits) if bits else ""
 
@@ -5045,6 +5096,16 @@ def set_baseline(ctx, node, why):
     if not (why or "").strip():
         die(REFUSED, 'say why: harness check --set-baseline --why "..."')
     sha = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
+    # One baseline serves every review in the tree, so it is set only at a
+    # commit the parent already holds (log 118: a lane-lead's re-baseline at a
+    # commit not in dev turned dev's reds "same" in its reviews of others).
+    parent = ctx.tree["nodes"].get(node, {}).get("parent")
+    if parent and ctx.rank(node) != 0:
+        pb = ctx.tree["nodes"].get(parent, {}).get("branch") or parent
+        if git("merge-base", "--is-ancestor", sha, pb, cwd=ctx.worktree)[0]:
+            die(REFUSED, f"{sha[:8]} is not in {parent} yet. The baseline is the whole "
+                         f"tree's: set it at a commit {parent} holds\n           (after "
+                         f"it integrates you), or ask {parent} to set it.")
     rep = read_check_report(ctx, node, sha)
     if rep is None:
         die(REFUSED, f"no check report at {sha[:8]} — run `harness check` first")
@@ -5057,7 +5118,8 @@ def set_baseline(ctx, node, why):
     base = {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "by": node, "node": node,
             "sha": sha, "why": why,
             "arms": {r["name"]: {"failed": r.get("exit") != 0,
-                                 "files": r.get("failedFiles")}
+                                 "files": r.get("failedFiles"),
+                                 "codes": r.get("failedCodes") or {}}
                      for r in rep.get("checks") or []},
             "history": ((old or {}).pop("history", []) + [old]) if old else []}
     p = baseline_path(ctx)
@@ -5100,8 +5162,8 @@ def arm_result(c, res, meter, base, report, estimate=None, history=None):
         err = (err + f"\ntimed out after {limit}s").lstrip("\n")
     row = {"name": c["name"], "command": c["command"], "blindSpot": c["blindSpot"],
            "exit": code, "seconds": round(dur, 2), "timedOut": timed_out,
-           "failedFiles": failed_files(out), "lastLine": last[-300:],
-           "stdout": out[-2000:], "stderr": err[-2000:],
+           "failedFiles": failed_files(out), "failedCodes": failed_codes(out),
+           "lastLine": last[-300:], "stdout": out[-2000:], "stderr": err[-2000:],
            "peakMemory": meter.get("peak"), "estimate": estimate, "memoryCeiling": ceiling,
            "memoryKilled": killed, "lastPeaks": history or []}
     peak = meter.get("peak")
@@ -6186,6 +6248,15 @@ def testd_finish(ctx, S, key):
         row, ok, lines = arm_result(o["checks"][name], res, meter, o["base"],
                                     shared_report_path(ctx, job["sha"]), t.get("estimate"),
                                     [h.get("peak") for h in hist])
+        if not ok:
+            try:
+                kept = keep_logs(ctx, o, name, row)
+            except Exception:
+                kept = []
+            if kept:
+                row["kept"] = kept
+                lines.append(f"        kept {len(kept)} log(s) from the copy: "
+                             f"{Path(kept[0]).parent}")
         o["rows"][name] = row
         o["failed"] += (not ok)
     else:
@@ -6203,6 +6274,40 @@ def testd_finish(ctx, S, key):
     for line in lines:
         o["log"].write(line + "\n")
     testd_running(ctx, S, job)
+
+
+KEEP_TAIL = 64 * 1024
+
+
+def keep_logs(ctx, o, name, row):
+    """A failed arm's own logs, out of the copy before it is torn down (log 119:
+    a file that crashed with signal 11 could not be looked into, because its
+    per-file logs died with the copy). The manifest names them per arm,
+    `"keep": ["logs/{file}.log", "tmp/*.out"]`: globs under the copy and the
+    arm's scratch, `{file}` once per failing file. Each kept as its last 64 KB."""
+    pats = (o.get("checks") or {}).get(name, {}).get("keep") or []
+    if not pats:
+        return []
+    node = (o["job"]["requested_by"][0].get("node") or "operator")
+    dest = Path(ctx.state) / "checks" / (re.sub(r"[^A-Za-z0-9]", "_", f"{node}-{name}") + ".files")
+    shutil.rmtree(dest, ignore_errors=True)
+    stems = [Path(f).stem for f in row.get("failedFiles") or []] or [""]
+    roots = [Path(o["wt"])]
+    sc = (_arm_env(o.get("env"), name) or {}).get("HARNESS_TEST_SCRATCH")
+    if sc:
+        roots.append(Path(sc))
+    kept = []
+    for pat in pats:
+        for stem in (stems if "{file}" in pat else [""]):
+            for root in roots:
+                for f in sorted(root.glob(pat.replace("{file}", stem)))[:50]:
+                    if not f.is_file():
+                        continue
+                    dest.mkdir(parents=True, exist_ok=True)
+                    out = dest / str(f.relative_to(root)).replace("/", "__")
+                    out.write_text(_tail(f, KEEP_TAIL))
+                    kept.append(str(out))
+    return sorted(set(kept))
 
 
 def testd_close(ctx, S, jid):
@@ -6845,7 +6950,35 @@ def cmd_review(a):
             print(f"   ⚠ {behind} commit(s) behind {parent} — T4 will refuse this "
                   f"until it catches up (T2)")
         else:
-            print(f"   caught up — `git merge --ff-only {cb}` will fast-forward")
+            carriers = [t for t, r in open_marks(ctx).items() if r.get("_node") == n
+                        and r.get("_presented_at") and (load_brief(ctx, t)[1] or {}).get("carries")]
+            if carriers and not a.task:
+                # Log 124: main read this line for a carrier and was invited to
+                # merge dev, 1,064 commits, into main.
+                print(f"   what {n} presented ({', '.join(carriers)}) only carries work up: "
+                      f"don't merge {cb} for it. harness review {n} --task {carriers[0]} "
+                      f"shows its commits")
+            else:
+                print(f"   caught up — `git merge --ff-only {cb}` will fast-forward")
+
+        if getattr(a, "task", None):
+            # Only this task's commits: its own Task: trailer, or the task it
+            # carries up (log 124).
+            want = {a.task, (load_brief(ctx, a.task)[1] or {}).get("carries")} - {None}
+            rc, log, _ = git("log", "--reverse",
+                             "--format=%h%x09%s%x09%(trailers:key=Task,valueonly,separator=;)",
+                             f"{base}..{cb}", cwd=ctx.repo)
+            mine = [ln.split("\t") for ln in log.splitlines()
+                    if want & {x.strip() for x in (ln.split("\t") + [""])[2].split(";")}]
+            print(f"   {len(mine)} commit(s) for {', '.join(sorted(want))} in this range:")
+            files = set()
+            for h, subj, *_ in mine:
+                print(f"     {h} {subj}")
+                rc, nm, _ = git("show", "--name-only", "--format=", h, cwd=ctx.repo)
+                files.update(f for f in nm.splitlines() if f)
+            print(f"   {len(files)} file(s): " + ", ".join(sorted(files)[:12])
+                  + (" …" if len(files) > 12 else ""))
+            continue
 
         rc, shown, _ = git("rev-list", "--count", f"{base}..{cb}", cwd=ctx.repo)
         shown = shown.strip() or "0"
@@ -6948,7 +7081,7 @@ def cmd_review(a):
                   f"{len(_crep.get('checks') or [])}) at {_when(_crep.get('at'))}"
                   + ("   [dirty worktree]" if _crep.get("dirty") else ""))
         else:
-            _base = load_baseline(ctx) if _crep.get("baseline") else None
+            _base = baseline_at(ctx, _crep.get("baseline")) if _crep.get("baseline") else None
             _diff = baseline_diff(_crep.get("checks") or [], _base) if _base else {}
             print(f"   checks       " + (baseline_summary(_crep, _base) if _base else
                   f"FAILED {_crep.get('failed')} of {len(_crep.get('checks') or [])}:"))
@@ -12004,22 +12137,49 @@ _RISKY_WORD = re.compile(
     r"prevents?|ensures?|all|every|always|never|none|live|subset|only)\b", re.I)
 
 
+_QUALIFIER = {"today", "now", "ever", "may", "might", "was", "were", "yet", "currently",
+              "so far", "usually", "often", "some", "most", "can", "could", "not yet"}
+_HARDENER = {"never", "every", "always", "all", "none", "cannot", "must"}
+
+
+def _words(t):
+    t = (t or "").lower()
+    return set(re.findall(r"[a-z']+", t)) | {q for q in _QUALIFIER if " " in q and q in t}
+
+
 def pairs_new_wording(rec):
     """Sentences a batch writes that appear in none of the text it replaces or
-    moves: [(file, sentence, flagged)]. Moves verify verbatim; the error is in
-    the new stub (log 99: a dated figure lost its date, "the remedy is a guard"
-    became "is fixed by a guard"). Flagged: a date, a status verb or a
-    population word, the usual casualties."""
+    moves: [(file, sentence, why flagged or "")]. Moves verify verbatim; the
+    error is in the new stub (log 99). Flagged when it carries a date, status or
+    scope word, or (log 121) when, against the nearest old sentence, it drops a
+    qualifier or adds a hardener: "cannot run today" became "cannot run"."""
+    import difflib
     norm = lambda t: re.sub(r"\s+", " ", t or "").strip()
-    old = " ".join(norm(p.get("old")) for p in rec.get("pairs") or [])
+    split = lambda t: [x for x in (norm(y).strip("#*- ")
+                                   for y in re.split(r"(?<=[.!?])\s+|\n{2,}", t or "")) if x]
+    old_all = " ".join(norm(p.get("old")) for p in rec.get("pairs") or [])
     out = []
     for p in rec.get("pairs") or []:
+        olds = split(p.get("old"))
         for field in ("new", "pointer"):
-            for sent in re.split(r"(?<=[.!?])\s+|\n{2,}", p.get(field) or ""):
-                s = norm(sent).strip("#*- ")
-                if len(s) < 12 or s in old:
+            for s_ in split(p.get(field)):
+                if len(s_) < 12 or s_ in old_all:
                     continue
-                out.append((p.get("file"), s, bool(_RISKY_WORD.search(s))))
+                why = []
+                if _RISKY_WORD.search(s_):
+                    why.append("date, status or scope word")
+                near = max(olds, key=lambda o: difflib.SequenceMatcher(None, o, s_).ratio(),
+                           default=None)
+                if near and difflib.SequenceMatcher(None, near, s_).ratio() > 0.5:
+                    dropped = sorted(q for q in _QUALIFIER
+                                     if q in _words(near) and q not in _words(s_))
+                    added = sorted(h for h in _HARDENER
+                                   if h in _words(s_) and h not in _words(near))
+                    if dropped:
+                        why.append("dropped: " + ", ".join(dropped))
+                    if added:
+                        why.append("added: " + ", ".join(added))
+                out.append((p.get("file"), s_, "; ".join(why)))
     return sorted(out, key=lambda x: not x[2])
 
 
@@ -12030,9 +12190,9 @@ def pairs_review(ctx, rec, read, full=False):
     nw = pairs_new_wording(rec)
     if nw:
         print(f"\nCheck these first: {len(nw)} sentence(s) not in the text they replace "
-              f"(! = a date, status or scope word)")
-        for f, s, flag in nw[:40 if not full else None]:
-            print(f"  {'!' if flag else ' '} {f}: {s[:220]}")
+              f"(! = a date, status or scope word, or a claim hardened, log 121)")
+        for f, s, why in nw[:40 if not full else None]:
+            print(f"  {'!' if why else ' '} {f}: {s[:220]}" + (f"   [{why}]" if why else ""))
         if not full and len(nw) > 40:
             print(f"    … {len(nw) - 40} more — --full")
     rows, texts = pair_report(rec["pairs"], read)
@@ -16397,6 +16557,8 @@ def main():
     rv.add_argument("--diff", action="store_true", help="also print the full diff")
     rv.add_argument("--record", action="store_true",
                     help="record that you read it, which is what unblocks T4 integration")
+    rv.add_argument("--task", metavar="TASK",
+                    help="only the commits whose Task: trailer is TASK or the task it carries")
     rv.add_argument("--since", metavar="REF",
                     help="review against REF instead of the parent (read work already merged)")
     rv.add_argument("--last", type=int, default=10, metavar="N",

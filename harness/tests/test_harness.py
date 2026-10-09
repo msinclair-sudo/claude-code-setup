@@ -1451,6 +1451,50 @@ class MailShownThenLogged(unittest.TestCase):
         self.assertEqual((m["text"], m["how"]), ("revoke dev_1's grant", "prompt"))
 
 
+class ExitFlips(unittest.TestCase):
+    """Log 119: the same file exiting 1 then -11 read as a new failure and a gone
+    one; its logs died with the copy. Log 118: reviews read old reports against
+    a baseline set since."""
+
+    def test_a_signal_is_a_code_not_a_name(self):
+        out = "failed: test_surface_samples.py(-11) test_dag.py(1)"
+        self.assertEqual(hz.failed_files(out), ["test_dag.py", "test_surface_samples.py"])
+        self.assertEqual(hz.failed_codes(out), {"test_surface_samples.py": -11, "test_dag.py": 1})
+
+    def test_a_changed_code_is_a_flip_not_new(self):
+        base = {"arms": {"surface": {"failed": True, "files": ["a.py", "b.py"],
+                                     "codes": {"a.py": 1, "b.py": 1}}}}
+        row = {"name": "surface", "exit": 1, "failedFiles": ["a.py", "b.py"],
+               "failedCodes": {"a.py": -11, "b.py": 1}}
+        d = hz.baseline_diff([row], base)["surface"]
+        self.assertEqual((d["new"], d["gone"], d["same"]), ([], [], 1))
+        self.assertEqual(d["flipped"], [("a.py", 1, -11)])
+        self.assertIn("a.py exit 1 → signal 11", hz.baseline_line(d))
+        self.assertIn("no new failures", hz.baseline_summary({"checks": [row]}, base))
+        old = {"arms": {"surface": {"failed": True, "files": ["a.py", "b.py"]}}}   # no codes kept
+        self.assertEqual(hz.baseline_diff([row], old)["surface"]["same"], 2)
+
+    def test_a_review_reads_a_report_against_its_own_baseline(self):
+        ctx = FakeCtx({"main": None})
+        p = hz.baseline_path(ctx)
+        p.parent.mkdir(parents=True)
+        p.write_text(json.dumps({"sha": "new", "arms": {}, "history": [{"sha": "old", "arms": {"x": 1}}]}))
+        self.assertEqual(hz.baseline_at(ctx, "old")["arms"], {"x": 1})
+        self.assertEqual(hz.baseline_at(ctx, "new")["sha"], "new")
+
+    def test_a_failed_arms_logs_are_kept_out_of_the_copy(self):
+        ctx = FakeCtx({"main": None})
+        wt = ctx.dir / "copy"
+        (wt / "logs").mkdir(parents=True)
+        (wt / "logs" / "test_x.log").write_text("x" * 100 + "segfault here")
+        (wt / "logs" / "test_y.log").write_text("not failing")
+        o = {"wt": wt, "env": None, "job": {"requested_by": [{"node": "dev"}]},
+             "checks": {"surface": {"keep": ["logs/{file}.log"]}}}
+        kept = hz.keep_logs(ctx, o, "surface", {"failedFiles": ["test_x.py"]})
+        self.assertEqual(len(kept), 1)
+        self.assertTrue(Path(kept[0]).read_text().endswith("segfault here"))
+
+
 class Records(unittest.TestCase):
     def test_author_is_not_told_of_own_comment(self):
         ctx = FakeCtx({"main": None, "dev": "main"})
@@ -4485,8 +4529,18 @@ class LogEntries92to102(unittest.TestCase):
              "to": "provenance/M/x.md", "pointer": "History: provenance/M/x.md. This is fixed by a guard."},
             {"file": "M.md", "old": "Loads take 3s.", "new": "Loads take 3s."}]}
         nw = hz.pairs_new_wording(rec)
-        self.assertEqual([(s, f) for _, s, f in nw],
+        self.assertEqual([(s, bool(f)) for _, s, f in nw],
                          [("This is fixed by a guard.", True), ("History: provenance/M/x.md.", False)])
+
+    def test_a_hardened_claim_is_flagged_with_its_reason(self):
+        # Log 121: "cannot run today" became "cannot run".
+        rec = {"pairs": [{"file": "API.md", "old": "The import cannot run today without the key.",
+                          "new": "The import cannot run without the key."},
+                         {"file": "API.md", "old": "An endpoint drops a state when it fails.",
+                          "new": "An endpoint never drops a state when it fails."}]}
+        why = {s: f for _, s, f in hz.pairs_new_wording(rec)}
+        self.assertIn("dropped: today", why["The import cannot run without the key."])
+        self.assertIn("added: never", why["An endpoint never drops a state when it fails."])
 
     # 101: a failed recheck leaves the value standing
     def test_a_failed_observation_is_never_the_latest(self):

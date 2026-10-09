@@ -98,7 +98,10 @@ A move verifies verbatim; the error is always in the new text around it. Keep a 
 sentence to what the moved text supports: keep its dates, don't upgrade a status ("the remedy is a
 guard" is not "fixed by a guard"), and don't widen a population ("this subset" is not "live"). Rank 0's
 review lists every sentence you wrote that isn't in the text it replaces, flagged when it carries a date,
-a status word or a scope word, and reads those first.
+a status word or a scope word, and reads those first. Keep the qualifiers too: "cannot run today" is not
+"cannot run", "can ever anchor" is not "anchors", and "was the tempting repair" is not "never drops". The
+review flags a rewritten sentence that drops a qualifier (today, now, ever, may, was, yet, currently, so
+far) or adds never, every, always or all (log 121).
 
 ## Pairs
 

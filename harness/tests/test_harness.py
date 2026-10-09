@@ -464,6 +464,61 @@ class CloseAfter(unittest.TestCase):
         self.assertIn("closes only after", err.getvalue())
 
 
+class HandedSegment(unittest.TestCase):
+    """Log 127: a mid-lead's `--close` of a segment its parent wrote presents it,
+    so the parent's integrate finds a PRESENTED record."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_tests": "dev",
+                            "dev_tests_1": "dev_tests"})
+        r = self.ctx.dir / "wt"
+        r.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=r, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q",
+                        "--allow-empty", "-m", "x"], cwd=r, check=True)
+        self.ctx.worktree = self.ctx.repo = r
+        for d in ("briefs", "marks"):
+            (self.ctx.dir / d).mkdir()
+        self.w = lambda p, o: (self.ctx.dir / p).write_text(json.dumps(o))
+
+    def close(self, task, me):
+        self.ctx.me, self.ctx.branch = me, me
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "s" * 36}), \
+             mock.patch("sys.argv", ["harness", "mark", task, "--close"]), \
+             mock.patch("sys.stderr", io.StringIO()) as err, redirect_stdout(io.StringIO()) as o:
+            try:
+                hz.main()
+            except SystemExit:
+                pass
+        self.err = err.getvalue()
+        return o.getvalue()
+
+    def test_a_handed_segment_is_presented_not_closed(self):
+        self.w("briefs/seg.json", {"task": "seg", "node": "dev_tests",
+                                   "written_by": "dev (session abcd1234)"})
+        self.w("briefs/p1.json", {"task": "p1", "node": "dev_tests_1", "from": "seg"})
+        self.w("marks/p1.json", {"_node": "dev_tests_1", "_closed_at": "2026"})
+        self.ctx.lock("dev_tests", os.getpid())
+        out = self.close("seg", "dev_tests")
+        self.assertIn("presented, not closed", out)
+        rec = json.loads((self.ctx.dir / "marks" / "seg.json").read_text())
+        self.assertTrue(rec.get("_presented_at"))
+        self.assertFalse(rec.get("_closed_at"))
+        self.assertTrue(self.ctx.lock_path("dev_tests").exists())        # still coordinating
+        rung = list((self.ctx.dir / "doorbell" / "dev" / "inbox").glob("*.json"))
+        self.assertTrue(rung)
+
+    def test_rank_0_still_closes_its_own_segment(self):
+        self.w("briefs/seg.json", {"task": "seg", "node": "main",
+                                   "written_by": "main (session abcd1234)"})
+        self.w("briefs/p1.json", {"task": "p1", "node": "dev", "from": "seg"})
+        self.w("marks/p1.json", {"_node": "dev", "_closed_at": "2026"})
+        self.close("seg", "main")
+        rec = json.loads((self.ctx.dir / "marks" / "seg.json").read_text())
+        self.assertTrue(rec.get("_closed_at"))
+
+
 class Hold(unittest.TestCase):
     """obs 66: a held resource stops the checks that read it."""
 
@@ -555,6 +610,44 @@ class ResetCeiling(unittest.TestCase):
             self.assertTrue(p.exists())
             hz.request_reset(self.ctx, ["dev"], cancel=True)
             self.assertFalse(p.exists())
+
+
+class ResetBelongsToItsSession(unittest.TestCase):
+    """Log 123: a pending reset outlived its session and stopped the next one."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main"})
+        self.ctx.lock("dev", 1, ref="sid-old")
+        (self.ctx.dir / "resets").mkdir()
+        self.ctx.branch = "main"
+        self.ctx.tree["nodes"]["main"]["branch"] = "main"
+
+    def test_the_record_names_its_session_and_lapses_for_another(self):
+        p = hz.reset_path(self.ctx, "dev")
+        with mock.patch.object(hz, "context_limits", return_value=(300_000, None)), \
+             mock.patch.object(hz, "node_running", return_value=("claimed", {"session_id": "sid-old"})), \
+             redirect_stdout(io.StringIO()):
+            hz.request_reset(self.ctx, ["dev"])
+        self.assertEqual(json.loads(p.read_text())["session"], "sid-old")
+        rec = dict(json.loads(p.read_text()), flushed=True, deadline=0)
+        p.write_text(json.dumps(rec))
+        with mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "sid-new"}), \
+             mock.patch.object(hz, "launch_reset") as launch:
+            self.assertFalse(hz.reset_step(self.ctx, "dev"))
+        launch.assert_not_called()
+        self.assertFalse(p.exists())
+        rung = list((self.ctx.dir / "doorbell" / "main" / "inbox").glob("*.json"))
+        self.assertIn("lapsed", json.loads(rung[0].read_text())["text"])
+
+    def test_its_own_session_still_resets(self):
+        p = hz.reset_path(self.ctx, "dev")
+        p.write_text(json.dumps({"by": "main", "flushed": True, "session": "sid-old",
+                                 "deadline": 0}))
+        with mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "sid-old"}), \
+             mock.patch.object(hz, "reset_quiet", return_value=True), \
+             mock.patch.object(hz, "launch_reset") as launch:
+            self.assertTrue(hz.reset_step(self.ctx, "dev"))
+        launch.assert_called_once()
 
 
 class Cited(unittest.TestCase):
@@ -1220,6 +1313,55 @@ class Orphan(unittest.TestCase):
             hz.stopped_path(self.ctx, "dev_1").unlink()                 # as a claim does
             self.assertEqual([r[0] for r in hz.lead_owes(self.ctx, "dev") if r[0] == "orphan"],
                              ["orphan"])
+
+
+class SilentNodes(unittest.TestCase):
+    """Log 128: a lead that released with its lanes mid-work and mail unread is
+    down; log 129: a child's unanswered question while it idles is owed."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_tests": "dev",
+                            "dev_tests_1": "dev_tests", "dev_2": "dev"})
+        (self.ctx.dir / "marks").mkdir()
+        (self.ctx.dir / "marks" / "lane.json").write_text(json.dumps({"_node": "dev_tests_1"}))
+        self.stamp = lambda ago: time.strftime("%Y-%m-%dT%H:%M:%S%z",
+                                               time.localtime(time.time() - ago))
+
+    def ring(self, to, frm, text, ago, read=False):
+        d = self.ctx.dir / "doorbell" / to
+        if read:
+            d.mkdir(parents=True, exist_ok=True)
+            with open(d / "delivered.jsonl", "a") as fh:
+                fh.write(json.dumps({"from": frm, "text": text, "at": self.stamp(ago)}) + "\n")
+        else:
+            (d / "inbox").mkdir(parents=True, exist_ok=True)
+            (d / "inbox" / f"{time.time_ns()}.json").write_text(json.dumps(
+                {"from": frm, "text": text, "at": self.stamp(ago)}))
+
+    def owed(self, node, running=(None, None), ended=True):
+        with mock.patch.object(hz, "node_running", return_value=running), \
+             mock.patch.object(hz, "turn_ended", return_value=ended), \
+             mock.patch.object(hz, "startable", return_value=[]):
+            return [(k, c, t) for k, c, t, _ in hz.lead_owes(self.ctx, node) if k != "heavy"]
+
+    def test_a_released_lead_with_lanes_at_work_and_mail_unread_is_down(self):
+        self.ring("dev_tests", "dev", "present it, please", 600)
+        rows = self.owed("dev")
+        self.assertIn(("down", "dev_tests", "and its lanes still hold open work; 1 unread ring(s)"),
+                      rows)
+        self.assertEqual(self.owed("dev", running=("unclaimed", {"sessionId": "x"})), [])
+
+    def test_a_question_a_child_waits_on_is_owed_until_answered(self):
+        self.ring("dev", "dev_2", "BLOCKER: (a) edit carve.py or (b) leave it to you?", 1800,
+                  read=True)
+        rows = self.owed("dev", running=("claimed", {"session_id": "s2"}))
+        self.assertEqual([r[:2] for r in rows if r[0] == "unanswered"], [("unanswered", "dev_2")])
+        self.assertEqual([r for r in self.owed("dev", ("claimed", {"session_id": "s2"}), ended=False)
+                          if r[0] == "unanswered"], [])                 # still working
+        self.ring("dev_2", "dev", "(a), go ahead", 60)
+        self.assertEqual([r for r in self.owed("dev", ("claimed", {"session_id": "s2"}))
+                          if r[0] == "unanswered"], [])                 # answered
+        self.assertIn("harness ring dev_2 -", hz.owed_line("unanswered", "dev_2", "q", 1800))
 
 
 class Records(unittest.TestCase):

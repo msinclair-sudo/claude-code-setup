@@ -701,7 +701,11 @@ def request_reset(ctx, nodes, by=None, within=None, dry_run=False, cancel=False)
         # A ceiling, because a busy lead never ends a turn quiet: dev's reset,
         # queued at 303k, had not fired an hour and 42k tokens later (obs 66).
         warn = context_limits(ctx, n)[0] or 300_000
+        how, det = node_running(ctx, n)
         rec = {"by": me or "operator", "flushed": False,
+               # The session it is for (log 123): a reset that outlived it fired
+               # on its successor's first quiet turn end, and none followed.
+               "session": (det or {}).get("session_id") or (det or {}).get("sessionId"),
                "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                "by_tokens": _ktok_arg(by) if by else warn + 100_000,
                "deadline": time.time() + 60 * (_minutes_arg(within) if within else 60)}
@@ -725,6 +729,15 @@ def reset_step(ctx, node, launch_only=False):
     if not p.exists():
         return False
     r = json.loads(p.read_text())
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if r.get("session") and sid and sid != r["session"]:
+        # Set for a session that has since ended: this one is already fresh.
+        p.unlink(missing_ok=True)
+        if r.get("by") in ctx.tree["nodes"] and r["by"] != node:
+            ring_inbox(ctx.state, r["by"], "harness",
+                       f"the reset you set on {node} lapsed: the session it was for "
+                       f"({r['session'][:8]}) ended, and {node} has a fresh one (log 123).")
+        return False
     if not r.get("flushed") and not launch_only:
         r["flushed"] = True
         p.write_text(json.dumps(r) + "\n")
@@ -2833,6 +2846,83 @@ def unreported(ctx, node):
     return out
 
 
+def released_gone(ctx, k):
+    """A child that released its claim and has no session in its worktree:
+    (gone for how many seconds, unread rings), or None when a session is there
+    or it never released. The age is its oldest unread ring, else when it last
+    presented (log 128: dev_tests released with its lanes mid-work
+    and three rings unread, and nothing above it was told)."""
+    if ctx.lock_path(k).exists():
+        return None
+    how, _ = node_running(ctx, k)
+    if how is not None:
+        return None
+    unread, ages = 0, []
+    try:
+        unread = MAIL().pending(ctx.state, k)
+        for f in (Path(ctx.state) / "doorbell" / k / "inbox").glob("*.json"):
+            at = _epoch((_read_json(f) or {}).get("at"))
+            if at:
+                ages.append(time.time() - at)
+    except Exception:
+        pass
+    # Presenting is what releases a claim, so its last presentation dates it
+    # (no session list here: this runs inside hooks with a 5s budget).
+    for r in open_marks(ctx).values():
+        if r.get("_node") == k:
+            at = _epoch(r.get("_presented_at") or r.get("_at"))
+            if at:
+                ages.append(time.time() - at)
+    return (max(ages) if ages else 0), unread
+
+
+_QUESTION = re.compile(r"\?|\bblock(?:ed|er|ing)?\b|\bquestion\b", re.I)
+
+
+def _rings(ctx, to, frm):
+    """Every ring `frm` sent `to`, read or not: [(epoch, text)]."""
+    d = Path(ctx.state) / "doorbell" / to
+    out = []
+    for f in (d / "inbox").glob("*.json") if (d / "inbox").is_dir() else []:
+        m = _read_json(f) or {}
+        if m.get("from") == frm and _epoch(m.get("at")):
+            out.append((_epoch(m["at"]), m.get("text") or ""))
+    try:
+        for line in (d / "delivered.jsonl").read_text().splitlines():
+            try:
+                m = json.loads(line)
+            except ValueError:
+                continue
+            if m.get("from") == frm and _epoch(m.get("at")):
+                out.append((_epoch(m["at"]), m.get("text") or ""))
+    except OSError:
+        pass
+    return sorted(out)
+
+
+def unanswered(ctx, node, k):
+    """A question child `k` rang `node` with, unanswered and older than
+    STALLED_IDLE while `k` sits idle: (age, excerpt) or None (log 129: dev_2
+    asked dev which way to take the fixture, and nothing would have reminded
+    dev; dev_1 queued behind dev_2)."""
+    asked = [(t, x) for t, x in _rings(ctx, node, k) if _QUESTION.search(x)]
+    if not asked:
+        return None
+    at, text = asked[-1]
+    if time.time() - at < STALLED_IDLE:
+        return None
+    if any(t > at for t, _ in _rings(ctx, k, node)):
+        return None                        # answered since
+    how, det = node_running(ctx, k)
+    if how is None:
+        return None                        # no session: "down" says so
+    sid = (det or {}).get("session_id") or (det or {}).get("sessionId")
+    if sid and not turn_ended(sid):
+        return None                        # working on, not waiting
+    one = " ".join(text.split())
+    return time.time() - at, (one[:90] + "…") if len(one) > 90 else one
+
+
 def lead_owes(ctx, node):
     """What this node owes its children, as (kind, child, task, age) rows.
 
@@ -2863,6 +2953,12 @@ def lead_owes(ctx, node):
         _dead = _held is not None and holder_alive(_held) is False
         _lw = last_write((_held or {}).get("ref")) if _dead else None
         _gone = time.time() - _lw if _lw else 0
+        _unread = 0
+        if _held is None:
+            rg = released_gone(ctx, k)
+            if rg:
+                _dead, (_gone, _unread) = True, rg
+        _mail = f"; {_unread} unread ring(s)" if _unread else ""
         own = [t for t, r in marks.items()
                if r.get("_node") == k and not r.get("_presented_at")]
         if own:
@@ -2876,8 +2972,11 @@ def lead_owes(ctx, node):
         below = set(subtree(ctx, k))
         if any(r.get("_node") in below for r in marks.values()):
             if _dead and _gone > 120:
-                owed.append(("down", k, "and its lanes still hold open work", _gone))
+                owed.append(("down", k, "and its lanes still hold open work" + _mail, _gone))
             continue
+        if _dead and _unread and _gone > 120:
+            # Mail nobody will read is work waiting too (log 128).
+            owed.append(("down", k, f"{_unread} unread ring(s)", _gone)); continue
         q = startable(ctx, k)
         if not q:
             continue                       # nothing it can start: not this rule
@@ -2906,6 +3005,13 @@ def lead_owes(ctx, node):
                 owed.append(("start", k, q[0]["task"], time.time() - last))
             else:
                 owed.append(("down", k, f"'{q[0]['task']}' queued", time.time() - last))
+    for k in kids:
+        try:
+            u = unanswered(ctx, node, k)
+        except Exception:
+            u = None
+        if u:
+            owed.append(("unanswered", k, u[1], u[0]))
     # A child carrying more context than its rank should (obs 60).
     for k in kids:
         warn = context_limits(ctx, k)[0]
@@ -2945,8 +3051,10 @@ def owed_line(kind, child, task, age):
                     f"  — harness mark {task} --close",
         "start": f"{child} quiet {human_age(age)}, '{task}' queued"
                  f"  — message it to start (SendMessage)",
-        "down": f"{child} has no running session (no claim, nothing in its worktree), {task}"
+        "down": f"{child} has no running session, {task}"
                 f"  — harness spawn {child}",
+        "unanswered": f"{child} asked you {human_age(age)} ago and has had no reply; it is "
+                      f"idle: \"{task}\"  — answer it: harness ring {child} -",
         "lingering": f"{child} finished and released, but its session is still in its worktree, "
                      f"{task}  — harness integrate {child} ends it and merges (log 105)",
         "heavy": f"{child} at {task} context"
@@ -3241,10 +3349,12 @@ def queue_items(ctx, node):
     # The item's task is the third field of a node row, else the second.
     def task_of(k):
         parts = k.split(":")
-        return parts[2] if parts[0] in ("sign off", "start", "down", "orphan") else parts[1]
+        return parts[2] if parts[0] in ("sign off", "start", "down", "orphan",
+                                        "unanswered") else parts[1]
     kept = {k: v for k, v in out.items()
             if k.startswith(("asked:", "comment:", "handed:", "heavy:", "sweep:", "uncovered:",
-                             "orphan:", "down:", "stuck:", "ruled:", "rejected:", "returned:",
+                             "orphan:", "down:", "unanswered:", "stuck:", "ruled:", "rejected:",
+                             "returned:",
                              "docs:", "review:", "done:", "imask:", "sign off:"))
             or in_focus(fam, task_of(k))}
     if len(kept) < len(out):
@@ -3523,7 +3633,7 @@ def cmd_hook_stop(a):
         # a child that has been idle for ninety seconds.
         fam = focus_family(ctx)
         owed = [o for o in lead_owes(ctx, node) if o[0] != "heavy"
-                and (o[0] in ("orphan", "down") or in_focus(fam, o[2]))]
+                and (o[0] in ("orphan", "down", "unanswered") or in_focus(fam, o[2]))]
         if owed:
             nl = chr(10)
             lines = []
@@ -3792,6 +3902,59 @@ def claim_conflict(ctx, node):
     return None, "stale"
 
 
+def synth_delegated_mark(ctx, a, node, f, verb):
+    """A split segment has no mark of its own: write it from its parts, once
+    they are all settled, so the segment can be closed or presented (log 127:
+    the same step serves a mid-lead presenting a segment it was handed)."""
+    db = load_brief(ctx, a.task)[1]
+    deleg = next((x for x in delegated(ctx, (db or {}).get("node") or node)
+                  if tkey(x["key"]) == tkey(a.task)), None)
+    if deleg is None:
+        die(REFUSED, f"no mark for '{a.task}' — nothing to {verb}")
+    if not deleg["ready"] and not a.force and deleg.get("uncovered") and \
+            all(r["state"] in ("closed", "superseded") for r in deleg["children"]):
+        die(REFUSED,
+            f"'{a.task}': every part is settled, but no part covers clause(s) "
+            f"{', '.join(map(str, deleg['uncovered']))} of its checks.\n"
+            f"           Brief them (--from {a.task} --covers N), or --force if "
+            f"the work is done some other way.")
+    if not deleg["ready"] and not a.force:
+        open_kids = [r for r in deleg["children"]
+                     if r["state"] not in ("closed", "superseded")]
+        die(REFUSED,
+            f"'{a.task}' was split into {len(deleg['children'])} task(s) and "
+            f"{len(open_kids)} {'is' if len(open_kids) == 1 else 'are'} not "
+            f"closed yet:\n"
+            + "".join(f"           {r['task']} ({r['node']}) — {r['state']}\n"
+                      for r in open_kids)
+            + f"           A segment is finished when its parts are. Close "
+              f"those first, or --force.")
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(
+        {"_node": (db or {}).get("node") or node,
+         "_task": a.task,
+         "_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+         "_delegated": [r["task"] for r in deleg["children"]],
+         "_note": (db or {}).get("task") or a.task}, indent=2) + "\n")
+    # What the close ASSERTS, printed beside what discharged it. The
+    # parts closing proves the parts were done; it does not prove they
+    # cover the segment, and the lead chose the split — so a segment
+    # broken into parts that miss a third of it closes green. Nothing
+    # can check that but a person, and a person cannot check it against
+    # a tick. Put the text and the parts on one screen and the gap, if
+    # there is one, is visible at the moment it still costs nothing.
+    print(f"'{a.task}' was delegated, not executed. You are asserting that "
+          f"these {len(deleg['children'])} part(s) cover it:\n")
+    for line in (db or {}).get("text", "").strip().splitlines()[:12] or ["(no text)"]:
+        print(f"      {line}")
+    print()
+    for r in deleg["children"]:
+        mark = "✓" if r["state"] == "closed" else "—"
+        note = "" if r["state"] == "closed" else f"  ({r['state']})"
+        print(f"      {mark} {r['task']:<24} {r['node']}{note}")
+    print()
+
+
 def cmd_mark(a):
     """Record the token position when a T1 is accepted, so the actual at T10 is a
     subtraction rather than an apportionment.
@@ -3813,12 +3976,31 @@ def cmd_mark(a):
     if not (a.done or a.close or a.abandon or a.requeue_after):
         refuse_if_halted(ctx, f"opening '{a.task}'")
 
+    if getattr(a, "close", None) and ctx.rank(node) != 0:
+        # Log 127: a mid-lead closed a segment its parent handed it, so nothing
+        # was presented and the parent's integrate refused. Only the node that
+        # wrote a brief closes it; the one it was handed to presents it.
+        hb = load_brief(ctx, a.task)[1] or {}
+        writer = (hb.get("written_by") or "").split(" ")[0]
+        mine = (hb.get("node") or node) == node
+        held = _read_json(f) if f.exists() else None
+        if mine and writer and writer not in (node, "harness") and not (held or {}).get(
+                "_presented_at") and (held is None or held.get("_delegated")) and any(
+                tkey(x["key"]) == tkey(a.task) for x in delegated(ctx, node)):
+            print(f"'{a.task}' was handed to you by {writer}: it is presented, not closed "
+                  f"(log 127). Presenting it.")
+            a.done, a.close = True, False
     if a.done:
         # The MEMBER presents, and the measurement is taken here rather than at
         # sign-off. Its own transcript is the only place the subtraction is real,
         # and the lead closing later is by definition a different session (I10).
         if not f.exists():
-            die(REFUSED, f"no mark for '{a.task}' — nothing to present")
+            db = load_brief(ctx, a.task)[1]
+            if db and any(tkey(x["key"]) == tkey(a.task)
+                          for x in delegated(ctx, db.get("node") or node)):
+                synth_delegated_mark(ctx, a, node, f, "present")   # a split segment (log 127)
+            else:
+                die(REFUSED, f"no mark for '{a.task}' — nothing to present")
         rec = json.loads(f.read_text())
         if rec.get("_closed_at"):
             die(REFUSED, f"'{a.task}' is already closed")
@@ -3870,7 +4052,10 @@ def cmd_mark(a):
         lock = ctx.lock_path(node)
         released = False
         try:
-            if lock.exists() and json.loads(lock.read_text()).get("session_id") == sid:
+            # A lead presenting a split segment still coordinates the rest of its
+            # work, so it keeps its claim (log 127).
+            if lock.exists() and json.loads(lock.read_text()).get("session_id") == sid \
+                    and not rec.get("_delegated"):
                 lock.unlink(); released = True
         except Exception:
             pass
@@ -4023,53 +4208,7 @@ def cmd_mark(a):
         # signed off, and the record is written here so there is still exactly
         # one place a finished task lives.
         if not f.exists():
-            db = load_brief(ctx, a.task)[1]
-            deleg = next((x for x in delegated(ctx, (db or {}).get("node") or node)
-                          if tkey(x["key"]) == tkey(a.task)), None)
-            if deleg is None:
-                die(REFUSED, f"no mark for '{a.task}' — nothing to close")
-            if not deleg["ready"] and not a.force and deleg.get("uncovered") and \
-                    all(r["state"] in ("closed", "superseded") for r in deleg["children"]):
-                die(REFUSED,
-                    f"'{a.task}': every part is settled, but no part covers clause(s) "
-                    f"{', '.join(map(str, deleg['uncovered']))} of its checks.\n"
-                    f"           Brief them (--from {a.task} --covers N), or --force if "
-                    f"the work is done some other way.")
-            if not deleg["ready"] and not a.force:
-                open_kids = [r for r in deleg["children"]
-                             if r["state"] not in ("closed", "superseded")]
-                die(REFUSED,
-                    f"'{a.task}' was split into {len(deleg['children'])} task(s) and "
-                    f"{len(open_kids)} {'is' if len(open_kids) == 1 else 'are'} not "
-                    f"closed yet:\n"
-                    + "".join(f"           {r['task']} ({r['node']}) — {r['state']}\n"
-                              for r in open_kids)
-                    + f"           A segment is finished when its parts are. Close "
-                      f"those first, or --force.")
-            f.parent.mkdir(parents=True, exist_ok=True)
-            f.write_text(json.dumps(
-                {"_node": (db or {}).get("node") or node,
-                 "_task": a.task,
-                 "_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-                 "_delegated": [r["task"] for r in deleg["children"]],
-                 "_note": (db or {}).get("task") or a.task}, indent=2) + "\n")
-            # What the close ASSERTS, printed beside what discharged it. The
-            # parts closing proves the parts were done; it does not prove they
-            # cover the segment, and the lead chose the split — so a segment
-            # broken into parts that miss a third of it closes green. Nothing
-            # can check that but a person, and a person cannot check it against
-            # a tick. Put the text and the parts on one screen and the gap, if
-            # there is one, is visible at the moment it still costs nothing.
-            print(f"'{a.task}' was delegated, not executed. You are asserting that "
-                  f"these {len(deleg['children'])} part(s) cover it:\n")
-            for line in (db or {}).get("text", "").strip().splitlines()[:12] or ["(no text)"]:
-                print(f"      {line}")
-            print()
-            for r in deleg["children"]:
-                mark = "✓" if r["state"] == "closed" else "—"
-                note = "" if r["state"] == "closed" else f"  ({r['state']})"
-                print(f"      {mark} {r['task']:<24} {r['node']}{note}")
-            print()
+            synth_delegated_mark(ctx, a, node, f, "close")
         rec = json.loads(f.read_text())
         if rec.get("_closed_at") and not a.force:
             die(REFUSED, f"'{a.task}' was closed at {rec['_closed_at']} — "
@@ -6767,7 +6906,18 @@ def cmd_integrate(a):
             print(f"     {n:<12} nothing to integrate — already in {here}"); continue
 
         holders = [r for r in rows if r.get("cwd") == cw]
-        if holders and finished_released(ctx, n, holders):
+        if holders and finished_released(ctx, n, holders) and a.dry_run:
+            # Log 117: the dry run ended the live session it was only meant to
+            # describe. Say what a real run would do, and go on as if it had.
+            for r in holders:
+                pid = r.get("pid") if isinstance(r.get("pid"), int) else None
+                tree = [p_ for p_ in proc_tree(pid) if p_ != pid] if pid else []
+                print(f"     {n:<12} it presented and released, but its session stayed up; "
+                      f"a real run would end {r.get('name') or '?'} "
+                      f"[{str(r.get('sessionId'))[:8]}]"
+                      + (f" and {len(tree)} process(es) under it" if tree else ""))
+            holders = []
+        elif holders and finished_released(ctx, n, holders):
             # Log 105: a lane presented, released its node, and its session
             # stayed. Integration ends it here, so the lead never has to run a
             # kill the permission checker refuses.
@@ -7127,6 +7277,16 @@ def cmd_recycle(a):
         # declined to stop. Same shape when `claude stop` returned non-zero.
         # Two sessions in one worktree is the exact state the claim lock exists
         # to prevent, reached by the command that is supposed to maintain it.
+        # What the fresh session would open, decided BEFORE anything is stopped
+        # (log 123: a reset stopped dev and then found nothing to start, so no
+        # successor came; the lanes waited an hour).
+        start = next_start(ctx, n)
+        if start["skip"] and not a.force:
+            print(f"  skip {n:<12} {start['skip']}  (--force starts it anyway); "
+                  f"nothing stopped")
+            if a.when_idle and not a.dry_run:
+                reset_outcome(ctx, n, start["skip"])
+            continue
         holders, unstopped = [], []
         for r in occ.get(n, []):
             label = f"{r.get('name') or '?'} [{r['sessionId'][:8]}]"
@@ -7202,10 +7362,6 @@ def cmd_recycle(a):
         # the dry run and the real command cannot disagree (obs 64). The node's
         # own open mark comes first: a session that died mid-task left work to
         # RESUME, which is not "nothing to do" and not "waiting".
-        start = next_start(ctx, n)
-        if start["skip"] and not a.force:
-            print(f"  skip {n:<12} {start['skip']}  (--force starts it anyway)")
-            continue
         line = start["line"] if not start["skip"] else \
             f"{start['skip']} — started anyway (--force)"
         if a.dry_run:
@@ -7222,6 +7378,7 @@ def cmd_recycle(a):
         print(f"  recycled {n:<12} {model}/{effort:<7} fresh context"
               + (f"  +{len(gr)} grant(s)" if gr else ""))
         reset_outcome(ctx, n)
+        launch_claim_check(ctx, n)
         done += 1
 
     verb = "would recycle" if a.dry_run else "recycled"
@@ -8929,6 +9086,48 @@ def launch_wake(ctx, task, at):
                           "--at", str(at)], cwd=str(ctx.repo), env=env, stdout=fh,
                          stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                          start_new_session=True)
+
+
+CLAIM_CHECK = 180          # seconds a recycled node has to claim before rank 0 hears
+
+
+def launch_claim_check(ctx, node):
+    """After a recycle, confirm a session claimed (log 123: a reset stopped dev,
+    no successor came, and nobody heard for an hour)."""
+    log = ctx.state_file("resets", f"{node}-claim", ".log")
+    log.parent.mkdir(parents=True, exist_ok=True)
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
+    try:
+        with open(log, "a") as fh:
+            subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "claimcheck", node,
+                              "--within", str(CLAIM_CHECK)], cwd=str(ctx.repo), env=env,
+                             stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                             start_new_session=True)
+    except Exception:
+        pass
+
+
+def cmd_claimcheck(a):
+    """`harness claimcheck <node> --within S` (run detached by recycle): after S
+    seconds, ring rank 0 and the node's lead if no session has claimed it."""
+    time.sleep(max(0, a.within))
+    ctx = Ctx(); ctx.require_enrolled()
+    how, _ = node_running(ctx, a.node)
+    if how == "claimed":
+        print(f"{_now()} {a.node} claimed"); return
+    text = (f"{a.node} was recycled {human_age(a.within)} ago and no session has claimed it"
+            + (" (one is in its worktree, unclaimed)" if how == "unclaimed" else "")
+            + f" — harness spawn {a.node}, or read resets/{a.node}.log (log 123)")
+    told = set()
+    for n, sp in ctx.tree["nodes"].items():
+        if not sp.get("parent"):
+            told.add(n)
+    parent = ctx.tree["nodes"].get(a.node, {}).get("parent")
+    if parent:
+        told.add(parent)
+    for n in told:
+        ring_inbox(ctx.state, n, "harness", text)
+    print(f"{_now()} {a.node} not claimed; told {', '.join(sorted(told))}")
 
 
 def wake_plan(ctx, task, at, rows):
@@ -16013,6 +16212,9 @@ def main():
     ig.add_argument("--dry-run", action="store_true")
     ig.add_argument("--roster", metavar="FILE",
                     help="a `claude agents --json` capture, for testing")
+    cc = add("claimcheck", cmd_claimcheck)
+    cc.add_argument("node")
+    cc.add_argument("--within", type=int, default=CLAIM_CHECK)
     wk = add("wake", cmd_wake)
     wk.add_argument("task")
     wk.add_argument("--at", required=True, help=argparse.SUPPRESS)

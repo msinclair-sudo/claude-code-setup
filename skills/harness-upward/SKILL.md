@@ -53,7 +53,7 @@ harness waiting "which pH bound applies to a derived reading" \
 harness waiting --clear          # the moment the answer lands
 ```
 
-The record reaches your lead only at its next harness command, so send the `SendMessage` it prints, in the same turn. `--still-moving` lets your lead tell a stopped step from a stopped lane. Clearing is yours (`harness release` also clears it). `harness waiting` with no argument shows what you wait on and who waits on you. A question for your lead is never a `harness blocked`.
+The record reaches your lead only at its next harness command, so send the `SendMessage` it prints, in the same turn. `--still-moving` lets your lead tell a stopped step from a stopped lane. Clearing is yours (`harness release` also clears it). `harness waiting` with no argument shows what you wait on and who waits on you. A question for your lead is never a `harness blocked`. If you're stopped until it's answered, record it with `harness waiting` as well as ringing: a question sent only by mail leaves nothing for your lead's hooks to remind it with, beyond a 20-minute "unanswered" line (log 129).
 
 ## You write inside your worktree, and nowhere else
 

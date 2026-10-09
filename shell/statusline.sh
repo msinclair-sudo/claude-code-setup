@@ -27,6 +27,23 @@ five_hour = '' if five_hour is None else str(int(five_hour))
 seven_day = rate_limits.get('seven_day', {}).get('used_percentage')
 seven_day = '' if seven_day is None else str(int(seven_day))
 
+# The limits are the account's, not this session's, and only a statusline is
+# ever handed them. Leave the latest copy where the harness viewer can show it.
+# Write-then-rename, so a reader never sees half a file. NOTE: no double
+# quotes, backticks or dollars in this block (it sits in a shell string).
+if rate_limits:
+    try:
+        import time
+        out = os.path.expanduser('~/.cache/harness/usage.json')
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        tmp = out + '.' + str(os.getpid())
+        with open(tmp, 'w') as fh:
+            json.dump({'at': time.time(), 'session': sid,
+                       'rate_limits': rate_limits}, fh)
+        os.replace(tmp, out)
+    except Exception:
+        pass
+
 # Session name (as seen by other agents/sessions) lives in
 # ~/.claude/sessions/<pid>.json, keyed by the harness process's PID, not by
 # session_id. Try the fast path via \$CLAUDE_PID first, then fall back to

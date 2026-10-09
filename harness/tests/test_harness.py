@@ -2931,6 +2931,30 @@ class DocChain(unittest.TestCase):
             self.assertEqual(gui.documenter_action("x", "drop", 1), (False, "unknown action"))
 
 
+class Usage(unittest.TestCase):
+    """The viewer shows the account's 5h and 7d limits the statusline saved."""
+
+    def test_read_usage(self):
+        gp = Path(__file__).resolve().parents[1] / "bin" / "harness-gui"
+        ld = importlib.machinery.SourceFileLoader("harness_gui", str(gp))
+        gui = importlib.util.module_from_spec(importlib.util.spec_from_loader("harness_gui", ld))
+        ld.exec_module(gui)
+        with tempfile.TemporaryDirectory() as td:
+            f = Path(td) / "usage.json"
+            with mock.patch.object(gui, "USAGE_FILE", f):
+                self.assertIsNone(gui.read_usage())                  # no statusline yet
+                f.write_text(json.dumps({"at": 1000, "rate_limits": {
+                    "five_hour": {"used_percentage": 42.7, "resets_at": 1500},
+                    "seven_day": {"used_percentage": 18, "resets_at": "1970-01-02T00:00:00Z"}}}))
+                u = gui.read_usage(now=1300)
+                self.assertEqual(u["age"], 300)
+                self.assertEqual([(w["label"], w["pct"]) for w in u["windows"]],
+                                 [("5h", 42), ("7d", 18)])
+                # Past the 5h reset the saved figure is stale: shown as unknown.
+                u = gui.read_usage(now=2000)
+                self.assertEqual([w["pct"] for w in u["windows"]], [None, 18])
+
+
 class Held(unittest.TestCase):
     """A node whose next task is gated on another's task or a clock is held."""
 

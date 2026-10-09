@@ -1364,6 +1364,93 @@ class SilentNodes(unittest.TestCase):
         self.assertIn("harness ring dev_2 -", hz.owed_line("unanswered", "dev_2", "q", 1800))
 
 
+class StopCause(unittest.TestCase):
+    """Logs 122, 125: a usage limit and an API refusal leave a synthetic API error
+    as the last assistant entry; the session's own Stop hook acts on it."""
+
+    LIMIT = {"type": "assistant", "isApiErrorMessage": True, "error": "rate_limit",
+             "message": {"model": "<synthetic>", "stop_reason": "stop_sequence", "content": [
+                 {"type": "text", "text": "You've hit your session limit · resets 6:10pm (Australia/Sydney)"}]}}
+    REFUSAL = [{"type": "system", "subtype": "model_refusal_no_fallback", "requestId": "req_1"},
+               {"type": "assistant", "isApiErrorMessage": True, "error": "invalid_request",
+                "message": {"model": "<synthetic>", "stop_reason": "refusal",
+                            "content": [{"type": "text", "text": "API Error: safeguards"}]}}]
+    END = {"type": "system", "subtype": "turn_duration"}
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev"})
+        self.t = self.ctx.dir / "t.jsonl"
+        m = mock.patch.object(hz, "transcript_for", return_value=self.t)
+        m.start(); self.addCleanup(m.stop)
+
+    def write(self, *recs):
+        self.t.write_text("".join(json.dumps(r) + "\n" for r in recs))
+
+    def test_a_limit_and_its_reset_time(self):
+        self.write({"type": "user", "message": {"content": "go"}}, self.LIMIT, self.END)
+        c = hz.stop_cause("s")
+        self.assertEqual(c["cause"], "limit")
+        self.assertEqual(time.strftime("%H:%M", time.localtime(c["until"])), "18:10")
+        self.assertGreater(c["until"], time.time())
+
+    def test_a_refusal_and_a_normal_end(self):
+        self.write(*self.REFUSAL, self.END)
+        self.assertEqual(hz.stop_cause("s")["cause"], "refusal")
+        self.assertEqual(hz.stop_cause("s")["request"], "req_1")
+        self.write({"type": "assistant", "message": {"stop_reason": "end_turn",
+                                                     "content": [{"type": "text", "text": "done"}]}},
+                   self.END)
+        self.assertIsNone(hz.stop_cause("s"))
+        self.write(self.LIMIT, {"type": "user", "message": {"content": "carry on"}})
+        self.assertIsNone(hz.stop_cause("s"))                 # prompted since
+
+    def test_the_limited_session_schedules_its_own_restart_once(self):
+        with mock.patch.object(hz, "launch_limit_wake") as wake:
+            for _ in range(2):
+                hz.stop_cause_step(self.ctx, "dev_1", {"cause": "limit", "until": time.time() + 600})
+        wake.assert_called_once()
+        rung = list((self.ctx.dir / "doorbell" / "main" / "inbox").glob("*.json"))
+        self.assertEqual(len(rung), 1)
+        self.assertIn("usage limit", json.loads(rung[0].read_text())["text"])
+
+    def test_a_refusal_rings_the_lead_not_the_owner(self):
+        hz.stop_cause_step(self.ctx, "dev_1", {"cause": "refusal", "request": "req_1"})
+        rung = list((self.ctx.dir / "doorbell" / "dev" / "inbox").glob("*.json"))
+        self.assertIn("harness recycle dev_1 --force", json.loads(rung[0].read_text())["text"])
+
+    def test_reset_times(self):
+        noon = time.mktime((2026, 10, 9, 12, 0, 0, 0, 0, -1))
+        for text, hm in (("resets 6:10pm", "18:10"), ("resets 9am", "09:00"), ("resets 12:30am", "00:30")):
+            self.assertEqual(time.strftime("%H:%M", time.localtime(hz._reset_epoch(text, noon))), hm)
+        self.assertIsNone(hz._reset_epoch("no time here"))
+
+
+class MailShownThenLogged(unittest.TestCase):
+    """Log 120: mail was logged as delivered before the hook printed it, and a
+    hook killed at its timeout lost it."""
+
+    def setUp(self):
+        self.state = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.state, True)
+        hz.ring_inbox(self.state, "dev", "main", "revoke dev_1's grant")
+
+    def test_a_claim_that_dies_before_its_commit_is_read_again(self):
+        got = hz.MAIL().claim(self.state, "dev")
+        self.assertEqual(len(got), 1)
+        self.assertEqual(hz.MAIL().pending(self.state, "dev"), 0)        # claimed
+        c = got[0][0]
+        c.rename(c.with_name(c.name.split(".taken-")[0] + ".taken-999999"))  # its process died
+        self.assertEqual(hz.MAIL().pending(self.state, "dev"), 1)        # back in the inbox
+        self.assertFalse((self.state / "doorbell" / "dev" / "delivered.jsonl").exists())
+
+    def test_commit_logs_it_and_again_shows_it(self):
+        got = hz.MAIL().claim(self.state, "dev")
+        hz.MAIL().commit(self.state, "dev", got, "prompt")
+        self.assertEqual(hz.MAIL().pending(self.state, "dev"), 0)
+        (m,) = hz.MAIL().delivered(self.state, "dev", 5)
+        self.assertEqual((m["text"], m["how"]), ("revoke dev_1's grant", "prompt"))
+
+
 class Records(unittest.TestCase):
     def test_author_is_not_told_of_own_comment(self):
         ctx = FakeCtx({"main": None, "dev": "main"})

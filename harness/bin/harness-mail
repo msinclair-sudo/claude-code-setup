@@ -49,38 +49,92 @@ def owner(state, node):
         return None
 
 
+def _pid_alive(pid):
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _restore_stale(d):
+    """A claim whose process died before it showed the message (a hook killed at
+    its timeout, log 120) goes back to the inbox, to be shown again."""
+    for c in d.glob("*.taken-*"):
+        pid = c.name.rsplit("-", 1)[-1]
+        if not _pid_alive(pid):
+            try:
+                os.rename(c, c.with_name(c.name.split(".taken-")[0] + ".json"))
+            except OSError:
+                pass
+
+
 def pending(state, node):
     """How many messages wait unread."""
     d = Path(state) / "doorbell" / node / "inbox"
-    return len(list(d.glob("*.json"))) if d.is_dir() else 0
+    if not d.is_dir():
+        return 0
+    _restore_stale(d)
+    return len(list(d.glob("*.json")))
 
 
-def take(state, node, how):
-    """Claim and return every unread message, oldest first. Each file is
-    claimed by an atomic rename, so two readers (a tool call and a turn end at
-    once) never both deliver it. Delivered mail is kept in delivered.jsonl."""
-    base = Path(state) / "doorbell" / node
-    d = base / "inbox"
+def claim(state, node):
+    """Claim every unread message, oldest first: [(claim path, message)]. Each
+    file is claimed by an atomic rename, so two readers (a tool call and a turn
+    end at once) never both deliver it. Nothing is marked delivered until
+    commit(): a hook killed between the two leaves the claim, and the next read
+    puts it back (log 120: two messages were logged as shown and never seen)."""
+    d = Path(state) / "doorbell" / node / "inbox"
     if not d.is_dir():
         return []
-    msgs = []
+    _restore_stale(d)
+    out = []
     for f in sorted(d.glob("*.json")):
-        claim = f.with_name(f"{f.stem}.taken-{os.getpid()}")
+        c = f.with_name(f"{f.stem}.taken-{os.getpid()}")
         try:
-            os.rename(f, claim)
+            os.rename(f, c)
         except OSError:
             continue                        # another reader has it
         try:
-            msgs.append(json.loads(claim.read_text()))
+            out.append((c, json.loads(c.read_text())))
         except Exception:
+            c.unlink(missing_ok=True)
+    return out
+
+
+def commit(state, node, claimed, how):
+    """The claimed messages were shown: log them as delivered, drop the claims."""
+    if not claimed:
+        return []
+    at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    with open(Path(state) / "doorbell" / node / "delivered.jsonl", "a") as log:
+        for _, m in claimed:
+            log.write(json.dumps(dict(m, delivered=at, how=how)) + "\n")
+    for c, _ in claimed:
+        c.unlink(missing_ok=True)
+    return [m for _, m in claimed]
+
+
+def take(state, node, how):
+    """Claim and commit at once, for a reader whose output cannot be lost
+    between the two (a Stop hook's block, `doorbell --read`)."""
+    return commit(state, node, claim(state, node), how)
+
+
+def delivered(state, node, n=5):
+    """The last n delivered messages, oldest first (`doorbell --read --again`)."""
+    f = Path(state) / "doorbell" / node / "delivered.jsonl"
+    try:
+        lines = f.read_text().splitlines()[-n:]
+    except OSError:
+        return []
+    out = []
+    for line in lines:
+        try:
+            out.append(json.loads(line))
+        except ValueError:
             pass
-        claim.unlink(missing_ok=True)
-    if msgs:
-        at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
-        with open(base / "delivered.jsonl", "a") as log:
-            for m in msgs:
-                log.write(json.dumps(dict(m, delivered=at, how=how)) + "\n")
-    return msgs
+    return out
 
 
 def _ago(at):
@@ -122,10 +176,12 @@ def main():
         who = owner(state, node)
         if not sid or (who and who != sid) or not pending(state, node):
             return
-        msgs = take(state, node, "tool call")
-        if msgs:
+        got = claim(state, node)
+        if got:
             print(json.dumps({"hookSpecificOutput": {
-                "hookEventName": "PostToolUse", "additionalContext": render(msgs)}}))
+                "hookEventName": "PostToolUse",
+                "additionalContext": render([m for _, m in got])}}), flush=True)
+            commit(state, node, got, "tool call")
     except Exception:
         return
 

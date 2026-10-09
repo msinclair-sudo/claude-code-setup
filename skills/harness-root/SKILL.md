@@ -155,6 +155,8 @@ It collects every refusal before deleting anything: occupied node, dirty worktre
 
 You are never recycled; everything under you starts cold. You compact at `--autocompact 500k`; add `~/.claude/harness/templates/compact-instructions.md` to the project `CLAUDE.md` once, so a compaction keeps what lives only in context. Recycle `dev` when it is waiting with nothing in flight (`harness recycle --idle`; `--cold` for sessions past the cache lifetime). If recycling would lose something, the lead was holding state that belongs in a record: write it there.
 
+**Usage limits and refusals** (logs 122, 125). A usage limit stops every session at once, so each stopped session's own Stop hook schedules its restart (the reset time + 2 minutes, `harness recycle <node> --force` then) and you are rung once per limit; orientation shows `limit` rows until then, and `recycle` skips a node still inside its limit. A session wedged by an API safety refusal is a `wedged` row and a ring to its lead: a fresh session clears it (`harness recycle <node> --force`, which needs no `--force` for a refusal now). Neither is the owner's to clear; never file an owner ask for one.
+
 ## Seeing it all
 
 ```bash

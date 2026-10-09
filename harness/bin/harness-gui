@@ -178,6 +178,7 @@ def tests_queue(pdir, repo):
     try:
         c = CLI.ProjCtx(pdir, repo)
         jobs = CLI.testq_order(CLI.testq_jobs(c, ("running", "queued")))
+        led = CLI._read_json(CLI.testq_meta(c) / "ledger.json") or {}
         last = (CLI.testq_jobs(c, ("done", "failed", "cancelled")) or [None])[-1]
     except Exception:
         return {"jobs": [], "last": None}
@@ -203,7 +204,12 @@ def tests_queue(pdir, repo):
                   "since": CLI.wait_age(t.get("since"))} for t in CLI.slot_tickets(c)]
     except Exception:
         slots = []
-    return {"jobs": out, "last": lj, "slots": slots}
+    ledger = None
+    if led.get("running") and CLI.testq_runner_alive(c):
+        ledger = (f"reserved {CLI.fmt_mem(led.get('reserved'))} of "
+                  f"{CLI.fmt_mem(led.get('pool'))} &middot; {led.get('cores_used')}/"
+                  f"{led.get('cores')} cores")
+    return {"jobs": out, "last": lj, "slots": slots, "ledger": ledger}
 
 
 def mark_held(cctx, nodes):
@@ -1727,7 +1733,8 @@ function docCard(p) {
 function testCard(p) {
   const t = p.tests || {};
   const jobs = t.jobs || [];
-  const run = jobs.find(j => j.state === 'running');
+  const runs = jobs.filter(j => j.state === 'running');
+  const run = runs[0];
   const q = jobs.filter(j => j.state === 'queued');
   const what = j => j.kind === 'check'
     ? (j.arms ? esc(j.arms.join(', ')) + ' of ' : 'check ') + '<code>' + esc(j.sha) + '</code>'
@@ -1736,18 +1743,21 @@ function testCard(p) {
   const who = (j, mark) => j.who.map(n => mark
     ? '<span class="tto" data-on="' + esc(n) + '"><b>' + esc(n) + '</b></span>'
     : esc(n)).join(', ');
-  const head = run
-    ? '<div class="ln">running: ' + tag(run) + who(run, true) + ' &middot; ' + what(run) +
+  // Tests from several jobs run at once (the memory ledger, 2026-10-09): a
+  // line for the ledger, then one per running job.
+  const headOf = run => '<div class="ln">running: ' + tag(run) + who(run, true) + ' &middot; ' + what(run) +
       // Arms side by side (2026-10-09): how many, each with its memory and cap.
       (run.running_arms && (run.running_arms.length > 1 || run.running_arms.some(r => r.cap))
-        ? ' &middot; ' + run.running_arms.length + ' arms side by side, ' + (run.done || 0) + '/' +
+        ? ' &middot; ' + run.running_arms.length + ' running, ' + (run.done || 0) + '/' +
           run.total + ' done <span class="q">' + run.running_arms.map(r => esc(r.arm) +
             (r.mem ? ' ' + esc(r.mem) : '') + (r.cap ? '/' + esc(r.cap) : '')).join(', ') + '</span>'
         : run.total ? ' &middot; arm ' + ((run.done || 0) + 1) + '/' + run.total +
         (run.arm ? ' <span class="q">' + esc(run.arm) + '</span>' : '') : '') +
       ' &middot; ' + esc(run.since || '') +
       (run.over ? ' &middot; <b class="over">over its estimate by ' + dur(run.over) + '</b>'
-       : run.eta != null ? ' &middot; done in ~' + dur(run.eta) : '') + '</div>'
+       : run.eta != null ? ' &middot; done in ~' + dur(run.eta) : '') + '</div>';
+  const head = runs.length
+    ? (t.ledger ? '<div class="ln q">' + t.ledger + '</div>' : '') + runs.map(headOf).join('')
     : '<div class="ln q">nothing running</div>';
   // `harness slot` commands: holding the slot or waiting for it, before the
   // queue (log 104: three of the owner's writes showed nowhere).

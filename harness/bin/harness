@@ -4527,6 +4527,7 @@ def run_arm(command, cwd, limit, outf, errf, env=None, cap=None, meter=None):
         with open(outf, "wb") as o, open(errf, "wb") as e:
             pr = subprocess.Popen(argv, cwd=str(cwd), stdout=o, stderr=e,
                                   stdin=subprocess.DEVNULL, start_new_session=True, env=env)
+            meter["pid"] = pr.pid
             with _ARMS_LOCK:
                 _ARMS.add(pr.pid)
                 if _ARM_HOOK[0]:
@@ -4752,29 +4753,9 @@ def set_baseline(ctx, node, why):
           f"{sum(v['failed'] for v in base['arms'].values())} arm(s)")
 
 
-TEST_MEMORY_SHARE = 0.6     # of free memory the parallel arms may hold together
-
-
-def test_budget(ctx):
-    """The manifest's parallel budget: (share of MemAvailable, cores)."""
-    try:
-        m = json.loads((Path(ctx.repo) / ".harness" / "manifest.json").read_text())
-    except Exception:
-        m = {}
-    try:
-        share = float(m.get("test_memory_share") or TEST_MEMORY_SHARE)
-    except (TypeError, ValueError):
-        share = TEST_MEMORY_SHARE
-    try:
-        cores = int(m.get("test_cores") or 0)
-    except (TypeError, ValueError):
-        cores = 0
-    return min(max(share, 0.05), 0.95), cores or max(1, (os.cpu_count() or 2) - 2)
-
-
 def _arm_env(env, name):
-    """Each arm its own scratch and TMPDIR, so arms side by side never share a
-    file (parallel arms, owner 2026-10-09). Same variable names as before."""
+    """Each test its own scratch and TMPDIR, so tests side by side never share a
+    file (owner, 2026-10-09). Same variable names as before."""
     if not env or "HARNESS_TEST_SCRATCH" not in env:
         return env
     safe = re.sub(r"[^\w.-]", "_", name)
@@ -4785,151 +4766,89 @@ def _arm_env(env, name):
     return dict(env, HARNESS_TEST_SCRATCH=str(sc), TMPDIR=str(tmp))
 
 
+def held_row(c, h):
+    why = f"{h['why']} — {h['by']}" + (f", until {h['until']}" if h.get("until") else "")
+    return {"name": c["name"], "command": c["command"], "blindSpot": c["blindSpot"],
+            "exit": None, "held": why, "seconds": 0, "timedOut": False, "failedFiles": None,
+            "stdout": "", "stderr": ""}, f"  NOT RUN (held: {why})  {c['name']}"
+
+
+def arm_result(c, res, meter, base, report, estimate=None, history=None):
+    """One finished arm -> (row, ok, lines to print). `res` is run_arm's result
+    plus (seconds, limit, output path); `meter` its memory readings."""
+    code, out, err, timed_out, dur, limit, outf = res
+    killed = bool(meter.get("oom"))
+    ceiling = meter.get("ceiling")
+    ok = code == 0 and not killed
+    last = next((x for x in reversed((out + "\n" + err).splitlines()) if x.strip()), "")
+    if timed_out:
+        err = (err + f"\ntimed out after {limit}s").lstrip("\n")
+    row = {"name": c["name"], "command": c["command"], "blindSpot": c["blindSpot"],
+           "exit": code, "seconds": round(dur, 2), "timedOut": timed_out,
+           "failedFiles": failed_files(out), "lastLine": last[-300:],
+           "stdout": out[-2000:], "stderr": err[-2000:],
+           "peakMemory": meter.get("peak"), "estimate": estimate, "memoryCeiling": ceiling,
+           "memoryKilled": killed, "lastPeaks": history or []}
+    peak = meter.get("peak")
+    mem = ""
+    if peak and not killed:
+        mem = f"   peak {fmt_mem(peak)}" + (f" of {fmt_mem(estimate)} asked" if estimate else "")
+    verdict = ("NOT RUN (timed out)" if timed_out else
+               f"KILLED (over its {fmt_mem(ceiling)} ceiling, 2x the {fmt_mem(estimate)} asked; "
+               f"peak {fmt_mem(peak)})" if killed else "PASS" if ok else "FAIL")
+    lines = [f"  {verdict}  {c['name']:<18} {dur:5.1f}s of {limit}" + mem
+             + ("" if ok or timed_out or killed else f"   exit {code}")]
+    if timed_out and last:
+        lines.append(f"        last output: {clip(last)}")
+    if not ok and not timed_out:
+        ls = (err or out).strip().splitlines()
+        if len(ls) > 6:
+            lines.append(f"        … {len(ls) - 6} earlier line(s) omitted")   # obs 34
+        lines += [f"        {clip(x)}" for x in ls[-6:]]
+    if not ok:
+        ff = row["failedFiles"]
+        lines.append(f"        report: {report}" + (f"  ({len(ff)} failed file(s) listed)" if ff
+                                                    else "") + f"\n        output: {outf}")
+    if base and not ok:
+        bl = baseline_line(baseline_diff([row], base)[c["name"]])
+        if bl:
+            lines.append(f"        {bl}")
+    lines.append(f"        cannot see: {c['blindSpot']}")
+    return row, ok, lines
+
+
 def run_arms(ctx, node, sha, cwd, checks, base, timeout, report, env=None, progress=None):
-    """Every arm, never stopping at a failure (I5). Prints as each ends; returns
-    (rows in manifest order, failed). `progress(done, arm, running, finished)`
-    is told whenever an arm starts or ends.
-
-    Arms the manifest gives a `memory` cap run side by side (owner, 2026-10-09),
-    longest first, each started only while the caps of the arms running plus its
-    own fit within a share of free memory and their `threads` fit the cores; one
-    larger than the whole budget runs alone. Arms without a cap then run one at
-    a time, alone, as they always did. Every arm runs in its own capped cgroup
-    where that is possible, and its peak memory goes in its row."""
+    """Every arm, in order, never stopping at a failure (I5): one job's arms run
+    here directly, one after another. The queue's runner packs tests from every
+    job instead (testd_schedule). Returns (rows, failed)."""
     holds = live_holds(ctx)
-    rows, failed = {}, 0
-    todo = []
-    for c in checks:
-        c = dict(c, reads=check_reads(c, cwd, env))
-        h = hold_catching(c, holds)
-        if h:
-            why = f"{h['why']} — {h['by']}" + (f", until {h['until']}" if h.get("until") else "")
-            rows[c["name"]] = {"name": c["name"], "command": c["command"],
-                               "blindSpot": c["blindSpot"], "exit": None, "held": why,
-                               "seconds": 0, "timedOut": False, "failedFiles": None,
-                               "stdout": "", "stderr": ""}
-            print(f"  NOT RUN (held: {why})  {c['name']}")
-            continue
-        todo.append(c)
-    capped = [c for c in todo if parse_mem(c.get("memory"))]
-    ok_cg, why_cg = cgroup_caps() if capped else (True, "")
-    if capped and not ok_cg:
-        print(f"  memory caps can't be enforced here ({why_cg}); every arm runs alone")
-    pool = capped if ok_cg else []
-    solo = [c for c in todo if c not in pool]
-    times = arm_seconds(ctx) if pool else {}
-    pool.sort(key=lambda c: -times.get(c["name"], 0))
-    share, cores = test_budget(ctx)
-    running, results, finished = {}, {}, []
-    told = [0.0]
-
-    def tell():
-        told[0] = time.time()
-        if progress:
-            progress(len(finished), ", ".join(running) or None,
-                     [{"arm": n, "started": r["started"], "cap": r["cap"],
-                       "mem": r["meter"].get("current")} for n, r in running.items()],
-                     list(finished))
-
-    def work(c, cap, meter):
-        limit = c.get("timeout") or timeout             # per-check ceiling (obs 24)
-        outf, errf = check_output_paths(ctx, node, c["name"])
-        t0 = time.time()
-        res = run_arm(c["command"], cwd, limit, outf, errf, _arm_env(env, c["name"]),
-                      cap=cap, meter=meter)
-        results[c["name"]] = res + (time.time() - t0, limit, outf)
-
-    def finish(c, meter):
-        nonlocal failed
-        code, out, err, timed_out, dur, limit, outf = results.pop(c["name"])
-        killed = bool(meter.get("oom"))
-        cap = parse_mem(c.get("memory")) if ok_cg else None
-        ok = code == 0 and not killed
-        failed += (not ok)
-        last = next((x for x in reversed((out + "\n" + err).splitlines()) if x.strip()), "")
-        if timed_out:
-            err = (err + f"\ntimed out after {limit}s").lstrip("\n")
-        rows[c["name"]] = {"name": c["name"], "command": c["command"],
-                           "blindSpot": c["blindSpot"], "exit": code,
-                           "seconds": round(dur, 2), "timedOut": timed_out,
-                           "failedFiles": failed_files(out), "lastLine": last[-300:],
-                           "stdout": out[-2000:], "stderr": err[-2000:],
-                           "peakMemory": meter.get("peak"), "memoryCap": cap,
-                           "memoryKilled": killed}
-        verdict = ("NOT RUN (timed out)" if timed_out else
-                   f"KILLED (over its {fmt_mem(cap)} cap; peak {fmt_mem(meter.get('peak'))})"
-                   if killed else "PASS" if ok else "FAIL")
-        print(f"  {verdict}  {c['name']:<18} {dur:5.1f}s of {limit}"
-              + (f"   peak {fmt_mem(meter['peak'])}" if meter.get("peak") and not killed else "")
-              + ("" if ok or timed_out or killed else f"   exit {code}"))
-        if timed_out and last:
-            print(f"        last output: {clip(last)}")
-        if not ok and not timed_out:
-            lines = (err or out).strip().splitlines()
-            if len(lines) > 6:
-                print(f"        … {len(lines) - 6} earlier line(s) omitted")   # obs 34
-            for line in lines[-6:]:
-                print(f"        {clip(line)}")
-        if not ok:
-            ff = rows[c["name"]]["failedFiles"]
-            print(f"        report: {report}"
-                  + (f"  ({len(ff)} failed file(s) listed)" if ff else "")
-                  + f"\n        output: {outf}")
-        if base and not ok:
-            bl = baseline_line(baseline_diff([rows[c["name"]]], base)[c["name"]])
-            if bl:
-                print(f"        {bl}")
-        print(f"        cannot see: {c['blindSpot']}")
-
-    # The pool: capped arms side by side, within the budget.
-    while pool or running:
-        if _CANCEL[0] and pool:
-            print(f"  cancelled before {', '.join(c['name'] for c in pool)}")
-            pool = []
-        while pool and not _CANCEL[0]:
-            c = pool[0]
-            cap, th = parse_mem(c["memory"]), max(1, int(c.get("threads") or 1))
-            used = sum(r["meter"].get("current") or 0 for r in running.values())
-            budget = share * (mem_available() + used)
-            held = sum(r["cap"] for r in running.values())
-            busy = sum(r["threads"] for r in running.values())
-            if running and (held + cap > budget or busy + th > cores):
-                break
-            pool.pop(0)
-            meter = {}
-            t = threading.Thread(target=work, args=(c, cap, meter), daemon=True)
-            running[c["name"]] = {"c": c, "cap": cap, "threads": th, "meter": meter,
-                                  "thread": t, "started": _now()}
-            print(f"  …     {c['name']}  (cap {fmt_mem(cap)}; {len(running)} running, caps "
-                  f"{fmt_mem(held + cap)} of {fmt_mem(budget)}, {busy + th}/{cores} cores)")
-            t.start()
-            tell()
-        time.sleep(0.2)
-        for n in [n for n, r in running.items() if not r["thread"].is_alive()]:
-            r = running.pop(n)
-            r["thread"].join()
-            finish(r["c"], r["meter"])
-            finished.append(n)
-            tell()
-        if running and time.time() - told[0] > 5:
-            tell()                               # live memory for `harness test`
-
-    # Then the rest, one at a time and alone.
-    for c in solo:
+    rows, failed, done = [], 0, []
+    for i, c in enumerate(checks):
         if _CANCEL[0]:
             print(f"  cancelled before {c['name']}")
             break
-        meter = {}
-        running[c["name"]] = {"c": c, "cap": None, "threads": 1, "meter": meter,
-                              "started": _now()}
-        tell()
+        c = dict(c, reads=check_reads(c, cwd, env))
+        h = hold_catching(c, holds)
+        if h:
+            row, line = held_row(c, h)
+            rows.append(row); print(line)
+            continue
+        if progress:
+            progress(len(done), c["name"], [{"arm": c["name"], "started": _now()}], list(done))
         print(f"  …     {c['name']}")
-        work(c, None, meter)
-        running.pop(c["name"])
-        finish(c, meter)
-        finished.append(c["name"])
-        tell()
-    return [rows[c["name"]] for c in checks if c["name"] in rows], failed
+        limit = c.get("timeout") or timeout             # per-check ceiling (obs 24)
+        outf, errf = check_output_paths(ctx, node, c["name"])
+        meter, t0 = {}, time.time()
+        res = run_arm(c["command"], cwd, limit, outf, errf, _arm_env(env, c["name"]), meter=meter)
+        row, ok, lines = arm_result(c, res + (time.time() - t0, limit, outf), meter, base, report)
+        rows.append(row)
+        failed += (not ok)
+        for line in lines:
+            print(line)
+        done.append(c["name"])
+        if progress:
+            progress(len(done), None, [], list(done))
+    return rows, failed
 
 
 def check_reads(c, cwd, env=None):
@@ -4993,12 +4912,15 @@ def print_check_report(rep, base):
         if r.get("held"):
             print(f"  NOT RUN (held: {r['held']})  {r['name']}"); continue
         v = ("NOT RUN (timed out)" if r.get("timedOut") else
-             f"KILLED (over its {fmt_mem(r.get('memoryCap'))} cap; peak "
-             f"{fmt_mem(r.get('peakMemory'))})" if r.get("memoryKilled") else
+             f"KILLED (over its {fmt_mem(r.get('memoryCeiling') or r.get('memoryCap'))} ceiling; "
+             f"peak {fmt_mem(r.get('peakMemory'))})" if r.get("memoryKilled") else
              "PASS" if r.get("exit") == 0 else "FAIL")
         print(f"  {v}  {r['name']:<18} {r.get('seconds', 0):5.1f}s"
-              + (f"   peak {fmt_mem(r['peakMemory'])}" if r.get("peakMemory")
-                 and not r.get("memoryKilled") else "")
+              + (f"   peak {fmt_mem(r['peakMemory'])}"
+                 + (f" of {fmt_mem(r['estimate'])} asked" if r.get("estimate") else "")
+                 + (f" (last runs: {', '.join(fmt_mem(x) for x in r['lastPeaks'] if x)})"
+                    if len(r.get("lastPeaks") or []) > 1 else "")
+                 if r.get("peakMemory") and not r.get("memoryKilled") else "")
               + ("" if r.get("exit") in (0, None) or r.get("timedOut") or r.get("memoryKilled")
                  else f"   exit {r['exit']}"))
         if v == "FAIL":
@@ -5037,10 +4959,11 @@ def cmd_check(a):
     """I5: submit this commit's checks to the project's test queue.
 
     EVERY check runs, including after one fails, and the result is recorded
-    against the exact commit. They run in a copy of the commit, one job at a time
-    per project (obs 81): integration checks from the priority queue first, then
-    lanes', each first in, first out. `--wait` blocks for the result; otherwise
-    the requester's doorbell rings when it is in. The harness has no tests of its
+    against the exact commit. They run in a copy of the commit; integration
+    checks go first, then lanes', oldest first, and tests from every job share
+    one memory pool (owner, 2026-10-09), so --memory gives each arm's estimate.
+    `--wait` blocks for the result; otherwise the requester's doorbell rings
+    when it is in. The harness has no tests of its
     own: the checks are the project's commands, run as given (owner, 2026-10-06).
 
     NOTHING RUNS THIS IMPLICITLY. `manifest.json` is a document that travels to
@@ -5103,9 +5026,33 @@ def cmd_check(a):
             arms = sel
             print(f"scoped to {', '.join(arms)}: {scope['why']} since {scope['base']}."
                   f"\n  Your lead runs the full set after merging; --all runs it here.")
+    # Every test comes with its memory estimate, the least it may need (owner,
+    # 2026-10-09): it reserves +20% in the pool and is killed above twice it.
+    want = arms or [c["name"] for c in checks]
+    spec = {c["name"]: c for c in checks}
+    if any(c.get("memory") for c in checks):
+        print("note: the manifest's per-arm `memory` is retired; estimates come with the "
+              "submission (--memory)")
+    est, bad = parse_estimates(a.memory, want)
+    missing = [n for n in want if n not in est]
+    if bad or missing:
+        sug = [f"{n}={usage_suggest(ctx, n) or '?'}" for n in want]
+        hist = []
+        for n in missing:
+            h = usage_for(ctx, n)
+            hist.append(f"    {n}: " + (", ".join(fmt_mem(r.get('peak')) + (' KILLED' if r.get('killed') else '')
+                                            for r in h) + " (last runs' peaks)" if h else
+                                  "no runs recorded: estimate it"))
+        die(REFUSED, (f"unreadable --memory part(s): {', '.join(bad)}\n           " if bad else "")
+            + (f"{len(missing)} test(s) need a memory estimate, the least each may need: "
+               f"{', '.join(missing)}\n" + "\n".join(hist) + "\n" if missing else "")
+            + f"           e.g. --memory {','.join(sug)}"
+            + ("\n           (? = never run: give your own estimate)" if "?" in ",".join(sug) else ""))
+    tests = {n: test_spec(est[n], (spec.get(n) or {}).get("threads"),
+                          (spec.get(n) or {}).get("exclusive")) for n in want}
     sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     job, how = testq_submit(ctx, "check", sha, node, sid, timeout=a.timeout, arms=arms,
-                            queue=queue, origin=str(ctx.worktree), scope=scope)
+                            queue=queue, origin=str(ctx.worktree), scope=scope, tests=tests)
     print(f"{how} {job['id']} — {'check' if not arms else 'arms ' + ', '.join(arms)} of "
           f"{sha[:8]}, {job['queue']} queue" + testq_wait_phrase(ctx, job))
     if not a.wait:
@@ -5119,7 +5066,7 @@ def cmd_check(a):
     sys.exit(check_exit(rep))
 
 
-# ── the test queue: one job at a time per project, in a copy of the commit ───
+# ── the test queue: tests packed into a memory ledger, each job in a copy ───
 #
 # Owner, 2026-10-05: "tests should be handled by a typical scheduler, not a
 # session. Tests are submitted to the scheduler, so we're not trying to run
@@ -5131,6 +5078,18 @@ def cmd_check(a):
 
 TESTQ_IDLE = 120                # a runner with nothing queued exits after this
 TESTQ_FREE_GB = 5               # the disk a job needs before it copies anything
+# The memory ledger (owner, 2026-10-09). Every test arrives with an estimate of
+# the memory it needs, the least it may need: it reserves that + 20% against a
+# pool of 80% of the memory WSL2 is given. The pool is soft: it counts
+# reservations and never kills, so use may spill over it while reservations
+# keep the total in bounds. Each test is killed only above twice its estimate.
+# Tests from every job are packed into the pool, oldest first, smaller ones
+# backfilling, until the oldest has waited TEST_STARVE without fitting.
+TEST_POOL_SHARE = 0.8
+TEST_NEED = 1.2
+TEST_CEILING = 2.0
+TEST_STARVE = 600
+TEST_HISTORY = 5                # runs kept per test, shown to its next submitter
 RUNS_HOME = Path.home() / ".cache" / "harness" / "runs"
 ASK_SCRATCH = Path.home() / ".cache" / "harness" / "asks"     # item sessions write here (log 114)
 
@@ -5156,6 +5115,146 @@ def _read_json(f):
 
 def shared_report_path(ctx, sha):
     return Path(ctx.state) / "checks" / f"{sha}.json"
+
+
+def mem_total():
+    """MemTotal, in bytes: on WSL2, the memory the VM is given."""
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemTotal:"):
+                return int(line.split()[1]) * 1024
+    except OSError:
+        pass
+    return 0
+
+
+def test_pool(ctx):
+    """(pool bytes, cores): the manifest's test_pool_share of MemTotal, and its
+    test_cores (default: every core but two)."""
+    try:
+        m = json.loads((Path(ctx.repo) / ".harness" / "manifest.json").read_text())
+    except Exception:
+        m = {}
+    try:
+        share = min(max(float(m.get("test_pool_share") or TEST_POOL_SHARE), 0.1), 0.95)
+    except (TypeError, ValueError):
+        share = TEST_POOL_SHARE
+    try:
+        cores = int(m.get("test_cores") or 0)
+    except (TypeError, ValueError):
+        cores = 0
+    return int(share * mem_total()), cores or max(1, (os.cpu_count() or 2) - 2)
+
+
+def job_tests(job):
+    """A job's tests: {name: {estimate, need, ceiling, threads, exclusive, state}}.
+    A job queued before estimates existed has none: its tests run alone."""
+    t = job.get("tests")
+    if t:
+        return t
+    names = (job.get("arms") or job.get("_names") or []) if job.get("kind") == "check" else ["cmd"]
+    if not names:
+        return {}
+    done = job.get("done_arms") or 0
+    out = {}
+    for i, n in enumerate(names):
+        st = "queued"
+        if job.get("state") == "running":
+            if job.get("kind") != "check":
+                st = "running"
+            elif i < done:
+                st = "done"
+            elif i == done:
+                st = "running"
+        out[n] = {"estimate": None, "need": None, "ceiling": None, "threads": 1,
+                  "exclusive": True, "state": st,
+                  "started": job.get("arm_started") or job.get("started")}
+    if job.get("kind") == "check" and not job.get("arms") and not job.get("_names"):
+        return out                                  # names unknown: not kept
+    job["tests"] = out
+    return out
+
+
+def test_spec(estimate, threads=1, exclusive=False):
+    return {"estimate": estimate, "need": int(estimate * TEST_NEED),
+            "ceiling": int(estimate * TEST_CEILING), "threads": max(1, int(threads or 1)),
+            "exclusive": bool(exclusive), "state": "queued"}
+
+
+def testq_age_key(j):
+    """Integration first, then by how long it has waited (to the microsecond:
+    two jobs asked in one second are still in the order they were asked)."""
+    return (j.get("queue") != "priority", j.get("order") or j.get("at") or "",
+            j.get("t") or _epoch(j.get("at")) or 0)
+
+
+def usage_key(job, name):
+    return name if job.get("kind") == "check" else f"cmd:{job.get('command')}"
+
+
+def testq_meta(ctx):
+    """The runner's own records (the ledger, test usage): beside the jobs, never
+    read as one."""
+    d = testq_dir(ctx) / "meta"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def usage_all(ctx):
+    return _read_json(testq_meta(ctx) / "usage.json") or {}
+
+
+def usage_for(ctx, key):
+    """The last TEST_HISTORY runs of one test, oldest first."""
+    return usage_all(ctx).get(key) or []
+
+
+def usage_append(ctx, key, rec):
+    with _TESTQ_SAVE:
+        u = usage_all(ctx)
+        u[key] = ((u.get(key) or []) + [rec])[-TEST_HISTORY:]
+        _save(testq_meta(ctx) / "usage.json", u)
+    return u[key]
+
+
+def report_peaks(ctx, name, n=TEST_HISTORY):
+    """An arm's recorded peaks from check reports, newest first: what a test had
+    before its usage history began."""
+    d = Path(ctx.state) / "checks"
+    out = []
+    for f in sorted(d.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True) \
+            if d.is_dir() else []:
+        for r in (_read_json(f) or {}).get("checks") or []:
+            if isinstance(r, dict) and r.get("name") == name and r.get("peakMemory") \
+                    and not r.get("memoryKilled"):
+                out.append(r["peakMemory"])
+        if len(out) >= n:
+            break
+    return out[:n]
+
+
+def usage_suggest(ctx, key):
+    """The median recorded peak for a test, as a size, or None."""
+    peaks = sorted(r["peak"] for r in usage_for(ctx, key) if r.get("peak")) \
+        or sorted(report_peaks(ctx, key))
+    return fmt_mem(peaks[len(peaks) // 2]) if peaks else None
+
+
+def parse_estimates(spec, names):
+    """`--memory a=2G,b=500M` (or one SIZE for a single test) -> ({name: bytes}, bad)."""
+    out, bad = {}, []
+    for part in [x.strip() for x in (spec or "").split(",") if x.strip()]:
+        if "=" in part:
+            k, v = part.split("=", 1)
+        elif len(names) == 1:
+            k, v = names[0], part
+        else:
+            bad.append(part); continue
+        b = parse_mem(v)
+        if b is None or b <= 0 or k.strip() not in names:
+            bad.append(part); continue
+        out[k.strip()] = b
+    return out, bad
 
 
 def testq_dir(ctx):
@@ -5192,6 +5291,8 @@ def _testq_save(ctx, job):
         r for r in old.get("requested_by") or [] if r.get("node") not in have]
     if old.get("state") == "cancelled" and job.get("state") == "queued":
         job["state"] = "cancelled"
+    if old.get("cancel"):
+        job["cancel"] = True            # asked while the runner held its own copy of the job
     _save(f, job)
 
 
@@ -5213,9 +5314,11 @@ def testq_describe(j):
             # Arms side by side: each with its live memory against its cap.
             arms = "; ".join(f"{r['arm']} {fmt_mem(r.get('mem')) if r.get('mem') else '…'}"
                              + (f"/{fmt_mem(r['cap'])}" if r.get("cap") else "") for r in ra)
-            return (f"{who}'s {what}, running {len(ra)} arm(s) side by side ({arms}), "
+            wait = [n for n, t in (j.get("tests") or {}).items() if t.get("state") == "queued"]
+            return (f"{who}'s {what}, running {len(ra)} test(s) ({arms}), "
                     f"{j.get('done_arms', 0)}/{j.get('total')} done"
-                    f" since {(j.get('started') or '')[11:16]}")
+                    + (f", waiting: {', '.join(wait)}" if wait else "")
+                    + f" since {(j.get('started') or '')[11:16]}")
         return (f"{who}'s {what}, running" + (f" arm {j.get('done_arms', 0) + 1}/{j.get('total')}"
                                               if j.get("total") else "")
                 + f" since {(j.get('started') or '')[11:16]}")
@@ -5223,7 +5326,7 @@ def testq_describe(j):
 
 
 def testq_submit(ctx, kind, sha, node, sid, command=None, timeout=None, arms=None,
-                 queue="normal", origin=None, scope=None):
+                 queue="normal", origin=None, scope=None, tests=None):
     """Queue a job, or join an identical one (same commit and arms) still queued
     or running: that is one run, not a guess about a result. A finished report is
     never reused; whether an old result still holds is the project's to say (obs
@@ -5243,9 +5346,11 @@ def testq_submit(ctx, kind, sha, node, sid, command=None, timeout=None, arms=Non
     job = {"id": f"{time.strftime('%Y%m%d-%H%M%S')}-{sha[:8]}-{os.urandom(3).hex()}",
            "kind": kind, "sha": sha, "command": command, "requested_by": [req],
            "state": "queued", "at": _now(), "timeout": timeout, "arms": arms,
-           "queue": queue, "origin": origin}
+           "queue": queue, "origin": origin, "t": time.time()}
     if scope:
         job["scope"] = scope
+    if tests:
+        job["tests"] = tests
     testq_save(ctx, job)
     testq_ensure_runner(ctx)
     return job, "queued"
@@ -5297,58 +5402,80 @@ def job_arm_names(ctx, arms):
     return [n for n in names if n in arms] if arms and names else list(arms or names)
 
 
-def _makespan(items, cores, busy=()):
-    """Wall seconds to run `items` [(seconds, threads)] longest first on `cores`,
-    after the running `busy` [(seconds left, threads)]: run_arms' pool, without
-    the memory test (memory isn't known ahead of time)."""
-    run = [(left, th) for left, th in busy]
-    q = sorted(items, key=lambda x: -x[0])
-    now = 0.0
-    while q or run:
-        used = sum(th for _, th in run)
-        while q and (not run or used + q[0][1] <= cores):
-            d, th = q.pop(0)
-            run.append((now + d, th))
-            used += th
-        now = min(e for e, _ in run)
-        run = [(e, th) for e, th in run if e > now]
+def usage_seconds(ctx, key):
+    """The median of a test's recorded run times (runs killed at their ceiling
+    are cut short, so not counted), or None."""
+    ds = sorted(r["seconds"] for r in usage_for(ctx, key)
+                if r.get("seconds") and not r.get("killed"))
+    return ds[len(ds) // 2] if ds else None
+
+
+def test_seconds(ctx, job, name):
+    """How long one test runs, from its own record: its usage history first
+    (every run, whatever report it went to), else an arm's report times, else a
+    command's finished jobs. None when it has never run."""
+    d = usage_seconds(ctx, usage_key(job, name))
+    if d is not None:
+        return d
+    if job.get("kind") == "check":
+        return arm_seconds(ctx).get(name)
+    return testq_duration(ctx, "cmd", None, job.get("command"))
+
+
+def ledger_estimate(ctx, job):
+    """Seconds until `job` finishes: the scheduler's packing simulated with each
+    test's recorded time, from what runs and waits now. None when a test that
+    goes before it has never run."""
+    pool, cores = test_pool(ctx)
+    jobs = sorted(testq_jobs(ctx, ("running", "queued")), key=testq_age_key)
+    if job["id"] not in [j["id"] for j in jobs]:
+        jobs.append(job)
+    for j in jobs:
+        if j.get("kind") == "check" and not j.get("tests") and not j.get("arms"):
+            j["_names"] = job_arm_names(ctx, None)      # a full check from before estimates
+    now, events = 0.0, []                       # running: [(end, need, threads, exclusive, job id)]
+    pending = []
+    for j in jobs:
+        for name, t in job_tests(j).items():
+            d = test_seconds(ctx, j, name)
+            if t.get("state") in ("done", "cancelled"):
+                continue
+            if d is None:
+                return None
+            if t.get("state") == "running":
+                left = max(0.0, d - (time.time() - (_epoch(t.get("started")) or time.time())))
+                events.append((left, t.get("need") or 0, t.get("threads") or 1,
+                               t.get("need") is None or t.get("exclusive"), j["id"]))
+            else:
+                pending.append((d, t.get("need") or 0, t.get("threads") or 1,
+                                t.get("need") is None or t.get("exclusive"), j["id"]))
+        if j["id"] == job["id"]:
+            break
+    left_of_job = sum(1 for e in events + pending if e[4] == job["id"])
+    if not left_of_job:
+        return 0.0
+    for _ in range(10000):
+        busy_x = any(e[3] for e in events)
+        res = sum(e[1] for e in events)
+        th = sum(e[2] for e in events)
+        while pending and not busy_x:
+            d, need, t_, ex, jid = pending[0]
+            if events and (ex or res + need > pool or th + t_ > cores):
+                break
+            pending.pop(0)
+            events.append((now + d, need, t_, ex, jid))
+            res, th, busy_x = res + need, th + t_, ex
+        if not events:
+            break
+        end = min(e[0] for e in events)
+        now = end
+        for e in [e for e in events if e[0] <= end]:
+            events.remove(e)
+            if e[4] == job["id"]:
+                left_of_job -= 1
+                if not left_of_job:
+                    return now
     return now
-
-
-def arm_estimate(ctx, arms, skip=0, current_ran=None, job=None):
-    """Seconds left for a check from its arms' own times (log 111: a one-arm job
-    was estimated as a full check), or None when any arm has no time yet.
-    Capped arms run side by side, so they count as the pool's wall time, not
-    their sum (parallel arms, 2026-10-09). For a running job, `job` says what
-    finished and what runs now; an older job only counts arms done (`skip`) and
-    how long the current one has run (`current_ran`)."""
-    names = job_arm_names(ctx, arms)
-    t = arm_seconds(ctx)
-    if not names or any(n not in t for n in names):
-        return None
-    try:
-        spec = {c["name"]: c for c in json.loads(
-            (Path(ctx.repo) / ".harness" / "manifest.json").read_text()).get("checks") or []}
-    except Exception:
-        spec = {}
-    capped = {n for n in names if parse_mem((spec.get(n) or {}).get("memory"))}
-    th = lambda n: max(1, int((spec.get(n) or {}).get("threads") or 1))
-    now = time.time()
-    if job is not None and job.get("finished_arms") is not None:
-        done = set(job["finished_arms"])
-        ran = {r["arm"]: now - (_epoch(r.get("started")) or now) for r in job.get("running_arms") or []}
-    else:
-        order = [n for n in names if n in capped] + [n for n in names if n not in capped] \
-            if job is not None else names
-        done = set(order[:skip])
-        cur = order[skip] if skip < len(order) and current_ran is not None else None
-        ran = {cur: current_ran} if cur else {}
-    left = lambda n: max(0.0, t[n] - ran.get(n, 0))
-    cores = test_budget(ctx)[1]
-    pool = [(t[n], th(n)) for n in names if n in capped and n not in done and n not in ran]
-    busy = [(left(n), th(n)) for n in ran if n in capped]
-    solo = sum(left(n) for n in names if n not in capped and n not in done)
-    return _makespan(pool, cores, busy) + solo
 
 
 def testq_duration(ctx, kind, arms, command=None):
@@ -5357,9 +5484,10 @@ def testq_duration(ctx, kind, arms, command=None):
     arms, else any check. A command: the same command only (log 103: a timing
     job was estimated from short probes, "done in under a minute" 27 minutes in)."""
     if kind == "check":
-        est = arm_estimate(ctx, arms)
-        if est is not None:
-            return est
+        t = arm_seconds(ctx)
+        names = job_arm_names(ctx, arms)
+        if names and all(n in t for n in names):
+            return sum(t[n] for n in names)
     done = [j for j in testq_jobs(ctx, ("done",)) if j.get("kind") == kind
             and _epoch(j.get("started")) and _epoch(j.get("finished"))]
     if kind == "cmd":
@@ -5372,31 +5500,34 @@ def testq_duration(ctx, kind, arms, command=None):
 
 
 def testq_wait_estimate(ctx, job):
-    """Seconds until this job finishes, from what runs and waits before it, or
-    None when no job like one of them has finished yet."""
+    """Seconds until this job finishes: the ledger simulated with each test's
+    own times, else (a test never run) the old reckoning from whole jobs."""
+    est = ledger_estimate(ctx, job)
+    if est is not None:
+        return est
     total = 0
     for j in testq_ahead(ctx, job) + [job]:
-        d = None
-        if j.get("state") == "running" and j.get("kind") == "check" and j.get("arm_started"):
-            d = arm_estimate(ctx, j.get("arms"), j.get("done_arms") or 0,
-                             time.time() - (_epoch(j["arm_started"]) or time.time()), job=j)
+        d = testq_duration(ctx, j.get("kind"), j.get("arms"), j.get("command"))
         if d is None:
-            d = testq_duration(ctx, j.get("kind"), j.get("arms"), j.get("command"))
-            if d is None:
-                return None
-            if j.get("state") == "running":
-                d = max(0, d - (time.time() - (_epoch(j.get("started")) or time.time())))
+            return None
+        if j.get("state") == "running":
+            d = max(0, d - (time.time() - (_epoch(j.get("started")) or time.time())))
         total += d
     return total
 
 
 def testq_overdue(ctx, job):
-    """Seconds a running job is past its own estimate, or None."""
+    """Seconds the most overdue running test of a job is past its own time, or None."""
     if job.get("state") != "running":
         return None
-    d = testq_duration(ctx, job.get("kind"), job.get("arms"), job.get("command"))
-    ran = time.time() - (_epoch(job.get("started")) or time.time())
-    return ran - d if d is not None and ran > d else None
+    over = []
+    for name, t in job_tests(job).items():
+        d = test_seconds(ctx, job, name)
+        if t.get("state") == "running" and d is not None:
+            ran = time.time() - (_epoch(t.get("started")) or time.time())
+            if ran > d:
+                over.append(ran - d)
+    return max(over) if over else None
 
 
 def _wait_words(sec):
@@ -5469,48 +5600,358 @@ def testd(pdir, repo):
 
 
 def _testd_loop(ctx):
+    """The runner: tests from every queued job packed into the memory ledger
+    (owner, 2026-10-09). A job's copy is made when its first test starts and
+    torn down after its last; its report is written and its requesters rung
+    then, as before."""
+    try:
+        sys.stdout.reconfigure(line_buffering=True)    # runner.log readable as it runs
+    except Exception:
+        pass
     testq_recover(ctx)
-    state = {"job": None}
+    S = {"open": {}, "running": {}, "head": (None, 0.0), "slot": None, "told": 0.0,
+         "said": ""}
 
     def on_term(signum, frame):
         for pid in list(_ARMS):
             kill_tree(pid)
-        j = state["job"]
-        if j:
-            j.update(state="cancelled", finished=_now(), why="the runner was stopped")
-            testq_save(ctx, j)
-            testq_teardown(ctx, j)
+        for o in list(S["open"].values()):
+            o["job"].update(state="cancelled", finished=_now(), why="the runner was stopped")
+            testq_save(ctx, o["job"])
+            testq_teardown(ctx, o["job"])
         sys.exit(1)
-    def on_cancel(signum, frame):
-        # Cancel this job only: kill its arm, and run_arms runs no more arms.
-        _CANCEL[0] = True
-        for pid in list(_ARMS):
-            kill_tree(pid)
     import signal
     signal.signal(signal.SIGTERM, on_term)
-    signal.signal(signal.SIGUSR1, on_cancel)
+    signal.signal(signal.SIGUSR1, lambda *_: None)       # a cancel: read from the job file
     idle_since = time.time()
     while True:
-        if halted(ctx):
-            # The owner halted the tree: the running job has finished; start no
-            # new one. `resume` starts a runner again (owner, 2026-10-06).
+        if halted(ctx) and not (S["running"] or S["open"]):
+            # The owner halted the tree: what ran has finished; start no new
+            # one. `resume` starts a runner again (owner, 2026-10-06).
+            if S["slot"] is not None:
+                S["slot"].close()
             print(f"{_now()} the tree is halted; runner exits"); return
-        if any(t.get("state") == "waiting" for t in slot_tickets(ctx)):
-            # A slot command (a live write, often the owner's) asked first; it
-            # goes before the next queued job (log 104).
-            time.sleep(2); idle_since = time.time(); continue
-        q = testq_order(testq_jobs(ctx, ("queued",)))
-        if not q:
-            if time.time() - idle_since > TESTQ_IDLE:
+        testd_tick(ctx, S)
+        busy = S["running"] or S["open"]
+        waiting = bool(testq_jobs(ctx, ("queued",)))
+        if busy or waiting:
+            idle_since = time.time()
+        if not busy:
+            if S["slot"] is not None:
+                S["slot"].close(); S["slot"] = None
+            if not waiting and time.time() - idle_since > TESTQ_IDLE:
                 print(f"{_now()} queue empty; runner exits"); return
-            time.sleep(3); continue
-        job = _read_json(testq_dir(ctx) / f"{q[0]['id']}.json") or q[0]
-        if job.get("state") != "queued":
+        time.sleep(0.5)
+
+
+def _say(S, line):
+    if line != S.get("said"):
+        print(f"{_now()} {line}")
+        S["said"] = line
+
+
+def testd_tick(ctx, S):
+    """One pass: reap ended tests, act on cancels, close finished jobs, start
+    what fits."""
+    for key in [k for k, r in S["running"].items() if not r["thread"].is_alive()]:
+        testd_finish(ctx, S, key)
+    for jid, o in list(S["open"].items()):
+        fresh = _read_json(testq_dir(ctx) / f"{jid}.json") or {}
+        if fresh.get("cancel") and not o.get("cancel"):
+            o["cancel"] = True
+            for (j2, name), r in S["running"].items():
+                if j2 == jid and r["meter"].get("pid"):
+                    kill_tree(r["meter"]["pid"])
+            for t in job_tests(o["job"]).values():
+                if t["state"] == "queued":
+                    t["state"] = "cancelled"
+            o["log"].write("cancelled with harness test --cancel\n")
+        if not any(j2 == jid for j2, _ in S["running"]) and all(
+                t["state"] in ("done", "cancelled") for t in job_tests(o["job"]).values()):
+            testd_close(ctx, S, jid)
+    testd_ledger(ctx, S)
+    if halted(ctx):
+        return
+    # A `harness slot` command waiting goes before anything new (log 104): start
+    # nothing, and once the running tests end let go of the slot.
+    if any(t.get("state") == "waiting" for t in slot_tickets(ctx)):
+        if not S["running"] and S["slot"] is not None:
+            S["slot"].close(); S["slot"] = None
+        _say(S, "a harness slot command is waiting; nothing new starts")
+        return
+    pool, cores = test_pool(ctx)
+    times = arm_seconds(ctx)
+    order = []
+    for j in sorted(testq_jobs(ctx, ("queued", "running")), key=testq_age_key):
+        if j.get("cancel"):
             continue
-        state["job"] = job
-        testq_run(ctx, job)
-        state["job"] = None
-        idle_since = time.time()
+        j = S["open"][j["id"]]["job"] if j["id"] in S["open"] else j
+        if j.get("kind") == "check" and not j.get("tests") and not j.get("arms"):
+            j["_names"] = job_arm_names(ctx, None)      # a full check queued before estimates
+        names = [n for n, t in job_tests(j).items() if t.get("state") == "queued"]
+        names.sort(key=lambda n: -(test_seconds(ctx, j, n) or times.get(n) or 0))  # longest first
+        order += [(j, n) for n in names]
+    if not order:
+        return
+    blocked = False
+    for j, name in order:
+        t = job_tests(j)[name]
+        run = S["running"]
+        reserved = sum(r["need"] for r in run.values())
+        used = sum(r["threads"] for r in run.values())
+        alone = t.get("need") is None or t.get("exclusive") or t["need"] > pool
+        node = (j.get("requested_by") or [{}])[0].get("node") or "operator"
+        clash = any(r["node"] == node and r["name"] == name for r in run.values())
+        fits = not run or (not alone and not any(r["alone"] for r in run.values())
+                           and not clash and reserved + t["need"] <= pool
+                           and used + t["threads"] <= cores)
+        if fits:
+            if not run and S["slot"] is None:
+                S["slot"] = _flock(testq_dir(ctx) / "slot.lock", block=False)
+                if S["slot"] is None:
+                    _say(S, "waiting for the test slot (harness slot holds it)")
+                    return
+            testd_start(ctx, S, j, name, reserved, pool, used, cores)
+            continue
+        if not blocked:
+            # The oldest test that doesn't fit: once it has waited TEST_STARVE
+            # like this, smaller ones stop backfilling past it.
+            blocked = True
+            if S["head"][0] != (j["id"], name):
+                S["head"] = ((j["id"], name), time.time())
+            if time.time() - S["head"][1] >= TEST_STARVE:
+                _say(S, f"{name} ({j['id']}) has waited {human_age(time.time() - S['head'][1])} "
+                        f"as the oldest that doesn't fit: nothing else starts until it does")
+                return
+
+
+def testd_open(ctx, S, job):
+    """Copy the commit for a job's first test: the worktree, scratch, env."""
+    node = (job["requested_by"][0].get("node") or "operator")
+    run = RUNS_HOME / ctx.slug / job["id"]
+    wt_name = f"{Path(ctx.repo).name}-{node}-{job['sha'][:8]}-{job['id'][-6:]}"
+    logf = testq_dir(ctx) / f"{job['id']}.log"
+    job.update(state="running", started=_now(), pid=os.getpid(), dir=str(run), wt_name=wt_name,
+               log=str(logf))
+    log = open(logf, "a", buffering=1)
+    o = {"job": job, "log": log, "rows": {}, "failed": 0, "code": None}
+    S["open"][job["id"]] = o
+    try:
+        free = shutil.disk_usage(Path.home()).free / 2**30
+        if free < TESTQ_FREE_GB:
+            raise RuntimeError(f"only {free:.1f} GB free on the Linux disk; a job needs "
+                               f"{TESTQ_FREE_GB} GB (copies of the test databases land in it)")
+        (run / "tmp").mkdir(parents=True, exist_ok=True)
+        rc, out, err = git("worktree", "add", "--detach", str(run / wt_name), job["sha"],
+                           cwd=ctx.repo)
+        if rc:
+            raise RuntimeError(f"git worktree add failed: {(err or out).strip()[:300]}")
+        o["wt"] = run / wt_name
+        # What the project needs to know about where it runs. The copy is not
+        # where the worktree was (obs 84), and only what is under the run folder
+        # is torn down (obs 86); setup is the project's own (obs 85).
+        (run / "scratch").mkdir(exist_ok=True)
+        env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
+        env.update(TMPDIR=str(run / "tmp"), HARNESS_TEST_JOB=job["id"],
+                   HARNESS_TEST_SHA=job["sha"], HARNESS_TEST_ORIGIN=job.get("origin") or "",
+                   HARNESS_TEST_SCRATCH=str(run / "scratch"))
+        o["env"] = env
+        if job["kind"] == "check":
+            checks = load_checks(ctx)
+            names = list(job_tests(job))
+            o["checks"] = {c["name"]: c for c in checks if c["name"] in names}
+            o["base"] = load_baseline(ctx)
+            o["holds"] = live_holds(ctx)
+            job["total"] = len(names)
+            log.write(f"{len(names)} check(s) at {job['sha'][:8]} in {o['wt']}\n")
+        else:
+            log.write(f"$ {job['command']}\n")
+        testq_save(ctx, job)
+        return o
+    except Exception as ex:
+        log.write(f"job failed: {ex}\n")
+        job.update(state="failed", finished=_now(), why=str(ex)[:300])
+        S["open"].pop(job["id"], None)
+        log.close()
+        testq_save(ctx, job)
+        testq_teardown(ctx, job)
+        testq_ring(ctx, job, None, None)
+        return None
+
+
+def testd_start(ctx, S, job, name, reserved, pool, used, cores):
+    """Start one test in its own thread, its own capped cgroup, its own scratch."""
+    o = S["open"].get(job["id"]) or testd_open(ctx, S, job)
+    if o is None:
+        return
+    job = o["job"]
+    t = job_tests(job)[name]
+    node = (job["requested_by"][0].get("node") or "operator")
+    if job["kind"] == "check":
+        c = o["checks"].get(name)
+        if c is None:                             # gone from the manifest since it was asked
+            t["state"] = "done"
+            o["rows"][name] = {"name": name, "command": "", "blindSpot": "", "exit": None,
+                               "held": "no longer in the manifest", "seconds": 0,
+                               "timedOut": False, "failedFiles": None, "stdout": "", "stderr": ""}
+            testq_save(ctx, job); return
+        c = dict(c, reads=check_reads(c, o["wt"], o["env"]))
+        h = hold_catching(c, o["holds"])
+        if h:
+            row, line = held_row(c, h)
+            o["rows"][name] = row
+            o["log"].write(line + "\n")
+            t["state"] = "done"
+            testq_save(ctx, job); return
+        command, limit = c["command"], c.get("timeout") or job.get("timeout") or 900
+        outf, errf = check_output_paths(ctx, node, name)
+    else:
+        command, limit = job["command"], None
+        run = Path(job["dir"])
+        outf, errf = run / "cmd.out", run / "cmd.err"
+    meter = {"ceiling": t.get("ceiling")}
+    res = {}
+
+    def work():
+        t0 = time.time()
+        r = run_arm(command, o["wt"], limit, outf, errf, _arm_env(o["env"], name),
+                    cap=t.get("ceiling"), meter=meter)
+        res["r"] = r + (time.time() - t0, limit, outf)
+    th = threading.Thread(target=work, daemon=True)
+    alone = t.get("need") is None or t.get("exclusive") or (t.get("need") or 0) > pool
+    S["running"][(job["id"], name)] = {"thread": th, "meter": meter, "res": res,
+                                       "need": t.get("need") or 0, "threads": t.get("threads") or 1,
+                                       "alone": alone, "node": node, "name": name,
+                                       "started": _now()}
+    t.update(state="running", started=_now())
+    need = t.get("need") or 0
+    line = (f"start {name} ({job['id']}): asked {fmt_mem(t.get('estimate'))}, reserves "
+            f"{fmt_mem(need)}, ceiling {fmt_mem(t.get('ceiling'))}; reserved "
+            f"{fmt_mem(reserved + need)} of {fmt_mem(pool)}, {used + t.get('threads', 1)}/{cores} "
+            f"cores" + (" — alone" if alone else ""))
+    print(f"{_now()} {line}")
+    o["log"].write(f"  …     {line}\n")
+    th.start()
+    testd_running(ctx, S, job)
+
+
+def testd_running(ctx, S, job):
+    """The job's view of its running tests, for `harness test` and the GUI."""
+    ra = [{"arm": n, "started": r["started"], "cap": r["meter"].get("ceiling"),
+           "mem": r["meter"].get("current"), "need": r["need"]}
+          for (jid, n), r in S["running"].items() if jid == job["id"]]
+    tests = job_tests(job)
+    job.update(running_arms=ra, arm=", ".join(r["arm"] for r in ra) or None,
+               arm_started=min((r["started"] for r in ra), default=_now()),
+               done_arms=sum(1 for t in tests.values() if t["state"] in ("done", "cancelled")),
+               finished_arms=[n for n, t in tests.items() if t["state"] == "done"],
+               arm_pids=[r["meter"]["pid"] for (jid, n), r in S["running"].items()
+                         if jid == job["id"] and r["meter"].get("pid")])
+    testq_save(ctx, job)
+
+
+def testd_finish(ctx, S, key):
+    """A test ended: its row, its usage record, the job's progress."""
+    jid, name = key
+    r = S["running"].pop(key)
+    r["thread"].join()
+    o = S["open"].get(jid)
+    if o is None:
+        return
+    job = o["job"]
+    t = job_tests(job)[name]
+    t.update(state="cancelled" if o.get("cancel") else "done", finished=_now())
+    res, meter = r["res"].get("r"), r["meter"]
+    if res is None or o.get("cancel"):
+        testd_running(ctx, S, job); return
+    hist = usage_append(ctx, usage_key(job, name), {
+        "peak": meter.get("peak"), "seconds": round(res[4], 1), "estimate": t.get("estimate"),
+        "killed": bool(meter.get("oom")), "at": _now(), "job": jid})
+    if job["kind"] == "check":
+        row, ok, lines = arm_result(o["checks"][name], res, meter, o["base"],
+                                    shared_report_path(ctx, job["sha"]), t.get("estimate"),
+                                    [h.get("peak") for h in hist])
+        o["rows"][name] = row
+        o["failed"] += (not ok)
+    else:
+        code = res[0]
+        o["code"] = 137 if meter.get("oom") else code
+        keep = testq_dir(ctx) / f"{jid}.out"
+        run = Path(job["dir"])
+        keep.write_text(_tail(run / "cmd.out", 200_000) + "\n--- stderr ---\n" +
+                        _tail(run / "cmd.err", 50_000))
+        lines = [f"exit {code}; peak {fmt_mem(meter.get('peak'))} of {fmt_mem(t.get('estimate'))}"
+                 f" asked" + ("; KILLED over its ceiling" if meter.get("oom") else "")
+                 + f"; output kept in {keep}"]
+    print(f"{_now()} end {name} ({jid}): peak {fmt_mem(meter.get('peak'))}"
+          + (" KILLED" if meter.get("oom") else ""))
+    for line in lines:
+        o["log"].write(line + "\n")
+    testd_running(ctx, S, job)
+
+
+def testd_close(ctx, S, jid):
+    """A job's last test ended: the report, the ring, the teardown."""
+    o = S["open"].pop(jid)
+    job, log = o["job"], o["log"]
+    rep = None
+    if o.get("cancel"):
+        job.update(state="cancelled", finished=_now(), why="cancelled with harness test --cancel")
+        log.write("cancelled: no report is written, so nothing reuses a partial run\n")
+    elif job["kind"] == "check":
+        sha, node = job["sha"], job["requested_by"][0].get("node") or "operator"
+        names = [n for n in o["checks"]] + [n for n in o["rows"] if n not in o["checks"]]
+        rows = [o["rows"][n] for n in names if n in o["rows"]]
+        base = o["base"]
+        rep = make_check_report(node, sha, rows, o["failed"], base,
+                                job=jid, requested_by=[r.get("node") for r in job["requested_by"]],
+                                arms=job.get("arms"),
+                                partial=bool(job.get("arms")) and not job.get("scope"),
+                                **({"scoped": job["scope"]} if job.get("scope") else {}))
+        shared = shared_report_path(ctx, sha)
+        shared.parent.mkdir(parents=True, exist_ok=True)
+        shared.write_text(json.dumps(rep, indent=2) + "\n")
+        # Requesters who joined while it ran are read fresh from the job file.
+        latest = _read_json(testq_dir(ctx) / f"{jid}.json") or job
+        job["requested_by"] = latest.get("requested_by") or job["requested_by"]
+        for r in job["requested_by"]:
+            n = r.get("node") or "operator"
+            check_report_path(ctx, n, sha).write_text(json.dumps(dict(rep, node=n), indent=2) + "\n")
+        job["report"] = str(shared)
+        for line in check_summary(rep, base, len(rows)):
+            log.write(line + "\n")
+        job.update(state="done", finished=_now())
+    else:
+        job.update(state="done", finished=_now())
+    job.update(running_arms=[], arm=None)
+    log.close()
+    testq_save(ctx, job)
+    testq_teardown(ctx, job)
+    testq_ring(ctx, job, rep, o.get("code"))
+
+
+def testd_ledger(ctx, S):
+    """The ledger as it stands, for `harness test` and the GUI: every 5s, and
+    whenever what runs changes."""
+    key = tuple(sorted(S["running"]))
+    if key == S.get("ledger_key") and time.time() - S["told"] < 5:
+        return
+    for (jid, n), r in S["running"].items():
+        cur = _cg_current(r["meter"].get("pid") or 0)
+        if cur is not None:
+            r["meter"]["current"] = cur
+    for o in S["open"].values():
+        if any(j == o["job"]["id"] for j, _ in S["running"]):
+            testd_running(ctx, S, o["job"])
+    pool, cores = test_pool(ctx)
+    _save(testq_meta(ctx) / "ledger.json", {
+        "at": _now(), "pool": pool, "cores": cores,
+        "reserved": sum(r["need"] for r in S["running"].values()),
+        "cores_used": sum(r["threads"] for r in S["running"].values()),
+        "running": [{"job": j, "test": n, "need": r["need"], "ceiling": r["meter"].get("ceiling"),
+                     "mem": r["meter"].get("current"), "started": r["started"]}
+                    for (j, n), r in S["running"].items()]})
+    S["ledger_key"], S["told"] = key, time.time()
 
 
 def testq_recover(ctx):
@@ -5541,119 +5982,6 @@ def testq_teardown(ctx, job):
         pass
 
 
-def testq_run(ctx, job):
-    """One job, start to finish: copy the commit, set up, run, report, ring, tear down."""
-    node = (job["requested_by"][0].get("node") or "operator")
-    run = RUNS_HOME / ctx.slug / job["id"]
-    wt_name = f"{Path(ctx.repo).name}-{node}-{job['sha'][:8]}"
-    log = testq_dir(ctx) / f"{job['id']}.log"
-    job.update(state="running", started=_now(), pid=os.getpid(), dir=str(run), wt_name=wt_name,
-               log=str(log))
-    testq_save(ctx, job)
-    out = open(log, "a", buffering=1)
-    old = sys.stdout
-    sys.stdout = out
-    rep, code = None, None
-    _CANCEL[0] = False
-    def arm_started(pids):
-        job["arm_pids"] = pids
-        job["arm_pid"] = pids[0] if pids else None
-        testq_save(ctx, job)
-    _ARM_HOOK[0] = arm_started
-    slot = _flock(testq_dir(ctx) / "slot.lock", block=False)
-    if slot is None:
-        print("waiting for the test slot (harness slot holds it)")
-        slot = _flock(testq_dir(ctx) / "slot.lock", block=True)
-    try:
-        free = shutil.disk_usage(Path.home()).free / 2**30
-        if free < TESTQ_FREE_GB:
-            raise RuntimeError(f"only {free:.1f} GB free on the Linux disk; a job needs "
-                               f"{TESTQ_FREE_GB} GB (copies of the test databases land in it)")
-        (run / "tmp").mkdir(parents=True, exist_ok=True)
-        rc, o, e = git("worktree", "add", "--detach", str(run / wt_name), job["sha"], cwd=ctx.repo)
-        if rc:
-            raise RuntimeError(f"git worktree add failed: {(e or o).strip()[:300]}")
-        wt = run / wt_name
-        # What the project needs to know about where it runs. The copy is not
-        # where the worktree was (obs 84), and only what is under the run folder
-        # is torn down (obs 86); setup is the project's own (obs 85).
-        (run / "scratch").mkdir(exist_ok=True)
-        env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
-        env.update(TMPDIR=str(run / "tmp"), HARNESS_TEST_JOB=job["id"],
-                   HARNESS_TEST_SHA=job["sha"], HARNESS_TEST_ORIGIN=job.get("origin") or "",
-                   HARNESS_TEST_SCRATCH=str(run / "scratch"))
-        if job["kind"] == "check":
-            rep = testq_check(ctx, job, wt, env)
-        else:
-            print(f"$ {job['command']}")
-            code, o, e, to = run_arm(job["command"], wt, None, run / "cmd.out",
-                                     run / "cmd.err", env)
-            keep = testq_dir(ctx) / f"{job['id']}.out"
-            keep.write_text(_tail(run / "cmd.out", 200_000) + "\n--- stderr ---\n" +
-                            _tail(run / "cmd.err", 50_000))
-            print(f"exit {code}; output kept in {keep}")
-        if _CANCEL[0]:
-            job.update(state="cancelled", finished=_now(), why="cancelled with harness test --cancel")
-        else:
-            job.update(state="done", finished=_now())
-    except Exception as ex:
-        print(f"job failed: {ex}")
-        job.update(state="failed", finished=_now(), why=str(ex)[:300])
-    finally:
-        _ARM_HOOK[0] = None
-        slot.close()
-        sys.stdout = old
-        out.close()
-        testq_save(ctx, job)
-        testq_teardown(ctx, job)
-    testq_ring(ctx, job, rep, code)
-
-
-def testq_check(ctx, job, wt, env):
-    """A check job's arms, run in the copy; the report goes to the commit and to
-    every node that asked for it."""
-    checks = load_checks(ctx)
-    if job.get("arms"):
-        checks = [c for c in checks if c["name"] in job["arms"]]
-    base = load_baseline(ctx)
-    sha = job["sha"]
-    shared = shared_report_path(ctx, sha)
-    job["total"] = len(checks)
-
-    def progress(i, arm, running=(), finished=()):
-        # One arm or several side by side (parallel arms, 2026-10-09): `arm`
-        # names what runs now, `arm_started` is when the earliest of them began.
-        st = min((r["started"] for r in running), default=_now())
-        job.update(done_arms=i, arm=arm, arm_started=st, running_arms=list(running),
-                   finished_arms=list(finished))
-        testq_save(ctx, job)
-    node = job["requested_by"][0].get("node") or "operator"
-    print(f"{len(checks)} check(s) at {sha[:8]} in {wt}")
-    rows, failed = run_arms(ctx, node, sha, wt, checks, base, job.get("timeout") or 900,
-                            shared, env, progress)
-    if _CANCEL[0]:
-        print("cancelled: no report is written, so nothing reuses a partial run")
-        return None
-    rep = make_check_report(node, sha, rows, failed, base,
-                            job=job["id"], requested_by=[r.get("node") for r in job["requested_by"]],
-                            arms=job.get("arms"),
-                            partial=bool(job.get("arms")) and not job.get("scope"),
-                            **({"scoped": job["scope"]} if job.get("scope") else {}))
-    shared.parent.mkdir(parents=True, exist_ok=True)
-    shared.write_text(json.dumps(rep, indent=2) + "\n")
-    # Requesters who joined while it ran are read fresh from the job file.
-    latest = _read_json(testq_dir(ctx) / f"{job['id']}.json") or job
-    job["requested_by"] = latest.get("requested_by") or job["requested_by"]
-    for r in job["requested_by"]:
-        n = r.get("node") or "operator"
-        f = check_report_path(ctx, n, sha)
-        f.write_text(json.dumps(dict(rep, node=n), indent=2) + "\n")
-    job["report"] = str(shared)
-    for line in check_summary(rep, base, len(checks)):
-        print(line)
-    return rep
-
-
 def testq_ring(ctx, job, rep, code):
     """Tell each requester the result, through its doorbell."""
     if job.get("state") != "done":
@@ -5682,8 +6010,11 @@ def testq_cancel(ctx, job):
     if job.get("state") == "running":
         pid = job.get("pid")
         if runner_alive(pid):
-            os.kill(pid, 10)        # SIGUSR1: the runner kills the arm's tree, ends the job,
-            return "stopped; its copy is being removed"     # tears it down, and goes on
+            # The runner reads the flag on its next pass: it kills this job's
+            # tests only, drops its waiting ones, and tears its copy down.
+            job["cancel"] = True
+            testq_save(ctx, job)
+            return "stopping; its tests are killed and its copy removed"
         for pid in job.get("arm_pids") or [job.get("arm_pid")]:
             if _pid_exists(pid):
                 kill_tree(pid)
@@ -5749,20 +6080,45 @@ def cmd_test(a):
             die(REFUSED, f"no job '{a.log}'")
         f = testq_dir(ctx) / f"{hit[-1]['id']}.log"
         print(f.read_text() if f.exists() else "no log yet"); return
+    if a.usage is not None:
+        u = usage_all(ctx)
+        keys = [k for k in sorted(u) if not a.usage or a.usage in k]
+        if not keys:
+            print("no test runs recorded" + (f" matching '{a.usage}'" if a.usage else "")); return
+        for k in keys:
+            print(f"{k}")
+            for r in u[k]:
+                print(f"   {(r.get('at') or '')[:16]}  peak {fmt_mem(r.get('peak')):>6}  asked "
+                      f"{fmt_mem(r.get('estimate')):>6}  {r.get('seconds')}s"
+                      + ("  KILLED" if r.get("killed") else ""))
+        return
     if cmd:
         refuse_if_halted(ctx, "a new test job")
         node, _ = ctx.node()
+        key = f"cmd:{shlex.join(cmd) if len(cmd) > 1 else cmd[0]}"
+        est = parse_mem(a.memory) if a.memory else None
+        if not est:
+            h = usage_for(ctx, key)
+            die(REFUSED, "say how much memory it needs, the least it may: harness test --memory "
+                         "SIZE -- <command>" + (f"\n           its last runs peaked at "
+                         + ", ".join(fmt_mem(r.get('peak')) for r in h) if h else
+                         "\n           (never run: estimate it)"))
         sha = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
         rc, dirt, _ = git("status", "--porcelain", "--untracked-files=no", cwd=ctx.worktree)
         if dirt.strip():
             die(REFUSED, "uncommitted changes: the queue runs a copy of the commit; commit first")
         job, _ = testq_submit(ctx, "cmd", sha, node, os.environ.get("CLAUDE_CODE_SESSION_ID", ""),
                               command=shlex.join(cmd) if len(cmd) > 1 else cmd[0],
-                              origin=str(ctx.worktree))
+                              origin=str(ctx.worktree), tests={"cmd": test_spec(est)})
         print(f"queued {job['id']} (normal queue)" + testq_wait_phrase(ctx, job)
               + ". Your doorbell rings when it ends; its output is kept.")
         return
-    jobs = testq_order(testq_jobs(ctx, ("running", "queued")))
+    jobs = sorted(testq_jobs(ctx, ("running", "queued")), key=lambda j: (j["state"] != "running",)
+                  + testq_age_key(j))
+    led = _read_json(testq_meta(ctx) / "ledger.json") or {}
+    if testq_runner_alive(ctx) and led.get("running"):
+        print(f"ledger: reserved {fmt_mem(led.get('reserved'))} of a {fmt_mem(led.get('pool'))} "
+              f"pool, {led.get('cores_used')}/{led.get('cores')} cores")
     slots = slot_tickets(ctx)
     for t in slots:
         print(f"{'▶' if t['state'] == 'holding' else '·'}  slot  {t['state']:<8} {t.get('who')}'s "
@@ -15923,10 +16279,16 @@ def main():
     ck.add_argument("--normal", action="store_true",
                     help="the normal queue (the default for lanes)")
     ck.add_argument("--report", metavar="SHA", help="print a finished report for a commit")
+    ck.add_argument("--memory", metavar="ARM=SIZE,...",
+                    help="each arm's memory estimate, the least it may need (required)")
     tq = add("test", cmd_test)
     tq.add_argument("command", nargs=argparse.REMAINDER,
                     help="-- <command>: queue it to run in a copy of this commit")
     tq.add_argument("--cancel", metavar="ID|all")
+    tq.add_argument("--memory", metavar="SIZE",
+                    help="with a command: its memory estimate, the least it may need (required)")
+    tq.add_argument("--usage", nargs="?", const="", metavar="TEST",
+                    help="the last runs' peak memory per test")
     tq.add_argument("--promote", metavar="ID",
                     help="rank 0 or a lead: move a queued job to the front (with --why)")
     tq.add_argument("--why", metavar="TEXT")

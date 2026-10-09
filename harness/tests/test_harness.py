@@ -4,11 +4,13 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from contextlib import redirect_stdout
@@ -3758,7 +3760,7 @@ class TestQueue(unittest.TestCase):
         self.assertFalse((d / "999999.json").exists())                          # its process is gone
         hz.testq_submit(self.ctx, "cmd", self.sha, "dev", "s", command="echo queued")
         started = []
-        with mock.patch.object(hz, "testq_run", side_effect=lambda *a, **k: started.append(1)), \
+        with mock.patch.object(hz, "testd_start", side_effect=lambda *a, **k: started.append(1)), \
              mock.patch.object(hz.time, "sleep", side_effect=SystemExit), \
              mock.patch("sys.stdout", io.StringIO()), mock.patch("signal.signal"):
             with self.assertRaises(SystemExit):
@@ -3868,41 +3870,46 @@ class TestQueue(unittest.TestCase):
         hz.testq_save(self.ctx, dict(job, requested_by=[]))
         self.assertAlmostEqual(hz.testq_wait_estimate(self.ctx, job), 60 + 20, delta=3)
 
-    # ── parallel arms with memory caps (owner, 2026-10-09) ──────────────────
-    def arms(self, specs, env=None, avail=None, share=None):
-        """run_arms over ad-hoc checks; each arm logs `name start end` to a file."""
+    # ── the memory ledger (owner, 2026-10-09) ─────────────────────────────
+    def ledger(self, arms, jobs, pool=None, cores=10, starve=None, during=None):
+        """Run the real runner over ad-hoc arms. arms: [(name, body, estimate,
+        exclusive)]; jobs: [[arm names], ...] submitted in order, a little apart.
+        Each arm logs `name start end`. -> (spans, runner output, jobs)."""
         log = self.root / "arms.log"
         log.unlink(missing_ok=True)
-        checks = []
-        for name, body, cap in specs:
-            c = {"name": name, "blindSpot": "-",
-                 "command": f"echo {name} $(date +%s.%N) >> {log}; {body}; "
-                            f"echo {name} $(date +%s.%N) >> {log}"}
-            if cap:
-                c["memory"] = cap
-            checks.append(c)
-        man = {"checks": checks}
-        if share:
-            man["test_memory_share"] = share
-        (self.repo / ".harness" / "manifest.json").write_text(json.dumps(man))
+        checks = [{"name": n, "blindSpot": "-",
+                   "command": f"echo {n} $(date +%s.%N) >> {log}; {body}; "
+                              f"echo {n} $(date +%s.%N) >> {log}"} for n, body, _, _ in arms]
+        (self.repo / ".harness" / "manifest.json").write_text(json.dumps({"checks": checks}))
+        spec = {n: (est, ex) for n, _, est, ex in arms}
+        for k, names in enumerate(jobs):
+            hz.testq_submit(self.ctx, "check", self.sha, f"n{k}", "s", arms=sorted(names),
+                            tests={n: hz.test_spec(hz.parse_mem(spec[n][0]), 1, spec[n][1])
+                                   for n in names})
+            time.sleep(0.02)
         hz._ARM_SECONDS.clear()
-        ms = [mock.patch.object(hz, "mem_available", return_value=avail)] if avail else []
-        for m in ms:
+        ps = [mock.patch.object(hz, "test_pool", return_value=(
+            hz.parse_mem(pool) if pool else 16 * 2**30, cores))]
+        if starve is not None:
+            ps.append(mock.patch.object(hz, "TEST_STARVE", starve))
+        for m in ps:
             m.start()
-        t0 = time.time()
         try:
-            with mock.patch("sys.stdout", io.StringIO()) as out:
-                rows, failed = hz.run_arms(self.ctx, "dev", self.sha, self.repo, checks, None,
-                                           60, "r", env=env)
+            with mock.patch("sys.stdout", io.StringIO()) as out, mock.patch("signal.signal"):
+                if during:
+                    th = threading.Thread(target=hz.testd, args=(self.state, self.repo))
+                    th.start(); during(); th.join()
+                else:
+                    hz.testd(self.state, self.repo)
         finally:
-            for m in ms:
+            for m in ps:
                 m.stop()
         span = {}
         for line in log.read_text().split("\n") if log.exists() else []:
             if line.strip():
                 n, ts = line.split()
                 span.setdefault(n, []).append(float(ts))
-        return rows, failed, time.time() - t0, span, out.getvalue()
+        return span, out.getvalue(), hz.testq_jobs(self.ctx)
 
     def needs_cgroups(self):
         if not hz.cgroup_caps()[0]:
@@ -3912,68 +3919,104 @@ class TestQueue(unittest.TestCase):
     def overlap(span, a, b):
         return span[a][0] < span[b][1] and span[b][0] < span[a][1]
 
-    def test_capped_arms_run_side_by_side_then_the_rest_alone(self):
+    def test_tests_from_two_jobs_pack_side_by_side_within_the_pool(self):
         self.needs_cgroups()
-        rows, failed, wall, span, _ = self.arms(
-            [("p1", "sleep 2", "256M"), ("p2", "sleep 2", "256M"), ("p3", "sleep 2", "256M"),
-             ("solo", "sleep 1", None)])
-        self.assertEqual(failed, 0)
-        self.assertLess(wall, 4.5)                                       # 2 + 1, not 7
-        self.assertTrue(self.overlap(span, "p1", "p2") and self.overlap(span, "p2", "p3"))
-        self.assertGreaterEqual(span["solo"][0], max(span[p][1] for p in ("p1", "p2", "p3")))
-        self.assertEqual([r["name"] for r in rows], ["p1", "p2", "p3", "solo"])   # manifest order
-        self.assertTrue(all(r.get("peakMemory") for r in rows))
+        t0 = time.time()
+        span, out, jobs = self.ledger([(n, "sleep 2", "256M", False) for n in ("a1", "a2", "b1", "b2")],
+                                      [["a1", "a2"], ["b1", "b2"]])
+        self.assertLess(time.time() - t0, 5)
+        self.assertTrue(self.overlap(span, "a1", "b1") and self.overlap(span, "a2", "b2"))
+        self.assertEqual([j["state"] for j in jobs], ["done", "done"])
+        for m in re.finditer(r"reserved (\S+) of (\S+),", out):
+            self.assertLessEqual(hz.parse_mem(m.group(1)), hz.parse_mem(m.group(2)))
 
-    def test_the_budget_holds_arms_back_and_a_big_arm_runs_alone(self):
+    def test_the_pool_holds_tests_back_and_one_bigger_than_it_runs_alone(self):
         self.needs_cgroups()
-        # 10G free x 0.6 = 6G: two 3G caps fit, a third waits.
-        _, _, _, span, out = self.arms([(f"a{i}", "sleep 1", "3G") for i in range(3)],
-                                       avail=10 * 2**30, share=0.6)
-        self.assertTrue(self.overlap(span, "a0", "a1"))
-        self.assertFalse(self.overlap(span, "a2", "a0") and self.overlap(span, "a2", "a1"))
-        self.assertIn("caps 6.0G of 6.0G", out)
-        # 1G free: every 3G arm is bigger than the budget, so each runs alone, no deadlock.
-        rows, failed, _, span, _ = self.arms([(f"b{i}", "sleep 0.5", "3G") for i in range(3)],
-                                             avail=2**30)
-        self.assertEqual(failed, 0)
-        self.assertFalse(any(self.overlap(span, f"b{i}", f"b{j}")
-                             for i in range(3) for j in range(i + 1, 3)))
+        # need = 256M x 1.2 = 307M: two fit a 700M pool, the third waits.
+        span, _, _ = self.ledger([(f"t{i}", "sleep 1", "256M", False) for i in range(3)],
+                                 [["t0", "t1", "t2"]], pool="700M")
+        self.assertTrue(self.overlap(span, "t0", "t1"))
+        self.assertFalse(self.overlap(span, "t2", "t0") and self.overlap(span, "t2", "t1"))
+        span, _, jobs = self.ledger([("big", "sleep 0.5", "1G", False),
+                                     ("s1", "sleep 0.5", "64M", False)], [["big"], ["s1"]],
+                                    pool="700M")
+        self.assertFalse(self.overlap(span, "big", "s1"))
+        self.assertTrue(all(j["state"] == "done" for j in jobs))
 
-    def test_an_arm_over_its_cap_is_killed_and_the_rest_carry_on(self):
+    def test_an_exclusive_test_runs_alone(self):
         self.needs_cgroups()
-        hog = "python3 -c 'x = bytearray(200 * 2**20)'"
-        rows, failed, _, _, out = self.arms([("hog", hog, "64M"), ("fine", "true", "64M")])
-        r = {x["name"]: x for x in rows}
+        span, _, _ = self.ledger([("x", "sleep 0.5", "64M", True), ("y", "sleep 0.5", "64M", False),
+                                  ("z", "sleep 0.5", "64M", False)], [["x"], ["y", "z"]])
+        self.assertFalse(self.overlap(span, "x", "y") or self.overlap(span, "x", "z"))
+        self.assertTrue(self.overlap(span, "y", "z"))
+
+    def test_the_oldest_test_stops_backfill_once_it_has_waited_too_long(self):
+        self.needs_cgroups()
+        arms = [("s1", "sleep 1.5", "256M", False), ("big", "sleep 0.5", "500M", False),
+                ("s2", "sleep 0.5", "256M", False)]
+        span, _, _ = self.ledger(arms, [["s1"], ["big"], ["s2"]], pool="700M", starve=600)
+        self.assertLess(span["s2"][0], span["big"][0])           # backfill while it is young
+        span, out, _ = self.ledger(arms, [["s1"], ["big"], ["s2"]], pool="700M", starve=0)
+        self.assertGreaterEqual(span["s2"][0], span["big"][0])   # it has waited: it goes first
+        self.assertIn("nothing else starts until it does", out)
+
+    def test_twice_the_estimate_kills_and_spill_below_that_runs_on(self):
+        self.needs_cgroups()
+        alloc = "python3 -c 'import time; x = bytearray({} * 2**20); time.sleep(0.3)'"
+        span, _, jobs = self.ledger([("hog", alloc.format(200), "32M", False),
+                                     ("spill", alloc.format(60), "40M", False)], [["hog", "spill"]])
+        rep = json.loads(hz.shared_report_path(self.ctx, self.sha).read_text())
+        r = {x["name"]: x for x in rep["checks"]}
         self.assertTrue(r["hog"]["memoryKilled"])
         self.assertLessEqual(r["hog"]["peakMemory"], 64 * 2**20)
-        self.assertFalse(r["fine"]["memoryKilled"])
-        self.assertEqual(failed, 1)
-        self.assertIn("KILLED (over its 64M cap", out)
+        self.assertFalse(r["spill"]["memoryKilled"])
+        self.assertGreater(r["spill"]["peakMemory"], 40 * 2**20)    # over its estimate, under 2x
+        self.assertEqual(r["spill"]["estimate"], 40 * 2**20)
+        self.assertEqual(rep["failed"], 1)
+        self.assertTrue(hz.usage_for(self.ctx, "hog")[-1]["killed"])
+        self.assertEqual(r["spill"]["lastPeaks"], [r["spill"]["peakMemory"]])
 
-    def test_each_arm_has_its_own_scratch(self):
-        sc, tmp = self.root / "scratch", self.root / "tmp"
-        env = dict(os.environ, HARNESS_TEST_SCRATCH=str(sc), TMPDIR=str(tmp))
-        rows, _, _, _, _ = self.arms([("x", 'echo "S=$HARNESS_TEST_SCRATCH T=$TMPDIR"', None),
-                                      ("y", 'echo "S=$HARNESS_TEST_SCRATCH T=$TMPDIR"', None)],
-                                     env=env)
-        r = {x["name"]: x["stdout"] for x in rows}
-        self.assertIn(f"S={sc / 'x'} T={tmp / 'x'}", r["x"])
-        self.assertIn(f"S={sc / 'y'} T={tmp / 'y'}", r["y"])
+    def test_cancelling_one_job_leaves_the_other_running(self):
+        self.needs_cgroups()
+        def cancel():
+            time.sleep(1)
+            (a,) = [j for j in hz.testq_jobs(self.ctx, ("running",)) if j["arms"] == ["c1"]]
+            hz.testq_cancel(self.ctx, a)
+        span, _, jobs = self.ledger([("c1", "sleep 3", "64M", False), ("c2", "sleep 2", "64M", False)],
+                                    [["c1"], ["c2"]], during=cancel)
+        st = {tuple(j["arms"]): j["state"] for j in jobs}
+        self.assertEqual(st, {("c1",): "cancelled", ("c2",): "done"})
+        self.assertEqual(len(span["c1"]), 1)                     # killed: it never logged its end
 
-    def test_a_parallel_job_is_estimated_as_its_longest_arm(self):
+    def test_usage_keeps_the_last_five_runs_and_suggests_their_median(self):
+        for i in range(7):
+            hz.usage_append(self.ctx, "arm", {"peak": (i + 1) * 2**20})
+        self.assertEqual([r["peak"] // 2**20 for r in hz.usage_for(self.ctx, "arm")], [3, 4, 5, 6, 7])
+        self.assertEqual(hz.usage_suggest(self.ctx, "arm"), "5M")
+        self.assertIsNone(hz.usage_suggest(self.ctx, "never"))
+
+    def test_estimates_are_parsed_per_test(self):
+        est, bad = hz.parse_estimates("a=2G, b=500M,c=x", ["a", "b", "c"])
+        self.assertEqual((est, bad), ({"a": 2 * 2**30, "b": 500 * 2**20}, ["c=x"]))
+        self.assertEqual(hz.parse_estimates("1G", ["only"])[0], {"only": 2**30})
+        self.assertEqual(hz.parse_estimates("1G", ["a", "b"])[1], ["1G"])
+        t = hz.test_spec(2**30)
+        self.assertEqual((t["need"], t["ceiling"]), (int(1.2 * 2**30), 2 * 2**30))
+
+    def test_the_ledger_estimate_packs_what_fits(self):
         (self.repo / ".harness" / "manifest.json").write_text(json.dumps({"checks": [
-            {"name": n, "command": "true", "blindSpot": "-", "memory": "1G"} for n in "abc"]
-            + [{"name": "d", "command": "true", "blindSpot": "-"}]}))
-        with mock.patch.object(hz, "arm_seconds", return_value={"a": 30, "b": 20, "c": 10, "d": 5}), \
-             mock.patch.object(hz, "test_budget", return_value=(0.6, 4)):
-            self.assertEqual(hz.arm_estimate(self.ctx, None), 35)           # 30 in the pool + 5
-            with mock.patch.object(hz, "test_budget", return_value=(0.6, 1)):
-                self.assertEqual(hz.arm_estimate(self.ctx, None), 65)       # one core: the sum
-            now = time.time()
-            stamp = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(t))
-            job = {"finished_arms": ["c"], "running_arms": [{"arm": "a", "started": stamp(now - 10)},
-                                                            {"arm": "b", "started": stamp(now - 10)}]}
-            self.assertAlmostEqual(hz.arm_estimate(self.ctx, None, job=job), 25, delta=2)
+            {"name": n, "command": "true", "blindSpot": "-"} for n in ("a", "b", "c")]}))
+        sp = lambda m: hz.test_spec(m * 2**20)
+        j1, _ = hz.testq_submit(self.ctx, "check", self.sha, "x", "s", arms=["a", "b"],
+                                tests={"a": sp(256), "b": sp(256)})
+        j2, _ = hz.testq_submit(self.ctx, "check", self.sha, "y", "s", arms=["c"],
+                                tests={"c": sp(256)})
+        with mock.patch.object(hz, "arm_seconds", return_value={"a": 30, "b": 20, "c": 10}):
+            with mock.patch.object(hz, "test_pool", return_value=(2**30, 10)):
+                self.assertEqual(hz.testq_wait_estimate(self.ctx, j1), 30)   # side by side
+                self.assertEqual(hz.testq_wait_estimate(self.ctx, j2), 10)   # backfills now
+            with mock.patch.object(hz, "test_pool", return_value=(400 * 2**20, 10)):
+                self.assertEqual(hz.testq_wait_estimate(self.ctx, j2), 60)   # one at a time
 
     def test_arms_run_only_the_named_and_the_report_says_partial(self):
         hz.testq_submit(self.ctx, "check", self.sha, "dev", "s", arms=["good"])

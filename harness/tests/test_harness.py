@@ -618,7 +618,20 @@ class ResetCeiling(unittest.TestCase):
              mock.patch.object(hz, "context_size", return_value=size), \
              mock.patch.object(hz, "launch_reset") as launch:
             hz.reset_step(self.ctx, "dev")
+        self.launch = launch
         return launch.called
+
+    def test_past_its_ceiling_the_recycle_is_told_so(self):
+        # Log 133: the ceiling is a promise; the launched recycle must not skip.
+        self.assertTrue(self.step(410_000, time.time() + 3600))
+        self.assertEqual(self.launch.call_args.kwargs, {"past": True})
+        hz.reset_path(self.ctx, "dev").write_text(json.dumps(
+            {"by": "main", "flushed": True, "by_tokens": 400_000, "deadline": time.time() + 3600}))
+        with mock.patch.object(hz, "reset_quiet", return_value=True), \
+             mock.patch.object(hz, "context_size", return_value=300_000), \
+             mock.patch.object(hz, "launch_reset") as launch:
+            hz.reset_step(self.ctx, "dev")
+        self.assertEqual(launch.call_args.kwargs, {"past": False})     # quiet, not due
 
     def test_ceiling(self):
         later = time.time() + 3600
@@ -1313,6 +1326,17 @@ class Orphan(unittest.TestCase):
             json.dumps({"_node": "dev_1", "_presented_at": "x"}))
         self.assertIn("waits", hz.next_start(self.ctx, "dev_1")["skip"])
 
+    def test_a_lead_with_a_lane_at_work_is_never_only_waiting(self):
+        # Log 133: dev's one queued task was a carrier waiting on dev_1, so its
+        # forced reset was skipped as "every queued task waits" for three hours.
+        (self.ctx.dir / "briefs" / "up.json").write_text(json.dumps(
+            {"task": "up", "node": "dev", "after": ["merge"]}))
+        st = hz.next_start(self.ctx, "dev")
+        self.assertIsNone(st["skip"])
+        self.assertIn("leads 1 open task(s) below it", st["line"])
+        (self.ctx.dir / "marks" / "merge.json").unlink()             # no lane at work
+        self.assertIn("waits", hz.next_start(self.ctx, "dev")["skip"])
+
     def test_parent_is_told_when_the_holder_dies(self):
         self.ctx.lock("dev_1", 1)
         with mock.patch.object(hz, "holder_alive", return_value=False), \
@@ -1397,6 +1421,18 @@ class SilentNodes(unittest.TestCase):
         self.assertIn(("down", "dev_tests", "and its lanes still hold open work; 1 unread ring(s)"),
                       rows)
         self.assertEqual(self.owed("dev", running=("unclaimed", {"sessionId": "x"})), [])
+
+    def test_nothing_that_would_start_a_session_is_owed_while_halted(self):
+        # Log 135: under the owner's halt the Stop hook still blocked main with
+        # "dev has no running session ... harness spawn dev".
+        self.ring("dev_tests", "dev", "present it, please", 600)
+        self.assertTrue([r for r in self.owed("dev") if r[0] == "down"])
+        hp = hz.halt_path(self.ctx)
+        hp.parent.mkdir(parents=True, exist_ok=True)
+        hp.write_text(json.dumps({"at": "2026-10-09T23:20:00+1100", "why": "shutdown for today"}))
+        self.assertEqual([r for r in self.owed("dev") if r[0] in hz.HALT_SILENT], [])
+        hp.unlink()
+        self.assertTrue([r for r in self.owed("dev") if r[0] == "down"])     # resumed: owed again
 
     def test_a_question_a_child_waits_on_is_owed_until_answered(self):
         self.ring("dev", "dev_2", "BLOCKER: (a) edit carve.py or (b) leave it to you?", 1800,

@@ -160,7 +160,7 @@ harness mark <task> --close        # sign off; recycles the child onto its next 
 harness mark <task> --close --no-recycle
 ```
 
-A child presents with `--done` and cannot close its own; presenting rings your doorbell, so review it then. A `harness hold <path> --until <task>` you place rings the lane doing that task and marks its wait on you answered. It never applies to that task's own checks: the lane's, or yours after integrating it (any commit carrying its `Task:` trailer). `whoami` lists what waits on you; `status` shows `awaiting sign-off`. Review first. `--close` refuses on a dirty worktree or an open unpresented mark; with nothing queued, nothing starts. Sign off promptly: after twenty minutes the rank above you is told, and your `Stop` hook blocks once while a sign-off is owed.
+A child presents with `--done` and cannot close its own; presenting rings your doorbell, so review it then. If orientation says a child is "unwoken", the ringer woke it several times and its mail is still unread: look at it (`harness status`), and recycle it if it is stuck. A `harness hold <path> --until <task>` you place rings the lane doing that task and marks its wait on you answered. It never applies to that task's own checks: the lane's, or yours after integrating it (any commit carrying its `Task:` trailer). `whoami` lists what waits on you; `status` shows `awaiting sign-off`. Review first. `--close` refuses on a dirty worktree or an open unpresented mark; with nothing queued, nothing starts. Sign off promptly: after twenty minutes the rank above you is told, and your `Stop` hook blocks once while a sign-off is owed.
 
 ## `T7` / `T8` — mediating a conflict
 

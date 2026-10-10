@@ -3331,6 +3331,19 @@ class Ringer(unittest.TestCase):
         self.assertEqual((m["priority"], m["from"]), ("fyi", "dev"))
         self.assertIn("rang main (fyi)", o.getvalue())
 
+    def test_a_launch_claude_code_refuses_is_not_called_spawned(self):
+        # 2026-10-11: `spawn` printed "spawned" after "Workspace not trusted".
+        run = lambda rc, out: mock.patch.object(hz.subprocess, "run", return_value=mock.Mock(
+            returncode=rc, stdout=out, stderr=""))
+        with run(0, "backgrounded · c4959ad8 · proj-dev\n  claude agents ..."):
+            self.assertEqual(hz.launch_bg(["claude", "--bg"], "/w"), (True, ""))
+        with run(1, "Workspace not trusted. Run `claude` in /w once and accept the trust prompt."):
+            ok, why = hz.launch_bg(["claude", "--bg"], "/w")
+        self.assertFalse(ok)
+        self.assertIn("Workspace not trusted", why)
+        with run(0, "something else entirely"):
+            self.assertFalse(hz.launch_bg(["claude", "--bg"], "/w")[0])
+
     def test_one_ringer_per_project_started_by_the_harness(self):
         (self.ctx.dir / "binding.json").write_text(json.dumps({"repo": str(self.ctx.dir)}))
         with mock.patch.object(hz.subprocess, "Popen") as po:

@@ -32,7 +32,15 @@ top lead  → harness + harness-downward + harness-root
 
 Messages to your node (`harness ring <node> "..."`, a presentation, a hold, a finished check) reach you through hooks: after your next tool call, at your turn end, or at your next prompt, marked "Doorbell — N message(s)". Act on them when they appear; each is shown once.
 
-A hook can't wake you once you're idle, so keep `harness doorbell` running in the background (`run_in_background`) from the moment you claim; the Stop hook won't let a turn end without one. It exits when mail waits, or when a node has waited on you, idle, for five minutes. When it finishes, run `harness doorbell --read`, act on what it says, and arm it again. To reach another node, `harness ring <node> "..."`; it tells you when that node will read it.
+There is nothing to arm. Once you're idle, the project's ringer wakes you when mail arrives: you get a message starting "harness ringer:", and your mail is printed with that prompt. If you see none, run `harness doorbell --read`. `harness doorbell --status` shows the ringer and what is unread. Don't run `harness doorbell` in the background; that waiter is retired.
+
+To reach another node, `harness ring <node> "..."`; it tells you when that node will read it. Pick the priority by what the receiver should do:
+
+- **default (high):** it needs to act. Shown after its next tool call if it is working; it is woken at once if idle.
+- **`--low`:** it should act, but not mid-task. Held until its turn ends; an idle node is woken after a minute.
+- **`--fyi`:** information only. It wakes nobody, asks for nothing, and is shown with the receiver's next mail or prompt. Use it for thanks, "done", and status nobody has to act on.
+
+Mail under "FYI, no action needed" and your own notes to yourself ask for nothing; only "Doorbell — N message(s) for you" carries the demand to act or say why not.
 
 ## Prose goes in on stdin, not in quotes
 

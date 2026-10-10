@@ -2164,8 +2164,10 @@ def cmd_spawn(a):
         if a.dry_run:
             print(f"  would spawn {name:<18} {model}/{effort:<7} in {sp['worktree']}{reach}")
         else:
-            subprocess.Popen(cmd, cwd=sp["worktree"],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            ok, why = launch_bg(cmd, sp["worktree"])
+            if not ok:
+                print(f"  NOT started {name:<14} Claude Code refused: {why}")
+                skipped += 1; continue
             stopped_path(ctx, n).unlink(missing_ok=True)
             print(f"  spawned {name:<18} {model}/{effort:<7} in {sp['worktree']}{reach}")
         launched += 1
@@ -7811,8 +7813,16 @@ def cmd_recycle(a):
         name = f"{idx['project']}-{n}"
         gr = grants_for(ctx, n)
         cmd = launch_cmd(ctx, n, name, gr, model, effort, a.prompt)
-        subprocess.Popen(cmd, cwd=sp["worktree"],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        ok, why = launch_bg(cmd, sp["worktree"])
+        if not ok:
+            # The old session is already stopped: say so plainly, and leave the
+            # pending reset to retry.
+            print(f"  NOT started {n:<12} Claude Code refused: {why}\n"
+                  f"       {'':<12} its old session is stopped; fix that, then: "
+                  f"harness spawn {n}")
+            if a.when_idle:
+                reset_outcome(ctx, n, f"the fresh session did not start: {why}"[:120])
+            continue
         print(f"  recycled {n:<12} {model}/{effort:<7} fresh context"
               + (f"  +{len(gr)} grant(s)" if gr else ""))
         reset_outcome(ctx, n)
@@ -8110,6 +8120,25 @@ def grants_for(ctx, node):
     """
     return [r for r in load_grants(ctx).get("nodes", {}).get(node, [])
             if not r.get("revoked_at")]
+
+
+def launch_bg(cmd, cwd):
+    """Run a `claude --bg` line and say whether a session started: (ok, why).
+    It used to be fired and forgotten with its output thrown away, so a refusal
+    ("Workspace not trusted", a bad flag) still printed "spawned" (2026-10-11).
+    `claude --bg` returns as soon as the session is backgrounded; one that does
+    not return in two minutes is taken as started, as before."""
+    try:
+        x = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=120,
+                           stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return True, ""
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
+    out = ((x.stdout or "") + (x.stderr or "")).strip()
+    if x.returncode or "backgrounded" not in out:
+        return False, (out.splitlines() or [f"exit {x.returncode}"])[0][:300]
+    return True, ""
 
 
 def launch_cmd(ctx, node, name, grants, model, effort, prompt):

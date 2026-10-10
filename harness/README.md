@@ -79,6 +79,22 @@ in either order. Use `dev`, `dev_ui`, `w_m1`; never `dev/ui`. `harness whoami`
 refuses a tree that breaks this rather than letting it fail at the first
 `git worktree add`.
 
+## A design session beside rank 0
+
+For design work on a new feature, without a second session in rank 0's worktree:
+
+```bash
+harness design "geo coverage"         # start it, or resume the topic's last conversation
+harness design --list                 # every design: branch, session, commits ahead
+harness design "geo coverage" --end   # stop it and remove its worktree; the branch is kept
+```
+
+Run these from a shell in the project; a session is refused. It works in
+`<repo>-design-<topic>` on `design/<topic>`, reads every node's worktree and the
+tree's records, writes design documents there and nowhere else, and directs
+nothing. `--here` runs it in the terminal, `--fresh` starts a new conversation,
+`--drop` also deletes the branch. Spec: T19.
+
 ## Statusline integration
 
 `statusline-snippet.py` is paste-ready and self-contained. Its contract is silence:

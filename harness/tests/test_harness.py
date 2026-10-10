@@ -2978,6 +2978,129 @@ class DocChain(unittest.TestCase):
             self.assertEqual(gui.documenter_action("x", "drop", 1), (False, "unknown action"))
 
 
+class Design(unittest.TestCase):
+    """Owner, 2026-10-10: a design session beside rank 0. It reads the tree,
+    writes design documents in its own worktree, and directs nothing."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        self.repo = self.root / "proj"
+        self.repo.mkdir()
+        g = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a],
+                                      cwd=self.repo, check=True, capture_output=True)
+        g("init", "-q", "-b", "main")
+        (self.repo / "f").write_text("x")
+        g("add", "f"); g("commit", "-q", "-m", "one")
+        self.g = g
+        self.ctx = FakeCtx({"main": None, "dev": "main"})
+        self.ctx.repo, self.ctx.branch, self.ctx.worktree = self.repo, "main", self.repo
+        self.ctx.tree["nodes"]["main"]["branch"] = "main"
+        self.ctx.tree["nodes"]["dev"]["branch"] = "dev"
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def args(self, cmd, **kw):
+        return hz.argparse.Namespace(cmd=cmd, fn=None, **kw)
+
+    def test_the_worktree_and_branch_are_made_once_and_reused(self):
+        self.assertEqual(hz.design_slug("Geo coverage, v2!"), "geo-coverage-v2")
+        rec = hz.design_ensure(self.ctx, "geo", "Geo coverage")
+        wt = self.root / "proj-design-geo"
+        self.assertEqual((rec["branch"], rec["worktree"]), ("design/geo", str(wt)))
+        self.assertTrue((wt / "f").exists())
+        (wt / "d.md").write_text("design")
+        again = hz.design_ensure(self.ctx, "geo")
+        self.assertEqual(again["topic"], "Geo coverage")
+        self.assertTrue((wt / "d.md").exists())                     # nothing remade
+        self.assertEqual([r["slug"] for r in hz.design_records(self.ctx)], ["geo"])
+        self.assertEqual(hz.design_ahead(self.ctx, rec), 0)
+
+    def test_it_may_write_only_in_its_own_worktree(self):
+        rec = hz.design_ensure(self.ctx, "geo")
+        with mock.patch.object(hz, "load_index", return_value={
+                "nodes": {"main": {"worktree": str(self.repo)}}}), \
+             mock.patch.object(hz, "scope_block", return_value="# scope"):
+            cmd = hz.design_cmd(self.ctx, rec, "opus", "high")
+        allow = cmd[cmd.index("--allowedTools") + 1:cmd.index("--permission-mode")]
+        self.assertEqual([r for r in allow if r.startswith(("Edit", "Write"))],
+                         [f"Edit(/{rec['worktree']}/**)"])
+        self.assertEqual(cmd[cmd.index("--permission-mode") + 1], "manual")
+        self.assertIn("--restricted", cmd)
+        dirs = cmd[cmd.index("--add-dir") + 1:cmd.index("--tools")]
+        self.assertIn(str(self.repo), dirs)
+        # Other worktrees: reading git only, never a commit or a merge.
+        other = [r for r in allow if str(self.repo) in r]
+        self.assertTrue(other and all(r.split('" ')[-1].split()[0] in hz.INTERMEDIARY_GIT
+                                      for r in other if '"' in r))
+        env = json.loads(cmd[cmd.index("--settings") + 1])["env"]
+        self.assertEqual(env["HARNESS_DESIGN"], "geo")
+        prompt = Path(cmd[cmd.index("--append-system-prompt-file") + 1]).read_text()
+        self.assertIn("Never ring a node", prompt)
+        self.assertIn("# scope", prompt)
+
+    def test_it_reads_the_tree_as_rank_0_and_writes_nothing_to_it(self):
+        self.addCleanup(setattr, hz, "DESIGN_VIEW", False)
+        for a in (self.args("ring", node="main", text=["x"]),
+                  self.args("mark", task="t", done=True),
+                  self.args("queue", node="dev", order="b,a", why="w"),
+                  self.args("brief", task="t", write="text"),
+                  self.args("charter", write="new"),
+                  self.args("hold", path="/x", why="w"),
+                  self.args("test", command=["--", "pytest"]),
+                  self.args("design", topic="another")):
+            with self.assertRaises(SystemExit) as e:
+                hz.design_gate(a)
+            self.assertEqual(e.exception.code, hz.REFUSED, a.cmd)
+            self.assertFalse(hz.DESIGN_VIEW)
+        # The hooks say nothing: above all, they never take rank 0's mail.
+        for h in ("hook-stop", "hook-orient"):
+            with self.assertRaises(SystemExit) as e:
+                hz.design_gate(self.args(h))
+            self.assertEqual(e.exception.code, 0)
+        hz.design_gate(self.args("check", report="abc", timeout=900),
+                       {"timeout": 900}.get)
+        hz.design_gate(self.args("queue", node="dev", order=None, why=None))
+        self.assertTrue(hz.DESIGN_VIEW)
+        c = hz.Ctx.__new__(hz.Ctx)
+        c.tree, c.branch = self.ctx.tree, "design/geo"
+        self.assertEqual(c.node()[0], "main")
+        hz.DESIGN_VIEW = False
+        with self.assertRaises(SystemExit) as e:
+            c.node()
+        self.assertEqual(e.exception.code, hz.NOT_ENROLLED)
+
+    def test_ending_keeps_the_branch_and_refuses_uncommitted_work(self):
+        rec = hz.design_ensure(self.ctx, "geo")
+        wt = Path(rec["worktree"])
+        (wt / "d.md").write_text("design")
+        with mock.patch.object(hz, "agents_json", return_value=[]), \
+             mock.patch("sys.stdout", io.StringIO()) as out:
+            with self.assertRaises(SystemExit) as e:
+                hz.design_end(self.ctx, "geo")
+            self.assertEqual(e.exception.code, hz.REFUSED)
+            self.assertTrue(wt.is_dir())
+            subprocess.run(["git", "add", "d.md"], cwd=wt, check=True)
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q",
+                            "-m", "design"], cwd=wt, check=True)
+            hz.design_end(self.ctx, "geo")
+            self.assertFalse(wt.exists())
+            self.assertIn("1 commit(s) ahead of main", out.getvalue())
+            self.assertEqual(hz.design_ahead(self.ctx, rec), 1)             # the branch is kept
+            self.assertTrue(hz.design_records(self.ctx)[0]["ended"])
+            # Rank 0 is told the branch is there to merge.
+            with mock.patch.object(hz, "halted", return_value=None), \
+                 mock.patch.object(hz, "drift_loops", return_value=[]), \
+                 mock.patch.object(hz, "untraced_briefs", return_value=[]), \
+                 mock.patch.object(hz, "live_holds", return_value=[]):
+                items = hz.queue_items(self.ctx, "main")
+                self.assertTrue(any(k.startswith("design:geo:1") for k in items))
+                self.assertFalse(any(k.startswith("design:") for k in hz.queue_items(self.ctx, "dev")))
+            hz.design_end(self.ctx, "geo", drop=True)
+            self.assertIsNone(hz.design_ahead(self.ctx, rec))
+            self.assertEqual(hz.design_records(self.ctx), [])
+
+
 class Usage(unittest.TestCase):
     """The viewer shows the account's 5h and 7d limits the statusline saved."""
 

@@ -167,6 +167,8 @@ def main():
         return
     if payload.get("agent_id"):
         return
+    if os.environ.get("HARNESS_DESIGN"):
+        return                      # a design session is beside a node, never its session
     try:
         hit = find_node(payload.get("cwd") or os.getcwd())
         if not hit:

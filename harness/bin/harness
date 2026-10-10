@@ -666,6 +666,12 @@ class Ctx:
         for name, spec in self.tree["nodes"].items():
             if spec.get("branch") == self.branch:
                 return name, spec
+        if DESIGN_VIEW:
+            # A design session reading the tree (design_gate): it stands beside
+            # rank 0, so a read verb shows it what rank 0 would see.
+            root = next((n for n, sp in self.tree["nodes"].items() if not sp.get("parent")), None)
+            if root:
+                return root, self.tree["nodes"][root]
         die(NOT_ENROLLED, f"branch '{self.branch}' is not a node in the role tree")
 
     def rank(self, name):
@@ -3390,6 +3396,25 @@ def queue_items(ctx, node):
                                       f"and wait")
     # Work that serves no charter feature is drift until rank 0 maps it or drops
     # it (owner, 2026-10-06: tasks created out of nothing).
+    # A design session beside rank 0 (owner, 2026-10-10): rank 0 is told it is
+    # there, and again when its branch gains commits, since that is what it
+    # will be asked to merge.
+    try:
+        if ctx.rank(node) == 0:
+            for r in design_records(ctx):
+                if r.get("ended") and not design_ahead(ctx, r):
+                    continue
+                n = design_ahead(ctx, r)
+                if n is None:
+                    continue
+                out[f"design:{r['slug']}:{n}:{bool(r.get('ended'))}"] = (
+                    f"design: '{r.get('topic') or r['slug']}' on {r['branch']}, {n} commit(s) "
+                    f"ahead of you — the owner's design session"
+                    + (" (ended)" if r.get("ended") else "")
+                    + ". It directs nothing; merge its branch when the owner says so "
+                      f"(git merge {r['branch']})")
+    except Exception:
+        pass
     try:
         if ctx.rank(node) == 0:
             for a_, b_, n1, n2 in drift_loops(ctx):
@@ -3726,7 +3751,7 @@ def cmd_hook_stop(a):
         # documenter, the owner's own) is not the node, and until 2026-10-06 that
         # did not matter, because no block here ever took effect (see stop_block).
         if os.environ.get("HARNESS_INTERMEDIARY") == "1" or \
-                os.environ.get("HARNESS_DOCUMENTER") == "1":
+                os.environ.get("HARNESS_DOCUMENTER") == "1" or design_env():
             return
         who = MAIL().owner(ctx.state, node)
         if who and sid and who != sid:
@@ -7854,13 +7879,21 @@ def _reconcile(ctx, dry_run=False):
             br = line.split(" ", 1)[1].replace("refs/heads/", "")
             if br not in idx["byBranch"]:
                 stray.append((br, cur))
+    designs = {r["branch"]: r for r in design_records(ctx)}
     for br, wt in stray:
+        if br in designs:
+            print(f"  design     {designs[br].get('topic') or br}: worktree {wt} on '{br}' "
+                  f"(the owner's design session; not a node)")
+            continue
         print(f"  note       worktree {wt} is on '{br}', which is not a node")
     orphan_br = []
     rc, brs, _ = git("for-each-ref", "--format=%(refname:short)", "refs/heads", cwd=ctx.repo)
     if rc == 0:
         known = set(idx["byBranch"])
-        orphan_br = [b for b in brs.split() if b not in known]
+        orphan_br = [b for b in brs.split() if b not in known and b not in designs]
+        kept = sorted(b for b in brs.split() if b in designs)
+        if kept:
+            print(f"  design     branch(es) kept for the owner's designs: {', '.join(kept)}")
     if orphan_br:
         print(f"  note       branch(es) that are not nodes: {', '.join(sorted(orphan_br))}")
     empty = sorted(n for n, s in idx["nodes"].items() if not s["worktree"])
@@ -16593,6 +16626,379 @@ def ring_report(ctx, node):
 
 
 
+# ── design sessions: the owner's, beside rank 0 ──────────────────────────────
+#
+# Owner, 2026-10-10: "i need to be able to put another session onto main, for
+# design work for new complex features." A third side session, after the
+# documenter and the intermediaries: it stands beside rank 0 and never claims
+# it. It reads everything, writes design documents in a worktree of its own (a
+# `design/<topic>` branch, which the guards pass over as not a node), and
+# directs nothing: every harness verb that writes is refused it (design_gate).
+# The owner talks to it directly, so nothing is handed on by the harness.
+
+DESIGN_TOOLS = ("Read", "Grep", "Glob", "Bash", "Write", "Edit", "Agent", "WebSearch",
+                "WebFetch", "AskUserQuestion")
+DESIGN_GIT_OWN = ("status", "log", "diff", "show", "add", "commit", "mv", "rm", "restore")
+DESIGN_VIEW = False     # set by design_gate: Ctx.node() answers as rank 0, for reading
+# The verbs a design session may run, each with the arguments that only read.
+# An allow-list, so a verb added later is refused until someone decides.
+DESIGN_READ = {
+    "status": {"roster"}, "index": set(), "queue": {"node", "roster"},
+    "position": {"format", "refresh", "behind", "quiet"},
+    "brief": {"task", "history"}, "note": {"task"},
+    "charter": {"feature", "full", "json"},
+    "hold": {"list"}, "check": {"report"}, "test": {"usage", "log"},
+    "ask": {"target", "show", "list", "all", "json", "project"},
+    "fact": {"name", "list"}, "finding": {"name", "list", "all"},
+    "idle": {"all", "roster"},
+}
+DESIGN_REFUSAL = ("a design session reads the tree and writes design documents; briefs, "
+                  "marks, rings and the charter are rank 0's")
+DESIGN_ROLE = """# You are a design session
+
+You work beside rank 0 of this project's harness tree, on one design topic, with
+the owner, who is talking to you directly. You are not a node: you hold no
+claim, you have no lead and no children, and nobody in the tree is waiting on
+you.
+
+- Write design documents only, in your own worktree. Never edit code, tests or
+  another worktree; reading them is what you are for.
+- Read anything: every node's worktree is open to you, and so are the tree's
+  records (`harness status`, `harness queue`, `harness brief <task>`,
+  `harness charter --full`, `harness ask --list`).
+- You direct nothing. Never ring a node, write a brief, mark a task or change
+  the charter; the harness refuses those from here. A design becomes work only
+  when the owner passes it to rank 0, which briefs it in its own words.
+- Commit your documents on your design branch as you go. Catch up with rank 0
+  when you need its latest documents: `git merge <its branch>`.
+- A design says what is to be built and why, what it touches, what it leaves
+  alone, the choices made and the ones still open, and how it would be checked.
+  Ground every claim about the code in the code, with paths.
+"""
+
+
+def design_slug(topic):
+    return re.sub(r"[^a-z0-9]+", "-", (topic or "").lower()).strip("-")
+
+
+def design_env():
+    """This session's design topic (its slug), or None."""
+    return os.environ.get("HARNESS_DESIGN") or None
+
+
+def design_name(repo, dslug):
+    return f"{Path(repo).name}-design-{dslug}"
+
+
+def design_branch(dslug):
+    return f"design/{dslug}"
+
+
+def design_worktree(repo, dslug):
+    """Beside the node worktrees, named as they are."""
+    return Path(repo).parent / design_name(repo, dslug)
+
+
+def design_root(ctx):
+    """(rank 0's node, its branch)."""
+    root = next(n for n, sp in ctx.tree["nodes"].items() if not sp.get("parent"))
+    return root, ctx.tree["nodes"][root].get("branch") or root
+
+
+def design_records(ctx):
+    d = Path(ctx.state) / "designs"
+    out = []
+    for f in (sorted(d.glob("*.json")) if d.is_dir() else []):
+        r = _read_json(f)
+        if r and r.get("slug"):
+            out.append(r)
+    return out
+
+
+def design_save(ctx, rec):
+    d = Path(ctx.state) / "designs"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{rec['slug']}.json").write_text(json.dumps(rec, indent=2) + "\n")
+
+
+def design_ahead(ctx, rec):
+    """Commits on the design branch that rank 0 does not hold, or None if the
+    branch is gone."""
+    rc, out, _ = git("rev-list", "--count", f"{design_root(ctx)[1]}..{rec['branch']}",
+                     cwd=ctx.repo)
+    return int(out.strip() or 0) if not rc else None
+
+
+def design_ensure(ctx, dslug, topic=None):
+    """The design's branch and worktree, made once and reused. -> its record."""
+    rec = _read_json(Path(ctx.state) / "designs" / f"{dslug}.json") or {
+        "slug": dslug, "topic": topic or dslug, "branch": design_branch(dslug),
+        "worktree": str(design_worktree(ctx.repo, dslug)), "started": _now()}
+    wt = Path(rec["worktree"])
+    if not (wt / ".git").exists():
+        have = not git("rev-parse", "--verify", "--quiet", f"refs/heads/{rec['branch']}",
+                       cwd=ctx.repo)[0]
+        args = ["worktree", "add", str(wt), rec["branch"]] if have else \
+            ["worktree", "add", "-b", rec["branch"], str(wt), design_root(ctx)[1]]
+        rc, out, err = git(*args, cwd=ctx.repo)
+        if rc:
+            die(REFUSED, f"git {' '.join(args[:2])} failed: {(err or out).strip()[:300]}")
+    rec.pop("ended", None)
+    design_save(ctx, rec)
+    return rec
+
+
+def design_prompt(ctx, rec):
+    """Its system prompt: the role, where it stands, the owner's Voice section
+    (--restricted loads no user files), then the project's scope."""
+    root, rb = design_root(ctx)
+    parts = [DESIGN_ROLE.rstrip() + f"\n\n## Where you stand\n"
+             f"- topic: {rec.get('topic') or rec['slug']}\n"
+             f"- your worktree: {rec['worktree']}\n"
+             f"- your branch: {rec['branch']} (off {rb}, rank 0 `{root}`'s branch)\n"
+             f"- designs go in docs/design/{rec['slug']}.md unless the project's own "
+             f"documentation index puts design notes elsewhere\n"
+             f"- the project's CLAUDE.md is not loaded for you: read it first if there is one"]
+    try:
+        g = (Path.home() / ".claude" / "CLAUDE.md").read_text()
+        m = re.search(r"^## Voice\n(.*?)(?=^## |\Z)", g, re.S | re.M)
+        if m:
+            parts.append("# The owner's voice (from their CLAUDE.md)\n" + m.group(1).strip())
+    except Exception:
+        pass
+    try:
+        parts.append(scope_block(ctx))
+    except Exception:
+        pass
+    p = Path(ctx.state) / "designs" / f"{rec['slug']}.prompt.md"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("\n\n".join(parts) + "\n")
+    return p
+
+
+def design_cmd(ctx, rec, model=None, effort=None, bg=True):
+    """The `claude` line for a design session. --restricted, so the machine's
+    own allow rules (git and harness, unconditionally) do not apply: it gets
+    what is listed here and asks the owner for anything else."""
+    wt = rec["worktree"]
+    dirs, repos = [str(ctx.state)], []
+    try:
+        idx = load_index(ctx)
+        cand = [sp.get("worktree") for sp in (idx.get("nodes") or {}).values()]
+    except Exception:
+        cand = []
+    for d in [str(ctx.repo)] + cand:
+        if d and d not in dirs and d != wt and Path(d).is_dir():
+            dirs.append(d); repos.append(d)
+    rb = design_root(ctx)[1]
+    # Edit rules cover Write, and `Write(...)` rules are ignored (log 114).
+    allow = [f"Edit(/{wt}/**)", "Bash(harness *)"]
+    allow += [f"Bash(git {g}{sfx})" for g in DESIGN_GIT_OWN for sfx in ("", " *")]
+    allow += [f"Bash(git merge {rb})", f"Bash(git merge {rb} *)"]
+    for d in repos:
+        for q in ('"', "'") + (("",) if " " not in d else ()):
+            allow += [f"Bash(git -C {q}{d}{q} {g} *)" for g in INTERMEDIARY_GIT]
+    env = {"HARNESS_DESIGN": rec["slug"], "HARNESS_PROJECT": Path(ctx.state).name}
+    cmd = ["claude"] + (["--bg"] if bg else []) + [
+        "-n", design_name(ctx.repo, rec["slug"]), "--restricted",
+        "--settings", json.dumps({"env": env}),
+        "--add-dir", *dirs,
+        "--tools", *DESIGN_TOOLS,
+        "--allowedTools", *allow,
+        "--permission-mode", "manual",
+        "--append-system-prompt-file", str(design_prompt(ctx, rec))]
+    if model:
+        cmd += ["--model", model]
+    if effort:
+        cmd += ["--effort", effort]
+    return cmd + [f"You are a design session for {Path(ctx.repo).name}, on "
+                  f"\"{rec.get('topic') or rec['slug']}\"; your instructions are in your "
+                  f"system prompt. Read the project's CLAUDE.md and anything already in "
+                  f"your worktree on this topic, then tell the owner in a few lines what "
+                  f"you found and ask what they want designed."]
+
+
+def design_rows(ctx, rec, rows=None):
+    """(live rows, ended rows) of this design's sessions, by name."""
+    name = design_name(ctx.repo, rec["slug"])
+    rows = agents_json() if rows is None else rows
+    mine = [r for r in rows if r.get("name") == name]
+    live = live_rows(mine)
+    return live, [r for r in mine if r not in live and r.get("sessionId")]
+
+
+def cmd_design(a):
+    """`harness design <topic>`: the owner's design session beside rank 0."""
+    ctx = Ctx(); ctx.require_enrolled()
+    if os.environ.get("CLAUDE_CODE_SESSION_ID"):
+        die(REFUSED, "a design session is the owner's to start and end: run this from a shell")
+    if a.list or not a.topic:
+        recs = design_records(ctx)
+        if not recs:
+            print("no designs — harness design <topic> starts one")
+        try:
+            rows = agents_json()
+        except Exception:
+            rows = []
+        for r in recs:
+            live, ended = design_rows(ctx, r, rows)
+            ahead = design_ahead(ctx, r)
+            sess = (f"session {live[0].get('status') or 'live'} — claude attach "
+                    f"{live[0]['sessionId'][:8]}" if live else
+                    "session ended; the same command resumes it" if ended else "no session")
+            print(f"  {r['slug']:<20} {r['branch']}"
+                  + ("  (branch gone)" if ahead is None else f"  {ahead} commit(s) ahead of "
+                     f"{design_root(ctx)[1]}")
+                  + ("" if Path(r["worktree"]).is_dir() else "  worktree removed")
+                  + f"\n  {'':<20} {sess}")
+        return
+    dslug = design_slug(a.topic)
+    if not dslug:
+        die(REFUSED, f"'{a.topic}' has no letters or digits to name a branch with")
+    if a.end or a.drop:
+        return design_end(ctx, dslug, a.drop)
+    if a.print_cmd:
+        rec = _read_json(Path(ctx.state) / "designs" / f"{dslug}.json") or {
+            "slug": dslug, "topic": a.topic, "branch": design_branch(dslug),
+            "worktree": str(design_worktree(ctx.repo, dslug))}
+        print(shlex.join(design_cmd(ctx, rec, a.model, a.effort, bg=not a.here)))
+        return
+    rec = design_ensure(ctx, dslug, a.topic)
+    try:
+        live, ended = design_rows(ctx, rec)
+    except Exception as e:
+        die(REFUSED, f"cannot read the session list: {e}")
+    if live:
+        print(f"{design_name(ctx.repo, dslug)} is already running — claude attach "
+              f"{live[0]['sessionId'][:8]}")
+        return
+    root = design_root(ctx)[0]
+    model, effort = a.model, a.effort
+    if not (model and effort):
+        try:
+            m0, e0 = assignment_for(ctx, root)
+            model, effort = model or m0, effort or e0
+        except Exception:
+            pass
+    env = {k: v for k, v in os.environ.items() if k != "HARNESS_DESIGN"}
+    if ended and not a.fresh:
+        # With no flags it continues under its saved options; any flag starts a
+        # copy instead (measured 2026-10-05).
+        cmd = ["claude"] + ([] if a.here else ["--bg"]) + ["--resume", ended[-1]["sessionId"]]
+        how = "resumed"
+    else:
+        cmd = design_cmd(ctx, rec, model, effort, bg=not a.here)
+        how = "started"
+    if a.here:
+        os.chdir(rec["worktree"])
+        os.execvpe(cmd[0], cmd, env)
+    r = subprocess.run(cmd, cwd=rec["worktree"], env=env, capture_output=True, text=True)
+    if r.returncode:
+        err = (r.stderr or r.stdout).strip()
+        if "not trusted" in err:
+            # Trust is the owner's to give, at Claude Code's own prompt.
+            die(REFUSED, f"Claude Code does not trust this repository yet, so it will not start "
+                         f"a background session in it.\n           Start it in this terminal "
+                         f"once and accept the prompt: harness design {dslug} --here")
+        die(REFUSED, f"the design session did not start: {err[:300]}")
+    print(f"{how} {design_name(ctx.repo, dslug)} on {rec['branch']}, in {rec['worktree']}")
+    print((r.stdout or "").strip() or "  `claude agents` lists it; `claude attach <id>` joins it")
+    print(f"  It writes design documents there and nowhere else. End it with: "
+          f"harness design {dslug} --end")
+
+
+def design_end(ctx, dslug, drop=False):
+    """Stop the session and remove the worktree. The branch holds the documents,
+    so it is kept unless `drop` says otherwise."""
+    rec = _read_json(Path(ctx.state) / "designs" / f"{dslug}.json")
+    if not rec:
+        die(REFUSED, f"no design '{dslug}' — harness design --list")
+    wt = Path(rec["worktree"])
+    if wt.is_dir() and not drop:
+        rc, dirt, _ = git("status", "--porcelain", cwd=wt)
+        if dirt.strip():
+            die(REFUSED, f"{wt} has uncommitted work:\n"
+                + "\n".join(f"           {l}" for l in dirt.splitlines()[:8])
+                + f"\n           Commit it there, or lose it with: harness design {dslug} --drop")
+    try:
+        live, _ = design_rows(ctx, rec)
+    except Exception:
+        live = []
+    for r in live:
+        subprocess.run(["claude", "stop", r["sessionId"][:8]], capture_output=True)
+        print(f"stopped {r.get('name')} [{r['sessionId'][:8]}]; its conversation is kept")
+    ahead = design_ahead(ctx, rec)
+    if wt.is_dir():
+        rc, out, err = git("worktree", "remove", *(["--force"] if drop else []), str(wt),
+                           cwd=ctx.repo)
+        if rc:
+            die(REFUSED, f"git worktree remove failed: {(err or out).strip()[:300]}")
+        print(f"removed {wt}")
+    f = Path(ctx.state) / "designs" / f"{dslug}.json"
+    if drop:
+        if ahead:
+            rc, log, _ = git("log", "--format=  %h %s", f"{design_root(ctx)[1]}..{rec['branch']}",
+                             cwd=ctx.repo)
+            print(f"dropping {ahead} commit(s) {design_root(ctx)[1]} does not hold:\n{log.rstrip()}")
+        if ahead is not None:
+            git("branch", "-D", rec["branch"], cwd=ctx.repo)
+            print(f"deleted {rec['branch']}")
+        f.unlink(missing_ok=True)
+        (f.parent / f"{dslug}.prompt.md").unlink(missing_ok=True)
+        return
+    rec["ended"] = _now()
+    design_save(ctx, rec)
+    rb = design_root(ctx)[1]
+    print(f"kept {rec['branch']}" + (f", {ahead} commit(s) ahead of {rb}. Rank 0 takes it "
+                                     f"with: git merge {rec['branch']}" if ahead else
+                                     f"; {rb} already holds everything on it"))
+
+
+def design_orient(ctx, dslug):
+    """`whoami` in a design session: what it is, and the project's scope."""
+    rec = _read_json(Path(ctx.state) / "designs" / f"{dslug}.json") or {"slug": dslug}
+    root, rb = design_root(ctx)
+    print(f"design   {rec.get('topic') or dslug}")
+    print(f"branch   {ctx.branch}")
+    print(f"worktree {ctx.worktree}")
+    print(f"beside   {root} (rank 0, branch {rb}); not a node, no claim")
+    print(f"may      read every worktree and the tree's records; write design documents "
+          f"here; commit them on {ctx.branch}")
+    print(f"may not  brief, mark, ring, order queues or change the charter — {root} does")
+    h = halted(ctx)
+    if h:
+        print(f"HALTED   by the owner at {h.get('at', '')[11:16]}: {h.get('why')}. The tree "
+              f"starts nothing; your design work is not part of it and carries on.")
+    try:
+        print("\n" + scope_block(ctx))
+    except Exception:
+        pass
+
+
+def design_gate(a, default=lambda k: None):
+    """What a design session may run. Hooks say nothing (above all, they never
+    take rank 0's mail); read verbs see the tree as rank 0 does; the rest is
+    refused."""
+    global DESIGN_VIEW
+    if a.cmd in ("hook-stop", "hook-orient"):
+        sys.exit(0)
+    if a.cmd == "whoami":
+        if a.__dict__.get("delta"):
+            sys.exit(0)
+        ctx = Ctx(); ctx.require_enrolled()
+        design_orient(ctx, design_env())
+        sys.exit(0)
+    ok = DESIGN_READ.get(a.cmd)
+    if ok is None:
+        die(REFUSED, f"`harness {a.cmd}`: {DESIGN_REFUSAL}")
+    bad = [k for k, v in vars(a).items()
+           if k not in ("cmd", "fn") and k not in ok
+           and v not in (None, False, "", []) and v != default(k)]
+    if bad:
+        die(REFUSED, f"`harness {a.cmd}` with {', '.join(sorted(bad))}: {DESIGN_REFUSAL}")
+    DESIGN_VIEW = True
+
+
 def main():
     # `gui` is handed off before argparse sees anything. The viewer has its own
     # flags and argparse.REMAINDER does not reliably pass a leading `--flag`
@@ -17080,7 +17486,25 @@ def main():
     fo.add_argument("--remove", nargs="+", metavar="TASK", help="remove from the current list")
     fo.add_argument("--why", help="one line")
     fo.add_argument("--clear", action="store_true")
+    dz = add("design", cmd_design)
+    dz.add_argument("topic", nargs="?",
+                    help="what is being designed; names the branch design/<topic> and "
+                         "the worktree. The same topic again resumes it")
+    dz.add_argument("--list", action="store_true", help="every design: branch, session, commits")
+    dz.add_argument("--end", action="store_true",
+                    help="stop its session and remove its worktree; the branch is kept")
+    dz.add_argument("--drop", action="store_true",
+                    help="end it and delete the branch too, uncommitted and unmerged work with it")
+    dz.add_argument("--here", action="store_true",
+                    help="run the session in this terminal instead of in the background")
+    dz.add_argument("--fresh", action="store_true",
+                    help="start a new conversation instead of resuming the last one")
+    dz.add_argument("--model")
+    dz.add_argument("--effort", choices=list(EFFORTS))
+    dz.add_argument("--print-cmd", action="store_true", help="print the command and exit")
     a = p.parse_args()
+    if design_env():
+        design_gate(a, sub.choices[a.cmd].get_default)
     read_dash_from_stdin(a)
     # No delta footer: nags belong to orientation (whoami, hook-orient), and a
     # command asked a question answers only that question (obs 13).

@@ -3353,6 +3353,26 @@ class Ringer(unittest.TestCase):
         self.assertIsNotNone(again)
         again.close()
 
+    def test_a_no_to_memory_caps_is_asked_again_and_a_yes_is_kept(self):
+        # Log 142: a runner that asked once, while the user's systemd manager was
+        # down, ran every test uncapped for hours after it came back.
+        saved = list(hz._CGROUP)
+        self.addCleanup(lambda: hz._CGROUP.__setitem__(slice(None), saved))
+        no, yes = mock.Mock(returncode=1, stderr="Failed to connect to bus", stdout=""), \
+            mock.Mock(returncode=0, stderr="", stdout="")
+        hz._CGROUP[:] = [None, 0.0]
+        with mock.patch.object(hz.subprocess, "run", side_effect=[no, yes]) as run, \
+             mock.patch("sys.stdout", io.StringIO()) as out:
+            self.assertFalse(hz.cgroup_caps()[0])
+            self.assertFalse(hz.cgroup_caps()[0])            # inside the minute: not asked again
+            self.assertEqual(run.call_count, 1)
+            hz._CGROUP[1] -= hz.CGROUP_RETRY
+            self.assertTrue(hz.cgroup_caps()[0])             # asked again: back
+            self.assertIn("available again", out.getvalue())
+            hz._CGROUP[1] -= 10 * hz.CGROUP_RETRY
+            self.assertTrue(hz.cgroup_caps()[0])             # a yes is kept
+            self.assertEqual(run.call_count, 2)
+
     def test_a_launch_claude_code_refuses_is_not_called_spawned(self):
         # 2026-10-11: `spawn` printed "spawned" after "Workspace not trusted".
         run = lambda rc, out: mock.patch.object(hz.subprocess, "run", return_value=mock.Mock(

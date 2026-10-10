@@ -4820,7 +4820,8 @@ _MEM_UNITS = {"K": 2**10, "M": 2**20, "G": 2**30, "T": 2**40}
 _ARM_WRAP = ('sh -c "$1"; rc=$?; d=/sys/fs/cgroup$(sed -n "s/^0:://p" /proc/$$/cgroup); '
              '{ cat "$d/memory.peak"; grep "^oom_kill " "$d/memory.events"; } > "$2" '
              '2>/dev/null; exit $rc')
-_CGROUP = [None]       # (usable, why not), probed once per process
+_CGROUP = [None, 0.0]  # (usable, why not) and when it was asked
+CGROUP_RETRY = 60      # a "no" is asked again after this; a "yes" is kept
 
 
 def parse_mem(v):
@@ -4855,8 +4856,14 @@ def mem_available():
 def cgroup_caps():
     """Can arms run in their own memory-capped cgroup here? (ok, why not). The
     runner is detached, so whether it reaches the user's systemd is asked of
-    systemd-run itself, once."""
-    if _CGROUP[0] is None:
+    systemd-run itself. A "yes" is kept for the life of the process. A "no" is
+    asked again each minute: after a WSL restart the user's systemd manager was
+    down, and a runner that had asked once ran every test uncapped and unmetered
+    for hours after the owner had brought it back (log 142, 2026-10-11)."""
+    stale = _CGROUP[0] is not None and not _CGROUP[0][0] \
+        and time.time() - _CGROUP[1] >= CGROUP_RETRY
+    if _CGROUP[0] is None or stale:
+        was = _CGROUP[0]
         try:
             r = subprocess.run(["systemd-run", "--user", "--scope", "-q", "-p", "MemoryMax=64M",
                                 "--", "true"], capture_output=True, text=True, timeout=20)
@@ -4864,7 +4871,10 @@ def cgroup_caps():
             why = "" if ok else ((r.stderr or r.stdout).strip()[:160] or f"exit {r.returncode}")
         except Exception as e:
             ok, why = False, f"systemd-run: {e}"[:160]
-        _CGROUP[0] = (ok, why)
+        _CGROUP[0], _CGROUP[1] = (ok, why), time.time()
+        if was is not None and ok:
+            print(f"{_now()} memory caps are available again: tests are capped and metered "
+                  f"from here")
     return _CGROUP[0]
 
 

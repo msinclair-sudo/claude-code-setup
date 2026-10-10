@@ -3719,7 +3719,7 @@ def cmd_hook_orient(a):
                 if sid and (not who or who == sid) and MAIL().pending(ctx.state, node):
                     got = MAIL().claim(ctx.state, node)
                     if got:
-                        print(MAIL().render([m for _, m in got], node), flush=True)
+                        print(MAIL().render([m for _, m in got], node, sid), flush=True)
                         MAIL().commit(ctx.state, node, got, "prompt")
     except (Exception, SystemExit):
         pass
@@ -3792,10 +3792,10 @@ def cmd_hook_stop(a):
         # loop on the same message.
         # Only mail that asks for something holds the turn open: an FYI, or the
         # node's own note, is shown with it or at the next prompt (log 134).
-        if sid and wake_calls(MAIL().unread(ctx.state, node), node):
+        if sid and wake_calls(MAIL().unread(ctx.state, node), node, sid):
             got = MAIL().claim(ctx.state, node)
             if got:
-                stop_block(MAIL().render([m for _, m in got], node))
+                stop_block(MAIL().render([m for _, m in got], node, sid))
                 sys.stdout.flush()
                 MAIL().commit(ctx.state, node, got, "turn end")     # shown, then logged (log 120)
                 return
@@ -16663,9 +16663,11 @@ def resume_session(sid, text, cwd):
         return False
 
 
-def wake_calls(mail, node):
-    """The unread messages worth waking for: not an FYI, not the node's own note."""
-    return [m for m in mail if MAIL().prio(m) != "fyi" and m.get("from") != node]
+def wake_calls(mail, node, sid=None):
+    """The unread messages worth waking for: not an FYI, and not a note the
+    node's own session (`sid`) sent itself."""
+    return [m for m in mail if MAIL().prio(m) != "fyi"
+            and not MAIL().own_note(m, node, sid)]
 
 
 def wake_text(node, calls):
@@ -16675,14 +16677,15 @@ def wake_text(node, calls):
             f"If you see none: harness doorbell --read")
 
 
-def ringer_plan(state, idle_for, mail, node, last, now):
+def ringer_plan(state, idle_for, mail, node, last, now, sid=None):
     """What the ringer does for one node this tick: (action, why). action is
     "wake" (post to a live session), "resume" (a stopped one) or None.
 
     state is "busy", "idle", "stopped" or "none". A busy session is left to its
     hooks: high mail is shown after its next tool call, low at its turn end.
-    `last` is {"tries", "at"} for the mail now at the head, or None."""
-    calls = wake_calls(mail, node)
+    `last` is {"tries", "at"} for the mail now at the head, or None. `sid` is
+    the node's own session, whose notes to itself wake nobody."""
+    calls = wake_calls(mail, node, sid)
     if not calls:
         return None, "nothing that wakes"
     if state == "busy":
@@ -16742,7 +16745,7 @@ def ringer_tick(ctx, S, now=None):
             if text:
                 ring_inbox(ctx.state, node, "harness", text)
         mail = MAIL().unread(ctx.state, node)
-        calls = wake_calls(mail, node)
+        calls = wake_calls(mail, node, sid)
         if not calls:
             S.pop(node, None)
             (d / "unwoken.json").unlink(missing_ok=True)
@@ -16756,7 +16759,7 @@ def ringer_tick(ctx, S, now=None):
         if state == "idle" and not any(MAIL().prio(m) == "high" for m in calls):
             ended = turn_end_at(row.get("sessionId") or "")
             idle_for = now - ended if ended else 0
-        act, why = ringer_plan(state, idle_for, mail, node, last, now)
+        act, why = ringer_plan(state, idle_for, mail, node, last, now, sid)
         if not act:
             continue
         text = wake_text(node, calls)
@@ -16832,7 +16835,7 @@ def cmd_doorbell(a):
             print("nothing new: a hook already showed you what rang. If you didn't see it: "
                   "harness doorbell --again 5")
         else:
-            print(MAIL().render(msgs, node))
+            print(MAIL().render(msgs, node, sid))
         return
     ensure_ringer(ctx.state)
     r = ringer_alive(ctx.state)
@@ -16906,6 +16909,12 @@ def ring_report(ctx, node, priority="high"):
     except Exception:
         rows = []
     row = next((r for r in rows if sid and r.get("sessionId") == sid), None)
+    try:
+        # The session's own file is fresher than the cached roster, which said
+        # "mid-turn" about a session idle for half a minute (2026-10-10).
+        row = next((r for r in live_sessions() if sid and r.get("sessionId") == sid), row)
+    except Exception:
+        pass
     if not row:
         # The same reading of "running" as orientation, spawn and integrate
         # (log 105). A session `recycle` started seconds ago is alive but has

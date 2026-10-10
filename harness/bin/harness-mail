@@ -186,13 +186,20 @@ def _ago(at):
     return f" ({s // 3600}h{s % 3600 // 60:02d}m ago)" if s >= 3600 else f" ({s // 60}m ago)"
 
 
-def render(msgs, node=None):
+def own_note(m, node, sid):
+    """A message this node's own session sent itself. The sender's name is not
+    enough: a ring from a shell in a node's checkout is signed with that node's
+    name, and it is the owner speaking, not a note to self."""
+    return bool(node and sid and m.get("from") == node and m.get("session") == sid)
+
+
+def render(msgs, node=None, sid=None):
     """Mail as the session reads it. Only mail that asks for something carries
-    the demand to act: an FYI, or a note the node sent itself, is information
+    the demand to act: an FYI, or a note the session sent itself, is information
     (log 134: every message, a thanks included, read as an order)."""
     row = lambda m, who: (f"  {(m.get('at') or '')[11:16]}{_ago(m.get('at') or '')}  "
                           f"{who}: {m.get('text')}")
-    own = [m for m in msgs if node and m.get("from") == node]
+    own = [m for m in msgs if own_note(m, node, sid)]
     fyi = [m for m in msgs if prio(m) == "fyi" and m not in own]
     act = [m for m in msgs if m not in own and m not in fyi]
     lines = []
@@ -233,7 +240,7 @@ def main():
         if got:
             print(json.dumps({"hookSpecificOutput": {
                 "hookEventName": "PostToolUse",
-                "additionalContext": render([m for _, m in got], node)}}), flush=True)
+                "additionalContext": render([m for _, m in got], node, sid)}}), flush=True)
             commit(state, node, got, "tool call")
     except Exception:
         return

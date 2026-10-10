@@ -3226,7 +3226,11 @@ class Ringer(unittest.TestCase):
         self.assertIsNone(plan("idle", [lo], idle=10))       # low: not yet idle long enough
         self.assertEqual(plan("idle", [lo], idle=hz.LOW_IDLE), "wake")
         self.assertIsNone(plan("idle", [fyi], idle=9999))    # an FYI wakes nobody
-        self.assertIsNone(plan("idle", [{"from": "main", "text": "note to self"}]))
+        mine = [{"from": "main", "session": "s-main", "text": "note to self"}]
+        self.assertIsNone(hz.ringer_plan("idle", 0, mine, "main", None, 1000, "s-main")[0])
+        # Signed "main" from a shell in main's checkout: the owner, not a note to self.
+        self.assertEqual(plan("idle", [{"from": "main", "session": "", "text": "from a shell"}]),
+                         "wake")
         self.assertEqual(plan("stopped", [hi]), "resume")
         self.assertEqual(plan("stopped", [lo]), "resume")
         self.assertIsNone(plan("stopped", [fyi]))
@@ -3692,7 +3696,8 @@ class DoorbellHooks(unittest.TestCase):
 
     def test_only_mail_that_asks_for_something_holds_the_turn_open(self):
         hz.ring_inbox(self.ctx.state, "main", "dev", "thanks, all good", "fyi")
-        hz.ring_inbox(self.ctx.state, "main", "main", "my own answer")
+        with mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "sess-main"}):
+            hz.ring_inbox(self.ctx.state, "main", "main", "my own answer")
         self.assertIsNone(self.stop())                       # an FYI and an own note: no block
         self.assertEqual(hz.MAIL().pending(self.ctx.state, "main"), 2)
         hz.ring_inbox(self.ctx.state, "main", "dev", "when you are free", "low")

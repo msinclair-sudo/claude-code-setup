@@ -78,18 +78,53 @@ def pending(state, node):
     return len(list(d.glob("*.json")))
 
 
-def claim(state, node):
-    """Claim every unread message, oldest first: [(claim path, message)]. Each
-    file is claimed by an atomic rename, so two readers (a tool call and a turn
-    end at once) never both deliver it. Nothing is marked delivered until
-    commit(): a hook killed between the two leaves the claim, and the next read
-    puts it back (log 120: two messages were logged as shown and never seen)."""
+# A message's priority (owner, 2026-10-10, log 134). high interrupts: it is
+# shown after the receiver's next tool call, and the ringer wakes an idle one
+# at once. low waits until the receiver is idle. fyi asks for nothing and never
+# wakes anyone; it is shown with whatever is delivered next.
+PRIORITIES = ("high", "low", "fyi")
+
+
+def prio(m):
+    p = (m or {}).get("priority")
+    return p if p in PRIORITIES else "high"
+
+
+def unread(state, node):
+    """The unread messages, oldest first, without claiming them (the ringer's
+    view: it decides whether to wake, and never takes mail)."""
     d = Path(state) / "doorbell" / node / "inbox"
     if not d.is_dir():
         return []
     _restore_stale(d)
     out = []
     for f in sorted(d.glob("*.json")):
+        try:
+            out.append(json.loads(f.read_text()))
+        except Exception:
+            pass
+    return out
+
+
+def claim(state, node, only=None):
+    """Claim every unread message, oldest first: [(claim path, message)]. Each
+    file is claimed by an atomic rename, so two readers (a tool call and a turn
+    end at once) never both deliver it. Nothing is marked delivered until
+    commit(): a hook killed between the two leaves the claim, and the next read
+    puts it back (log 120: two messages were logged as shown and never seen).
+    `only` is a set of priorities: the rest are left in the inbox."""
+    d = Path(state) / "doorbell" / node / "inbox"
+    if not d.is_dir():
+        return []
+    _restore_stale(d)
+    out = []
+    for f in sorted(d.glob("*.json")):
+        if only is not None:
+            try:
+                if prio(json.loads(f.read_text())) not in only:
+                    continue
+            except Exception:
+                continue
         c = f.with_name(f"{f.stem}.taken-{os.getpid()}")
         try:
             os.rename(f, c)
@@ -151,12 +186,26 @@ def _ago(at):
     return f" ({s // 3600}h{s % 3600 // 60:02d}m ago)" if s >= 3600 else f" ({s // 60}m ago)"
 
 
-def render(msgs):
-    lines = [f"Doorbell — {len(msgs)} message(s) for you:"]
-    for m in msgs:
-        lines.append(f"  {(m.get('at') or '')[11:16]}{_ago(m.get('at') or '')}  "
-                     f"from {m.get('from') or '?'}: {m.get('text')}")
-    lines.append("They are marked read: act on them now, or say on the record why not.")
+def render(msgs, node=None):
+    """Mail as the session reads it. Only mail that asks for something carries
+    the demand to act: an FYI, or a note the node sent itself, is information
+    (log 134: every message, a thanks included, read as an order)."""
+    row = lambda m, who: (f"  {(m.get('at') or '')[11:16]}{_ago(m.get('at') or '')}  "
+                          f"{who}: {m.get('text')}")
+    own = [m for m in msgs if node and m.get("from") == node]
+    fyi = [m for m in msgs if prio(m) == "fyi" and m not in own]
+    act = [m for m in msgs if m not in own and m not in fyi]
+    lines = []
+    if act:
+        lines.append(f"Doorbell — {len(act)} message(s) for you:")
+        lines += [row(m, f"from {m.get('from') or '?'}") for m in act]
+        lines.append("They are marked read: act on them now, or say on the record why not.")
+    if fyi:
+        lines.append(f"FYI, no action needed — {len(fyi)} message(s):")
+        lines += [row(m, f"from {m.get('from') or '?'}") for m in fyi]
+    if own:
+        lines.append(f"Your own note(s) to yourself — {len(own)}:")
+        lines += [row(m, "you wrote") for m in own]
     return "\n".join(lines)
 
 
@@ -178,11 +227,13 @@ def main():
         who = owner(state, node)
         if not sid or (who and who != sid) or not pending(state, node):
             return
-        got = claim(state, node)
+        # Mid-turn, only what interrupts. Low and FYI mail waits for the turn
+        # to end (log 134).
+        got = claim(state, node, only={"high"})
         if got:
             print(json.dumps({"hookSpecificOutput": {
                 "hookEventName": "PostToolUse",
-                "additionalContext": render([m for _, m in got])}}), flush=True)
+                "additionalContext": render([m for _, m in got], node)}}), flush=True)
             commit(state, node, got, "tool call")
     except Exception:
         return

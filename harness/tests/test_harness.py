@@ -17,6 +17,10 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
+# Every mail write starts the project's ringer when none runs (log 134). No
+# test may start a real daemon.
+os.environ["HARNESS_NO_RINGER"] = "1"
+
 _SRC = Path(__file__).resolve().parents[1] / "bin" / "harness"
 _ld = importlib.machinery.SourceFileLoader("harness_cli", str(_SRC))
 hz = importlib.util.module_from_spec(importlib.util.spec_from_loader("harness_cli", _ld))
@@ -3183,6 +3187,169 @@ class Usage(unittest.TestCase):
                 self.assertEqual([w["pct"] for w in u["windows"]], [None, 18])
 
 
+class Ringer(unittest.TestCase):
+    """Log 134: one watcher per project wakes whoever has mail, by priority, by
+    posting to the session's own inbox socket. No session runs a waiter."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev"})
+        (self.ctx.dir / "locks").mkdir()
+        self.ctx.repo = self.ctx.dir
+        self.rows, self.sent = [], []
+
+    def own(self, node, sid):
+        (self.ctx.dir / "locks" / f"{node}.lock").write_text(json.dumps({"session_id": sid}))
+
+    def tick(self, S, now, ended=None, ok=True, resumed=None):
+        def wake(row, text):
+            self.sent.append((row["sessionId"], text)); return ok
+        def resume(sid, text, cwd):
+            (resumed if resumed is not None else self.sent).append((sid, text)); return ok
+        with mock.patch.object(hz, "live_sessions", return_value=self.rows), \
+             mock.patch.object(hz, "load_index", return_value={"nodes": {
+                 n: {"worktree": f"/w/{n}"} for n in self.ctx.tree["nodes"]}}), \
+             mock.patch.object(hz, "bell_nudge", return_value=None), \
+             mock.patch.object(hz, "turn_end_at", return_value=ended), \
+             mock.patch.object(hz, "turn_ended", return_value=True), \
+             mock.patch.object(hz, "wake_session", side_effect=wake), \
+             mock.patch.object(hz, "resume_session", side_effect=resume), \
+             mock.patch("sys.stdout", io.StringIO()):
+            return hz.ringer_tick(self.ctx, S, now)
+
+    def test_the_plan_for_every_kind_of_receiver_and_mail(self):
+        hi, lo, fyi = ({"from": "dev", "priority": p, "text": "x"} for p in ("high", "low", "fyi"))
+        plan = lambda st, mail, idle=0, last=None, now=1000: hz.ringer_plan(
+            st, idle, mail, "main", last, now)[0]
+        self.assertIsNone(plan("busy", [hi]))                # its hooks deliver
+        self.assertIsNone(plan("busy", [lo]))
+        self.assertEqual(plan("idle", [hi]), "wake")         # high: now
+        self.assertIsNone(plan("idle", [lo], idle=10))       # low: not yet idle long enough
+        self.assertEqual(plan("idle", [lo], idle=hz.LOW_IDLE), "wake")
+        self.assertIsNone(plan("idle", [fyi], idle=9999))    # an FYI wakes nobody
+        self.assertIsNone(plan("idle", [{"from": "main", "text": "note to self"}]))
+        self.assertEqual(plan("stopped", [hi]), "resume")
+        self.assertEqual(plan("stopped", [lo]), "resume")
+        self.assertIsNone(plan("stopped", [fyi]))
+        self.assertIsNone(plan("none", [hi]))                # the "down" row covers it
+        # Woken and still unread: wait the grace, then again at 1, 5 and 15 minutes.
+        self.assertIsNone(plan("idle", [hi], last={"tries": 1, "at": 950}))
+        self.assertEqual(plan("idle", [hi], last={"tries": 1, "at": 1000 - hz.WAKE_GRACE}), "wake")
+        self.assertIsNone(plan("idle", [hi], last={"tries": 2, "at": 800}))
+        self.assertEqual(plan("idle", [hi], last={"tries": 2, "at": 1000 - 300}), "wake")
+
+    def test_the_wake_is_one_line_on_the_session_s_own_socket(self):
+        d = Path(tempfile.mkdtemp())
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(str(d / "s.sock")); srv.listen(1)
+        got = []
+        def serve():
+            c, _ = srv.accept()
+            buf = b""
+            while True:
+                b = c.recv(4096)
+                if not b:
+                    break
+                buf += b
+            got.append(buf); c.close()
+        th = threading.Thread(target=serve); th.start()
+        self.assertTrue(hz.wake_session({"messagingSocketPath": str(d / "s.sock")}, "harness: mail"))
+        th.join(5); srv.close()
+        self.assertTrue(got[0].endswith(b"\n"))
+        self.assertEqual(json.loads(got[0]), {"type": "user", "message": {
+            "role": "user", "content": "harness: mail"}})
+        self.assertFalse(hz.wake_session({"messagingSocketPath": str(d / "gone.sock")}, "x"))
+        self.assertFalse(hz.wake_session({}, "x"))
+
+    def test_an_idle_node_is_woken_a_busy_one_is_left_to_its_hooks(self):
+        self.own("dev", "s-dev"); self.own("dev_1", "s-1")
+        self.rows = [{"sessionId": "s-dev", "status": "idle", "messagingSocketPath": "/a"},
+                     {"sessionId": "s-1", "status": "busy", "messagingSocketPath": "/b"}]
+        hz.ring_inbox(self.ctx.state, "dev", "dev_1", "done, please review")
+        hz.ring_inbox(self.ctx.state, "dev_1", "dev", "stop and read this")
+        self.assertTrue(self.tick({}, 1000))
+        self.assertEqual([s for s, _ in self.sent], ["s-dev"])
+        self.assertIn("1 unread message(s) for dev (from dev_1)", self.sent[0][1])
+        self.assertEqual(hz.MAIL().pending(self.ctx.state, "dev"), 1)    # it never takes mail
+
+    def test_low_waits_for_idle_and_fyi_never_wakes(self):
+        self.own("dev", "s-dev")
+        self.rows = [{"sessionId": "s-dev", "status": "idle", "messagingSocketPath": "/a"}]
+        hz.ring_inbox(self.ctx.state, "dev", "main", "for information", "fyi")
+        self.tick({}, 1000, ended=0)
+        self.assertEqual(self.sent, [])
+        hz.ring_inbox(self.ctx.state, "dev", "main", "when you are free", "low")
+        self.tick({}, 1000, ended=990)                       # idle 10 s
+        self.assertEqual(self.sent, [])
+        self.tick({}, 1000, ended=1000 - hz.LOW_IDLE)
+        self.assertEqual(len(self.sent), 1)
+
+    def test_a_wake_that_is_not_read_is_retried_then_flagged_to_its_lead(self):
+        self.own("dev_1", "s-1")
+        self.rows = [{"sessionId": "s-1", "status": "idle", "messagingSocketPath": "/b"}]
+        hz.ring_inbox(self.ctx.state, "dev_1", "dev", "your check finished")
+        S, t = {}, 1000
+        self.tick(S, t); self.tick(S, t + 30)                # inside the grace: once
+        self.assertEqual(len(self.sent), 1)
+        for gap in (90, 300, 900):
+            t += gap
+            self.tick(S, t)
+        self.assertEqual(len(self.sent), 4)
+        self.assertEqual(hz.unwoken(self.ctx, "dev_1")["tries"], 4)
+        with mock.patch.object(hz, "node_running", return_value=("claimed", {})), \
+             mock.patch.object(hz, "cached_roster", return_value=[]):
+            rows = [r for r in hz.lead_owes(self.ctx, "dev") if r[0] == "unwoken"]
+        self.assertEqual([(r[1], r[2]) for r in rows], [("dev_1", "1 unread message(s)")])
+        self.assertIn("harness recycle dev_1", hz.owed_line(*rows[0]))
+        hz.MAIL().take(self.ctx.state, "dev_1", "t")         # read at last: the flag goes
+        self.tick(S, t + 1)
+        self.assertIsNone(hz.unwoken(self.ctx, "dev_1"))
+
+    def test_a_session_stopped_while_idle_is_resumed_and_a_halt_resumes_nothing(self):
+        self.own("dev_1", "s-1")                             # claimed, no live process
+        hz.ring_inbox(self.ctx.state, "dev_1", "dev", "your check finished")
+        resumed = []
+        self.assertFalse(self.tick({}, 1000, resumed=resumed))
+        self.assertEqual([s for s, _ in resumed], ["s-1"])
+        hp = hz.halt_path(self.ctx)
+        hp.parent.mkdir(parents=True, exist_ok=True)
+        hp.write_text(json.dumps({"at": "2026-10-09T23:20:00+1100", "why": "x"}))
+        resumed.clear()
+        self.tick({}, 2000, resumed=resumed)
+        self.assertEqual(resumed, [])
+
+    def test_ring_takes_a_priority_and_says_what_happens(self):
+        self.ctx.me = "dev"
+        o = io.StringIO()
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.object(hz, "cached_roster", return_value=[]), redirect_stdout(o):
+            hz.cmd_ring(mock.Mock(node="main", text=["schema", "landed"], fyi=True, low=False))
+        (m,) = hz.MAIL().unread(self.ctx.state, "main")
+        self.assertEqual((m["priority"], m["from"]), ("fyi", "dev"))
+        self.assertIn("rang main (fyi)", o.getvalue())
+
+    def test_one_ringer_per_project_started_by_the_harness(self):
+        (self.ctx.dir / "binding.json").write_text(json.dumps({"repo": str(self.ctx.dir)}))
+        with mock.patch.object(hz.subprocess, "Popen") as po:
+            hz.ensure_ringer(self.ctx.state)                 # the test switch: nothing starts
+            self.assertFalse(po.called)
+            with mock.patch.dict(os.environ):
+                os.environ.pop("HARNESS_NO_RINGER")
+                hz.ensure_ringer(self.ctx.state)
+                self.assertEqual(po.call_args.args[0][-1], "ringer")
+                self.assertNotIn("CLAUDE_CODE_SESSION_ID", po.call_args.kwargs["env"])
+                po.reset_mock()
+                with mock.patch.object(hz, "ringer_alive", return_value={"pid": 1}):
+                    hz.ensure_ringer(self.ctx.state)         # one runs already
+                self.assertFalse(po.called)
+        # A second ringer finds the lock held and leaves at once.
+        held = hz._flock(hz.ringer_dir(self.ctx.state) / "ringer.lock", block=False)
+        self.addCleanup(held.close)
+        self.ctx.require_enrolled = lambda: None
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx):
+            hz.cmd_ringer(mock.Mock())
+        self.assertFalse((hz.ringer_dir(self.ctx.state) / "ringer.json").exists())
+
+
 class Held(unittest.TestCase):
     """A node whose next task is gated on another's task or a clock is held."""
 
@@ -3387,7 +3554,8 @@ class DocPing(unittest.TestCase):
 
 
 class Doorbell(unittest.TestCase):
-    """Waking an idle session: its background `harness doorbell` exits."""
+    """Reading mail by hand. The waiter this command used to be is retired
+    (log 134): the project's ringer wakes a session, and nothing is armed."""
 
     def setUp(self):
         self.ctx = FakeCtx({"main": None, "dev": "main"})
@@ -3409,10 +3577,11 @@ class Doorbell(unittest.TestCase):
         self.ctx.me = "dev"
         self.out(hz.cmd_ring, mock.Mock(node="main", text=["dev", "needs", "a", "ruling"]))
         self.ctx.me = "main"
-        with mock.patch.object(hz, "bell_nudge", return_value=None):
-            o = self.out(hz.cmd_doorbell, mock.Mock(read=False, status=False))
-        self.assertIn("rang: mail is waiting", o)
+        # The old way to arm it: says it is retired, starts nothing, takes nothing.
+        o = self.out(hz.cmd_doorbell, mock.Mock(read=False, status=False))
+        self.assertIn("retired", o)
         self.assertFalse((hz.bell_dir(self.ctx, "main") / "armed.json").exists())
+        self.assertEqual(hz.MAIL().pending(self.ctx.state, "main"), 1)
         o = self.out(hz.cmd_doorbell, mock.Mock(read=True, status=False))
         self.assertIn("from dev: dev needs a ruling", o)
         self.assertIn("nothing new", self.out(hz.cmd_doorbell, mock.Mock(read=True, status=False)))
@@ -3425,14 +3594,6 @@ class Doorbell(unittest.TestCase):
         self.assertEqual(hz.MAIL().pending(self.ctx.state, "main"), 1)
         self.assertEqual([m["text"] for m in hz.MAIL().take(self.ctx.state, "main", "t")], ["hello"])
         self.assertIn("nothing new", self.out(hz.cmd_doorbell, mock.Mock(read=True, status=False)))
-
-    def test_a_newer_doorbell_replaces_the_old(self):
-        d = hz.bell_dir(self.ctx, "main")
-        def sleep(_):
-            (d / "armed.json").write_text(json.dumps({"pid": -1}))
-        with mock.patch.object(hz, "bell_nudge", return_value=None), \
-             mock.patch.object(hz.time, "sleep", side_effect=sleep):
-            self.assertIn("replaced", self.out(hz.cmd_doorbell, mock.Mock(read=False, status=False)))
 
     def test_nudge_once_per_wait_and_only_when_idle(self):
         rows = [{"sessionId": "sess-main", "status": "idle", "cwd": "/m"}]
@@ -3523,10 +3684,25 @@ class DoorbellHooks(unittest.TestCase):
         hz.ring_inbox(self.ctx.state, "main", "dev", "late news")
         self.assertIn("late news", self.stop(again=True)["reason"])
 
-    def test_an_unarmed_doorbell_blocks_every_turn_end(self):
+    def test_no_turn_end_is_blocked_for_want_of_a_waiter(self):
+        # Log 134: "your doorbell is not armed" blocked every turn end, forty
+        # re-arms a day on main. The ringer wakes an idle session; nothing to arm.
         for _ in range(2):
-            self.assertIn("harness doorbell", self.stop(armed=False)["reason"])
-        self.assertIsNone(self.stop(armed=True))
+            self.assertIsNone(self.stop(armed=False))
+
+    def test_only_mail_that_asks_for_something_holds_the_turn_open(self):
+        hz.ring_inbox(self.ctx.state, "main", "dev", "thanks, all good", "fyi")
+        hz.ring_inbox(self.ctx.state, "main", "main", "my own answer")
+        self.assertIsNone(self.stop())                       # an FYI and an own note: no block
+        self.assertEqual(hz.MAIL().pending(self.ctx.state, "main"), 2)
+        hz.ring_inbox(self.ctx.state, "main", "dev", "when you are free", "low")
+        out = self.stop()["reason"]                          # low: handed over at the turn end
+        self.assertIn("Doorbell — 1 message(s) for you", out)
+        self.assertIn("when you are free", out)
+        self.assertIn("FYI, no action needed — 1", out)
+        self.assertIn("you wrote: my own answer", out)
+        self.assertEqual(out.count("act on them now"), 1)
+        self.assertEqual(hz.MAIL().pending(self.ctx.state, "main"), 0)
 
     def test_the_prompt_hook_hands_over_mail(self):
         hz.ring_inbox(self.ctx.state, "main", "owner", "re-file the delete")
@@ -3546,6 +3722,8 @@ class DoorbellHooks(unittest.TestCase):
         (st / "locks" / "main.lock").write_text(json.dumps({"session_id": "s1"}))
         (st / "index.json").write_text(json.dumps({"byWorktree": {"/w/repo": "main",
                                                                   "/w/repo-dev": "dev"}}))
+        hz.ring_inbox(st, "main", "dev", "not urgent", "low")
+        hz.ring_inbox(st, "main", "dev", "for information", "fyi")
         hz.ring_inbox(st, "main", "dev", "mid-turn note")
 
         def run(payload):
@@ -3560,21 +3738,28 @@ class DoorbellHooks(unittest.TestCase):
         out = json.loads(run({"cwd": "/w/repo/sub", "session_id": "s1"}))
         self.assertEqual(out["hookSpecificOutput"]["hookEventName"], "PostToolUse")
         self.assertIn("mid-turn note", out["hookSpecificOutput"]["additionalContext"])
+        # Mid-turn only what interrupts: the low and FYI messages stay (log 134).
+        self.assertNotIn("not urgent", out["hookSpecificOutput"]["additionalContext"])
         self.assertEqual(run({"cwd": "/w/repo", "session_id": "s1"}), "")       # once
         log = (st / "doorbell" / "main" / "delivered.jsonl").read_text().splitlines()
         self.assertEqual(json.loads(log[0])["how"], "tool call")
+        self.assertEqual(sorted(M.prio(m) for m in M.unread(st, "main")), ["fyi", "low"])
 
     def test_ring_says_when_it_will_be_read(self):
-        with mock.patch.object(hz, "bell_armed", return_value={"pid": 1}):
-            self.assertIn("wakes now", hz.ring_report(self.ctx, "main"))
-        with mock.patch.object(hz, "bell_armed", return_value=None):
-            self.assertIn("no live session", hz.ring_report(self.ctx, "main"))
-            with mock.patch.object(hz, "cached_roster",
-                                   return_value=[{"sessionId": "sess-main", "status": "busy"}]):
-                self.assertIn("next tool call", hz.ring_report(self.ctx, "main"))
-            with mock.patch.object(hz, "cached_roster",
-                                   return_value=[{"sessionId": "sess-main", "status": "idle"}]):
-                self.assertIn("next prompt", hz.ring_report(self.ctx, "main"))
+        rr = lambda pr="high": hz.ring_report(self.ctx, "main", pr)
+        self.assertIn("no live session", rr())
+        with mock.patch.object(hz, "cached_roster",
+                               return_value=[{"sessionId": "sess-main", "status": "busy"}]):
+            self.assertIn("next tool call", rr())
+            self.assertIn("held until its turn ends", rr("low"))
+        with mock.patch.object(hz, "cached_roster",
+                               return_value=[{"sessionId": "sess-main", "status": "idle"}]):
+            self.assertIn("the ringer wakes it now", rr())
+            self.assertIn("idle a minute", rr("low"))
+            self.assertIn("wakes nobody", rr("fyi"))
+            hz.reset_path(self.ctx, "main").parent.mkdir(parents=True, exist_ok=True)
+            hz.reset_path(self.ctx, "main").write_text("{}")
+            self.assertIn("a reset of it is pending", rr())
 
     def test_ring_knows_a_session_that_has_not_claimed_yet(self):
         # Log 96 note: `ring` said "no live session" about a node `recycle` had
@@ -4788,15 +4973,6 @@ class LogEntries92to102(unittest.TestCase):
         self.assertFalse(p.exists())
         log = json.loads((d / "owner" / "withdrawn.jsonl").read_text())
         self.assertEqual((log["id"], log["by"], log["why"]), ("owner-2", "main", "replaced by owner-4"))
-
-    # 100: a waiter that has just rung has a wake on its way
-    def test_ring_report_knows_a_wake_is_on_its_way(self):
-        with mock.patch.object(hz, "bell_armed", return_value=None), \
-             mock.patch.object(hz, "cached_roster", return_value=[]):
-            (hz.bell_dir(self.ctx, "dev") / "rang.json").write_text(json.dumps({"at": time.time() - 30}))
-            self.assertIn("just rang", hz.ring_report(self.ctx, "dev"))
-            (hz.bell_dir(self.ctx, "dev") / "rang.json").write_text(json.dumps({"at": time.time() - 600}))
-            self.assertNotIn("just rang", hz.ring_report(self.ctx, "dev"))
 
     # 94: delivered mail says how old it is
     def test_mail_shows_its_age(self):

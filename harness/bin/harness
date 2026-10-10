@@ -12034,6 +12034,17 @@ def cmd_pairs(a):
         if not task:
             die(REFUSED, "which task do these pairs serve? --task <task>")
         pairs = parse_pairs(a.target or "")
+        if documenter:
+            # Plans (the manifest's documenter_skip) are not its to edit, move
+            # out of or delete, whichever doc the run was on (owner, 2026-10-11).
+            skip = documenter_skip(ctx)
+            off = sorted({p.get("file") for p in pairs
+                          if p.get("file") and doc_skipped(p["file"], skip)})
+            if off:
+                die(REFUSED, f"not the documenter's to change: {', '.join(off[:6])} "
+                             f"(the manifest's documenter_skip; plans by default).\n"
+                             f"           Drop those pairs and submit the rest. If one is "
+                             f"wrong enough to matter, say so with harness ask.")
         rows, texts = pair_report(pairs, on_branch, pair_guard(ctx))
         ok = print_pair_report(rows)
         if not ok:
@@ -15480,6 +15491,8 @@ def docs_measure(ctx):
                        for f in (load_charter(ctx)[1].get("features") or {}).values()
                        if not f.get("retired_at")]
     snap["scope_asks"] = docs_open_asks(ctx)
+    snap["skip"] = documenter_skip(ctx)
+    snap["skipped"] = sum(1 for d in texts if doc_skipped(d, snap["skip"]))
     snap["gaps"] = docs_gaps(snap)
     snap["previous"] = {"at": since, "claude_md": (last or {}).get("claude_md")} if last else None
     return snap
@@ -15666,6 +15679,32 @@ def is_provenance(doc):
     return doc.startswith("provenance/") or "/provenance/" in doc
 
 
+DOC_SKIP_DEFAULT = ("plans/**",)
+
+
+def documenter_skip(ctx):
+    """Globs of documents the documenter leaves alone: the manifest's
+    `documenter_skip`, or plans by default (owner, 2026-10-11: plans are not
+    documentation in the normal sense; they say what was intended, so checking
+    them against the code and trimming them is wrong). They stay documents to
+    the guard, and sessions still read them."""
+    try:
+        v = json.loads((ctx.repo / ".harness" / "manifest.json").read_text()).get(
+            "documenter_skip")
+    except Exception:
+        v = None
+    return list(DOC_SKIP_DEFAULT if v is None else v)
+
+
+def doc_skipped(doc, globs):
+    """The glob that keeps `doc` from the documenter, or None. `dir/**` covers
+    everything under dir."""
+    for g in globs:
+        if fnmatch.fnmatch(doc, g) or (g.endswith("/**") and doc.startswith(g[:-2])):
+            return g
+    return None
+
+
 def docs_gaps(snap):
     """Every doc that needs a run, most urgent first, with why:
     [{doc, score, why: [...], stale}]. Score is importance x trouble.
@@ -15678,7 +15717,7 @@ def docs_gaps(snap):
     out = []
     cap, cm = snap.get("budget"), snap.get("claude_md") or 0
     for d, r in snap["docs"].items():
-        if is_provenance(d):
+        if is_provenance(d) or doc_skipped(d, snap.get("skip") or ()):
             continue
         ck = r.get("check") or {}
         broken = len(ck.get("paths") or []) + len(ck.get("links") or [])
@@ -15785,9 +15824,15 @@ def cmd_docs(a):
     if a.verb in ("check", "begin"):
         texts = {d: (ctx.repo / d).read_text(errors="replace") for d in doc_files(ctx)
                  if (ctx.repo / d).is_file()}
-        docs = [_doc_arg(ctx, d) for d in a.args] or [d for d in texts if not is_provenance(d)]
+        skip = documenter_skip(ctx)
+        docs = [_doc_arg(ctx, d) for d in a.args] or [
+            d for d in texts if not is_provenance(d) and not doc_skipped(d, skip)]
         if a.verb == "begin" and len(docs) != 1:
             die(REFUSED, "harness docs begin <doc>: one doc per run")
+        if a.verb == "begin" and doc_skipped(docs[0], skip):
+            die(REFUSED, f"{docs[0]} is not the documenter's: it matches "
+                         f"'{doc_skipped(docs[0], skip)}' in the manifest's documenter_skip "
+                         f"(plans by default).\n           Take another: harness docs measure")
         known = doc_check_symbols(ctx, {d: texts.get(d, "") for d in docs})
         ver = docs_verified(ctx)
         for d in docs:
@@ -15956,6 +16001,10 @@ def cmd_docs(a):
             {"doc": "none", "trouble": 0, "why": [], "reads": 0}]:
         print(f"  {g.get('trouble', 0):>6}  {g['doc']}" + ("  (rested)" if g["doc"] in rested else "")
               + ": " + "; ".join(g["why"]))
+    if snap.get("skipped"):
+        print(f"not yours: {snap['skipped']} doc(s) under {', '.join(snap['skip'])} "
+              f"(the manifest's documenter_skip; plans by default). Never begin, edit, move "
+              f"out of or delete one.")
     if stale:
         print(f"stale, {len(stale)} doc(s) nothing reads, points to or cites: "
               + ", ".join(g["doc"] for g in stale[:8]) + (" …" if len(stale) > 8 else ""))

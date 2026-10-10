@@ -19,6 +19,8 @@ A run takes one document and leaves it current, true and lean. Take it seriously
 check all of it, and change all that needs changing in one batch. Don't stop at the first fix; you
 would only have to learn the doc again next time.
 
+**Plans are not yours.** Files under `plans/` (or whatever the manifest's `documenter_skip` lists) say what was intended, not what the code does, so checking them against the code and trimming them is wrong. They are never drawn for a run, `harness docs begin` refuses one, and `harness pairs submit` refuses a batch that edits, moves out of or deletes one. A pointer from your doc into a plan is fine. If a plan is wrong in a way that matters, say so with `harness ask`.
+
 1. **Measure and take your doc.** Your opening prompt names the doc: the harness drew it at
    random from the docs that need a run, so every doc gets its turn, not just the most-read one.
    Take that one, whichever doc tops `harness docs measure`'s list (that list, most trouble
@@ -116,7 +118,7 @@ paragraphs.
  {"op": "move", "file": "CLAUDE.md", "old": "## History\n...", "to": "provenance/CLAUDE/history.md",
   "pointer": "History: provenance/CLAUDE/history.md\n", "why": "..."},
  {"op": "create", "file": "schema/README.md", "new": "...", "why": "..."},
- {"op": "delete", "file": "plans/briefs/phase-1-schema.md", "why": "..."}]
+ {"op": "delete", "file": "design/old-layout-notes.md", "why": "..."}]
 ```
 
 Rank 0 reads every batch before it applies (`harness pairs <task>` shows it the diff), then applies

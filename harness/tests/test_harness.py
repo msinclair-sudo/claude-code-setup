@@ -2816,6 +2816,28 @@ class DocTruth(unittest.TestCase):
             fh.write(json.dumps({"doc": "A.md"}) + "\n")
         self.assertEqual(hz.docs_pick(self.ctx, self.SNAP, rng)[1], 2)  # all rested: all back
 
+    def test_plans_are_not_the_documenters(self):
+        # Owner, 2026-10-11: plans aren't documentation in the normal sense.
+        self.assertEqual(hz.documenter_skip(self.ctx), ["plans/**"])       # no manifest key
+        self.assertEqual(hz.doc_skipped("plans/enrich/ENRICH-MAP.md", ["plans/**"]), "plans/**")
+        self.assertEqual(hz.doc_skipped("plans/PLAN.md", ["plans/**"]), "plans/**")
+        self.assertIsNone(hz.doc_skipped("design/plans.md", ["plans/**"]))
+        self.assertIsNone(hz.doc_skipped("plans.md", ["plans/**"]))
+        row = {"words": 10, "reads": 9, "pointers_in": 0, "pointers_out": 0, "cited": 0,
+               "idle_days": 0, "check": {"paths": [(1, "x")]}, "verified": None}
+        snap = {"docs": {"plans/PLAN.md": dict(row), "design/D.md": dict(row)},
+                "skip": ["plans/**"]}
+        self.assertEqual([g["doc"] for g in hz.docs_gaps(snap)], ["design/D.md"])
+        # The project's own list replaces the default; an empty one skips nothing.
+        man = self.repo / ".harness" / "manifest.json"
+        man.parent.mkdir(exist_ok=True)
+        old = man.read_text() if man.exists() else None
+        self.addCleanup(lambda: man.write_text(old) if old is not None else man.unlink())
+        man.write_text(json.dumps({"documenter_skip": []}))
+        self.assertEqual(hz.documenter_skip(self.ctx), [])
+        man.write_text(json.dumps({"documenter_skip": ["design/**", "NOTES.md"]}))
+        self.assertEqual(hz.doc_skipped("NOTES.md", hz.documenter_skip(self.ctx)), "NOTES.md")
+
     def test_a_doc_that_needs_nothing_is_skipped_and_another_drawn(self):
         env = {"CLAUDE_CODE_SESSION_ID": "s" * 36}
         def skip(*why):

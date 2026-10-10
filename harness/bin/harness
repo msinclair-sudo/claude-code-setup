@@ -16618,6 +16618,7 @@ def bell_nudge(ctx, node, sid):
 RINGER_TICK = 1.0
 RINGER_IDLE = 600               # with no node session alive this long, it exits
 LOW_IDLE = 60                   # a low message wakes a receiver idle this long
+FYI_IDLE = 300                  # an FYI wakes one idle this long, so it is always read
 WAKE_GRACE = 90                 # a woken session has this long to take its mail
 WAKE_RETRY = (60, 300, 900)     # then it is woken again after each of these
 NUDGE_EVERY = 60                # how often an idle node's waiters are looked at
@@ -16699,6 +16700,14 @@ def wake_calls(mail, node, sid=None):
             and not MAIL().own_note(m, node, sid)]
 
 
+def read_calls(mail, node, sid=None):
+    """Everything the ringer will get read, sooner or later: all but a note the
+    node's own session sent itself. An FYI asks for nothing, but one that is
+    never shown was never sent (owner, 2026-10-11: with nothing else to prompt
+    the session, an FYI sat unread for good)."""
+    return [m for m in mail if not MAIL().own_note(m, node, sid)]
+
+
 def wake_text(node, calls):
     who = sorted({str(m.get("from") or "?") for m in calls})
     return (f"harness ringer: {len(calls)} unread message(s) for {node} (from "
@@ -16712,24 +16721,34 @@ def ringer_plan(state, idle_for, mail, node, last, now, sid=None):
 
     state is "busy", "idle", "stopped" or "none". A busy session is left to its
     hooks: high mail is shown after its next tool call, low at its turn end.
+    An idle one is woken at once for high mail, after LOW_IDLE for low, and
+    after FYI_IDLE for an FYI, which never interrupts but is always read. A
+    stopped session is resumed for mail that asks for something, never for an
+    FYI alone: that waits for its next session.
     `last` is {"tries", "at"} for the mail now at the head, or None. `sid` is
     the node's own session, whose notes to itself wake nobody."""
-    calls = wake_calls(mail, node, sid)
+    calls = read_calls(mail, node, sid)
     if not calls:
         return None, "nothing that wakes"
     if state == "busy":
         return None, "busy: its hooks deliver"
     if state not in ("idle", "stopped"):
         return None, "no session"
-    high = any(MAIL().prio(m) == "high" for m in calls)
-    if not high and state == "idle" and idle_for < LOW_IDLE:
-        return None, "low: waiting for it to be idle"
+    kinds = {MAIL().prio(m) for m in calls}
+    high = "high" in kinds
+    if not high and state == "stopped" and "low" not in kinds:
+        return None, "fyi: waits for its next session"
+    if not high and state == "idle":
+        need = LOW_IDLE if "low" in kinds else FYI_IDLE
+        if idle_for < need:
+            return None, ("low" if "low" in kinds else "fyi") + ": waiting for it to be idle"
     tries, at = (last or {}).get("tries", 0), (last or {}).get("at", 0)
     if tries:
         gap = max(WAKE_GRACE, WAKE_RETRY[min(tries, len(WAKE_RETRY)) - 1])
         if now - at < gap:
             return None, "woken: waiting for it to read"
-    return ("wake" if state == "idle" else "resume"), ("high" if high else "low")
+    return ("wake" if state == "idle" else "resume"), (
+        "high" if high else "low" if "low" in kinds else "fyi")
 
 
 def unwoken(ctx, node):
@@ -16774,7 +16793,7 @@ def ringer_tick(ctx, S, now=None):
             if text:
                 ring_inbox(ctx.state, node, "harness", text)
         mail = MAIL().unread(ctx.state, node)
-        calls = wake_calls(mail, node, sid)
+        calls = read_calls(mail, node, sid)
         if not calls:
             S.pop(node, None)
             (d / "unwoken.json").unlink(missing_ok=True)
@@ -16784,7 +16803,7 @@ def ringer_tick(ctx, S, now=None):
         if last and last.get("sig") != sig:
             last = None                         # what it was woken for was read
             (d / "unwoken.json").unlink(missing_ok=True)
-        idle_for = LOW_IDLE
+        idle_for = FYI_IDLE
         if state == "idle" and not any(MAIL().prio(m) == "high" for m in calls):
             ended = turn_end_at(row.get("sessionId") or "")
             idle_for = now - ended if ended else 0
@@ -16807,6 +16826,18 @@ def ringer_tick(ctx, S, now=None):
     return any_live
 
 
+def ringer_stamp(path):
+    """What changes when the CLI or its mail module is replaced."""
+    out = []
+    for p in (path, path.with_name("harness-mail")):
+        try:
+            st = p.stat()
+            out.append((st.st_mtime_ns, st.st_size))
+        except OSError:
+            out.append(None)
+    return out
+
+
 def cmd_ringer(a):
     """`harness ringer` (internal: started by ensure_ringer). One per project."""
     ctx = Ctx(); ctx.require_enrolled()
@@ -16821,7 +16852,16 @@ def cmd_ringer(a):
     (d / "ringer.json").write_text(json.dumps({"pid": os.getpid(), "at": _now()}))
     print(f"{_now()} ringer started (pid {os.getpid()})")
     S, quiet_since = {}, time.time()
+    me = Path(__file__).resolve()
+    born = ringer_stamp(me)
     while True:
+        if ringer_stamp(me) != born:
+            # install.sh replaced this file: a daemon would otherwise run the
+            # old rules until every session had gone (2026-10-11). The lock is
+            # close-on-exec, so the new process takes it.
+            print(f"{_now()} the harness was updated; ringer restarts")
+            lock.close()
+            os.execv(sys.executable, [sys.executable, str(me), "ringer"])
         try:
             ctx.tree = json.loads(ctx.tree_path.read_text())
             if ringer_tick(ctx, S):
@@ -16894,7 +16934,8 @@ def cmd_doorbell(a):
 
 def ring_inbox(state, node, frm, text, priority="high"):
     """Leave a message at a node's doorbell; the project's ringer wakes its
-    session as the priority says (high now, low once idle, fyi never)."""
+    session as the priority says (high now, low once idle a minute, an FYI
+    once idle five)."""
     d = Path(state) / "doorbell" / node / "inbox"
     d.mkdir(parents=True, exist_ok=True)
     (d / f"{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}-{time.time_ns() % 10**6}.json"
@@ -16956,7 +16997,8 @@ def ring_report(ctx, node, priority="high"):
             return "it is running; it gets this at its next tool call or prompt"
         return "it has no live session; its next session gets this at its first prompt"
     if priority == "fyi":
-        return "an FYI wakes nobody; it reads this with its next mail or prompt"
+        return ("an FYI asks for nothing: it reads this with its next mail or prompt, or "
+                "the ringer wakes it once it has been idle five minutes")
     if row.get("status") == "busy":
         return ("it is mid-turn and gets this after its next tool call" if priority == "high"
                 else "it is mid-turn; this is held until its turn ends")
@@ -17466,7 +17508,7 @@ def main():
     rgp.add_argument("--low", action="store_true",
                      help="not urgent: held until the receiver is idle, then it is woken")
     rgp.add_argument("--fyi", action="store_true",
-                     help="information only: asks for nothing and wakes nobody")
+                     help="information only: asks for nothing, never interrupts, read once idle 5 min")
     add("ringer", cmd_ringer)        # internal: started by ensure_ringer
     hl = add("halt", cmd_halt)
     hl.add_argument("--why", metavar="TEXT")

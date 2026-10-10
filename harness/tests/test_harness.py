@@ -3225,7 +3225,9 @@ class Ringer(unittest.TestCase):
         self.assertEqual(plan("idle", [hi]), "wake")         # high: now
         self.assertIsNone(plan("idle", [lo], idle=10))       # low: not yet idle long enough
         self.assertEqual(plan("idle", [lo], idle=hz.LOW_IDLE), "wake")
-        self.assertIsNone(plan("idle", [fyi], idle=9999))    # an FYI wakes nobody
+        self.assertIsNone(plan("idle", [fyi], idle=hz.FYI_IDLE - 1))    # an FYI never interrupts
+        self.assertEqual(plan("idle", [fyi], idle=hz.FYI_IDLE), "wake")  # but it is always read
+        self.assertEqual(hz.ringer_plan("idle", hz.FYI_IDLE, [fyi], "main", None, 1000)[1], "fyi")
         mine = [{"from": "main", "session": "s-main", "text": "note to self"}]
         self.assertIsNone(hz.ringer_plan("idle", 0, mine, "main", None, 1000, "s-main")[0])
         # Signed "main" from a shell in main's checkout: the owner, not a note to self.
@@ -3275,12 +3277,18 @@ class Ringer(unittest.TestCase):
         self.assertIn("1 unread message(s) for dev (from dev_1)", self.sent[0][1])
         self.assertEqual(hz.MAIL().pending(self.ctx.state, "dev"), 1)    # it never takes mail
 
-    def test_low_waits_for_idle_and_fyi_never_wakes(self):
+    def test_low_waits_for_idle_and_an_fyi_waits_longer_but_is_read(self):
+        # Owner, 2026-10-11: an FYI that nothing ever prompts the session to read
+        # is never read. It never interrupts, and after five idle minutes it wakes.
         self.own("dev", "s-dev")
         self.rows = [{"sessionId": "s-dev", "status": "idle", "messagingSocketPath": "/a"}]
         hz.ring_inbox(self.ctx.state, "dev", "main", "for information", "fyi")
-        self.tick({}, 1000, ended=0)
+        self.tick({}, 1000, ended=1000 - hz.LOW_IDLE - 5)    # idle a minute: not yet
         self.assertEqual(self.sent, [])
+        self.tick({}, 1000, ended=1000 - hz.FYI_IDLE)
+        self.assertEqual(len(self.sent), 1)
+        self.sent.clear()
+        hz.MAIL().take(self.ctx.state, "dev", "t")
         hz.ring_inbox(self.ctx.state, "dev", "main", "when you are free", "low")
         self.tick({}, 1000, ended=990)                       # idle 10 s
         self.assertEqual(self.sent, [])
@@ -3330,6 +3338,20 @@ class Ringer(unittest.TestCase):
         (m,) = hz.MAIL().unread(self.ctx.state, "main")
         self.assertEqual((m["priority"], m["from"]), ("fyi", "dev"))
         self.assertIn("rang main (fyi)", o.getvalue())
+
+    def test_the_ringer_restarts_itself_when_the_harness_is_updated(self):
+        # A daemon outlives an install: it must not run the old rules.
+        self.ctx.require_enrolled = lambda: None
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.object(hz, "ringer_stamp", side_effect=[["old"], ["new"]]), \
+             mock.patch.object(hz.os, "execv", side_effect=SystemExit) as ex, \
+             mock.patch("sys.stdout", io.StringIO()), self.assertRaises(SystemExit):
+            hz.cmd_ringer(mock.Mock())
+        self.assertEqual(ex.call_args.args[1][-1], "ringer")
+        # The lock was let go for the new process.
+        again = hz._flock(hz.ringer_dir(self.ctx.state) / "ringer.lock", block=False)
+        self.assertIsNotNone(again)
+        again.close()
 
     def test_a_launch_claude_code_refuses_is_not_called_spawned(self):
         # 2026-10-11: `spawn` printed "spawned" after "Workspace not trusted".
@@ -3774,7 +3796,7 @@ class DoorbellHooks(unittest.TestCase):
                                return_value=[{"sessionId": "sess-main", "status": "idle"}]):
             self.assertIn("the ringer wakes it now", rr())
             self.assertIn("idle a minute", rr("low"))
-            self.assertIn("wakes nobody", rr("fyi"))
+            self.assertIn("idle five minutes", rr("fyi"))
             hz.reset_path(self.ctx, "main").parent.mkdir(parents=True, exist_ok=True)
             hz.reset_path(self.ctx, "main").write_text("{}")
             self.assertIn("a reset of it is pending", rr())

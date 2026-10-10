@@ -38,7 +38,7 @@ To reach another node, `harness ring <node> "..."`; it tells you when that node 
 
 - **default (high):** it needs to act. Shown after its next tool call if it is working; it is woken at once if idle.
 - **`--low`:** it should act, but not mid-task. Held until its turn ends; an idle node is woken after a minute.
-- **`--fyi`:** information only. It wakes nobody, asks for nothing, and is shown with the receiver's next mail or prompt. Use it for thanks, "done", and status nobody has to act on.
+- **`--fyi`:** information only. It asks for nothing and never interrupts: it is shown with the receiver's next mail or prompt, and an idle node is woken to read it after five minutes, so it is always read. Use it for thanks, "done", and status nobody has to act on.
 
 Mail under "FYI, no action needed" and your own notes to yourself ask for nothing; only "Doorbell — N message(s) for you" carries the demand to act or say why not.
 

@@ -81,7 +81,8 @@ def pending(state, node):
 # A message's priority (owner, 2026-10-10, log 134). high interrupts: it is
 # shown after the receiver's next tool call, and the ringer wakes an idle one
 # at once. low waits until the receiver is idle. fyi asks for nothing and never
-# wakes anyone; it is shown with whatever is delivered next.
+# interrupts: it is shown with whatever is delivered next, and the ringer wakes
+# a receiver idle five minutes so that it is always read.
 PRIORITIES = ("high", "low", "fyi")
 
 

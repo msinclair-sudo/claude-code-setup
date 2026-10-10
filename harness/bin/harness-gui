@@ -723,11 +723,18 @@ def read_state():
             ringing = False
         for n in nodes:
             try:
-                n["mail"] = CLI.MAIL().pending(Path(pdir), n["name"])
+                M = CLI.MAIL()
+                unread = M.unread(Path(pdir), n["name"])
+                n["mail"] = len(unread)
+                # What asks for something. The rest is FYI mail and the node's
+                # own notes, which wake nobody and wait for its next prompt: an
+                # FYI in main's inbox read as "the ringer is waking it".
+                n["calls"] = len(CLI.wake_calls(unread, n["name"],
+                                                M.owner(Path(pdir), n["name"])))
                 n["unwoken"] = bool(CLI.unwoken(bctx, n["name"]))
                 n["bell"] = ringing and not n["unwoken"]
             except Exception:
-                n["mail"], n["bell"], n["unwoken"] = 0, False, False
+                n["mail"], n["calls"], n["bell"], n["unwoken"] = 0, 0, False, False
         nodes.sort(key=lambda n: (n["rank"], n["name"]))
         pname = Path(repo).name
 
@@ -1148,6 +1155,7 @@ color:var(--s-idle);opacity:0;animation:sti-z 2.7s ease-out infinite}
 .v2 .sym{display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:5px;font-size:11.5px;
 color:var(--dim);align-items:baseline}
 .v2 .sym .g{cursor:default;white-space:nowrap}
+.v2 .sym .g.fyi{opacity:.55}
 .v2 .sym .g[data-tog]{cursor:pointer;border-bottom:1px dotted currentColor}
 .v2 .sym .mail,.v2 .sym .cold2{color:var(--s-need)}
 .v2 .sym .wt2{color:var(--s-wait)}
@@ -1538,13 +1546,19 @@ function card(n) {
   // The symbol row. Each mark's sentence is its title; waiting and held open
   // their full wording on click.
   const sym = [];
-  if (n.mail) {
-    const idle = !busy;
-    sym.push('<span class="g mail" title="' + n.mail + ' unread &middot; ' +
-      (!ss.length ? 'no session' : !idle ? 'delivered at its next tool call'
+  if (n.mail && !n.calls) {
+    // FYI mail and its own notes only: nothing is asked of it and nothing wakes it.
+    sym.push('<span class="g mail fyi" title="' + n.mail + ' FYI &middot; no action needed; ' +
+      'shown at its next prompt, or once it has been idle five minutes">&#9993; ' + n.mail +
+      ' fyi</span>');
+  } else if (n.mail) {
+    const idle = !busy, fyi = n.mail - n.calls;
+    sym.push('<span class="g mail" title="' + n.calls + ' unread' +
+      (fyi ? ' and ' + fyi + ' FYI' : '') + ' &middot; ' +
+      (!ss.length ? 'no session' : !idle ? 'delivered at its next tool call or turn end'
        : n.unwoken ? 'the ringer woke it and it has not read them'
        : n.bell ? 'the ringer is waking it' : 'the ringer is not running') + '">&#9993; ' +
-      n.mail + (ss.length && idle && !n.bell ? ' !' : '') + '</span>');
+      n.calls + (ss.length && idle && !n.bell ? ' !' : '') + '</span>');
   }
   if (w) {
     const chain = (w.chain && w.chain.length ? w.chain : [w.parent || 'its lead']);

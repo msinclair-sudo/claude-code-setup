@@ -437,7 +437,9 @@ class WaitChain(unittest.TestCase):
         self.wait(OLD)
         self.assertTrue(hz.node_activity(self.ctx, "dev_2").startswith("waiting on dev 3h"))
         self.checking(os.getpid())
-        self.assertEqual(hz.node_activity(self.ctx, "dev"), "check running arm 7/23, 3h00")
+        # OLD is three hours before this file was loaded, so the minutes depend on
+        # how long the suite has run: the hour is what is being checked.
+        self.assertRegex(hz.node_activity(self.ctx, "dev"), r"^check running arm 7/23, 3h0\d$")
         with mock.patch.object(hz, "runner_alive", return_value=False):
             self.assertIn("check runner died", hz.node_activity(self.ctx, "dev"))
 
@@ -4487,6 +4489,11 @@ class TestQueue(unittest.TestCase):
         g("add", "-A"); g("commit", "-qm", "one")
         self.sha = g("rev-parse", "HEAD").stdout.strip()
         self.ctx = hz.ProjCtx(self.state, self.repo)
+        # The runner proves the memory caps when it starts (two real processes,
+        # over a second). That has its own tests; every other runner test skips it.
+        self.caps_watch = hz.caps_watch
+        cw = mock.patch.object(hz, "caps_watch")
+        cw.start(); self.addCleanup(cw.stop)
         self.runs = self.root / "runs"
         for m in (mock.patch.object(hz, "RUNS_HOME", self.runs),
                   mock.patch.object(hz, "TESTQ_IDLE", 0),
@@ -4781,6 +4788,170 @@ class TestQueue(unittest.TestCase):
         self.assertGreater(r["new"]["peakMemory"], 80 * 2**20)
         self.assertGreater(hz.usage_for(self.ctx, "new")[-1]["peak"], 80 * 2**20)
         self.assertEqual(hz.usage_suggest(self.ctx, "new"), hz.fmt_mem(r["new"]["peakMemory"]))
+
+    # ── memory caps: proven, visible, always on (log 142, owner 2026-10-11) ──
+    def arm(self, body, cap, how, limit=20):
+        d = Path(tempfile.mkdtemp())
+        m = {}
+        r = hz.run_arm(f"{sys.executable} -c {hz.shlex.quote(body)}", d, limit, d / "o", d / "e",
+                       cap=cap, meter=m, how=how)
+        return r, m
+
+    def test_with_no_system_cap_the_harness_watches_and_kills(self):
+        # After the 22:40 restart 246 tests ran with no ceiling. No systemd needed here.
+        M = 2**20
+        take = "import time; x = bytearray({} * 2**20); time.sleep({})"
+        (code, _, _, timed_out), m = self.arm(take.format(200, 10), 64 * M, "watch")
+        self.assertTrue(m["oom"])
+        self.assertEqual((code, timed_out, m["how"]), (137, False, "watch"))
+        self.assertGreater(m["peak"], 64 * M)
+        (code, _, _, _), m = self.arm(take.format(40, 1.2), 64 * M, "watch")
+        self.assertEqual((code, m.get("oom")), (0, None))                # under it: finishes
+        self.assertTrue(30 * M <= m["peak"] <= 64 * M)
+        self.assertTrue(m["sampled"])
+
+    def test_the_watch_counts_a_child_that_left_the_tree(self):
+        # A child that detaches itself (setsid, its parent gone) is still the arm's.
+        M = 2**20
+        hog = f"{sys.executable} -c 'import time; x = bytearray(150 * 2**20); time.sleep(20)'"
+        body = ("import subprocess, time; "
+                f"subprocess.Popen({hog!r}, shell=True, start_new_session=True); time.sleep(20)")
+        t0 = time.time()
+        (code, _, _, _), m = self.arm(body, 64 * M, "watch")
+        self.assertTrue(m["oom"])
+        self.assertLess(time.time() - t0, 10)
+
+    def test_a_timed_out_test_keeps_its_peak(self):
+        # 2026-10-11 12:56: killing a timed-out arm killed the wrapper that
+        # writes the scope's peak, so the row had none.
+        self.needs_cgroups()
+        (code, _, _, timed_out), m = self.arm(
+            "import time; x = bytearray(50 * 2**20); time.sleep(30)", None, "system", limit=2)
+        self.assertEqual((code, timed_out), (124, True))
+        self.assertGreater(m["peak"], 40 * 2**20)
+
+    def test_the_proof_names_the_way_that_works_and_records_it(self):
+        def proved(system_ok, proofs):
+            it = iter(proofs)
+            with mock.patch.object(hz, "cgroup_caps",
+                                   return_value=(system_ok, "" if system_ok else "no bus")), \
+                 mock.patch.object(hz, "caps_proof", side_effect=lambda how, tmp: next(it)):
+                return hz.caps_selftest(self.state)
+        c = proved(True, [(True, "")])
+        self.assertEqual((c["how"], c["proved"]), ("system", True))
+        self.assertIsNone(hz.caps_line(c))                               # the normal case is silent
+        self.assertEqual(hz.caps_state(self.state)["how"], "system")
+        c = proved(True, [(False, "not killed"), (True, "")])            # a scope, but no kill
+        self.assertEqual((c["how"], c["proved"]), ("watch", True))
+        self.assertIn("the proof failed: not killed", c["why"])
+        self.assertEqual(hz._CGROUP_BAD[0], c["why"])
+        hz._CGROUP_BAD[0] = None
+        c = proved(False, [(True, "")])
+        self.assertEqual((c["how"], c["why"]), ("watch", "no bus"))
+        self.assertIn("capped by the harness's own watch", hz.caps_line(c))
+        self.assertIn("loginctl enable-linger", hz.caps_line(c))
+        c = proved(False, [(False, "nothing was killed")])
+        self.assertEqual((c["how"], c["proved"]), ("none", False))
+        self.assertIn("MEMORY CAPS OFF", hz.caps_line(c))
+
+    def test_both_ways_of_capping_pass_the_real_proof(self):
+        self.assertEqual(hz.caps_proof("watch", self.root / "pw"), (True, ""))
+        if hz.cgroup_caps()[0]:
+            self.assertEqual(hz.caps_proof("system", self.root / "ps"), (True, ""))
+
+    def test_a_report_says_how_tests_were_capped_and_when_one_was_not_measured(self):
+        rows = [{"name": "a", "exit": 0, "seconds": 1.0, "peakMemory": 5 * 2**20, "capBy": "watch"},
+                {"name": "b", "exit": 0, "seconds": 1.0, "peakMemory": None, "capBy": "watch"},
+                {"name": "old", "exit": 0, "seconds": 1.0, "peakMemory": None}]
+        out = lambda caps: self.printed(hz.print_check_report, hz.make_check_report(
+            "dev", "abc", rows, 0, None, **({"caps": caps} if caps else {})), None)
+        o = out({"how": "watch", "proved": True, "why": "Failed to connect to bus"})
+        self.assertIn("memory: capped by the harness's own watch", o.splitlines()[0] + o.splitlines()[1])
+        self.assertIn("peak not recorded", [l for l in o.splitlines() if " b " in l][0])
+        self.assertNotIn("peak not recorded", [l for l in o.splitlines() if " old " in l][0])
+        self.assertIn("MEMORY CAPS OFF", out({"how": "none", "proved": False}))
+        self.assertNotIn("memory:", out({"how": "system", "proved": True}))
+        self.assertNotIn("memory:", out(None))
+
+    def printed(self, f, *a):
+        o = io.StringIO()
+        with redirect_stdout(o):
+            f(*a)
+        return o.getvalue()
+
+    def test_rank_0_is_told_once_when_the_caps_change(self):
+        (self.repo / ".harness" / "tree.json").write_text(json.dumps(
+            {"nodes": {"main": {"parent": None}, "dev": {"parent": "main"}}}))
+        inbox = lambda: [json.loads(f.read_text()) for f in
+                         sorted((self.state / "doorbell" / "main" / "inbox").glob("*.json"))]
+        watch = {"how": "watch", "proved": True, "why": "no bus", "at": "x"}
+        system = {"how": "system", "proved": True, "why": "", "at": "x"}
+
+        def start(result):                       # a fresh runner each time, as when the queue empties
+            def proof(state):
+                hz._save(Path(state) / "testq" / "meta" / "caps.json", result)
+                return result
+            with mock.patch.object(hz, "caps_selftest", side_effect=proof), \
+                 mock.patch("sys.stdout", io.StringIO()) as out:
+                self.caps_watch(self.ctx, {})
+            return out.getvalue()
+        self.assertIn("memory caps proved", start(system))
+        self.assertFalse((self.state / "doorbell" / "main").exists())    # the normal case: no mail
+        self.assertIn("capped by the harness's own watch", start(watch))
+        self.assertEqual([(m["priority"], m["from"]) for m in inbox()], [("high", "test queue")])
+        start(watch)                                                     # the next runner: no repeat
+        self.assertEqual(len(inbox()), 1)
+        start(system)
+        (back,) = [m for m in inbox() if m["priority"] == "fyi"]         # good news: an FYI
+        self.assertIn("is back and proved", back["text"])
+        self.assertEqual(len(inbox()), 2)
+
+    def test_the_runner_finishes_what_runs_then_restarts_on_a_new_install(self):
+        ticks = []
+
+        def tick(ctx, S):
+            ticks.append(bool(S.get("drain")))
+            if len(ticks) == 1:
+                S["running"]["x"] = object()     # something is running when the install lands
+            elif len(ticks) == 3:
+                S["running"].clear()
+        stamps = iter([["old"], ["old"]] + [["new"]] * 9)   # the install lands after one pass
+        with mock.patch.object(hz, "testq_recover"), mock.patch("signal.signal"), \
+             mock.patch.object(hz, "testd_tick", side_effect=tick), \
+             mock.patch.object(hz, "testq_jobs", return_value=[{"id": "queued-behind"}]), \
+             mock.patch.object(hz, "ringer_stamp", side_effect=lambda p: next(stamps)), \
+             mock.patch.object(hz.time, "sleep"), \
+             mock.patch.object(hz.os, "execv", side_effect=SystemExit) as ex, \
+             mock.patch("sys.stdout", io.StringIO()) as out, self.assertRaises(SystemExit):
+            hz._testd_loop(self.ctx)
+        self.assertEqual(ticks, [False, True, True])     # draining, and not restarted while it ran
+        self.assertEqual(ex.call_args.args[1][2], "testd")
+        self.assertIn("finishing what runs", out.getvalue())
+
+    def test_a_draining_runner_starts_nothing(self):
+        jobs = [{"id": "j", "kind": "check", "t": time.time(), "requested_by": [],
+                 "tests": {"a": hz.test_spec(2**20)}}]
+        started = []
+        with mock.patch.object(hz, "testq_jobs", return_value=jobs), \
+             mock.patch.object(hz, "test_pool", return_value=(2**30, 8)), \
+             mock.patch.object(hz, "arm_seconds", return_value={}), \
+             mock.patch.object(hz, "slot_tickets", return_value=[]), \
+             mock.patch.object(hz, "halted", return_value=False), \
+             mock.patch.object(hz, "testd_ledger"), \
+             mock.patch.object(hz, "testd_start", side_effect=lambda *a: started.append(1)):
+            hz.testd_tick(self.ctx, {"open": {}, "running": {}, "slot": object(), "said": "",
+                                     "drain": True})
+        self.assertEqual(started, [])
+
+    def test_an_outage_cannot_push_the_measured_runs_out_of_the_history(self):
+        for i in range(5):
+            hz.usage_append(self.ctx, "arm", {"peak": (i + 1) * 2**20, "seconds": 1})
+        for _ in range(8):                                               # the outage: no peaks
+            hz.usage_append(self.ctx, "arm", {"peak": None, "seconds": 2})
+        h = hz.usage_for(self.ctx, "arm")
+        self.assertEqual([r["peak"] // 2**20 for r in h if r["peak"]], [1, 2, 3, 4, 5])
+        self.assertEqual(sum(1 for r in h if not r["peak"]), 5)
+        self.assertEqual(hz.usage_suggest(self.ctx, "arm"), "3M")
 
     def test_twice_the_estimate_kills_and_spill_below_that_runs_on(self):
         self.needs_cgroups()

@@ -210,7 +210,13 @@ def tests_queue(pdir, repo):
         ledger = (f"reserved {CLI.fmt_mem(led.get('reserved'))} of "
                   f"{CLI.fmt_mem(led.get('pool'))} &middot; {led.get('cores_used')}/"
                   f"{led.get('cores')} cores")
-    return {"jobs": out, "last": lj, "slots": slots, "ledger": ledger}
+    # How tests are capped, when it is not the system's own cap (log 142).
+    try:
+        cs = CLI.caps_state(pdir) or {}
+        caps = {"how": cs.get("how"), "line": CLI.caps_line(cs)} if CLI.caps_line(cs) else None
+    except Exception:
+        caps = None
+    return {"jobs": out, "last": lj, "slots": slots, "ledger": ledger, "caps": caps}
 
 
 def mark_held(cctx, nodes):
@@ -822,6 +828,7 @@ border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z
 h1{font-size:14px;margin:0;letter-spacing:.09em;text-transform:uppercase;color:var(--dim)}
 #age{color:var(--none);font-size:12px;margin-left:auto}
 #usage{color:var(--dim);font-size:12px;font-variant-numeric:tabular-nums}
+.capw{color:var(--wait)}
 #usage .hi{color:var(--wait)}#usage .old,#usage .rs{color:var(--none)}
 main{padding:16px 20px 70px}
 .cols{display:flex;gap:20px;align-items:flex-start}
@@ -1821,9 +1828,13 @@ function testCard(p) {
       ' &middot; ' + esc(run.since || '') +
       (run.over ? ' &middot; <b class="over">over its estimate by ' + dur(run.over) + '</b>'
        : run.eta != null ? ' &middot; done in ~' + dur(run.eta) : '') + '</div>';
-  const head = runs.length
+  // Tests not under the system's memory cap: said here, always, whatever runs.
+  const caps = t.caps ? '<div class="ln"><b class="' + (t.caps.how === 'watch' ? 'capw' : 'over') +
+    '" title="' + esc(t.caps.line) + '">' + (t.caps.how === 'watch'
+      ? 'caps: the harness&rsquo;s own watch' : 'MEMORY CAPS OFF') + '</b></div>' : '';
+  const head = caps + (runs.length
     ? (t.ledger ? '<div class="ln q">' + t.ledger + '</div>' : '') + runs.map(headOf).join('')
-    : '<div class="ln q">nothing running</div>';
+    : '<div class="ln q">nothing running</div>');
   // `harness slot` commands: holding the slot or waiting for it, before the
   // queue (log 104: three of the owner's writes showed nowhere).
   const slots = (t.slots || []).map(x => '<div class="ln' + (x.state === 'holding' ? '' : ' q') +

@@ -2457,6 +2457,24 @@ def cmd_doctor(a):
         arm("found a code path in this worktree to test with", False,
             "nothing here classifies as code")
 
+    # Memory caps, proved the same way as the guard: by doing it (log 142: 246
+    # tests ran with no ceiling after a restart, and nothing said so).
+    try:
+        c = caps_selftest(ctx.state)
+        arm("a test over its memory ceiling is killed, and one under it is measured",
+            bool(c.get("proved")),
+            "by the system's cap" if c.get("how") == "system" else (caps_line(c) or ""))
+        lg = subprocess.run(["loginctl", "show-user", os.environ.get("USER") or str(os.getuid()),
+                             "-p", "Linger"], capture_output=True, text=True, timeout=10)
+        if "Linger=yes" in lg.stdout:
+            print("  ok   the user's systemd manager starts at boot (lingering is on)")
+        else:
+            print(f"  note lingering is off, so after a restart the system's memory cap is "
+                  f"unavailable until you log in:\n"
+                  f"       sudo loginctl enable-linger {os.environ.get('USER') or '$USER'}")
+    except Exception as ex:
+        print(f"  note memory caps could not be checked: {type(ex).__name__}: {ex}")
+
     print()
     wiring_failed(fails)
     print(f"guarded: {node} ({ctx.branch}) — refusal demonstrated, not inferred")
@@ -4822,6 +4840,8 @@ _ARM_WRAP = ('sh -c "$1"; rc=$?; d=/sys/fs/cgroup$(sed -n "s/^0:://p" /proc/$$/c
              '2>/dev/null; exit $rc')
 _CGROUP = [None, 0.0]  # (usable, why not) and when it was asked
 CGROUP_RETRY = 60      # a "no" is asked again after this; a "yes" is kept
+_CGROUP_BAD = [None]   # why the system cap failed its proof (caps_selftest), or None
+WATCH_EVERY = 0.5      # seconds between the harness's own memory readings
 
 
 def parse_mem(v):
@@ -4860,6 +4880,12 @@ def cgroup_caps():
     asked again each minute: after a WSL restart the user's systemd manager was
     down, and a runner that had asked once ran every test uncapped and unmetered
     for hours after the owner had brought it back (log 142, 2026-10-11)."""
+    if os.environ.get("HARNESS_NO_CGROUP"):
+        return False, "switched off (HARNESS_NO_CGROUP)"
+    if _CGROUP_BAD[0]:
+        # A scope could be made, but a test over its cap was not killed: the
+        # proof failed, and it stays failed until the next proof.
+        return False, _CGROUP_BAD[0]
     stale = _CGROUP[0] is not None and not _CGROUP[0][0] \
         and time.time() - _CGROUP[1] >= CGROUP_RETRY
     if _CGROUP[0] is None or stale:
@@ -4878,35 +4904,116 @@ def cgroup_caps():
     return _CGROUP[0]
 
 
-def _cg_current(pid):
+def _cg_dir(pid):
+    """The scope a process runs in, as a cgroup directory, or None."""
     try:
         rel = Path(f"/proc/{pid}/cgroup").read_text().split("::", 1)[1].strip()
         if rel.endswith(".scope"):
-            return int(Path(f"/sys/fs/cgroup{rel}/memory.current").read_text())
-    except (OSError, IndexError, ValueError):
+            return Path(f"/sys/fs/cgroup{rel}")
+    except (OSError, IndexError):
         pass
     return None
 
 
-def run_arm(command, cwd, limit, outf, errf, env=None, cap=None, meter=None):
+def _cg_read(pid, name):
+    d = _cg_dir(pid)
+    try:
+        return int((d / name).read_text()) if d else None
+    except (OSError, ValueError):
+        return None
+
+
+def _cg_current(pid):
+    return _cg_read(pid, "memory.current")
+
+
+def _proc_start(pid):
+    """A process's start time (clock ticks since boot): with its pid, what tells
+    it from a later process given the same number. None when it is gone."""
+    try:
+        st = Path(f"/proc/{pid}/stat").read_text()
+        return st[st.rindex(")") + 2:].split()[19]
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _proc_mem(pid):
+    """Bytes a process holds: its proportional share (Pss), so pages shared with
+    its relatives are counted once across the tree; its resident size where Pss
+    cannot be read. None when it is gone."""
+    try:
+        for line in Path(f"/proc/{pid}/smaps_rollup").read_text().splitlines():
+            if line.startswith("Pss:"):
+                return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        for line in Path(f"/proc/{pid}/status").read_text().splitlines():
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def tree_memory(root, seen):
+    """Bytes held by `root` and everything descended from it. `seen` ({pid:
+    start time}) remembers every process ever found in the tree, so a child
+    that detaches itself (setsid, a double fork) is still counted while it
+    lives; the start time keeps a reused pid from being mistaken for it."""
+    kids, _ = proc_children()
+    todo, tree = [root], set()
+    while todo:
+        p = todo.pop()
+        if p in tree:
+            continue
+        tree.add(p)
+        todo += kids.get(p, [])
+    for p in tree:
+        if p not in seen:
+            st = _proc_start(p)
+            if st is not None:
+                seen[p] = st
+    total = 0
+    for p, st in list(seen.items()):
+        if _proc_start(p) != st:
+            del seen[p]                         # gone, or its number reused
+            continue
+        total += _proc_mem(p) or 0
+    return total
+
+
+def run_arm(command, cwd, limit, outf, errf, env=None, cap=None, meter=None, how=None):
     """One arm under `sh -c`, streamed to disk so a timeout keeps what it printed.
 
     `subprocess.run(timeout=)` threw the output away with the process, so an arm
     that ran twenty files and hung on the twenty-first reported nothing (obs 69).
     Its own process group, so a timeout kills the whole arm, not just `sh`.
-    Where cgroups can be used it runs in its own scope, capped at `cap` bytes
-    (none: no cap), and `meter` (a dict) gets `current` while it runs, then
-    `peak` and `oom` (killed for going over the cap).
+
+    It is capped at `cap` bytes (none: no cap) one of two ways, and `meter` (a
+    dict) says which in `how`:
+      "system"  its own cgroup scope with MemoryMax, where the user's systemd
+                manager can be reached. Exact, and the kernel does the killing.
+      "watch"   the harness's own watch, where it cannot (owner, 2026-10-11:
+                after a WSL restart 246 tests ran with no ceiling). Every
+                WATCH_EVERY seconds the memory of the arm's whole process tree
+                is added up, and above the cap the tree is killed. Close, not
+                exact: a spike shorter than the gap can overshoot.
+    `meter` gets `current` while the arm runs, then `peak` and `oom` (killed for
+    going over the cap). `how` forces one way, for the proof (caps_selftest).
     Returns (exit, stdout tail, stderr tail, timed_out)."""
     outf.parent.mkdir(parents=True, exist_ok=True)
     meter = meter if meter is not None else {}
     stats = outf.with_name(outf.name + ".mem")
     argv = ["sh", "-c", command]
-    if cgroup_caps()[0]:
+    how = how or ("system" if cgroup_caps()[0] else "watch")
+    meter["how"] = how
+    if how == "system":
         stats.unlink(missing_ok=True)
         argv = ["systemd-run", "--user", "--scope", "-q",
                 "-p", f"MemoryMax={cap if cap else 'infinity'}", "-p", "MemorySwapMax=0",
                 "-p", "OOMPolicy=continue", "--", "sh", "-c", _ARM_WRAP, "_", command, str(stats)]
+    floor, seen, first = 0, {}, True
     try:
         with open(outf, "wb") as o, open(errf, "wb") as e:
             pr = subprocess.Popen(argv, cwd=str(cwd), stdout=o, stderr=e,
@@ -4919,15 +5026,39 @@ def run_arm(command, cwd, limit, outf, errf, env=None, cap=None, meter=None):
             end = time.time() + limit if limit else None
             try:
                 while True:
+                    # The watch reads sooner the first time, so a short arm is
+                    # measured at all.
+                    gap = 1 if how == "system" else (0.1 if first else WATCH_EVERY)
+                    first = False
                     try:
-                        code = pr.wait(timeout=1 if end is None else max(0.05, min(1, end - time.time())))
+                        code = pr.wait(timeout=gap if end is None
+                                       else max(0.05, min(gap, end - time.time())))
                         timed_out = False
                         break
                     except subprocess.TimeoutExpired:
-                        cur = _cg_current(pr.pid)
+                        cur = _cg_current(pr.pid) if how == "system" \
+                            else tree_memory(pr.pid, seen)
                         if cur is not None:
                             meter["current"] = cur
+                            floor = max(floor, cur)
+                        if how == "watch" and cap and cur and cur > cap:
+                            kill_tree(pr.pid)
+                            for q in list(seen):
+                                try:
+                                    os.kill(q, 9)       # a child that left the tree
+                                except OSError:
+                                    pass
+                            pr.wait()
+                            meter["oom"] = True
+                            code, timed_out = 137, False
+                            break
                         if end is not None and time.time() >= end:
+                            # Read the scope's own peak first: killing the tree
+                            # kills the wrapper that would have written it, so a
+                            # timed-out arm had no peak (2026-10-11, 12:56).
+                            pk = _cg_read(pr.pid, "memory.peak") if how == "system" else None
+                            if pk:
+                                meter["peak"] = pk
                             # The whole tree, not the group: a runner that setsid's
                             # its children leaves them out of the group (obs 80).
                             kill_tree(pr.pid)
@@ -4941,6 +5072,14 @@ def run_arm(command, cwd, limit, outf, errf, env=None, cap=None, meter=None):
                         _ARM_HOOK[0](sorted(_ARMS))
     except Exception as ex:
         return 125, "", str(ex), False
+    if how == "system" and code and not stats.exists() and not timed_out \
+            and "Failed to connect to bus" in _tail(errf):
+        # The user's systemd manager went away after this process was told it
+        # was there: the arm never ran. Ask again next time, and run this one
+        # under the harness's own watch rather than report a test failure.
+        _CGROUP[0] = None
+        return run_arm(command, cwd, limit, outf, errf, env=env, cap=cap, meter=meter,
+                       how="watch")
     try:
         st = stats.read_text().split()
         meter["peak"] = int(st[0])
@@ -4948,8 +5087,87 @@ def run_arm(command, cwd, limit, outf, errf, env=None, cap=None, meter=None):
     except (OSError, ValueError, IndexError):
         pass
     stats.unlink(missing_ok=True)
+    if not meter.get("peak") and floor:
+        # No reading from the scope (or none exists: the watch): the highest
+        # sample is the peak, so one is never missing.
+        meter["peak"] = floor
+        meter["sampled"] = True
     meter.pop("current", None)
     return code, _tail(outf), _tail(errf), timed_out
+
+
+def caps_proof(how, tmp):
+    """Does this way of capping work? Two real processes: one that takes 96 MB
+    under a 32 MB ceiling must be killed, one that takes 16 MB under 64 MB must
+    finish and be measured. -> (ok, why not)."""
+    M = 2**20
+    tmp = Path(tmp)
+    tmp.mkdir(parents=True, exist_ok=True)
+    take = "import time; x = bytearray({} * 2**20); time.sleep({})"
+    py = shlex.quote(sys.executable)
+    try:
+        m = {}
+        run_arm(f"{py} -c {shlex.quote(take.format(96, 4))}", tmp, 20, tmp / "hog.out",
+                tmp / "hog.err", cap=32 * M, meter=m, how=how)
+        if not m.get("oom"):
+            return False, "a process over its ceiling was not killed"
+        m = {}
+        code = run_arm(f"{py} -c {shlex.quote(take.format(16, 1.2))}", tmp, 20, tmp / "ok.out",
+                       tmp / "ok.err", cap=64 * M, meter=m, how=how)[0]
+        if code != 0 or m.get("oom"):
+            return False, f"a process under its ceiling did not finish (exit {code})"
+        if not 8 * M <= (m.get("peak") or 0) <= 64 * M:
+            return False, f"a 16 MB process was measured at {fmt_mem(m.get('peak'))}"
+        return True, ""
+    except Exception as ex:
+        return False, f"{type(ex).__name__}: {ex}"[:200]
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def caps_selftest(state):
+    """Prove which way of capping works here, and record it in
+    testq/meta/caps.json: {at, how: system|watch|none, proved, why}. `why` is
+    why the system cap is not the one in use."""
+    meta = Path(state) / "testq" / "meta"
+    meta.mkdir(parents=True, exist_ok=True)
+    tmp = meta / f"capsproof-{os.getpid()}"
+    _CGROUP_BAD[0] = None
+    _CGROUP[0] = None                           # ask the system afresh
+    res = None
+    ok_sys, why_sys = cgroup_caps()
+    if ok_sys:
+        ok, why = caps_proof("system", tmp)
+        if ok:
+            res = {"how": "system", "proved": True, "why": ""}
+        else:
+            why_sys = f"a scope could be made but the proof failed: {why}"
+            _CGROUP_BAD[0] = why_sys
+    if res is None:
+        ok, why = caps_proof("watch", tmp)
+        res = {"how": "watch" if ok else "none", "proved": ok, "why": why_sys}
+        if not ok:
+            res["watch_why"] = why
+    res["at"] = _now()
+    _save(meta / "caps.json", res)
+    return res
+
+
+def caps_state(state):
+    return _read_json(Path(state) / "testq" / "meta" / "caps.json")
+
+
+def caps_line(c):
+    """One sentence for a caps record, or None when the system cap is proved
+    (the normal case says nothing)."""
+    if not c or (c.get("how") == "system" and c.get("proved")):
+        return None
+    fix = f"To restore the system cap: sudo loginctl enable-linger {os.environ.get('USER') or '$USER'}"
+    if c.get("how") == "watch":
+        return (f"memory: capped by the harness's own watch, not the system (system caps "
+                f"unavailable: {c.get('why') or '?'}). Close, not exact. {fix}")
+    return (f"MEMORY CAPS OFF: no test is capped or measured (system caps: "
+            f"{c.get('why') or '?'}; the harness's own watch: {c.get('watch_why') or '?'}). {fix}")
 
 
 _ARMS = set()          # the arms running now, for a signal handler to kill
@@ -5238,11 +5456,14 @@ def arm_result(c, res, meter, base, report, estimate=None, history=None):
            "failedFiles": failed_files(out), "failedCodes": failed_codes(out),
            "lastLine": last[-300:], "stdout": out[-2000:], "stderr": err[-2000:],
            "peakMemory": meter.get("peak"), "estimate": estimate, "memoryCeiling": ceiling,
-           "memoryKilled": killed, "lastPeaks": history or []}
+           "memoryKilled": killed, "lastPeaks": history or [],
+           "capBy": meter.get("how"), "peakSampled": bool(meter.get("sampled"))}
     peak = meter.get("peak")
     mem = ""
     if peak and not killed:
         mem = f"   peak {fmt_mem(peak)}" + (f" of {fmt_mem(estimate)} asked" if estimate else "")
+    elif not peak and not killed:
+        mem = "   peak not recorded"
     verdict = ("NOT RUN (timed out)" if timed_out else
                f"KILLED (over its {fmt_mem(ceiling)} ceiling, 2x the {fmt_mem(estimate)} asked; "
                f"peak {fmt_mem(peak)})" if killed else "PASS" if ok else "FAIL")
@@ -5358,6 +5579,8 @@ def print_check_report(rep, base):
     """A finished report, arm by arm, as a check prints it while it runs."""
     if partial_line(rep):
         print(partial_line(rep))
+    if caps_line(rep.get("caps")):
+        print(caps_line(rep["caps"]))
     for r in rep.get("checks") or []:
         if r.get("held"):
             print(f"  NOT RUN (held: {r['held']})  {r['name']}"); continue
@@ -5371,7 +5594,9 @@ def print_check_report(rep, base):
                     " (no estimate: ran alone)")
                  + (f" (last runs: {', '.join(fmt_mem(x) for x in r['lastPeaks'] if x)})"
                     if len(r.get("lastPeaks") or []) > 1 else "")
-                 if r.get("peakMemory") and not r.get("memoryKilled") else "")
+                 if r.get("peakMemory") and not r.get("memoryKilled") else
+                 "   peak not recorded" if "capBy" in r and not r.get("peakMemory")
+                 and not r.get("memoryKilled") and r.get("exit") is not None else "")
               + ("" if r.get("exit") in (0, None) or r.get("timedOut") or r.get("memoryKilled")
                  else f"   exit {r['exit']}"))
         if v == "FAIL":
@@ -5679,7 +5904,14 @@ def usage_for(ctx, key):
 def usage_append(ctx, key, rec):
     with _TESTQ_SAVE:
         u = usage_all(ctx)
-        u[key] = ((u.get(key) or []) + [rec])[-TEST_HISTORY:]
+        # The last TEST_HISTORY runs of any kind (for run time), and the last
+        # TEST_HISTORY that have a peak (for memory): after the outage of
+        # 2026-10-10 half of what was kept had none, and they had pushed the
+        # measured runs out.
+        runs = (u.get(key) or []) + [rec]
+        keep = {id(r) for r in runs[-TEST_HISTORY:]} \
+            | {id(r) for r in [r for r in runs if r.get("peak")][-TEST_HISTORY:]}
+        u[key] = [r for r in runs if id(r) in keep]
         _save(testq_meta(ctx) / "usage.json", u)
     return u[key]
 
@@ -6095,7 +6327,22 @@ def _testd_loop(ctx):
     signal.signal(signal.SIGTERM, on_term)
     signal.signal(signal.SIGUSR1, lambda *_: None)       # a cancel: read from the job file
     idle_since = time.time()
+    me = Path(__file__).resolve()
+    born = ringer_stamp(me)
     while True:
+        caps_watch(ctx, S)
+        if not S.get("drain") and ringer_stamp(me) != born:
+            # install.sh replaced this file. A runner that kept going ran the old
+            # rules for as long as the queue stayed busy (2026-10-11: the retry
+            # for memory caps never reached the runner that needed it). Finish
+            # what runs, start nothing, then become the new one.
+            S["drain"] = True
+            print(f"{_now()} the harness was updated; finishing what runs, then restarting")
+        if S.get("drain") and not (S["running"] or S["open"]):
+            if S["slot"] is not None:
+                S["slot"].close()
+            print(f"{_now()} runner restarts on the new harness")
+            os.execv(sys.executable, [sys.executable, str(me), "testd", project_arg(ctx.state)])
         if halted(ctx) and not (S["running"] or S["open"]):
             # The owner halted the tree: what ran has finished; start no new
             # one. `resume` starts a runner again (owner, 2026-10-06).
@@ -6113,6 +6360,50 @@ def _testd_loop(ctx):
             if not waiting and time.time() - idle_since > TESTQ_IDLE:
                 print(f"{_now()} queue empty; runner exits"); return
         time.sleep(0.5)
+
+
+CAPS_EVERY = 3600               # the memory caps are proved again this often
+
+
+def caps_watch(ctx, S, now=None):
+    """Prove the memory caps when the runner starts, every CAPS_EVERY, and as
+    soon as the system's answer about scopes changes. A change is logged, and
+    rank 0 is told once (not at every runner start: the last proof on disk is
+    what a new runner compares with)."""
+    now = time.time() if now is None else now
+    c = S.get("caps")
+    due = c is None or now - S.get("caps_at", 0) >= CAPS_EVERY
+    if not due and now - S.get("caps_asked", 0) >= 5:
+        S["caps_asked"] = now
+        due = cgroup_caps()[0] != (c.get("how") == "system")
+    if not due:
+        return
+    before = c or caps_state(ctx.state)
+    new = caps_selftest(ctx.state)
+    S["caps"], S["caps_at"], S["caps_asked"] = new, now, now
+    key = lambda x: (x.get("how"), bool(x.get("proved"))) if x else ("system", True)
+    if c is None or key(c) != key(new):
+        print(f"{_now()} " + (caps_line(new) or
+                              "memory caps proved: each test in its own capped scope (system)"))
+    if key(before) != key(new):
+        caps_tell(ctx, new)
+
+
+def caps_tell(ctx, new):
+    """Rank 0 hears once when the caps change: at once when they weaken, as an
+    FYI when the system's cap is back."""
+    try:
+        nodes = json.loads((Path(ctx.repo) / ".harness" / "tree.json").read_text())["nodes"]
+        root = next(n for n, sp in nodes.items() if not sp.get("parent"))
+    except Exception:
+        return
+    line = caps_line(new)
+    if line:
+        ring_inbox(ctx.state, root, "test queue", line + " — harness test --caps proves it again.")
+    else:
+        ring_inbox(ctx.state, root, "test queue",
+                   "the system's memory cap is back and proved: every test runs in its own "
+                   "capped scope again.", "fyi")
 
 
 def _say(S, line):
@@ -6141,7 +6432,7 @@ def testd_tick(ctx, S):
                 t["state"] in ("done", "cancelled") for t in job_tests(o["job"]).values()):
             testd_close(ctx, S, jid)
     testd_ledger(ctx, S)
-    if halted(ctx):
+    if halted(ctx) or S.get("drain"):
         return
     # A `harness slot` command waiting goes before anything new (log 104): start
     # nothing, and once the running tests end let go of the slot.
@@ -6452,6 +6743,7 @@ def testd_close(ctx, S, jid):
                                 job=jid, requested_by=[r.get("node") for r in job["requested_by"]],
                                 arms=job.get("arms"),
                                 partial=bool(job.get("arms")) and not job.get("scope"),
+                                **({"caps": S["caps"]} if S.get("caps") else {}),
                                 **({"scoped": job["scope"]} if job.get("scope") else {}))
         shared = shared_report_path(ctx, sha)
         shared.parent.mkdir(parents=True, exist_ok=True)
@@ -6625,6 +6917,14 @@ def cmd_test(a):
             die(REFUSED, f"no job '{a.log}'")
         f = testq_dir(ctx) / f"{hit[-1]['id']}.log"
         print(f.read_text() if f.exists() else "no log yet"); return
+    if getattr(a, "caps", False) is True:
+        c = caps_selftest(ctx.state)
+        print(caps_line(c) or "memory caps proved: a process over its ceiling was killed and one "
+                              "under it was measured, each in its own capped scope (system)")
+        if c.get("how") == "watch":
+            print("  proved for the watch: a process over its ceiling was killed, one under it "
+                  "measured")
+        return
     if a.usage is not None:
         u = usage_all(ctx)
         keys = [k for k in sorted(u) if not a.usage or a.usage in k]
@@ -6663,6 +6963,8 @@ def cmd_test(a):
     jobs = sorted(testq_jobs(ctx, ("running", "queued")), key=lambda j: (j["state"] != "running",)
                   + testq_age_key(j))
     led = _read_json(testq_meta(ctx) / "ledger.json") or {}
+    if caps_line(caps_state(ctx.state)):
+        print(caps_line(caps_state(ctx.state)))
     if testq_runner_alive(ctx) and led.get("running"):
         print(f"ledger: reserved {fmt_mem(led.get('reserved'))} of a {fmt_mem(led.get('pool'))} "
               f"pool, {led.get('cores_used')}/{led.get('cores')} cores")
@@ -17763,6 +18065,8 @@ def main():
     tq.add_argument("--cancel", metavar="ID|all")
     tq.add_argument("--memory", metavar="SIZE",
                     help="with a command: its memory estimate, the least it may need (required; ? if never run)")
+    tq.add_argument("--caps", action="store_true",
+                    help="prove the memory caps now: a process over its ceiling must be killed")
     tq.add_argument("--usage", nargs="?", const="", metavar="TEST",
                     help="the last runs' peak memory per test")
     tq.add_argument("--promote", metavar="ID",

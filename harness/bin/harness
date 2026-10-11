@@ -11177,6 +11177,56 @@ def finding_carriers(ctx, task, b, decider):
     return made
 
 
+def direct_carriers(ctx, task, b, writer):
+    """A brief rank 0 wrote for a node below one of its leads gets a way up, and
+    every lead on the path is told (log 152; owner, 2026-10-12: rank 0 "should
+    be able to" brief a node two ranks down).
+
+    The work still comes up one rank at a time: the node presents to its own
+    lead, which reviews and signs it off, and each lead from there up to (not
+    including) rank 0 holds a carrier, `<task>.up-<node>`, that opens once the
+    one below is signed off and is presented like any other task. Without it a
+    lead that was briefed nothing has nothing to present, and `integrate` at
+    rank 0 refuses. Returns the carriers written; one that exists is left alone,
+    so a rewrite of the brief tells nobody twice."""
+    node = (b or {}).get("node")
+    lead = ctx.tree["nodes"].get(node, {}).get("parent")
+    if not lead or ctx.rank(lead) == 0:
+        return []
+    chain = [lead] + [n for n in ancestors(ctx, lead) if ctx.rank(n) > 0]
+    made, below = [], task
+    now = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    for n in chain:
+        ct = carrier_task(task, n)
+        f, have = load_brief(ctx, ct)
+        if have is None:
+            parent = ctx.tree["nodes"].get(n, {}).get("parent")
+            rec = {"task": ct, "node": n, "revision": 1,
+                   "text": (f"Carry {task} up to {parent}: {writer} briefed it for {node} "
+                            f"directly, so nobody issued it to you. Once {below} is signed off "
+                            f"here, harness mark {ct}, then harness mark {ct} --done."),
+                   "written_by": f"harness (carrier for {task})", "written_at": now,
+                   "suggestions": [], "comments": [], "history": [],
+                   "carries": task, "direct_by": writer, "after": [below]}
+            if b.get("feature"):
+                rec["feature"] = b["feature"]
+            rec.update(next_seq(ctx, n))
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(json.dumps(rec, indent=2) + "\n")
+            mine = n == lead
+            ring_inbox(ctx.state, n, "harness",
+                       f"{writer} briefed {node} directly: '{task}' (harness brief {task}). "
+                       "You did not write it and you do not hand it down. "
+                       + (f"{node} is your child, so you start it (harness spawn {node}), answer "
+                          f"it, review its work and sign it off as you would any task of yours. "
+                          if mine else "")
+                       + f"You carry it up to {parent} as {ct}, which opens once {below} is "
+                         f"signed off.", "high" if mine else "low")
+            made.append((ct, n))
+        below = ct
+    return made
+
+
 def print_carriers(made):
     for ct, n in made:
         print(f"  carrier {ct} for {n}: it presents this work one rank up (log 106)")
@@ -11245,14 +11295,19 @@ def cmd_brief(a):
         if target not in ctx.tree["nodes"]:
             die(REFUSED, f"'{target}' is not a node in {ctx.tree_path}")
         parent = ctx.tree["nodes"][target].get("parent")
-        own_root = (target == me and ctx.rank(me) == 0)
-        if parent != me and not own_root:
+        # Rank 0 writes for any node (log 152). The rule this guards is "nobody
+        # sets their own task", and rank 0 briefing a node below one of its
+        # leads does not break it; it already approves, declines, supersedes and
+        # parks briefs anywhere in the tree. The leads between are told, and
+        # carry the work up (direct_carriers).
+        root = ctx.rank(me) == 0
+        if parent != me and not root:
             die(REFUSED,
                 f"'{me}' does not write the brief for '{target}'.\n"
                 f"           A lead writes the briefs of its CHILDREN; "
                 + (f"'{target}' answers to '{parent}'.\n" if parent
                    else f"'{target}' has no parent.\n") +
-                f"           Rank 0 writes its own, and nobody writes their own anywhere "
+                f"           Rank 0 writes for any node, and nobody writes their own anywhere "
                 f"else — a node\n           that sets its own task is what the tree exists "
                 f"to prevent. Suggest instead:\n"
                 f"           harness brief {a.task} --suggest \"...\"")
@@ -11499,6 +11554,12 @@ def cmd_brief(a):
         blk = a.from_block or (b or {}).get("from_block")
         if blk:
             rec["from_block"] = blk
+        # Written by rank 0 for a node below one of its leads (log 152). Kept
+        # across rewrites, whoever makes them.
+        if root and parent and parent != me:
+            rec["direct_by"] = me
+        elif (b or {}).get("direct_by"):
+            rec["direct_by"] = b["direct_by"]
         brief_carry(rec, b)
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(json.dumps(rec, indent=2) + "\n")
@@ -11520,6 +11581,23 @@ def cmd_brief(a):
             print(f"  what it said before: {was[0][:66] if was else '(empty)'}"
                   + ("…" if was and len(was[0]) > 66 else ""))
             print(f"  kept, and readable:  harness brief {a.task} --history")
+        if rec.get("direct_by") and root:
+            made = direct_carriers(ctx, a.task, rec, me)
+            if made:
+                print(f"  '{target}' answers to '{parent}', which did not write this. Told "
+                      f"{', '.join(n for _, n in made)}; {parent} starts {target}, reviews its "
+                      f"work and signs it off.")
+                for ct, n in made:
+                    print(f"  carrier {ct} for {n}: it presents this work one rank up")
+        elif rec.get("direct_by") and b is not None and rec["direct_by"] in ctx.tree["nodes"]:
+            # A lead may rewrite its child's brief, this one included. The node
+            # that wrote it hears, since the text it chose is no longer the plan.
+            ring_inbox(ctx.state, rec["direct_by"], me,
+                       f"{me} replaced the brief you wrote for {target}, '{a.task}' (revision "
+                       f"{b.get('revision', 0)} → {rev}). What it said before: "
+                       f"harness brief {a.task} --history", "low")
+            print(f"  {rec['direct_by']} wrote this brief for {target}; it has been told "
+                  f"you replaced it")
         if a.from_task:
             print(f"  splits '{parent_task}', the brief '{me}' was handed")
             _cl, _unc, _decl = segment_coverage(ctx, parent_task)

@@ -44,7 +44,7 @@ When the operator names a priority, set it: `harness focus <task>... --why "…"
 
 ## Briefs (`T1`)
 
-You write your own briefs and your children's, never a grandchild's (tell the lead instead).
+You write your own briefs and your children's, and you may write one for any node below them: `harness brief <task> --for <node> --write -`. Past a lead, the harness tells every lead on the path and gives each a carrier (`<task>.up-<lead>`) so the work still comes up one rank at a time; the node's own lead starts the session, reviews and signs off. Use it when the owner shaped the work with you directly. Otherwise brief the lead, since splitting a segment is its job and it knows its lanes.
 
 ```bash
 harness brief <task> --write "..."              # your own

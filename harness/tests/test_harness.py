@@ -5370,6 +5370,104 @@ class LogEntries88to91(unittest.TestCase):
         self.assertFalse((root / "proj").exists())
 
 
+class Log152(unittest.TestCase):
+    """Log 152 (owner, 2026-10-12): rank 0 writes a brief for any node. The
+    leads between are told, and carry the work up one rank at a time."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_dag": "dev", "dev_dag_1": "dev_dag"})
+        nodes = self.ctx.tree["nodes"]
+
+        def rank(n, r=0):
+            while nodes[n].get("parent"):
+                n, r = nodes[n]["parent"], r + 1
+            return r
+        self.ctx.rank = rank
+        self.ctx.worktree = self.ctx.repo = self.ctx.dir
+        self.ctx.tree_path = self.ctx.dir / "tree.json"
+        for d in ("briefs", "findings"):
+            (self.ctx.dir / d).mkdir()
+
+    def brief(self, me, *argv):
+        self.ctx.me = self.ctx.branch = me
+        out = io.StringIO()
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "s" * 36}), \
+             mock.patch.object(hz, "print_delta", lambda *a, **k: None), \
+             mock.patch("sys.argv", ["harness", "brief", *argv]), \
+             redirect_stdout(out), mock.patch("sys.stderr", out):
+            try:
+                hz.main(); code = 0
+            except SystemExit as e:
+                code = e.code or 0
+        return code, out.getvalue()
+
+    def load(self, task):
+        return hz.load_brief(self.ctx, task)[1]
+
+    def mail(self, node):
+        return [json.loads(p.read_text())
+                for p in sorted((self.ctx.dir / "doorbell" / node / "inbox").glob("*.json"))]
+
+    def test_rank_0_briefs_a_node_two_ranks_down_and_its_lead_carries_it_up(self):
+        code, out = self.brief("main", "environment-dag", "--for", "dev_dag", "--write", "build it")
+        self.assertEqual(code, 0, out)
+        b = self.load("environment-dag")
+        self.assertEqual((b["node"], b["direct_by"], b["text"]), ("dev_dag", "main", "build it"))
+        c = self.load("environment-dag.up-dev")
+        self.assertEqual((c["node"], c["carries"], c["after"]), ("dev", "environment-dag",
+                                                                 ["environment-dag"]))
+        self.assertIn("carrier environment-dag.up-dev for dev", out)
+        # The carrier opens once the task below it is signed off, and needs no approval.
+        self.assertFalse(hz.awaiting(c))
+        self.assertTrue(hz.waits_on(self.ctx, c)[0].startswith("after environment-dag"))
+        (self.ctx.dir / "marks").mkdir()
+        (self.ctx.dir / "marks" / "environment-dag.json").write_text(
+            json.dumps({"_node": "dev_dag", "_closed_at": "2026"}))
+        self.assertEqual(hz.waits_on(self.ctx, c), [])
+        (m,) = self.mail("dev")
+        self.assertEqual(m["priority"], "high")                    # it has a session to start
+        self.assertIn("main briefed dev_dag directly: 'environment-dag'", m["text"])
+        self.assertIn("harness spawn dev_dag", m["text"])
+        self.assertIn("you do not hand it down", m["text"])
+        # A rewrite by rank 0 tells nobody twice and writes no second carrier.
+        code, out = self.brief("main", "environment-dag", "--write", "build it better")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(self.mail("dev")), 1)
+        self.assertEqual(self.load("environment-dag")["direct_by"], "main")
+
+    def test_three_ranks_down_every_lead_between_holds_a_carrier(self):
+        code, out = self.brief("main", "leaf", "--for", "dev_dag_1", "--write", "do it")
+        self.assertEqual(code, 0, out)
+        lo, hi = self.load("leaf.up-dev_dag"), self.load("leaf.up-dev")
+        self.assertEqual((lo["after"], hi["after"]), (["leaf"], ["leaf.up-dev_dag"]))
+        self.assertEqual(self.mail("dev_dag")[0]["priority"], "high")       # the node's own lead
+        self.assertEqual(self.mail("dev")[0]["priority"], "low")            # further up: no act yet
+        self.assertNotIn("harness spawn", self.mail("dev")[0]["text"])
+
+    def test_a_child_of_rank_0_needs_no_carrier_and_nobody_else_gained_the_right(self):
+        code, out = self.brief("main", "seg", "--for", "dev", "--write", "x")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("direct_by", self.load("seg"))
+        self.assertIsNone(self.load("seg.up-dev"))
+        # A lead still writes only for its children, and nobody writes their own.
+        code, out = self.brief("dev", "far", "--for", "dev_dag_1", "--write", "x")
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("'dev' does not write the brief for 'dev_dag_1'", out)
+        self.assertEqual(self.brief("dev_dag", "own", "--for", "dev_dag", "--write", "x")[0],
+                         hz.REFUSED)
+
+    def test_the_lead_may_rewrite_it_and_rank_0_hears(self):
+        self.brief("main", "environment-dag", "--for", "dev_dag", "--write", "build it")
+        code, out = self.brief("dev", "environment-dag", "--write", "build it my way")
+        self.assertEqual(code, 0, out)
+        self.assertIn("main wrote this brief for dev_dag; it has been told", out)
+        (m,) = self.mail("main")
+        self.assertEqual((m["from"], m["priority"]), ("dev", "low"))
+        self.assertIn("dev replaced the brief you wrote for dev_dag", m["text"])
+        self.assertEqual(self.load("environment-dag")["direct_by"], "main")  # still marked
+
+
 class CatchUp(unittest.TestCase):
     """Log 139: the harness merges a node's parent in whenever nothing there can
     be disturbed by it, and says so, with the reason, when it cannot."""

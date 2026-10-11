@@ -1091,6 +1091,27 @@ def _whoami(a):
               f"(if the skills you loaded disagree with it, /reload-skills)")
     except Exception:
         pass
+    # How current this tree is with its lead's, and each child's with this one
+    # (log 139). Printed only when something is behind.
+    try:
+        _bix = load_index(ctx)
+        _b = behind_now(ctx, _bix, node, own=True)
+        if _b and _b["n"]:
+            print(f"behind   {behind_words(_b)}")
+            print(f"         {behind_remedy(_b)}")
+        _late = []
+        _rows = live_sessions() if kids else []
+        for k in kids:
+            bk = behind_seen(ctx, _bix, k, _rows)
+            if bk and bk["n"]:
+                _late.append(f"{k} {behind_words(bk, short=True)}")
+        if _late:
+            print(f"stale    below you: {'; '.join(_late)}")
+            print("         A conflict is yours to mediate (T7, T8). Anything else the harness "
+                  "merges once no turn is\n         running there and the tree is clean: "
+                  "harness behind --all")
+    except Exception:
+        pass
 
     # Rank 0 only, and only when there is something. Orientation runs on every
     # start, resume and compact, so a line that is usually absent costs nothing
@@ -1543,16 +1564,41 @@ def _whoami(a):
 
 
 def cmd_behind(a):
+    """How far this node is behind its parent, since when, and why nothing has
+    merged it. The count stays the first word. `--all` is the same for every
+    node below the caller (log 139: main measured this by hand)."""
     ctx = Ctx(); ctx.require_enrolled()
     node, spec = ctx.node()
+    idx = load_index(ctx)
+    if getattr(a, "all", False):
+        nodes = idx.get("nodes") or {}
+        rows = live_sessions()
+        below = sorted(subtree(ctx, node), key=lambda n: ((nodes.get(n) or {}).get("rank") or 0, n))
+        late = 0
+        for n in below:
+            b = behind_now(ctx, idx, n, rows)
+            if b is None:
+                continue
+            late += bool(b["n"])
+            print(f"  {n:<14} " + (f"current with {b['parent']}" if not b["n"] else
+                                    behind_words(b) + ("" if b.get("why") else
+                                                       ": the harness merges it at its next pass")))
+        print(f"{late} of {len(below)} node(s) behind their parent"
+              + ("   — harness catchup --all" if late else ""))
+        return
     parent = spec.get("parent")
     if not parent:
         print("0  (rank 0 has no parent)"); return
+    b = behind_now(ctx, idx, node, own=True)
+    if b is None:
+        die(1, f"could not count against {parent}")
     pb = ctx.tree["nodes"][parent]["branch"]
-    rc, out, err = git("rev-list", "--count", f"HEAD..{pb}")
-    if rc:
-        die(1, f"could not count against {pb}: {err}")
-    print(f"{out}  commits behind {parent} ({pb})")
+    if not b["n"]:
+        print(f"0  commits behind {parent} ({pb})"); return
+    print(f"{b['n']}  commits behind {parent} ({pb}){behind_when(b)}"
+          + (f": {b['why']}" if b.get("why") else ""))
+    print("   harness catchup merges it now"
+          + ("" if b.get("why") else "; the harness also does at your next turn end"))
 
 
 def cmd_claim(a):
@@ -1702,6 +1748,16 @@ def cmd_status(a):
         tasks_rec[task] = rec
 
     _waits = open_waits(ctx)
+    # How far each node is behind its parent, and why nothing has merged it
+    # (log 139: a lead saw its children's context and task, never their staleness).
+    _behind = {}
+    try:
+        _ix = load_index(ctx)
+        _live = live_sessions()
+        for _n in ctx.tree["nodes"]:
+            _behind[_n] = behind_seen(ctx, _ix, _n, _live)
+    except Exception:
+        pass
     d = ctx.state / "locks"
     locks = sorted(d.glob("*.lock")) if d.is_dir() else []
     claimed, unassigned = set(), []
@@ -1738,6 +1794,9 @@ def cmd_status(a):
         act = node_activity(ctx, h["node"], _waits)
         if act:
             work += f"   {act}"
+        _bh = _behind.get(h["node"])
+        if _bh and _bh["n"]:
+            work += f"   {behind_words(_bh, short=True)}"
         if live == "gone" and last_write(h["ref"]):
             work += time.strftime("   (process gone, last write %H:%M)",
                                   time.localtime(last_write(h["ref"])))
@@ -1768,6 +1827,13 @@ def cmd_status(a):
                       f"OCCUPIED but unclaimed — released the node, kept the session")
     except Exception:
         pass
+
+    _late = sorted(n for n, b in _behind.items() if b and b["n"] and n not in claimed)
+    if _late:
+        print(f"\n  {len(_late)} unclaimed node(s) behind their parent:")
+        for n in _late:
+            print(f"    {n:<12} {behind_words(_behind[n], short=True)}")
+        print("  A session started there is caught up first; or now: harness catchup --all")
 
     blocked = open_blocks(ctx)
     if blocked:
@@ -2027,6 +2093,13 @@ def cmd_halt(a):
             ring_inbox(ctx.state, n, "owner", f"the owner resumed the tree (halted at "
                        f"{h.get('at', '')[11:16]}: {h.get('why')}). Carry on with your queue.")
         print(f"resumed; {len(nodes)} node(s) told")
+        # A tree that stood still for a day starts again current (log 139).
+        try:
+            for n, st, info, _ in catchup_pass(ctx, idx=load_index(ctx, refresh=True), by="owner"):
+                if catchup_line(n, st, info):
+                    print(f"  {catchup_line(n, st, info)}")
+        except Exception:
+            pass
         return
     why = (a.why or "").strip()
     if not why:
@@ -2161,6 +2234,13 @@ def cmd_spawn(a):
         gr = grants_for(ctx, n)
         reach = f"  +{len(gr)} grant(s)" if gr else ""
         cmd = launch_cmd(ctx, n, name, gr, model, effort, a.prompt)
+        # A session starts on its lead's current tree (log 139).
+        try:
+            _st, _info = catch_up(ctx, idx, n, here or "operator", dry=a.dry_run)
+            if catchup_line(n, _st, _info):
+                print(f"       {catchup_line(n, _st, _info)}")
+        except Exception:
+            pass
         if a.dry_run:
             print(f"  would spawn {name:<18} {model}/{effort:<7} in {sp['worktree']}{reach}")
         else:
@@ -3206,6 +3286,16 @@ def lead_owes(ctx, node):
             until = cause.get("until")
             owed.append(("limit", k, time.strftime("%H:%M", time.localtime(until))
                          if until else "unknown", 0))
+    # A child behind this node that the harness cannot catch up, for a reason
+    # only its lead clears (log 139): a conflict, or uncommitted changes with no
+    # session there to commit them. Anything else merges at its next turn end.
+    for k in kids:
+        bh = _read_json(behind_path(ctx, k)) or {}
+        if bh.get("n") and bh.get("since") and time.time() - bh["since"] > STALE_AFTER and (
+                bh.get("kind") == "conflict"
+                or (bh.get("kind") in ("dirty", "git", "refused") and not bh.get("occupied"))):
+            owed.append(("stale", k, f"{bh['n']} commit(s) behind you: {bh.get('why')}",
+                         time.time() - bh["since"]))
     # A child carrying more context than its rank should (obs 60).
     for k in kids:
         warn = context_limits(ctx, k)[0]
@@ -3234,7 +3324,7 @@ def lead_owes(ctx, node):
     return owed
 
 
-HALT_SILENT = {"orphan", "down", "start", "lingering", "heavy", "wedged", "limit"}
+HALT_SILENT = {"orphan", "down", "start", "lingering", "heavy", "wedged", "limit", "stale"}
 
 
 def subtree(ctx, node):
@@ -3270,6 +3360,11 @@ def owed_line(kind, child, task, age):
                  f"  — harness recycle {child} --at-quiet",
         "orphan": f"{child}'s session ended {human_age(age)} ago holding '{task}' open"
                   f"  — harness recycle {child} (it resumes the task)",
+        "stale": f"{child} has been {task} for {human_age(age)}"
+                 + ("  — a conflict is yours to mediate: T7 if you issued both tasks, T8 if "
+                    "they were authored below you" if "conflicts with" in str(task) else
+                    f"  — nobody is there to commit it: look at its worktree, then "
+                    f"harness catchup {child}"),
     }[kind]
 
 
@@ -3470,6 +3565,26 @@ def queue_items(ctx, node):
                                         f"{t} --feature <name>, or drop it as out of scope")
     except Exception:
         pass
+    # The node's own tree against its lead's (log 139), from the record the
+    # harness's last pass left: this runs at every prompt and reads no git. A
+    # merge made while the session was between turns is news once; being behind
+    # is said once per move of the parent, and only for a reason the node can act on.
+    try:
+        bh = _read_json(behind_path(ctx, node)) or {}
+        c = bh.get("caught") or {}
+        if c and not c.get("told") and time.time() - (c.get("at") or 0) < CAUGHT_NEWS:
+            fl = c.get("files") or []
+            out[f"caught:{str(c.get('tip'))[:12]}"] = (
+                f"caught up: {c.get('n')} commit(s) from {bh.get('parent')} were merged into "
+                f"your worktree at {time.strftime('%H:%M', time.localtime(c.get('at') or 0))} "
+                f"({c.get('nfiles')} file(s)"
+                + (": " + ", ".join(fl[:5]) + (", …" if (c.get("nfiles") or 0) > 5 else "")
+                   if fl else "") + ") — re-read any you had open")
+        if bh.get("n") and bh.get("kind") in ("dirty", "conflict", "git", "refused"):
+            out[f"behind:{str(bh.get('parent_tip'))[:12]}:{bh['kind']}"] = (
+                f"{behind_words(bh)}. {behind_remedy(bh)}")
+    except Exception:
+        pass
     # An old hold is its placer's (and rank 0's) to confirm or release: every
     # check that reads the path skips those arms while it stands (log 92).
     try:
@@ -3581,6 +3696,7 @@ def queue_items(ctx, node):
                                         "unanswered") else parts[1]
     kept = {k: v for k, v in out.items()
             if k.startswith(("asked:", "comment:", "handed:", "heavy:", "sweep:", "uncovered:",
+                             "caught:", "behind:", "stale:",
                              "orphan:", "down:", "unanswered:", "wedged:", "limit:", "stuck:",
                              "ruled:", "rejected:",
                              "returned:",
@@ -3603,7 +3719,7 @@ def queue_items(ctx, node):
 # a debt costs one line every DEBT_RENAG, not one line every turn.
 DEBT_RENAG = 10 * 60
 DEBT_KINDS = ("sign off:", "start:", "down:", "orphan:", "stuck:", "heavy:", "approve:", "task:", "asked:", "handed:",
-              "sweep:", "hold old:", "untraced:", "lingering:")
+              "sweep:", "hold old:", "untraced:", "lingering:", "stale:")
 HOLD_OLD = 30 * 60      # a hold this old is asked about (log 92: one stood three hours over nothing)
 
 
@@ -3877,7 +3993,8 @@ def cmd_hook_stop(a):
         fam = focus_family(ctx)
         owed = [o for o in lead_owes(ctx, node) if o[0] != "heavy"
                 and o[0] != "limit"
-                and (o[0] in ("orphan", "down", "unanswered", "wedged") or in_focus(fam, o[2]))]
+                and (o[0] in ("orphan", "down", "unanswered", "wedged", "stale")
+                     or in_focus(fam, o[2]))]
         if owed:
             nl = chr(10)
             lines = []
@@ -4335,8 +4452,16 @@ def cmd_mark(a):
         # integrates. If nobody ran the checks, the lead is about to accept work
         # on a claim rather than on a result, which is what T4's gate exists to
         # refuse in the other direction.
-        _sha = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
-        _rep = read_check_report(ctx, node, _sha)
+        _head = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
+        # A catch-up merge made after the check does not unmake the check (log
+        # 139): the report is found on the commit the merge was made on.
+        _rep, _sha, _hops = check_through_catchup(ctx, node, _head)
+        if _hops:
+            print(f"  HEAD {_head[:8]} is {_sha[:8]} plus a catch-up from "
+                  f"{ctx.tree['nodes'][node].get('parent')}, merged after the check ran; "
+                  f"the merge itself was not checked.")
+        if _rep is not None and stale_line(_rep.get("behind")):
+            print("  " + stale_line(_rep["behind"]))
         if _rep is None:
             print(f"  NOT CHECKED at {_sha[:8]} — nothing has run the check set against "
                   f"this commit.\n  Your lead will see that too:  harness check")
@@ -4680,6 +4805,14 @@ def cmd_mark(a):
     tot["_note"] = a.note or ""
     tot["_node"] = node
     tot["_branch"] = ctx.branch
+    # A task starts on its lead's current tree (log 139). When that cannot be,
+    # the task still opens, and its record keeps how far behind it began.
+    _st, _info = own_catchup(ctx, node)
+    if _st in ("blocked", "conflict"):
+        tot["_behind_at_open"] = {k: _info.get(k) for k in ("n", "parent", "since", "why")}
+        print("         " + ("That is T7: collect the conflict with harness catchup and tell "
+                             "your lead; do not resolve it." if _st == "conflict" else
+                             "Commit what is there, then: harness catchup"))
     tot["_sha"] = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
     f.write_text(json.dumps(tot, indent=2) + "\n")
     if _cl in ("unclaimed", "stale"):
@@ -5581,6 +5714,8 @@ def print_check_report(rep, base):
         print(partial_line(rep))
     if caps_line(rep.get("caps")):
         print(caps_line(rep["caps"]))
+    if stale_line(rep.get("behind")):
+        print(stale_line(rep["behind"]))
     for r in rep.get("checks") or []:
         if r.get("held"):
             print(f"  NOT RUN (held: {r['held']})  {r['name']}"); continue
@@ -5674,18 +5809,25 @@ def cmd_check(a):
             die(REFUSED, f"no arm {', '.join(bad)} in the manifest (arms: {', '.join(names)})")
     queue = ("priority" if a.priority else "normal" if a.normal else
              "priority" if role_of(ctx, node) in ("root", "lead") else "normal")
-    sha = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
     rc, dirt, _ = git("status", "--porcelain", "--untracked-files=no", cwd=ctx.worktree)
     if dirt.strip():
         die(REFUSED, f"{len(dirt.splitlines())} uncommitted change(s). The queue runs a copy of "
                      f"the commit, so commit first (a WIP commit is fine), then harness check.")
+    # A check describes the lead's current tree (log 139): the parent is merged
+    # in first. Where it cannot be, the check still runs and its report says
+    # how far behind the commit was.
+    _st, _info = own_catchup(ctx, node)
+    stale = ({k: _info.get(k) for k in ("n", "parent", "since", "why")}
+             if _st in ("blocked", "conflict") else None)
+    sha = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
     # One full run per change, at the lead (owner, 2026-10-08): a worker checks
     # only the arms its change touches, a lead runs the full set after merging.
     scope = None
     if not a.arms and (a.changed or (not a.all and role_of(ctx, node) == "member")):
         sel, scope = changed_arms(ctx, node, checks)
         if sel == []:
-            rep = make_check_report(node, sha, [], 0, None, arms=[], scoped=scope)
+            rep = make_check_report(node, sha, [], 0, None, arms=[], scoped=scope,
+                                    **({"behind": stale} if stale else {}))
             f = check_report_path(ctx, node, sha)
             f.parent.mkdir(parents=True, exist_ok=True)
             f.write_text(json.dumps(rep, indent=2) + "\n")
@@ -5732,7 +5874,8 @@ def cmd_check(a):
                           (spec.get(n) or {}).get("exclusive")) for n in want}
     sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     job, how = testq_submit(ctx, "check", sha, node, sid, timeout=a.timeout, arms=arms,
-                            queue=queue, origin=str(ctx.worktree), scope=scope, tests=tests)
+                            queue=queue, origin=str(ctx.worktree), scope=scope, tests=tests,
+                            behind=stale)
     print(f"{how} {job['id']} — {'check' if not arms else 'arms ' + ', '.join(arms)} of "
           f"{sha[:8]}, {job['queue']} queue" + testq_wait_phrase(ctx, job))
     if not a.wait:
@@ -6029,7 +6172,7 @@ def testq_describe(j):
 
 
 def testq_submit(ctx, kind, sha, node, sid, command=None, timeout=None, arms=None,
-                 queue="normal", origin=None, scope=None, tests=None):
+                 queue="normal", origin=None, scope=None, tests=None, behind=None):
     """Queue a job, or join an identical one (same commit and arms) still queued
     or running: that is one run, not a guess about a result. A finished report is
     never reused; whether an old result still holds is the project's to say (obs
@@ -6054,6 +6197,8 @@ def testq_submit(ctx, kind, sha, node, sid, command=None, timeout=None, arms=Non
         job["scope"] = scope
     if tests:
         job["tests"] = tests
+    if behind:
+        job["behind"] = behind          # the commit could not be caught up first (log 139)
     testq_save(ctx, job)
     testq_ensure_runner(ctx)
     return job, "queued"
@@ -6744,6 +6889,7 @@ def testd_close(ctx, S, jid):
                                 arms=job.get("arms"),
                                 partial=bool(job.get("arms")) and not job.get("scope"),
                                 **({"caps": S["caps"]} if S.get("caps") else {}),
+                                **({"behind": job["behind"]} if job.get("behind") else {}),
                                 **({"scoped": job["scope"]} if job.get("scope") else {}))
         shared = shared_report_path(ctx, sha)
         shared.parent.mkdir(parents=True, exist_ok=True)
@@ -6826,6 +6972,7 @@ def testq_ring(ctx, job, rep, code):
     elif rep is not None:
         n = len(rep.get("checks") or [])
         text = ((partial_line(rep) + ". ") if partial_line(rep) else "") + (
+                (stale_line(rep.get("behind")) + " ") if rep.get("behind") else "") + (
                 f"check of {job['sha'][:8]}: {n - rep['failed'] - rep['held']}/{n} passed"
                 + (f", {rep['new']} new failure(s) against the baseline" if rep.get("new") else "")
                 + f" — harness check --report {job['sha'][:8]}")
@@ -7562,6 +7709,556 @@ def cmd_review(a):
     print()
 
 
+# ── catch-up: a node is kept current with its parent (log 139) ───────────────
+#
+# 2026-10-10: the owner asked whether dev_tests is always updated from dev, and
+# main had to measure it by hand. dev_tests_1 was 42 commits behind its parent,
+# 33 hours and a shutdown after its last merge; it lacked a schema change its
+# fixture already had, so three tests failed there on correct code. T2 told
+# each session to merge its parent in twice per task and never between, and
+# nothing did it, checked it or showed it. The owner: "it should be updating as
+# often as it can be".
+#
+# So the harness does the merge, whenever nothing can be disturbed by it: no
+# turn is running in the worktree and nothing there is uncommitted. That is at
+# a session's start, at a task's start, before a check, and from the ringer
+# whenever a parent moves. Where it cannot, the reason is recorded and shown.
+CATCHUP_EVERY = 30          # seconds between the ringer's passes
+STALE_AFTER = 15 * 60       # behind this long for a reason only its lead clears: owed
+CAUGHT_NEWS = 3600          # a merge older than this is not news at a prompt
+
+
+def behind_path(ctx, node):
+    return Path(ctx.state) / "behind" / f"{node}.json"
+
+
+def behind_since(repo, cb, pb):
+    """When the parent first moved past what the child holds, epoch seconds.
+    Read from the parent branch's reflog: its newest entries are the tips the
+    child lacks. Without a reflog, the date of the oldest missing commit."""
+    # Two git calls, whatever the count: the commits the child lacks, and the
+    # parent's reflog, whose newest entries are tips among them. Asking git
+    # "is this an ancestor" per entry was a second each on biblion2's disk, and
+    # 44 of them in one pass (measured 2026-10-12).
+    rc, out, _ = git("log", "--format=%H %ct", f"{cb}..{pb}", cwd=repo)
+    lacked = [l.split() for l in out.splitlines()] if rc == 0 else []
+    if not lacked:
+        return None
+    missing = {sha for sha, _ in lacked}
+    when = None
+    rc, out, _ = git("reflog", "show", "--format=%H %gd", "--date=unix", pb, cwd=repo)
+    for line in (out.splitlines() if rc == 0 else []):
+        sha, _, sel = line.partition(" ")
+        if sha not in missing:
+            break
+        m = re.search(r"@\{(\d+)\}", sel)
+        if m:
+            when = int(m.group(1))
+    return when if when is not None else int(lacked[-1][1])
+
+
+def behind_of(ctx, idx, node):
+    """How far a node is behind its parent: {n, parent, tip, parent_tip, since}.
+    n is 0 when it is current. None for rank 0, or when git cannot say."""
+    nodes = idx.get("nodes") or {}
+    sp = nodes.get(node) or {}
+    parent = sp.get("parent")
+    cb, pb = sp.get("branch"), (nodes.get(parent) or {}).get("branch")
+    if not parent or not cb or not pb:
+        return None
+    rc, n, _ = git("rev-list", "--count", f"{cb}..{pb}", cwd=ctx.repo)
+    if rc or not n.isdigit():
+        return None
+    out = {"n": int(n), "parent": parent, "tip": git("rev-parse", cb, cwd=ctx.repo)[1],
+           "parent_tip": git("rev-parse", pb, cwd=ctx.repo)[1]}
+    if out["n"]:
+        old = _read_json(behind_path(ctx, node)) or {}
+        # Since-when holds for as long as the child has not moved.
+        out["since"] = (old["since"] if old.get("n") and old.get("since")
+                        and old.get("tip") == out["tip"] else behind_since(ctx.repo, cb, pb))
+    return out
+
+
+def behind_write(ctx, node, rec):
+    """Record a node's state for the hooks and the viewer, which read files and
+    run no git. True when the count or the reason changed. The last merge is
+    kept beside whatever came after it."""
+    p = behind_path(ctx, node)
+    old = _read_json(p) or {}
+    new = dict(rec, at=_now())
+    if "caught" not in new and old.get("caught"):
+        new["caught"] = old["caught"]
+    changed = (old.get("n"), old.get("why")) != (new.get("n"), new.get("why"))
+    if changed or new.get("caught") != old.get("caught") or old.get("tip") != new.get("tip"):
+        p.parent.mkdir(parents=True, exist_ok=True)
+        _save(p, new)
+    return changed
+
+
+def node_sessions(idx, node, rows):
+    """The live sessions standing in a node's worktree. A session belongs to the
+    deepest node worktree that holds its directory, so one inside a child's
+    worktree is never counted as its parent's."""
+    wts = {n: str(sp.get("worktree")) for n, sp in (idx.get("nodes") or {}).items()
+           if sp.get("worktree")}
+    out = []
+    for r in rows or []:
+        cwd = str(r.get("cwd") or "")
+        best = max((n for n, w in wts.items() if cwd == w or cwd.startswith(w + "/")),
+                   key=lambda n: len(wts[n]), default=None)
+        if best == node:
+            out.append(r)
+    return out
+
+
+QUIET_COMMANDS = {"sleep", "bash", "sh", "dash", "zsh", "timeout", "tail", "inotifywait"}
+
+
+def session_work(row):
+    """What a session's background shells are running, as one command's name;
+    None when they only wait.
+
+    Measured on biblion2, 2026-10-12: five lanes read `shell` with their turn
+    ended, each on a polling loop (`sleep 20` in a shell), and the two stalest
+    nodes in the tree, 30 and 40 commits behind, were among them. A shell the
+    Bash tool started is known by the snapshot it sources; everything under it
+    is looked at. When that cannot be read, the answer is "a command": not
+    knowing is a reason to leave the tree alone."""
+    pid = row.get("pid")
+    if not isinstance(pid, int):
+        return "a command"
+
+    def cmdline(p):
+        try:
+            return Path(f"/proc/{p}/cmdline").read_bytes()
+        except OSError:
+            return b""
+    try:
+        kids, _ = proc_children()
+    except Exception:
+        return "a command"
+    shells = [k for k in kids.get(pid, []) if b"shell-snapshots" in cmdline(k)]
+    if not shells:
+        return "a command"
+    todo = list(shells)
+    while todo:
+        p = todo.pop()
+        todo += kids.get(p, [])
+        try:
+            comm = Path(f"/proc/{p}/comm").read_text().strip()
+        except OSError:
+            continue                            # it ended while we looked
+        cl = cmdline(p)
+        if comm in QUIET_COMMANDS or (b"/harness" in cl and (b"--wait" in cl or b"doorbell" in cl)):
+            continue
+        return comm or "a command"
+    return None
+
+
+def catchup_block(ctx, idx, node, rows=None, own=False, tip=None):
+    """Why nothing may merge into this node's worktree right now, as (kind,
+    words), or None. `own` is the node's session acting in its own worktree:
+    its turn is the one running, so only the tree itself is tested.
+
+    The tests that read files come first and git last: a node whose session is
+    mid-turn costs no git at all, and a `git status` on a slow disk is most of
+    a second (0.8 s per worktree on biblion2). Git's optional locks are off, so
+    a look from the ringer never holds the index against the session's own git."""
+    sp = (idx.get("nodes") or {}).get(node) or {}
+    wt = sp.get("worktree")
+    if not wt or not Path(wt).is_dir():
+        return "nowt", "it has no worktree on this machine"
+    if not own:
+        if halted(ctx):
+            return "halt", "the tree is halted"
+        for r in node_sessions(idx, node, live_sessions() if rows is None else rows):
+            st = r.get("reported_status") or r.get("status")
+            if st == "busy" or not turn_ended(r.get("sessionId") or ""):
+                return "busy", "its session is mid-turn"
+            if st != "idle":
+                # Its turn has ended and a background shell is still up. A
+                # build or a test must not have its sources change under it; a
+                # loop that only waits is no reason to keep the node stale.
+                doing = session_work(r)
+                if doing:
+                    return "busy", f"its session is running {doing}"
+        try:
+            tip = tip or git("rev-parse", sp.get("branch") or "HEAD", cwd=wt)[1]
+            if any(j.get("kind") == "check" and j.get("sha") == tip
+                   for j in testq_jobs(ctx, ("queued", "running"))):
+                return "check", "a check of its commit is in the queue"
+        except Exception:
+            pass
+    rc, out, _ = git("--no-optional-locks", "status", "--porcelain=v2", "--branch",
+                     "--untracked-files=no", cwd=wt)
+    if rc:
+        return "git", "git status failed there"
+    lines = out.splitlines()
+    head = next((l.split(" ", 2)[2] for l in lines if l.startswith("# branch.head ")), None)
+    if head != sp.get("branch"):
+        return "git", f"its worktree is not on {sp.get('branch')}"
+    dirt = [l for l in lines if not l.startswith("#")]
+    if dirt:
+        return "dirty", f"{len(dirt)} uncommitted change(s) there"
+    if git("rev-parse", "-q", "--verify", "MERGE_HEAD", cwd=wt)[0] == 0:
+        return "dirty", "a merge is already in progress there"
+    return None
+
+
+def carry_presented(ctx, node, branch, prev, tip, parent, by):
+    """A presentation and its review follow the work across a clean catch-up.
+
+    The child's side was read; the parent's side is the lead's own integrated
+    history, which it does not review to itself; and git wrote the merge, so
+    nobody decided anything in it. A conflicted merge never gets here. Leaving
+    the presented sha at the old tip is how a store starts describing a node
+    that no longer exists in that state. -> the old sha when a review moved."""
+    carried = None
+    old = read_review(ctx, node, prev)
+    if old and old.get("reviewed_by_node") == parent:
+        write_review(ctx, node, branch, tip, parent, carried_from=prev)
+        carried = prev
+    for stem, mrec in open_marks(ctx).items():
+        if mrec.get("_node") == node and mrec.get("_presented_at") \
+                and mrec.get("_presented_sha") in (prev, None):
+            mrec["_presented_sha"] = tip
+            mrec["_caught_up_by"] = by
+            mrec["_caught_up_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+            (ctx.state / "marks" / (stem + ".json")).write_text(
+                json.dumps(mrec, indent=2) + "\n")
+    return carried
+
+
+def catch_up(ctx, idx, node, by, rows=None, own=False, keep_conflict=False, dry=False, b=None):
+    """Merge a node's parent into its worktree, if nothing there can be
+    disturbed by it. -> (status, info).
+
+    status is None (rank 0, or git cannot say), "current", "caught", "would"
+    (a dry run), "blocked" or "conflict"; info is behind_of's record plus `why`
+    and `kind` when it did not merge, or `prev`, `tip`, `files` and `carried`
+    when it did. A conflict is aborted and the node left as it was, unless
+    `keep_conflict`: the node's own session collects the stages for T7.
+    One merge at a time per node: the ringer and a lead's `integrate` may both
+    come for the same worktree."""
+    b = b or behind_of(ctx, idx, node)
+    if b is None:
+        return None, {}
+    if not b["n"]:
+        if not dry:
+            behind_write(ctx, node, b)
+        return "current", b
+    sp = idx["nodes"][node]
+    wt, pb = sp.get("worktree"), idx["nodes"][b["parent"]]["branch"]
+    occupied = bool(node_sessions(idx, node, live_sessions() if rows is None else rows)) \
+        if not own else True
+    if dry:
+        # A dry run writes nothing: no record, no lock file.
+        why = catchup_block(ctx, idx, node, rows, own, tip=b.get("tip"))
+        return ("blocked", dict(b, kind=why[0], why=why[1], occupied=occupied)) if why \
+            else ("would", b)
+    lock = behind_path(ctx, node).with_suffix(".lock")
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    fh = _flock(lock, block=False)
+    if fh is None:
+        return "blocked", dict(b, kind="busy", why="another catch-up is running there")
+    try:
+        why = catchup_block(ctx, idx, node, rows, own, tip=b.get("tip"))
+        if why:
+            info = dict(b, kind=why[0], why=why[1], occupied=occupied)
+            behind_write(ctx, node, info)
+            return "blocked", info
+        prev = git("rev-parse", "HEAD", cwd=wt)[1]
+        rc, out, err = git("merge", "--no-edit", pb, cwd=wt)
+        if rc:
+            files = git("diff", "--name-only", "--diff-filter=U", cwd=wt)[1].splitlines()
+            merging = git("rev-parse", "-q", "--verify", "MERGE_HEAD", cwd=wt)[0] == 0
+            if merging and not (files and keep_conflict):
+                git("merge", "--abort", cwd=wt)
+            if files:
+                info = dict(b, kind="conflict", conflict=files, occupied=occupied,
+                            why=f"it conflicts with {b['parent']} in "
+                                + ", ".join(files[:4]) + (", …" if len(files) > 4 else ""))
+            else:
+                # Refused before or after the merge itself: untracked files in
+                # the way, or a hook. Git's own words, since they name the files.
+                said = " ".join((err or out).split())[:160]
+                info = dict(b, kind="refused", occupied=occupied,
+                            why=f"git refused the merge: {said}")
+            behind_write(ctx, node, info)
+            return ("conflict" if files else "blocked"), info
+        tip = git("rev-parse", "HEAD", cwd=wt)[1]
+        files = git("diff", "--name-only", prev, tip, cwd=wt)[1].splitlines()
+        carried = carry_presented(ctx, node, sp.get("branch"), prev, tip, b["parent"], by)
+        behind_write(ctx, node, {
+            "n": 0, "parent": b["parent"], "tip": tip, "parent_tip": b["parent_tip"],
+            "caught": {"at": time.time(), "n": b["n"], "prev": prev, "tip": tip, "by": by,
+                       "files": files[:8], "nfiles": len(files), "told": bool(own)}})
+        return "caught", dict(b, prev=prev, tip=tip, files=files, carried=carried)
+    finally:
+        fh.close()
+
+
+def behind_when(b):
+    """` since 10-09 14:36` for one behind record; the day only when it is old."""
+    since = (b or {}).get("since")
+    if not since:
+        return ""
+    day = time.strftime("%m-%d ", time.localtime(since)) \
+        if time.time() - since > 20 * 3600 else ""
+    return f" since {day}{time.strftime('%H:%M', time.localtime(since))}"
+
+
+def behind_words(b, short=False):
+    """`42 commit(s) behind dev since 10-09 14:36: <why>` for one behind record."""
+    if not b or not b.get("n"):
+        return ""
+    if short:
+        return f"⇩{b['n']}{behind_when(b)}" + (f" ({b['why']})" if b.get("why") else "")
+    return (f"{b['n']} commit(s) behind {b.get('parent')}{behind_when(b)}"
+            + (f": {b['why']}" if b.get("why") else ""))
+
+
+def behind_seen(ctx, idx, node, rows=None):
+    """A node's state as the ringer's last pass recorded it, while a ringer is
+    running and has made a pass; measured now otherwise. For the surfaces that
+    show every node at once (`status`, a lead's orientation): asking git about
+    thirteen worktrees on a slow disk is seconds, and the ringer has just done it."""
+    try:
+        r, p = ringer_alive(ctx.state), _read_json(behind_path(ctx, "_pass")) or {}
+        fresh = bool(r) and int(r.get("pid") or 0) == p.get("pid") \
+            and time.time() - (p.get("at") or 0) < 4 * CATCHUP_EVERY
+    except Exception:
+        fresh = False
+    if not fresh:
+        return behind_now(ctx, idx, node, rows)
+    if not ((idx.get("nodes") or {}).get(node) or {}).get("parent"):
+        return None
+    rec = _read_json(behind_path(ctx, node)) or {}
+    return {k: rec.get(k) for k in ("n", "parent", "tip", "parent_tip", "since", "kind", "why")} \
+        if rec.get("n") else {"n": 0, "parent": idx["nodes"][node]["parent"]}
+
+
+def behind_remedy(b):
+    """What the node itself does about being behind, by the reason."""
+    return {
+        "dirty": "Commit what is there (a WIP commit is fine): the harness merges at your "
+                 "next turn end, or now with harness catchup",
+        "conflict": "That is T7: harness catchup leaves the conflict in place for you to "
+                    "collect. Tell your lead; do not resolve it",
+        "refused": "harness catchup shows git's refusal in full",
+        "git": "Put the worktree back on its node's branch, then: harness catchup",
+    }.get((b or {}).get("kind"),
+          "The harness merges it at your next turn end, or now: harness catchup")
+
+
+def behind_now(ctx, idx, node, rows=None, own=False):
+    """behind_of, with why nothing has merged it as of now. A conflict, or a
+    merge git refused, is read from the record of the pass that met it, for as
+    long as neither branch has moved; every other reason is tested afresh."""
+    b = behind_of(ctx, idx, node)
+    if not b or not b["n"]:
+        return b
+    rec = _read_json(behind_path(ctx, node)) or {}
+    if rec.get("kind") in ("conflict", "refused") and rec.get("tip") == b["tip"] \
+            and rec.get("parent_tip") == b["parent_tip"]:
+        return dict(b, kind=rec["kind"], why=rec.get("why"))
+    why = catchup_block(ctx, idx, node, rows, own)
+    return dict(b, kind=why[0], why=why[1]) if why else b
+
+
+def catchup_line(node, status, info, parent=None):
+    """What one catch-up did, in a line. Empty when the node was current."""
+    if status == "caught":
+        fl = info.get("files") or []
+        return (f"{node} caught up: {info['n']} commit(s) from {info['parent']} merged "
+                f"({len(fl)} file(s)" + (": " + ", ".join(fl[:4]) + (", …" if len(fl) > 4 else "")
+                                         if fl else "") + ")")
+    if status == "would":
+        return f"{node} would catch up {info['n']} commit(s) from {info['parent']}"
+    if status in ("blocked", "conflict"):
+        return f"{node} is {behind_words(info)} — not caught up"
+    return ""
+
+
+def catchup_pass(ctx, idx=None, rows=None, by="harness", only=None, dry=False, skip=None,
+                 tips=None, memo=None, hold=()):
+    """Every node below rank 0, from the top down, so one change at rank 0
+    reaches every rank in one pass. `skip` holds the pairs of tips already found
+    to conflict: a conflict is tried once, not every pass. `hold` names nodes to
+    leave alone this pass (the ringer has just woken them).
+
+    `tips` (branch -> sha, from one `for-each-ref`) and `memo` (node -> the pair
+    of tips last counted, and the count) are the ringer's: a node whose pair has
+    not moved is not counted again, so a quiet pass over a tree on a slow disk
+    costs no git per node.
+    -> [(node, status, info, changed)], changed when the count or reason is new."""
+    idx = idx or load_index(ctx)
+    rows = live_sessions() if rows is None else rows
+    nodes = idx.get("nodes") or {}
+    out = []
+    for n in sorted((n for n in nodes if nodes[n].get("parent")),
+                    key=lambda n: (nodes[n].get("rank") or 0, n)):
+        if only is not None and n not in only:
+            continue
+        cb, pb = nodes[n].get("branch"), (nodes.get(nodes[n]["parent"]) or {}).get("branch")
+        was = _read_json(behind_path(ctx, n)) or {}
+        b = None
+        seen = (tips.get(cb), tips.get(pb)) if tips else None
+        if memo is not None and seen and all(seen) and (memo.get(n) or [None])[0] == seen:
+            if not memo[n][1]:
+                continue                               # current, and neither branch has moved
+            if was.get("n") == memo[n][1] and was.get("tip") == seen[0]:
+                b = {k: was.get(k) for k in ("n", "parent", "tip", "parent_tip", "since")}
+        b = b or behind_of(ctx, idx, n)
+        if b is None:
+            continue
+        pair = (b.get("tip"), b.get("parent_tip"))
+        if b["n"] and n in hold:
+            st, info = "blocked", dict(b, kind="busy", why="its session was just woken")
+        elif b["n"] and skip is not None and skip.get(n) == pair:
+            st, info = ("conflict" if was.get("kind") == "conflict" else "blocked"), dict(was or b)
+        else:
+            st, info = catch_up(ctx, idx, n, by, rows=rows, dry=dry, b=b)
+            if skip is not None:
+                # A merge that conflicted, or that git refused, is not tried
+                # again until a branch moves: each try writes into the worktree.
+                if st == "conflict" or info.get("kind") == "refused":
+                    skip[n] = pair
+                else:
+                    skip.pop(n, None)
+        if st == "caught" and tips is not None:
+            tips[cb] = info["tip"]                     # its children are behind it now
+        if memo is not None and tips:
+            memo[n] = ((tips.get(cb), tips.get(pb)), 0 if st in ("caught", "current") else b["n"])
+        out.append((n, st, info, (was.get("n"), was.get("why")) != (info.get("n"), info.get("why"))
+                    or st == "caught"))
+    return out
+
+
+def ringer_catchup(ctx, S):
+    """The ringer's part: when any branch has moved, or a node is still behind,
+    one pass. Each merge and each new reason is a line in its log. A quiet tree
+    costs one `for-each-ref` per pass and nothing else."""
+    rc, out, _ = git("for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads",
+                     cwd=ctx.repo)
+    if rc:
+        return
+    if out != S.get("_tips") or S.get("_behind"):
+        tips = dict(l.split(" ", 1) for l in out.splitlines() if " " in l)
+        # A session the ringer woke a moment ago is starting a turn, whatever
+        # its status still reads.
+        hold = {n for n, v in list(S.items()) if not n.startswith("_") and isinstance(v, dict)
+                and time.time() - (v.get("at") or 0) < WAKE_GRACE}
+        res = catchup_pass(ctx, skip=S.setdefault("_conflicts", {}), tips=tips,
+                           memo=S.setdefault("_pairs", {}), hold=hold)
+        for n, st, info, changed in res:
+            if changed and catchup_line(n, st, info):
+                print(f"{_now()} {catchup_line(n, st, info)}")
+        S["_behind"] = sorted(n for n, st, info, _ in res if st in ("blocked", "conflict"))
+        S["_tips"] = git("for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads",
+                         cwd=ctx.repo)[1]
+    # The records are current as of now: `status` and orientation read them
+    # instead of asking git again for every node (behind_seen).
+    _save(behind_path(ctx, "_pass"), {"pid": os.getpid(), "at": time.time()})
+
+
+def own_catchup(ctx, node, keep_conflict=False):
+    """A session's own command, in its own worktree, catches its node up first:
+    a task's start and a check. Never raises and never refuses its caller.
+    -> (status, info), having printed what happened."""
+    try:
+        idx = load_index(ctx)
+        st, info = catch_up(ctx, idx, node, node, own=True, keep_conflict=keep_conflict)
+    except Exception:
+        return None, {}
+    if st == "caught":
+        print(catchup_line(node, st, info))
+    elif st in ("blocked", "conflict"):
+        print(f"BEHIND   {behind_words(info)}. Not caught up.")
+    return st, info
+
+
+def stale_line(b):
+    """The first line of anything measured on a tree that is behind its parent."""
+    if not b or not b.get("n"):
+        return ""
+    return (f"STALE TREE: this commit is {behind_words(b)}. A failure here may be the "
+            f"difference, not your change.")
+
+
+def check_through_catchup(ctx, node, sha):
+    """The check report for a commit, or for the commit a catch-up merge was
+    made on: a merge the harness makes after a check must not turn a checked
+    commit into "NOT CHECKED". -> (report, the sha it is for, merges walked)."""
+    rep = read_check_report(ctx, node, sha)
+    if rep is not None:
+        return rep, sha, 0
+    parent = (ctx.tree["nodes"].get(node) or {}).get("parent")
+    pb = (ctx.tree["nodes"].get(parent) or {}).get("branch") if parent else None
+    for hops, cur in enumerate(catchup_chain(ctx.worktree, sha, pb)[1:], 1):
+        rep = read_check_report(ctx, node, cur)
+        if rep is not None:
+            return rep, cur, hops
+    return None, sha, 0
+
+
+def catchup_chain(repo, sha, pb, limit=6):
+    """`sha`, then each commit a catch-up merge was made on, walking back for
+    as long as the commit is one: a merge whose second parent is the parent
+    branch's own history. What the node itself committed ends the walk."""
+    out = [sha]
+    while pb and len(out) <= limit:
+        rc, line, _ = git("rev-list", "--parents", "-n", "1", out[-1], cwd=repo)
+        parts = line.split()
+        if rc or len(parts) != 3 or git("merge-base", "--is-ancestor", parts[2], pb, cwd=repo)[0]:
+            break
+        out.append(parts[1])
+    return out
+
+
+def cmd_catchup(a):
+    """`harness catchup [<node>… | --children | --all] [--dry-run]`: merge the
+    parent in now. With no node it is this session's own, in its own worktree,
+    and a conflict is left in place for the T7 collection. For nodes below the
+    caller it is the same merge the ringer makes, with the same tests."""
+    ctx = Ctx(); ctx.require_enrolled()
+    idx = load_index(ctx, refresh=True)
+    here = idx["byBranch"].get(ctx.branch)
+    if not (a.node or a.children or a.all):
+        if here is None:
+            die(NOT_ENROLLED, f"branch '{ctx.branch}' is not a node")
+        st, info = catch_up(ctx, idx, here, here, own=True, keep_conflict=True, dry=a.dry_run)
+        if st is None:
+            print("rank 0 has no parent"); return
+        if st == "current":
+            print(f"{here} is current with {info['parent']}"); return
+        if st == "conflict":
+            print(f"{here} CONFLICTS with {info['parent']} in: {', '.join(info['conflict'])}")
+            print("  The merge is left in place for you to collect, not to resolve (T7):")
+            print("    git show :1:FILE   :2:FILE   :3:FILE     base, ours, theirs")
+            print("    git log --merge --format='%(trailers:key=Task,valueonly)'")
+            print("    git merge --abort      once collected; then tell your lead")
+            sys.exit(REFUSED)
+        print(catchup_line(here, st, info))
+        if st == "blocked":
+            sys.exit(REFUSED)
+        return
+    below = set(subtree(ctx, here)) if here else set(idx["nodes"])
+    if a.node:
+        bad = [n for n in a.node if n not in below]
+        if bad:
+            die(REFUSED, f"{', '.join(bad)}: not below {here or 'the tree'}. A node is caught "
+                         f"up from its own parent, by the harness or by a node above it.")
+        only = set(a.node)
+    else:
+        only = set(ctx.children(here)) if (a.children and here) else below
+    res = catchup_pass(ctx, idx=idx, by=here or "operator", only=only, dry=a.dry_run)
+    for n, st, info, _ in res:
+        print("  " + (catchup_line(n, st, info) or f"{n} is current"))
+    if any(st in ("blocked", "conflict") for _, st, _, _ in res):
+        sys.exit(REFUSED)
+
+
 def cmd_integrate(a):
     """T4: catch a presented child up, then fast-forward it into this node.
 
@@ -7699,6 +8396,14 @@ def cmd_integrate(a):
 
         rc, tip, _ = git("rev-parse", cb, cwd=ctx.repo)
         tip = tip.strip()
+        if mrec.get("_presented_sha") and mrec["_presented_sha"] != tip \
+                and mrec["_presented_sha"] in catchup_chain(ctx.repo, tip, ctx.branch):
+            # Only catch-up merges stand between what it presented and its tip,
+            # and the record did not follow them (a pass that was killed between
+            # the merge and the write). The merges are this node's own history:
+            # carry the presentation and its review across now.
+            carry_presented(ctx, n, cb, mrec["_presented_sha"], tip, here, here)
+            mrec = open_marks(ctx).get(stem) or mrec
         if mrec.get("_presented_sha") and mrec["_presented_sha"] != tip:
             print(f"skip {n:<12} has committed since it presented "
                   f"({mrec['_presented_sha'][:8]} → {tip[:8]}).\n"
@@ -7716,9 +8421,13 @@ def cmd_integrate(a):
 
         carried = None
         if behind != "0":
-            rc, out, err = git("merge", "--no-edit", ctx.branch, cwd=cw)
-            if rc:
-                git("merge", "--abort", cwd=cw)
+            # Occupancy and dirt were tested above, so this is the lead's own
+            # act; the shared catch-up holds the node's lock against the ringer.
+            st, info = catch_up(ctx, idx, n, here, rows=rows, own=True)
+            if st == "blocked":
+                print(f"skip {n:<12} could not be caught up: {info.get('why')}")
+                failed += 1; continue
+            if st == "conflict":
                 # Whose collision it is turns on authorship, not on position:
                 # T7 if this node issued both tasks, T8 if the work was authored
                 # ranks below. The trailers answer it and nobody has to guess.
@@ -7733,25 +8442,10 @@ def cmd_integrate(a):
                 failed += 1; continue
             prev, tip = tip, git("rev-parse", cb, cwd=ctx.repo)[1].strip()
             print(f"     {n:<12} caught up ({behind} behind) — {prev[:8]} → {tip[:8]}")
-            # A CLEAN catch-up carries the review. The child's side was read;
-            # the parent's side is this node's own integrated history, which it
-            # does not need to review to itself; and git wrote the merge
-            # mechanically, so there is no third party's decision in it. A
-            # CONFLICTED one does not reach here at all, which is the case where
-            # somebody chose something and it has to be read.
-            old = read_review(ctx, n, prev)
-            if old and old.get("reviewed_by_node") == here:
-                write_review(ctx, n, cb, tip, here, carried_from=prev)
-                carried = prev
-            # The presentation followed the work across the merge, so every
-            # other reader — `recycle`, `status`, the viewer — still sees a node
-            # whose presented sha is its tip. Leaving that stale is how a store
-            # starts describing a node that no longer exists in that state.
-            mrec["_presented_sha"] = tip
-            mrec["_caught_up_by"] = here
-            mrec["_caught_up_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
-            (ctx.state / "marks" / (stem + ".json")).write_text(
-                json.dumps(mrec, indent=2) + "\n")
+            # A clean catch-up carries the review and the presentation with it
+            # (carry_presented); a conflicted one does not reach here at all.
+            carried = info.get("carried")
+            mrec = open_marks(ctx).get(stem) or mrec
 
         rev = read_review(ctx, n, tip)
         if rev is None or rev.get("reviewed_by_node") != here:
@@ -8125,6 +8819,14 @@ def cmd_recycle(a):
         name = f"{idx['project']}-{n}"
         gr = grants_for(ctx, n)
         cmd = launch_cmd(ctx, n, name, gr, model, effort, a.prompt)
+        # The fresh session starts on its lead's current tree (log 139). The
+        # old one is stopped by now, so the session files are read afresh.
+        try:
+            _st, _info = catch_up(ctx, idx, n, "harness")
+            if catchup_line(n, _st, _info):
+                print(f"       {catchup_line(n, _st, _info)}")
+        except Exception:
+            pass
         ok, why = launch_bg(cmd, sp["worktree"])
         if not ok:
             # The old session is already stopped: say so plainly, and leave the
@@ -9061,6 +9763,8 @@ def cmd_fact(a):
             flag = ("tree moved since" if fresh is False
                     else "current" if same_wt
                     else "OTHER WORKTREE")
+            if o.get("behind"):
+                flag += f"   measured {o['behind']} behind {o.get('behind_of')}"
             print(f"  {r.get('name', k):<24} {str(o.get('value'))[:34]:<36} {flag}")
             print(f"  {'':<24} {_ago(o.get('at'))} by {o.get('by')}"
                   + (f"   ({len(r['observations'])} observations)"
@@ -9093,16 +9797,26 @@ def cmd_fact(a):
         r = r or {"name": a.name, "observations": []}
         if a.what:
             r["what"] = a.what
-        r.setdefault("observations", []).append(
+        # A measurement on a tree behind its parent says so (log 139: a lane
+        # measured memory and run time on a tree 42 commits behind).
+        try:
+            _b = behind_of(ctx, load_index(ctx), node) or {}
+        except Exception:
+            _b = {}
+        r.setdefault("observations", []).append(dict(
             {"value": a.is_, "command": a.from_, "node": node,
              "worktree": str(ctx.worktree), "sha": head, "by": who,
-             "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")})
+             "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")},
+            **({"behind": _b["n"], "behind_of": _b["parent"]} if _b.get("n") else {})))
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(json.dumps(r, indent=2) + "\n")
         n = len(r["observations"])
         print(f"fact '{a.name}' = {a.is_}   (observation {n}, by {who})")
         print(f"  from: {a.from_}")
         print(f"  at {head[:8]} in {ctx.worktree}")
+        if _b.get("n"):
+            print(f"  STALE TREE: measured {behind_words(_b)}. Catch up (harness catchup) "
+                  f"and measure again before anyone relies on it.")
         if n > 1:
             prev = r["observations"][-2]
             if str(prev.get("value")) != str(a.is_):
@@ -9175,6 +9889,8 @@ def cmd_fact(a):
         print(f"  {r['what']}")
     print(f"  from     {o.get('command')}")
     print(f"  measured {_ago(o.get('at'))} by {o.get('by')}  at {str(o.get('sha'))[:8]}")
+    if o.get("behind"):
+        print(f"  STALE    measured on a tree {o['behind']} commit(s) behind {o.get('behind_of')}")
     if not same_wt:
         print(f"  WORKTREE {o.get('worktree')}")
         print(f"           not the one you are standing in — a check can count "
@@ -17166,12 +17882,37 @@ def cmd_ringer(a):
     S, quiet_since = {}, time.time()
     me = Path(__file__).resolve()
     born = ringer_stamp(me)
+    # The catch-up pass runs beside the wake loop, never inside it: a merge on
+    # a slow disk takes seconds, and mail must still wake its reader within
+    # one. `passing` is held for the length of a pass, and taken before this
+    # process is replaced or ends, so neither happens between a merge and the
+    # records that follow it.
+    passing = threading.Lock()
+
+    def one_pass():
+        with passing:
+            try:
+                ringer_catchup(ctx, S)
+            except Exception as e:
+                print(f"{_now()} catch-up failed: {type(e).__name__}: {e}")
+
+    def stop(*_):
+        passing.acquire(timeout=120)        # a stop waits for the pass in hand
+        print(f"{_now()} ringer stopped")
+        os._exit(0)
+    try:
+        import signal
+        signal.signal(signal.SIGTERM, stop)
+    except Exception:
+        pass
+
     while True:
         if ringer_stamp(me) != born:
             # install.sh replaced this file: a daemon would otherwise run the
             # old rules until every session had gone (2026-10-11). The lock is
             # close-on-exec, so the new process takes it.
             print(f"{_now()} the harness was updated; ringer restarts")
+            passing.acquire()
             lock.close()
             os.execv(sys.executable, [sys.executable, str(me), "ringer"])
         try:
@@ -17180,7 +17921,12 @@ def cmd_ringer(a):
                 quiet_since = time.time()
         except Exception as e:
             print(f"{_now()} tick failed: {type(e).__name__}: {e}")
+        if time.time() - S.get("_catchup_at", 0) >= CATCHUP_EVERY and not passing.locked():
+            # Every node kept current with its parent (log 139).
+            S["_catchup_at"] = time.time()
+            threading.Thread(target=one_pass, daemon=True).start()
         if time.time() - quiet_since > RINGER_IDLE:
+            passing.acquire()
             print(f"{_now()} no node session for {RINGER_IDLE // 60}m; ringer exits")
             (d / "ringer.json").unlink(missing_ok=True)
             return
@@ -17340,7 +18086,7 @@ DESIGN_VIEW = False     # set by design_gate: Ctx.node() answers as rank 0, for 
 # An allow-list, so a verb added later is refused until someone decides.
 DESIGN_READ = {
     "status": {"roster"}, "index": set(), "queue": {"node", "roster"},
-    "position": {"format", "refresh", "behind", "quiet"},
+    "position": {"format", "refresh", "behind", "quiet"}, "behind": {"all"},
     "brief": {"task", "history"}, "note": {"task"},
     "charter": {"feature", "full", "json"},
     "hold": {"list"}, "check": {"report"}, "test": {"usage", "log"},
@@ -17725,7 +18471,14 @@ def main():
     wh.add_argument("--no-check", action="store_true", help="skip the R7 name assertion")
     wh.add_argument("--quiet", action="store_true",
                     help="print nothing and exit 0 when not enrolled (for SessionStart hooks)")
-    add("behind", cmd_behind)
+    bh = add("behind", cmd_behind)
+    bh.add_argument("--all", action="store_true",
+                    help="every node below you: how far behind its parent, since when, and why")
+    cu = add("catchup", cmd_catchup)
+    cu.add_argument("node", nargs="*", help="nodes below you; none means your own")
+    cu.add_argument("--children", action="store_true", help="each of your children")
+    cu.add_argument("--all", action="store_true", help="every node below you, top down")
+    cu.add_argument("--dry-run", action="store_true")
     cl = add("claim", cmd_claim, roster=True, force=True)
     cl.add_argument("--strict-name", action="store_true",
                     help="refuse when the session name does not match <project>-<node>")

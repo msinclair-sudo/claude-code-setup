@@ -47,14 +47,45 @@ Every node is checked out in exactly one worktree held by exactly one session.
 ### T2 — Catch-up (merge down)
 
 **Direction** downward, node into worktree.
-**Performed by** the worktree's own session, never by the node — while the worktree is occupied. See below.
-**Rule** Twice per task, and only twice: once after claiming, before the first commit; once immediately before presenting. Never between.
-**Enforcement** `git merge <parent>`. This produces a real merge commit, because the worktree holds its own work.
-**Fails when** Attempted from outside. Merging into a worktree that is in use aborts with `error: Your local changes to the following files would be overwritten by merge` when the incoming change touches dirty files, and succeeds silently when it does not — so it lands in the harmless cases and refuses in the colliding ones. A node therefore publishes `git rev-list --count <child>..<node>` and lets the recipient act at its own boundary.
+**Performed by** the harness, wherever nothing in the worktree can be disturbed by it; otherwise by the worktree's own session (`harness catchup`).
+**Rule** As often as the worktree allows (owner, 2026-10-10, log 139: "it should be updating as often as it can be"). A node is merged with its parent at its session's start, at each task's start, before each check, and whenever the parent moves while no turn is running there.
+**Enforcement** `git merge --no-edit <parent>` in the node's worktree, made by `catch_up`. This produces a real merge commit, because the worktree holds its own work.
+**Never when** a turn is running in the worktree, a background command of its session is doing work, tracked files have uncommitted changes, a merge is already in progress, a check of the node's commit is queued or running, or the tree is halted. Each is recorded as the reason, and shown.
+
+**Until 2026-10-12 this rule read "twice per task, and only twice … never between", and nothing performed it, checked it or showed it.** Measured 2026-10-10: one lane 42 commits behind its lead 33 hours and a shutdown after its last merge, three others 4 to 15 behind. The stale lane lacked a schema change its fixture already had, so three tests failed there on correct code, and it was the lane measuring memory and run time. The count a session was told to keep is gone; what replaced it is below.
+
+**Who merges, and when:**
+- **A session's start.** `spawn` and `recycle` (which a node's own reset also runs) merge before the session is launched.
+- **A task's start.** `harness mark <task>` merges before it records the task. If it cannot, the task still opens and its record keeps the count (`_behind_at_open`).
+- **Before a check.** `harness check` merges after its clean-tree test and before it queues the job, so a check describes the lead's current tree.
+- **Whenever the parent moves.** The project's ringer makes a pass every 30 seconds (`CATCHUP_EVERY`) when any branch has moved or a node is still behind. It walks the tree from rank 0 down, so one change at the top reaches every rank in one pass.
+- **After a halt.** `harness resume` makes the same pass once.
+- **By hand.** `harness catchup` for the session's own node; `harness catchup <node>… | --children | --all` for nodes below the caller, with the same tests as the ringer's pass.
+
+**Occupied now means a turn is running, or something is uncommitted.** A session that has ended its turn with a clean tree holds nothing a merge can overwrite, so the harness merges under it and tells it at its next prompt, once: how many commits, from whom, and which files, so it re-reads any it had open. No mail is sent for this, so an idle session is not woken.
+
+**A background shell blocks only when it is doing something.** A session whose turn has ended can still report `shell`: a command it started in the background is running. Measured on biblion2, 2026-10-12: five lanes were in that state, each on a polling loop (`sleep 20` in a shell), and the two stalest nodes in the tree were among them. So the harness looks under each shell the Bash tool started: shells, `sleep`, `tail`, `timeout` and a `harness … --wait` are waiting, and anything else (a build, a test, a script's own program) is work, which blocks with its name as the reason. When the process tree cannot be read, it blocks. A loop that runs a test between sleeps can still start one on a tree merged a moment earlier; the tree is whole by then.
+
+**A conflict is aborted and the node left exactly as it was.** It is tried once per pair of tips, not every pass. The node is told at its next prompt, and its lead is owed a `stale` row once the node has been behind for 15 minutes (`STALE_AFTER`): a conflict is the lead's to mediate ([[#T7 — Conflict escalation]], [[#T8 — Deep conflict]]). The same row appears for uncommitted changes in a worktree with no session, since nobody is there to commit them. `harness catchup` run by the node's own session leaves the conflict in place, so the stages can be collected for T7.
+
+**A presentation and its review follow the work across a clean merge**, whoever made it. The presented commit in the task record moves to the merge commit, and a review recorded by the parent is carried with `carried_from`. This is the bookkeeping `harness integrate` already did; both now go through one function, under one lock per node, so the ringer and a lead never merge the same worktree at once.
+
+**Staleness is shown wherever a node is:**
+- `harness status`: `⇩42 since 10-09 14:36`, with the reason, on each node's row; unclaimed nodes that are behind are listed below.
+- `harness behind`: the count, since when, and why. `--all` prints every node below the caller.
+- Orientation: the node's own line, and for a lead one line naming each child that is behind.
+- The viewer: a `⇩N` badge with its age on the node's card, in the alarm colour when it is blocked.
+- The ringer's log: every merge and every new reason.
+
+**Anything measured on a behind tree says so.** A check submitted from a commit that could not be caught up carries the count: its report, its result mail and the presenting line open with `STALE TREE: this commit is N commit(s) behind <parent> … A failure here may be the difference, not your change`. A fact records `behind` with the observation. A check made before a catch-up merge is still found at presenting: `mark --done` reads the report on the commit the merge was made on and says the merge itself was not checked.
+
+**What this does not close.** A merge the harness makes between turns changes files a session may have read; the prompt line names them, and the session must re-read. A node whose session never ends a turn with a clean tree is never merged, only reported. Since-when comes from the parent branch's reflog, so on a clone without one it falls back to the oldest missing commit's date.
+
+*The three paragraphs below are from before this change. They record why a lead may merge into a child that has presented and released, which still holds.*
 
 **Two catch-ups is the MEMBER's count, and reading it as the worktree's count made the two rules here unsatisfiable together.** [[#T4 — Integration (fast-forward up)]] is `--ff-only`, which succeeds only while the child is an ancestor of the parent. Integrate the first child and the parent moves: every sibling that caught up before presenting — exactly as this rule instructs — is now behind, cannot be fast-forwarded, and needs a third catch-up this rule forbids. With *k* children at most one per round can satisfy both. It is not a rare race; it is what happens the second time a lead integrates anything.
 
-**The prohibition protects the worktree, not the ref, so it ends where occupancy ends.** Everything in the *Fails when* line above is about a tree somebody is working in. A member that has presented and released is not working in it, the roster says so, and the merge that was dangerous a minute earlier is now ordinary. So: **the member catches up twice; a third catch-up into an unoccupied worktree belongs to the lead, and is part of T4 rather than an exception here.** `harness integrate` is that act and refuses an occupied worktree outright — occupancy is the one thing nothing overrides.
+**The prohibition protects the worktree, not the ref, so it ends where occupancy ends.** Everything the old rule guarded against is about a tree somebody is working in. A member that has presented and released is not working in it, the roster says so, and the merge that was dangerous a minute earlier is now ordinary. So: **the member catches up twice; a third catch-up into an unoccupied worktree belongs to the lead, and is part of T4 rather than an exception here.** `harness integrate` is that act and refuses an occupied worktree outright — occupancy is the one thing nothing overrides.
 
 **Found three times in one night, and worked around in the wrong place first.** `harness recycle` was taught to release a presented child that had been left behind, which is correct — the member has genuinely finished — but it clears the *node* and leaves the *work* precisely where it was. Both are needed and they are different jobs.
 
@@ -202,7 +233,7 @@ is inert by construction, not by convention.
 
 **Direction** upward one hop, to the node that issued the work.
 **Applies when** this node issued the tasks named in the conflicting commits' `Task:` trailers, so it already holds both intents. Otherwise [[#T8 — Deep conflict]].
-**Rule** A conflict surfaces during the second T2, while the author's own work is current. The member collects and does not resolve.
+**Rule** A conflict surfaces at a catch-up ([[#T2 — Catch-up (merge down)]]). The harness aborts its own attempt and reports it; the member reproduces it with `harness catchup`, which leaves the merge in place, then collects and does not resolve.
 
 1. Collect: `git diff --name-only --diff-filter=U`; stages `:1:` base, `:2:` ours, `:3:` theirs; `git log --merge` for both author names.
 2. Ask the lead. The member cannot know why the conflict exists.
@@ -618,7 +649,7 @@ Rough per-transaction cost, for budgeting a task's overhead:
 | transaction | member | lead |
 | --- | --- | --- |
 | T1 assignment | — | 2k – 5k |
-| T2 catch-up (×2) | 1k – 3k each | — |
+| T2 catch-up | one prompt line when the harness merges; 1k – 3k when the session runs `harness catchup` | — |
 | T3 guard check | ~1k | — |
 | T4 integration | — | < 1k |
 | T11 approach review | 2k – 4k | 4k – 8k |
@@ -719,7 +750,7 @@ Understanding gained here also travels upward. A lead that reviewed its children
 
 ### I8 — Tasks are short
 
-The ground moves only at task boundaries, so two catch-ups is frequent only if boundaries are close together. A lead's boundary is *between integrations*, a narrower window than a member's, and it narrows with depth.
+A short task ends its turns often, and each turn that ends with a clean tree is a moment the harness can merge the parent in ([[#T2 — Catch-up (merge down)]]). A long task with a tree that is never clean is never merged, only reported. A lead's quiet moment is *between integrations*, a narrower window than a member's, and it narrows with depth.
 
 ### I12 — The project says what it is before it is divided
 

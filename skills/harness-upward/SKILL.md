@@ -13,15 +13,22 @@ A session works its queue until blocked. Orientation (`whoami` at start, `hook-o
 
 The order is your lead's; do not pick which task comes first. If orientation says your queue is empty, tell your lead plainly rather than invent work.
 
-## The rhythm: catch up twice
+## The rhythm: the harness keeps you caught up
 
 ```
-claimed ──T2──► current ──T11──► working ──T2──► presenting ──T4──► integrated
+claimed ──► current ──T11──► working ──► checked ──► presenting ──T4──► integrated
 ```
 
-Twice is your count. If your lead integrates a sibling after you present, it catches you up itself with `harness integrate`; do not come back to do it.
+**`T2` catch-up** is the harness's job, not a count you keep. It merges your lead's branch into your worktree when your session starts, when you open a task (`harness mark`), before each `harness check`, and whenever your lead's branch moves while your turn has ended and your tree is clean. You merge down; the node above fast-forwards up. Never the reverse.
 
-**`T2` catch-up 1**: after claiming, before the first commit, `git merge <parent-branch>`. You merge down; the node above fast-forwards up. Never the reverse.
+- **`caught up: N commit(s) from <lead> were merged into your worktree … (files)`** at a prompt: it happened while you were between turns. Re-read any of those files you had open.
+- **`N commit(s) behind <lead> since …: <reason>`** at a prompt, or a `behind` line in orientation: it could not merge. The line says what to do.
+  - Uncommitted changes: commit them (a WIP commit is fine). It merges at your next turn end, or now with `harness catchup`.
+  - A conflict: see below.
+- **End a turn with your work committed** whenever you can. An uncommitted tree is the one thing that keeps you stale.
+- `harness behind` shows the count, since when, and why. `harness catchup` merges now.
+
+If your lead integrates a sibling after you present, the harness or `harness integrate` catches you up; do not come back to do it.
 
 **`T3` guard check**: `harness doctor`. Exit 6 means this worktree is not guarded: stop and say which arm failed. Never work around the guard and never repair it yourself (`harness scaffold` refuses below rank 0). Report the failed arm to your lead and carry on with your task. A green run proves the document guard refuses and the other hooks match what was installed, not that every guard fires.
 
@@ -29,11 +36,14 @@ Twice is your count. If your lead integrates a sibling after you present, it cat
 
 **Work** inside your assigned scope. Seams between children belong to your lead (`I9`).
 
-**`T2` catch-up 2**: immediately before presenting. Conflicts surface here, and it makes your lead's merge a fast-forward.
+**Before presenting**: `harness check` merges your lead's branch in first, so the check describes the current tree and your lead's merge is a fast-forward. A report that opens with `STALE TREE` ran on a commit that could not be caught up: say so when you present, and don't read its failures as yours until you have.
 
-## When catch-up 2 conflicts — do not resolve it (`T7`)
+## When a catch-up conflicts — do not resolve it (`T7`)
+
+The harness aborts its own attempt and tells you. Reproduce it to collect it: `harness catchup` leaves the merge in place.
 
 ```bash
+harness catchup                               # the conflict, left in place
 git diff --name-only --diff-filter=U          # which files
 git show :1:FILE                              # base
 git show :2:FILE                              # ours
@@ -41,7 +51,7 @@ git show :3:FILE                              # theirs
 git log --merge --format='%h %an %(trailers:key=Task,valueonly)' -- FILE
 ```
 
-Send all of it to your lead, which states the cause and proposes a resolution. Then re-run your checks under the proposal and report what it does to your task: a check result, not assent.
+Then `git merge --abort`, and send all of it to your lead, which states the cause and proposes a resolution. Re-run your checks under the proposal and report what it does to your task: a check result, not assent.
 
 ## `T12` questions and waiting
 
@@ -108,7 +118,7 @@ Do it for anything you had to work out how to measure. Look one up first (`harne
 
 ## Checks (`I5`)
 
-`harness check` queues your commit on the project's test queue: tests from every job share one memory pool, longest-waiting weighed first, each job in a throwaway copy of the commit that is removed afterwards. So commit first (a WIP commit is fine); a dirty worktree is refused. It returns at once: end your turn, and your doorbell rings with the result (`--wait` blocks instead; `harness check --report <sha>` reprints it; `harness test` shows the queue). Lanes use the normal queue, so expect a wait; submit prints how long, counting only the arms each job runs. Every check names each arm's memory estimate, the least it may need: `harness check --memory enrich=1.2G,dag=300M` (a command: `harness test --memory 2G -- <cmd>`). Without one the check is refused, and the refusal prints a ready `--memory` from each arm's last runs; copy it, adjusting where you know better. For an arm that has never run, `arm=?` runs it alone and uncapped and records its peak for next time (`harness test --memory ? -- <cmd>` for a command). Tests from every job run side by side as the memory pool allows, so under-estimating only costs a wait, never a failure; above twice the estimate a test is `KILLED (over its ceiling)`, a real failure to fix or an estimate to raise, never a flaky test to rerun. A first line about memory caps in a report ("capped by the harness's own watch", or `MEMORY CAPS OFF`) is a fact about the machine, not about your change: pass it to your lead as it reads, and don't treat it as a test failure. Each report row shows the arm's peak against what you asked and its last runs (`harness test --usage <arm>` lists them). If a check is slow, ask your lead to split its slow arm into smaller arms rather than iterating with `--arms`. On a worker, `harness check` runs only the arms your change touches (owner, 2026-10-08): the diff from your lead's branch, matched against each arm's `paths` in the manifest. A file no arm claims runs every arm, so does a manifest whose arms declare no `paths` (it says so; tell your lead), files in `checks_ignore` need none, and when nothing testable changed it records that and runs nothing. Present on that; your lead runs the full set once after merging. `--all` runs every arm here; `--arms a,b` picks arms by hand while you iterate (marked partial). Results are never reused across runs, because tests may read data the commit doesn't hold. Every arm it runs runs to the end, including after one fails, and the result is recorded against your commit. While you develop, run a single test file directly; never run a test module, the suite or a sweep yourself — they stalled the machine running side by side (obs 81). Queue those: `harness check`, or `harness test -- <command>` for a sweep or a probe. Report pass, fail and each check's declared blind spot. `NOT RUN (timed out)` means the check's `"timeout"` expired: it is not a fail, but say it did not run. `… N earlier line(s) omitted` means output was cut. Presenting unchecked work is a choice; say so in your report. A `hold` line in your orientation means `check` skips the arms that read that resource; name them when you present. If your brief `--requires` a commit, commit freely; `mark --done` refuses until your HEAD contains it, so catch up before presenting.
+`harness check` queues your commit on the project's test queue: tests from every job share one memory pool, longest-waiting weighed first, each job in a throwaway copy of the commit that is removed afterwards. So commit first (a WIP commit is fine); a dirty worktree is refused. It returns at once: end your turn, and your doorbell rings with the result (`--wait` blocks instead; `harness check --report <sha>` reprints it; `harness test` shows the queue). Lanes use the normal queue, so expect a wait; submit prints how long, counting only the arms each job runs. Every check names each arm's memory estimate, the least it may need: `harness check --memory enrich=1.2G,dag=300M` (a command: `harness test --memory 2G -- <cmd>`). Without one the check is refused, and the refusal prints a ready `--memory` from each arm's last runs; copy it, adjusting where you know better. For an arm that has never run, `arm=?` runs it alone and uncapped and records its peak for next time (`harness test --memory ? -- <cmd>` for a command). Tests from every job run side by side as the memory pool allows, so under-estimating only costs a wait, never a failure; above twice the estimate a test is `KILLED (over its ceiling)`, a real failure to fix or an estimate to raise, never a flaky test to rerun. A first line about memory caps in a report ("capped by the harness's own watch", or `MEMORY CAPS OFF`) is a fact about the machine, not about your change: pass it to your lead as it reads, and don't treat it as a test failure. Each report row shows the arm's peak against what you asked and its last runs (`harness test --usage <arm>` lists them). If a check is slow, ask your lead to split its slow arm into smaller arms rather than iterating with `--arms`. On a worker, `harness check` runs only the arms your change touches (owner, 2026-10-08): the diff from your lead's branch, matched against each arm's `paths` in the manifest. A file no arm claims runs every arm, so does a manifest whose arms declare no `paths` (it says so; tell your lead), files in `checks_ignore` need none, and when nothing testable changed it records that and runs nothing. Present on that; your lead runs the full set once after merging. `--all` runs every arm here; `--arms a,b` picks arms by hand while you iterate (marked partial). Results are never reused across runs, because tests may read data the commit doesn't hold. Every arm it runs runs to the end, including after one fails, and the result is recorded against your commit. While you develop, run a single test file directly; never run a test module, the suite or a sweep yourself — they stalled the machine running side by side (obs 81). Queue those: `harness check`, or `harness test -- <command>` for a sweep or a probe. Report pass, fail and each check's declared blind spot. `NOT RUN (timed out)` means the check's `"timeout"` expired: it is not a fail, but say it did not run. `… N earlier line(s) omitted` means output was cut. Presenting unchecked work is a choice; say so in your report. A `hold` line in your orientation means `check` skips the arms that read that resource; name them when you present. If your brief `--requires` a commit, commit freely; `mark --done` refuses until your HEAD contains it; `harness check` and `harness catchup` both merge it in.
 
 An arm that ends with `failed: a.py(1) b.py(2)` (or `failed: none`) is compared file by file with the project's baseline. When one is set, the result reads `vs baseline: new … · gone … · N same`, and check fails only on a new file or an arm that did not run. Report new ones as yours to explain; known reds are not.
 
@@ -118,7 +128,7 @@ Every commit carries a `Task:` trailer.
 
 ## `T4` present and `T10` release
 
-Your lead reads your diff, records the read, and runs `git merge --ff-only`. That merge is refused without the record, and a record you wrote yourself is refused. Skipping catch-up 2 makes it fail with `fatal: Not possible to fast-forward, aborting.` Never push.
+Your lead reads your diff, records the read, and runs `git merge --ff-only`. That merge is refused without the record, and a record you wrote yourself is refused. A branch that is behind its lead fails it with `fatal: Not possible to fast-forward, aborting.`; `harness integrate` catches a released child up first. Never push.
 
 ```bash
 harness mark <task-id> --done --note "what this work is"

@@ -741,6 +741,17 @@ def read_state():
                 n["bell"] = ringing and not n["unwoken"]
             except Exception:
                 n["mail"], n["calls"], n["bell"], n["unwoken"] = 0, 0, False, False
+            # How far behind its parent, as the harness's last pass left it
+            # (log 139): the count, since when, and why nothing merged it.
+            try:
+                b = CLI._read_json(CLI.behind_path(bctx, n["name"])) or {}
+                n["behind"] = ({"n": b["n"], "parent": b.get("parent"), "why": b.get("why"),
+                                "age": (int(time.time() - b["since"]) if b.get("since") else None),
+                                "blocked": b.get("kind") in ("conflict", "dirty", "git", "refused",
+                                                             "nowt")}
+                               if b.get("n") else None)
+            except Exception:
+                n["behind"] = None
         nodes.sort(key=lambda n: (n["rank"], n["name"]))
         pname = Path(repo).name
 
@@ -1586,6 +1597,12 @@ function card(n) {
   if ((n.holding || []).length) sym.push('<span class="g hd2" title="' +
       esc(n.holding.map(h => h.node + ' held on ' + n.name).join('\n')) + '">&#9939;&#8672; ' +
       n.holding.length + '</span>');
+  if (n.behind) sym.push('<span class="g ' + (n.behind.blocked ? 'mail' : 'wt2') + '" title="' +
+      n.behind.n + ' commit(s) behind ' + esc(n.behind.parent || 'its parent') +
+      (n.behind.age != null ? ' for ' + hm(n.behind.age) : '') + ' &middot; ' +
+      esc(n.behind.why || 'the harness merges it once its turn has ended') + '">&#8681;' +
+      n.behind.n + (n.behind.age != null ? ' <span class="num">' + hm(n.behind.age) +
+      '</span>' : '') + '</span>');
   if (s && s.cold) sym.push('<span class="g cold2" title="idle past the cache lifetime; ' +
       'the next turn re-reads ' + tokf(s.carry) + '">&#10052; cold</span>');
   if (s && s.carry) sym.push('<span class="g" title="context carried">ctx <span class="num">' +

@@ -5368,3 +5368,554 @@ class LogEntries88to91(unittest.TestCase):
             self.assertTrue((root / "proj").exists())             # j2 still there
             hz.testq_teardown(self.ctx, {"dir": str(b)})
         self.assertFalse((root / "proj").exists())
+
+
+class CatchUp(unittest.TestCase):
+    """Log 139: the harness merges a node's parent in whenever nothing there can
+    be disturbed by it, and says so, with the reason, when it cannot."""
+
+    def setUp(self):
+        self.env = mock.patch.dict(os.environ, {
+            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev"})
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.addCleanup(shutil.rmtree, self.ctx.dir, True)
+        repo = self.root / "proj"
+        repo.mkdir()
+        self.wt = {"main": repo, "dev": self.root / "wt-dev", "dev_1": self.root / "wt-dev_1"}
+        self.git("main", "init", "-q", "-b", "main")
+        (repo / "a.txt").write_text("a\n")
+        self.git("main", "add", "-A"); self.git("main", "commit", "-qm", "base")
+        self.git("main", "worktree", "add", "-q", "-b", "dev", str(self.wt["dev"]))
+        self.git("dev", "worktree", "add", "-q", "-b", "dev_1", str(self.wt["dev_1"]))
+        self.ctx.repo = self.ctx.worktree = repo
+        self.ctx.branch = "main"
+        for n in self.ctx.tree["nodes"]:
+            self.ctx.tree["nodes"][n]["branch"] = n
+        self.idx = {"nodes": {
+            "main": {"branch": "main", "worktree": str(repo), "parent": None, "rank": 0},
+            "dev": {"branch": "dev", "worktree": str(self.wt["dev"]), "parent": "main", "rank": 1},
+            "dev_1": {"branch": "dev_1", "worktree": str(self.wt["dev_1"]), "parent": "dev",
+                      "rank": 2}}}
+        for p in (mock.patch.object(hz, "load_index", return_value=self.idx),
+                  mock.patch.object(hz, "live_sessions", return_value=[]),
+                  mock.patch.object(hz, "agents_json", return_value=[])):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def git(self, node, *a):
+        r = subprocess.run(["git", *a], cwd=self.wt[node], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout.strip()
+
+    def commit(self, node, name, text="x\n"):
+        (self.wt[node] / name).write_text(text)
+        self.git(node, "add", "-A"); self.git(node, "commit", "-qm", f"{node}: {name}")
+        return self.git(node, "rev-parse", "HEAD")
+
+    def has(self, node, sha):
+        return subprocess.run(["git", "merge-base", "--is-ancestor", sha, node],
+                              cwd=self.wt["main"]).returncode == 0
+
+    def up(self, node, **kw):
+        return hz.catch_up(self.ctx, self.idx, node, "harness", **kw)
+
+    def test_the_count_and_since_when(self):
+        self.assertEqual(hz.behind_of(self.ctx, self.idx, "dev")["n"], 0)
+        self.assertIsNone(hz.behind_of(self.ctx, self.idx, "main"))        # rank 0 has no parent
+        t0 = time.time()
+        self.commit("main", "m1"); self.commit("main", "m2")
+        b = hz.behind_of(self.ctx, self.idx, "dev")
+        self.assertEqual((b["n"], b["parent"]), (2, "main"))
+        # When the parent FIRST moved past it, from the reflog: not the last move.
+        self.assertTrue(t0 - 2 <= b["since"] <= time.time() + 1)
+        self.assertIn("2 commit(s) behind main since ", hz.behind_words(b))
+
+    def test_a_clean_node_nobody_is_working_in_is_merged(self):
+        sha = self.commit("main", "m1")
+        st, info = self.up("dev")
+        self.assertEqual((st, info["n"], info["files"]), ("caught", 1, ["m1"]))
+        self.assertTrue(self.has("dev", sha))
+        rec = hz._read_json(hz.behind_path(self.ctx, "dev"))
+        self.assertEqual((rec["n"], rec["caught"]["n"], rec["caught"]["files"]), (0, 1, ["m1"]))
+        self.assertEqual(self.up("dev")[0], "current")
+
+    def test_each_thing_that_blocks_it_and_the_reason_is_recorded(self):
+        self.commit("main", "m1")
+        tip = self.git("dev", "rev-parse", "HEAD")
+        row = lambda st: [{"cwd": str(self.wt["dev"]), "status": st, "sessionId": "s"}]
+        with mock.patch.object(hz, "turn_ended", return_value=True):
+            self.assertEqual(self.up("dev", rows=row("busy"))[1]["kind"], "busy")
+            self.assertIn("running a command", self.up("dev", rows=row("shell"))[1]["why"])
+            # Its own session, acting in its own worktree, is not in its own way.
+            self.assertEqual(self.up("dev", rows=row("busy"), own=True, dry=True)[0], "would")
+        with mock.patch.object(hz, "turn_ended", return_value=False):
+            # Idle by the session file, but the transcript says a turn is running.
+            st, info = self.up("dev", rows=row("idle"))
+            self.assertEqual((st, info["kind"], info["occupied"]), ("blocked", "busy", True))
+        # A session in a child's worktree is the child's, never its parent's.
+        with mock.patch.object(hz, "turn_ended", return_value=False):
+            self.assertEqual(self.up("dev", dry=True, rows=[
+                {"cwd": str(self.wt["dev_1"]), "status": "busy", "sessionId": "c"}])[0], "would")
+        (self.ctx.dir / "testq").mkdir(exist_ok=True)
+        job = self.ctx.dir / "testq" / "j1.json"
+        job.write_text(json.dumps({"id": "j1", "kind": "check", "sha": tip, "state": "queued"}))
+        self.assertEqual(self.up("dev")[1]["kind"], "check")       # the commit under test stays put
+        job.unlink()
+        (self.ctx.dir / "halt.json").write_text(json.dumps({"at": hz._now(), "why": "stop"}))
+        self.assertEqual(self.up("dev")[1]["kind"], "halt")
+        (self.ctx.dir / "halt.json").unlink()
+        (self.wt["dev"] / "a.txt").write_text("edited\n")
+        st, info = self.up("dev")
+        self.assertEqual((st, info["kind"], info["occupied"]), ("blocked", "dirty", False))
+        self.assertEqual(self.up("dev", own=True)[1]["kind"], "dirty")     # own or not
+        rec = hz._read_json(hz.behind_path(self.ctx, "dev"))
+        self.assertEqual((rec["n"], rec["kind"]), (1, "dirty"))
+        self.assertEqual(self.git("dev", "rev-parse", "HEAD"), tip)        # nothing moved
+        gone = dict(self.idx["nodes"]["dev"], worktree=str(self.root / "nowhere"))
+        with mock.patch.dict(self.idx["nodes"], {"dev": gone}):
+            self.assertEqual(self.up("dev")[1]["kind"], "nowt")
+
+    def test_a_conflict_is_aborted_and_the_node_left_as_it_was(self):
+        self.commit("main", "a.txt", "main's\n")
+        tip = self.commit("dev", "a.txt", "dev's\n")
+        st, info = self.up("dev")
+        self.assertEqual((st, info["kind"], info["conflict"]), ("conflict", "conflict", ["a.txt"]))
+        self.assertEqual(self.git("dev", "rev-parse", "HEAD"), tip)
+        self.assertEqual(self.git("dev", "status", "--porcelain"), "")
+        self.assertIn("conflicts with main in a.txt",
+                      hz._read_json(hz.behind_path(self.ctx, "dev"))["why"])
+        # The node's own session keeps the conflict in place to collect it (T7).
+        self.assertEqual(self.up("dev", own=True, keep_conflict=True)[0], "conflict")
+        self.assertIn("UU a.txt", self.git("dev", "status", "--porcelain"))
+        self.git("dev", "merge", "--abort")
+        # Read from the record for as long as neither branch moves.
+        now = hz.behind_now(self.ctx, self.idx, "dev")
+        self.assertEqual((now["n"], now["kind"]), (1, "conflict"))
+
+    def test_a_merge_git_refuses_is_recorded_in_its_words_and_tried_once(self):
+        self.commit("main", "new.txt", "main's\n")
+        (self.wt["dev"] / "new.txt").write_text("an untracked file in the way\n")
+        tip = self.git("dev", "rev-parse", "HEAD")
+        st, info = self.up("dev")
+        self.assertEqual((st, info["kind"]), ("blocked", "refused"))
+        self.assertIn("git refused the merge:", info["why"])
+        self.assertIn("new.txt", info["why"])
+        self.assertEqual(self.git("dev", "rev-parse", "HEAD"), tip)
+        skip = {}
+        with mock.patch.object(hz, "catch_up", wraps=hz.catch_up) as cu:
+            hz.catchup_pass(self.ctx, idx=self.idx, rows=[], skip=skip, only={"dev"})
+            res = hz.catchup_pass(self.ctx, idx=self.idx, rows=[], skip=skip, only={"dev"})
+        self.assertEqual(cu.call_count, 1)                 # not written into again and again
+        self.assertEqual((res[0][1], res[0][2]["kind"]), ("blocked", "refused"))
+
+    def test_a_presented_node_keeps_its_record_and_review(self):
+        tip = self.commit("dev_1", "work")
+        (self.ctx.dir / "marks").mkdir()
+        (self.ctx.dir / "marks" / "t.json").write_text(json.dumps(
+            {"_node": "dev_1", "_presented_at": hz._now(), "_presented_sha": tip}))
+        hz.write_review(self.ctx, "dev_1", "dev_1", tip, "dev")
+        self.commit("dev", "sibling")                      # the lead integrated someone else
+        st, info = self.up("dev_1")
+        self.assertEqual((st, info["carried"]), ("caught", tip))
+        new = self.git("dev_1", "rev-parse", "HEAD")
+        m = hz.open_marks(self.ctx)["t"]
+        self.assertEqual((m["_presented_sha"], m["_caught_up_by"]), (new, "harness"))
+        rv = hz.read_review(self.ctx, "dev_1", new)
+        self.assertEqual((rv["reviewed_by_node"], rv["carried_from"]), ("dev", tip))
+        # So the lead's fast-forward goes through.
+        self.git("dev", "merge", "-q", "--ff-only", "dev_1")
+
+    def test_one_pass_carries_a_change_down_every_rank(self):
+        sha = self.commit("main", "m1")
+        res = hz.catchup_pass(self.ctx, idx=self.idx, rows=[])
+        self.assertEqual([(n, st) for n, st, _, _ in res], [("dev", "caught"), ("dev_1", "caught")])
+        self.assertTrue(self.has("dev_1", sha))
+        self.assertEqual([st for _, st, _, _ in hz.catchup_pass(self.ctx, idx=self.idx, rows=[])],
+                         ["current", "current"])
+
+    def test_the_ringer_passes_only_when_something_moved_and_tries_a_conflict_once(self):
+        S = {}
+        with mock.patch("sys.stdout", io.StringIO()) as out, \
+             mock.patch.object(hz, "catchup_pass", wraps=hz.catchup_pass) as p:
+            hz.ringer_catchup(self.ctx, S)
+            hz.ringer_catchup(self.ctx, S)
+            self.assertEqual(p.call_count, 1)              # nothing moved: one git call, no pass
+            self.commit("main", "a.txt", "main's\n")
+            self.commit("dev", "a.txt", "dev's\n")
+            with mock.patch.object(hz, "catch_up", wraps=hz.catch_up) as cu:
+                hz.ringer_catchup(self.ctx, S)
+                hz.ringer_catchup(self.ctx, S)
+                tried = [c.args[2] for c in cu.call_args_list]
+        self.assertEqual(tried.count("dev"), 1)            # the same pair of tips: not again
+        self.assertEqual(S["_behind"], ["dev"])
+        self.assertEqual(out.getvalue().count("dev is 1 commit(s) behind main"), 1)
+        self.assertIn("dev_1 caught up: 1 commit(s) from dev", out.getvalue())
+
+    def test_a_background_shell_blocks_only_when_it_is_doing_something(self):
+        d = self.root / "shell-snapshots"
+        d.mkdir()
+        (d / "s.sh").write_text("")
+        def shell(cmd):
+            p = subprocess.Popen(["bash", "-c", f"source '{d}/s.sh'; {cmd}; true"])
+            self.addCleanup(p.wait)
+            self.addCleanup(p.kill)
+            return p
+        me = {"pid": os.getpid(), "cwd": str(self.wt["dev"]), "status": "shell", "sessionId": "s"}
+        self.assertEqual(hz.session_work(me), "a command")          # no tool shell: cannot tell
+        self.assertEqual(hz.session_work({"pid": None}), "a command")
+        w = shell("sleep 30")
+        time.sleep(0.3)
+        self.assertIsNone(hz.session_work(me))                      # a loop that only waits
+        self.commit("main", "m1")
+        with mock.patch.object(hz, "turn_ended", return_value=True):
+            self.assertEqual(self.up("dev", rows=[me], dry=True)[0], "would")
+            job = shell(f"'{sys.executable}' -c 'import time; time.sleep(30)'")
+            time.sleep(0.3)
+            st, info = self.up("dev", rows=[me], dry=True)
+        self.assertEqual(st, "blocked")
+        self.assertRegex(info["why"], r"its session is running python")
+        w.kill(); job.kill()
+        for p in hz.proc_tree(os.getpid())[1:]:                     # the sleeps under them
+            try:
+                os.kill(p, 9)
+            except OSError:
+                pass
+
+    def test_since_when_is_the_first_move_it_lacks_however_many_followed(self):
+        def at(t, name):
+            with mock.patch.dict(os.environ, {"GIT_COMMITTER_DATE": f"{t} +0000"}):
+                return self.commit("main", name)
+        for i in range(3):
+            at(1700000000 + i, f"old{i}")
+        self.assertEqual(self.up("dev")[0], "caught")          # holds the first three moves
+        for i in range(9):
+            at(1700001000 + 100 * i, f"new{i}")
+        b = hz.behind_of(self.ctx, self.idx, "dev")
+        self.assertEqual((b["n"], b["since"]), (9, 1700001000))
+
+    def test_a_quiet_pass_asks_git_once_and_a_pending_one_does_not_recount(self):
+        S = {}
+        calls = []
+        real = hz.git
+        def spy(*a, **kw):
+            calls.append(a[0] if a[0] != "--no-optional-locks" else a[1])
+            return real(*a, **kw)
+        with mock.patch("sys.stdout", io.StringIO()), mock.patch.object(hz, "git", side_effect=spy):
+            hz.ringer_catchup(self.ctx, S)
+            calls.clear()
+            hz.ringer_catchup(self.ctx, S)                      # nothing moved
+            self.assertEqual(calls, ["for-each-ref"])
+            self.commit("main", "m1")
+            (self.wt["dev"] / "a.txt").write_text("edited\n")   # dev cannot be merged into
+            hz.ringer_catchup(self.ctx, S)
+            self.assertEqual(S["_behind"], ["dev"])
+            calls.clear()
+            hz.ringer_catchup(self.ctx, S)                      # still behind, nothing moved
+            self.assertNotIn("rev-list", calls)                 # counted once, not again
+            self.assertNotIn("reflog", calls)
+            self.assertIn("status", calls)                      # but looked at again
+        self.assertEqual(hz._read_json(hz.behind_path(self.ctx, "_pass"))["pid"], os.getpid())
+
+    def test_a_node_the_ringer_just_woke_is_left_alone_this_pass(self):
+        sha = self.commit("main", "m1")
+        S = {"dev": {"at": time.time(), "tries": 1}}
+        with mock.patch("sys.stdout", io.StringIO()):
+            hz.ringer_catchup(self.ctx, S)
+            self.assertFalse(self.has("dev", sha))
+            self.assertEqual(S["_behind"], ["dev"])             # so the next pass comes back
+            S["dev"]["at"] = time.time() - hz.WAKE_GRACE - 1
+            hz.ringer_catchup(self.ctx, S)
+        self.assertTrue(self.has("dev", sha))
+
+    def test_status_reads_the_ringer_s_records_while_it_is_running(self):
+        self.commit("main", "m1")
+        (self.wt["dev"] / "a.txt").write_text("edited\n")
+        with mock.patch("sys.stdout", io.StringIO()):
+            hz.ringer_catchup(self.ctx, {})
+        with mock.patch.object(hz, "ringer_alive", return_value={"pid": os.getpid()}), \
+             mock.patch.object(hz, "git", side_effect=AssertionError("no git")):
+            b = hz.behind_seen(self.ctx, self.idx, "dev")
+            self.assertEqual((b["n"], b["kind"]), (1, "dirty"))
+            self.assertEqual(hz.behind_seen(self.ctx, self.idx, "dev_1")["n"], 0)
+        with mock.patch.object(hz, "ringer_alive", return_value=None):     # no ringer: measured
+            self.assertEqual(hz.behind_seen(self.ctx, self.idx, "dev")["n"], 1)
+
+    def test_integrate_repairs_a_presentation_a_merge_left_behind(self):
+        tip = self.commit("dev_1", "work")
+        (self.ctx.dir / "marks").mkdir()
+        (self.ctx.dir / "marks" / "t.json").write_text(json.dumps(
+            {"_node": "dev_1", "_task": "t", "_presented_at": hz._now(), "_presented_sha": tip}))
+        hz.write_review(self.ctx, "dev_1", "dev_1", tip, "dev")
+        self.commit("dev", "sibling")
+        self.git("dev_1", "merge", "-q", "--no-edit", "dev")   # merged, and no record followed
+        code, out = self.run_as("dev", "integrate", "dev_1", read_roster=lambda p: None)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.git("dev", "rev-parse", "HEAD"), self.git("dev_1", "rev-parse", "HEAD"))
+        # A commit of its own after presenting is still refused.
+        self.commit("dev_1", "more")
+        code, out = self.run_as("dev", "integrate", "dev_1", read_roster=lambda p: None)
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("has committed since it presented", out)
+
+    def test_a_check_is_found_through_a_catch_up_merge(self):
+        tip = self.commit("dev_1", "work")
+        f = hz.check_report_path(self.ctx, "dev_1", tip)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps({"sha": tip, "passed": True}))
+        self.commit("dev", "sibling")
+        self.assertEqual(self.up("dev_1")[0], "caught")
+        head = self.git("dev_1", "rev-parse", "HEAD")
+        self.ctx.worktree = self.wt["dev_1"]
+        rep, at, hops = hz.check_through_catchup(self.ctx, "dev_1", head)
+        self.assertEqual((rep["passed"], at, hops), (True, tip, 1))
+        # A commit of its own on top is not a catch-up: that one is unchecked.
+        mine = self.commit("dev_1", "more")
+        self.assertEqual(hz.check_through_catchup(self.ctx, "dev_1", mine), (None, mine, 0))
+
+    def test_the_session_s_own_commands_catch_up_first_and_say_so(self):
+        sha = self.commit("main", "m1")
+        out = io.StringIO()
+        with redirect_stdout(out):
+            st, _ = hz.own_catchup(self.ctx, "dev")
+        self.assertEqual(st, "caught")
+        self.assertTrue(self.has("dev", sha))
+        self.assertIn("dev caught up: 1 commit(s) from main merged (1 file(s): m1)", out.getvalue())
+        self.commit("main", "m2")
+        (self.wt["dev"] / "a.txt").write_text("edited\n")
+        out = io.StringIO()
+        with redirect_stdout(out):
+            st, info = hz.own_catchup(self.ctx, "dev")
+        self.assertEqual((st, info["n"]), ("blocked", 1))
+        self.assertIn("BEHIND   1 commit(s) behind main", out.getvalue())
+        self.assertIn("uncommitted change(s)", out.getvalue())
+
+    def items(self, node):
+        with mock.patch.object(hz, "lead_owes", return_value=[]), \
+             mock.patch.object(hz, "rank0_owes", return_value=[]), \
+             mock.patch.object(hz, "open_waits", return_value={}), \
+             mock.patch.object(hz, "focus_family", return_value=None), \
+             mock.patch.object(hz, "unread_brief_comments", return_value={}), \
+             mock.patch.object(hz, "unactioned_briefs", return_value=[]), \
+             mock.patch.object(hz, "open_marks", return_value={}), \
+             mock.patch.object(hz, "queue", return_value=[]):
+            return hz.queue_items(self.ctx, node)
+
+    def test_the_node_is_told_at_its_next_prompt_once(self):
+        self.commit("main", "m1")
+        self.up("dev")                                     # merged while it was between turns
+        got = self.items("dev")
+        key = next(k for k in got if k.startswith("caught:"))
+        self.assertIn("caught up: 1 commit(s) from main were merged into your worktree", got[key])
+        self.assertIn("(1 file(s): m1) — re-read any you had open", got[key])
+        rows, ids = hz.delta(self.ctx, "dev", "sid-dev")
+        self.assertIn(key, ids)
+        self.assertEqual(hz.delta(self.ctx, "dev", "sid-dev"), ([], []))       # once
+        # Its own command already printed it: not said again at the prompt.
+        self.commit("main", "m2")
+        with redirect_stdout(io.StringIO()):
+            hz.own_catchup(self.ctx, "dev")
+        self.assertFalse(any(k.startswith("caught:") for k in self.items("dev")))
+        # Behind for a reason it can act on: said, with what to do.
+        self.commit("main", "m3")
+        (self.wt["dev"] / "a.txt").write_text("edited\n")
+        self.up("dev")
+        line = next(v for k, v in self.items("dev").items() if k.startswith("behind:"))
+        self.assertIn("1 commit(s) behind main", line)
+        self.assertIn("Commit what is there", line)
+        # Mid-turn is not something to tell it: it merges when the turn ends.
+        (self.wt["dev"] / "a.txt").write_text("a\n")
+        with mock.patch.object(hz, "turn_ended", return_value=False):
+            self.up("dev", rows=[{"cwd": str(self.wt["dev"]), "status": "busy", "sessionId": "s"}])
+        self.assertFalse(any(k.startswith("behind:") for k in self.items("dev")))
+
+    def test_the_lead_owes_only_what_only_it_can_clear(self):
+        def rec(**kw):
+            hz._save(hz.behind_path(self.ctx, "dev_1"),
+                     dict({"n": 4, "parent": "dev", "since": time.time() - 3600}, **kw))
+            with mock.patch.object(hz, "open_marks", return_value={}), \
+                 mock.patch.object(hz, "startable", return_value=[]), \
+                 mock.patch.object(hz, "unanswered", return_value=None), \
+                 mock.patch.object(hz, "node_running", return_value=(None, None)), \
+                 mock.patch.object(hz, "context_limits", return_value=(None, None)):
+                return [o for o in hz.lead_owes(self.ctx, "dev") if o[0] == "stale"]
+        owed = rec(kind="conflict", why="it conflicts with dev in a.txt", occupied=True)
+        self.assertEqual([(o[1], o[2]) for o in owed],
+                         [("dev_1", "4 commit(s) behind you: it conflicts with dev in a.txt")])
+        self.assertIn("yours to mediate", hz.owed_line(*owed[0]))
+        owed = rec(kind="dirty", why="2 uncommitted change(s) there", occupied=False)
+        self.assertIn("harness catchup dev_1", hz.owed_line(*owed[0]))
+        self.assertEqual(rec(kind="dirty", why="x", occupied=True), [])    # its session commits
+        self.assertEqual(rec(kind="busy", why="its session is mid-turn"), [])
+        self.assertEqual(rec(kind="conflict", why="x", since=time.time() - 60), [])   # not yet
+        (self.ctx.dir / "halt.json").write_text(json.dumps({"at": hz._now(), "why": "stop"}))
+        self.assertEqual(rec(kind="conflict", why="x"), [])                # nothing new in a halt
+
+    def test_a_report_on_a_behind_tree_opens_by_saying_so(self):
+        b = {"n": 42, "parent": "dev_tests", "since": time.time() - 60,
+             "why": "it conflicts with dev_tests in schema.sql"}
+        rep = hz.make_check_report("dev_1", "a" * 40, [], 0, None, behind=b)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            hz.print_check_report(rep, None)
+        first = out.getvalue().splitlines()[0]
+        self.assertTrue(first.startswith("STALE TREE: this commit is 42 commit(s) behind dev_tests"))
+        self.assertIn("may be the difference, not your change", first)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            hz.print_check_report(hz.make_check_report("dev_1", "a" * 40, [], 0, None), None)
+        self.assertNotIn("STALE", out.getvalue())
+
+    def run_as(self, node, *argv, sid="s" * 36, **patches):
+        """One `harness ...` command as `node`'s session (sid None: a shell)."""
+        self.ctx.me, self.ctx.branch, self.ctx.worktree = node, node, self.wt[node]
+        self.idx.update(project="proj", byBranch={n: n for n in self.idx["nodes"]},
+                        byWorktree={sp["worktree"]: n for n, sp in self.idx["nodes"].items()})
+        patches.setdefault("print_delta", lambda *a, **k: None)
+        out, code = io.StringIO(), 0
+        env = dict(os.environ, CLAUDE_CODE_SESSION_ID=sid or "")
+        if not sid:
+            env.pop("CLAUDE_CODE_SESSION_ID")
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.dict(os.environ, env, clear=True), \
+             mock.patch.multiple(hz, **patches), \
+             mock.patch("sys.argv", ["harness", *argv]), \
+             redirect_stdout(out), mock.patch("sys.stderr", out):
+            try:
+                hz.main()
+            except SystemExit as e:
+                code = e.code or 0
+        return code, out.getvalue()
+
+    def test_behind_says_how_far_since_when_and_why(self):
+        self.commit("main", "m1")
+        (self.wt["dev"] / "a.txt").write_text("edited\n")
+        code, out = self.run_as("dev", "behind")
+        self.assertTrue(out.startswith("1  commits behind main (main) since "), out)
+        self.assertIn("1 uncommitted change(s) there", out)
+        code, out = self.run_as("main", "behind", "--all")
+        self.assertIn("dev            1 commit(s) behind main", out)
+        self.assertIn("dev_1          current with dev", out)
+        self.assertIn("1 of 2 node(s) behind their parent", out)
+
+    def test_catchup_by_hand_for_itself_and_for_the_nodes_below(self):
+        sha = self.commit("main", "m1")
+        code, out = self.run_as("dev", "catchup", "--dry-run")
+        self.assertIn("dev would catch up 1 commit(s) from main", out)
+        self.assertFalse(self.has("dev", sha))
+        code, out = self.run_as("dev", "catchup")
+        self.assertEqual(code, 0, out)
+        self.assertTrue(self.has("dev", sha))
+        self.assertIn("dev is current with main", self.run_as("dev", "catchup")[1])
+        sha2 = self.commit("main", "m2")
+        code, out = self.run_as("main", "catchup", "--all")
+        self.assertTrue(self.has("dev_1", sha2), out)
+        # Not a node below the caller: refused, by name.
+        code, out = self.run_as("dev_1", "catchup", "dev")
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("not below dev_1", out)
+        # Its own conflict stays in place to be collected, and is not resolved.
+        self.commit("main", "a.txt", "main's\n")
+        self.commit("dev", "a.txt", "dev's\n")
+        code, out = self.run_as("dev", "catchup")
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("dev CONFLICTS with main in: a.txt", out)
+        self.assertIn("UU a.txt", self.git("dev", "status", "--porcelain"))
+
+    def check(self, node):
+        sent = {}
+        def submit(ctx, kind, sha, n, sid, **kw):
+            sent.update(kw, sha=sha)
+            return {"id": "j1", "queue": "priority"}, "queued"
+        code, out = self.run_as(
+            node, "check", "--memory", "x=100M",
+            load_checks=lambda ctx: [{"name": "x", "command": "true", "blindSpot": "b"}],
+            role_of=lambda ctx, n: "lead", testq_submit=submit,
+            testq_wait_phrase=lambda ctx, job: "")
+        return code, out, sent
+
+    def test_a_check_merges_the_parent_in_first(self):
+        sha = self.commit("main", "m1")
+        code, out, sent = self.check("dev")
+        self.assertEqual(code, 0, out)
+        self.assertIn("dev caught up: 1 commit(s) from main", out)
+        self.assertTrue(self.has("dev", sha))
+        self.assertEqual(sent["sha"], self.git("dev", "rev-parse", "HEAD"))   # the merged commit
+        self.assertIsNone(sent["behind"])
+
+    def test_a_check_that_cannot_catch_up_still_runs_and_is_stamped(self):
+        self.commit("main", "a.txt", "main's\n")
+        tip = self.commit("dev", "a.txt", "dev's\n")
+        code, out, sent = self.check("dev")
+        self.assertEqual(code, 0, out)
+        self.assertIn("BEHIND   1 commit(s) behind main", out)
+        self.assertEqual((sent["sha"], sent["behind"]["n"], sent["behind"]["parent"]),
+                         (tip, 1, "main"))
+        self.assertIn("conflicts with main in a.txt", sent["behind"]["why"])
+        self.assertEqual(self.git("dev", "status", "--porcelain"), "")     # aborted, not left
+
+    def test_a_session_starts_on_its_lead_s_current_tree(self):
+        sha = self.commit("main", "m1")
+        started = []
+        code, out = self.run_as(
+            "main", "spawn", "dev", sid=None,
+            read_roster=lambda p: None, startable=lambda ctx, n: [{"task": "t"}],
+            grants_for=lambda ctx, n: [], launch_cmd=lambda *a: ["true"],
+            assignment_for=lambda ctx, n: ("m", "e"),
+            launch_bg=lambda cmd, cwd: (started.append((cwd, self.has("dev", sha))), (True, ""))[1])
+        self.assertIn("dev caught up: 1 commit(s) from main", out)
+        self.assertEqual(started, [(str(self.wt["dev"]), True)])           # merged BEFORE it starts
+
+    def test_a_task_starts_on_the_lead_s_current_tree(self):
+        (self.ctx.dir / "briefs").mkdir()
+        (self.ctx.dir / "marks").mkdir()
+        for t in ("t", "u"):
+            (self.ctx.dir / "briefs" / f"{t}.json").write_text(
+                json.dumps({"task": t, "node": "dev_1"}))
+        opened = dict(unreported=lambda *a: [], claim_conflict=lambda ctx, n: (None, "unclaimed"),
+                      read_spend_or_none=lambda sid: (None, "no transcript"),
+                      assignment_for=lambda ctx, n: ("m", "e"))
+        sha = self.commit("dev", "d1")
+        code, out = self.run_as("dev_1", "mark", "t", **opened)
+        self.assertEqual(code, 0, out)
+        self.assertIn("dev_1 caught up: 1 commit(s) from dev", out)
+        rec = json.loads((self.ctx.dir / "marks" / "t.json").read_text())
+        self.assertTrue(self.has("dev_1", sha))
+        self.assertEqual(rec["_sha"], self.git("dev_1", "rev-parse", "HEAD"))
+        self.assertNotIn("_behind_at_open", rec)
+        # It cannot be caught up: the task opens all the same, and keeps the count.
+        self.commit("dev", "d2")
+        (self.wt["dev_1"] / "a.txt").write_text("edited\n")
+        code, out = self.run_as("dev_1", "mark", "u", **opened)
+        self.assertEqual(code, 0, out)
+        self.assertIn("BEHIND   1 commit(s) behind dev", out)
+        rec = json.loads((self.ctx.dir / "marks" / "u.json").read_text())
+        self.assertEqual((rec["_behind_at_open"]["n"], rec["_behind_at_open"]["parent"]), (1, "dev"))
+
+    def test_integrate_catches_a_released_child_up_through_the_same_door(self):
+        tip = self.commit("dev_1", "work")
+        (self.ctx.dir / "marks").mkdir()
+        (self.ctx.dir / "marks" / "t.json").write_text(json.dumps(
+            {"_node": "dev_1", "_task": "t", "_presented_at": hz._now(), "_presented_sha": tip}))
+        hz.write_review(self.ctx, "dev_1", "dev_1", tip, "dev")
+        self.commit("dev", "sibling")
+        code, out = self.run_as("dev", "integrate", "dev_1", read_roster=lambda p: None)
+        self.assertEqual(code, 0, out)
+        self.assertIn("caught up (1 behind)", out)
+        self.assertIn("review carried from " + tip[:8], out)
+        self.assertEqual(self.git("dev", "rev-parse", "HEAD"), self.git("dev_1", "rev-parse", "HEAD"))
+        self.assertEqual(hz.open_marks(self.ctx)["t"]["_caught_up_by"], "dev")
+
+    def test_a_fact_measured_on_a_behind_tree_says_so(self):
+        self.commit("main", "m1")
+        code, out = self.run_as("dev", "fact", "peak", "--is", "3G", "--from", "echo 3G")
+        self.assertEqual(code, 0, out)
+        self.assertIn("STALE TREE: measured 1 commit(s) behind main", out)
+        obs = hz.load_fact(self.ctx, "peak")[1]["observations"][-1]
+        self.assertEqual((obs["behind"], obs["behind_of"]), (1, "main"))
+        self.assertIn("STALE    measured on a tree 1 commit(s) behind main",
+                      self.run_as("dev", "fact", "peak")[1])

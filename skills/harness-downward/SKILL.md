@@ -162,9 +162,21 @@ harness mark <task> --close --no-recycle
 
 A child presents with `--done` and cannot close its own; presenting rings your doorbell, so review it then. If orientation says a child is "unwoken", the ringer woke it several times and its mail is still unread: look at it (`harness status`), and recycle it if it is stuck. A `harness hold <path> --until <task>` you place rings the lane doing that task and marks its wait on you answered. It never applies to that task's own checks: the lane's, or yours after integrating it (any commit carrying its `Task:` trailer). `whoami` lists what waits on you; `status` shows `awaiting sign-off`. Review first. `--close` refuses on a dirty worktree or an open unpresented mark; with nothing queued, nothing starts. Sign off promptly: after twenty minutes the rank above you is told, and your `Stop` hook blocks once while a sign-off is owed.
 
+## Children behind you
+
+The harness merges your branch into each child whenever no turn is running there and its tree is clean: at its session's start, at each task's start, before each check, and within a minute of your branch moving. You don't ask a child to catch up.
+
+- `harness status` shows `⇩N since …` and the reason on each child's row; `harness behind --all` lists every node below you; orientation has a `stale` line when any child is behind.
+- A **`stale`** row in what you owe means a child has been behind 15 minutes for a reason only you can clear:
+  - **a conflict**: mediate it (next section). The harness aborted its attempt, so the child's tree is untouched.
+  - **uncommitted changes with no session there**: look at the worktree, commit or discard what is in it, then `harness catchup <child>`.
+- A child that is mid-turn or has uncommitted work of its own is not yours to fix: it merges when its turn ends with the work committed.
+- A check report or a fact that says `STALE TREE` was measured on a commit behind you. Read its failures as possibly the difference, and have it measured again once the child is current.
+- `harness catchup <child>`, `--children` or `--all` runs the same merge now, with the same tests.
+
 ## `T7` / `T8` — mediating a conflict
 
-The child sends stages and authors from its catch-up. Authorship decides the transaction:
+The child sends stages and authors from its catch-up (`harness catchup` in its worktree leaves the conflict in place to collect). Authorship decides the transaction:
 
 ```bash
 git log --merge --format='%(trailers:key=Task,valueonly)' -- FILE

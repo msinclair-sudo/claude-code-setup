@@ -157,7 +157,7 @@ Runs in your worktree; underneath is `git merge --ff-only <child-branch>`. Use t
 
 Rank 0 may brief any node. When it briefs one of yours, or a node below one of yours, your doorbell says so and names a carrier, `<task>.up-<you>`.
 
-- **Your own child:** you did not write the brief and you don't hand it down or retype it. Start the child (`harness spawn <child>`), answer it, review its work and sign it off as you would any task you issued.
+- **Your own child:** you did not write the brief and you don't hand it down or retype it. Rank 0 may start the child itself, and your doorbell says so when it has; if it has not, you start it (`harness spawn <child>`). Either way you answer it, review its work and sign it off as you would any task you issued.
 - **Then carry it up:** once the task below is signed off, `harness mark <task>.up-<you>`, then `harness mark <task>.up-<you> --done`. That presents the work to your own lead.
 - You may still rewrite the brief if the work must change; rank 0 is told, and the earlier text stays in `harness brief <task> --history`.
 

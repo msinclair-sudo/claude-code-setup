@@ -2115,6 +2115,31 @@ def cmd_halt(a):
           f"finishes. harness resume ends it.")
 
 
+def direct_start(ctx, by, node):
+    """The task `node` would start on or resume, when rank 0 (`by`) briefed it
+    for the node directly. -> (task, None), or (None, (its task, the one ahead))
+    when such a brief is queued behind someone else's, or (None, None).
+
+    Only the task the session would actually open counts. The order of a queue
+    is its lead's, so a direct brief standing second does not let rank 0 start
+    the node on whatever stands first."""
+    try:
+        if ctx.rank(by) != 0:
+            return None, None
+        own = [t for t, r in open_marks(ctx).items()
+               if r.get("_node") == node and not r.get("_presented_at")]
+        if own:
+            b = load_brief(ctx, own[0])[1] or {}
+            return (b.get("task") or own[0], None) if b.get("direct_by") == by else (None, None)
+        nq = startable(ctx, node)
+        if nq and nq[0].get("direct_by") == by:
+            return nq[0]["task"], None
+        later = next((b["task"] for b in nq[1:] if b.get("direct_by") == by), None)
+        return None, ((later, nq[0]["task"]) if later else None)
+    except Exception:
+        return None, None
+
+
 def cmd_spawn(a):
     """Launch one correctly-named background session per unoccupied node.
 
@@ -2170,12 +2195,22 @@ def cmd_spawn(a):
         if n == here:
             print(f"  skip {n:<12} this session — it cannot spawn into its own worktree")
             skipped += 1; continue
+        _direct = None
         if mine is not None and n not in mine:
             _p = (ctx.tree["nodes"].get(n) or {}).get("parent")
-            print(f"  skip {n:<12} not your child — "
-                  + (f"{_p} starts it, and only {_p} knows what it is for"
-                     if _p else "it is rank 0; the operator starts it"))
-            skipped += 1; continue
+            # Rank 0 starts a node on the task it briefed for it directly (log
+            # 152; owner, 2026-10-12): it wrote the brief, so it knows what the
+            # session is for, and its lead need not act before the work begins.
+            _direct, _behind = direct_start(ctx, here, n)
+            if not _direct:
+                print(f"  skip {n:<12} not your child — "
+                      + (f"{_p} starts it, and only {_p} knows what it is for"
+                         if _p else "it is rank 0; the operator starts it")
+                      + (f".\n  {'':<17} '{_behind[0]}', which you briefed for it, is queued "
+                         f"behind '{_behind[1]}': it starts on that first. To put yours "
+                         f"first: harness queue {n} --order {_behind[0]} --why \"...\""
+                         if _behind else ""))
+                skipped += 1; continue
         if n in occupied:
             who = occupied[n][0].get("name") or "?"
             print(f"  skip {n:<12} occupied by {who}"); skipped += 1; continue
@@ -2250,6 +2285,14 @@ def cmd_spawn(a):
                 skipped += 1; continue
             stopped_path(ctx, n).unlink(missing_ok=True)
             print(f"  spawned {name:<18} {model}/{effort:<7} in {sp['worktree']}{reach}")
+            if _direct:
+                # Its lead did not start it, and is the one who reviews it.
+                _p = (ctx.tree["nodes"].get(n) or {}).get("parent")
+                ring_inbox(ctx.state, _p, here,
+                           f"{here} started {n} on '{_direct}', which it briefed for {n} "
+                           f"directly. Nothing for you to start: you answer it, review its "
+                           f"work and sign it off.", "low")
+                print(f"  {'':<17} {_p} is told: it reviews and signs off '{_direct}'")
         launched += 1
     verb = "would spawn" if a.dry_run else "spawned"
     print(f"{verb} {launched}, skipped {skipped}"
@@ -11217,8 +11260,9 @@ def direct_carriers(ctx, task, b, writer):
             ring_inbox(ctx.state, n, "harness",
                        f"{writer} briefed {node} directly: '{task}' (harness brief {task}). "
                        "You did not write it and you do not hand it down. "
-                       + (f"{node} is your child, so you start it (harness spawn {node}), answer "
-                          f"it, review its work and sign it off as you would any task of yours. "
+                       + (f"{node} is your child: {writer} may start it itself, and if it has "
+                          f"not, you do (harness spawn {node}). You answer it, review its work "
+                          f"and sign it off as you would any task of yours. "
                           if mine else "")
                        + f"You carry it up to {parent} as {ct}, which opens once {below} is "
                          f"signed off.", "high" if mine else "low")
@@ -11585,8 +11629,9 @@ def cmd_brief(a):
             made = direct_carriers(ctx, a.task, rec, me)
             if made:
                 print(f"  '{target}' answers to '{parent}', which did not write this. Told "
-                      f"{', '.join(n for _, n in made)}; {parent} starts {target}, reviews its "
-                      f"work and signs it off.")
+                      f"{', '.join(n for _, n in made)}; {parent} reviews its work and signs "
+                      f"it off.\n  Start it yourself (harness spawn {target}), or leave that "
+                      f"to {parent}.")
                 for ct, n in made:
                     print(f"  carrier {ct} for {n}: it presents this work one rank up")
         elif rec.get("direct_by") and b is not None and rec["direct_by"] in ctx.tree["nodes"]:

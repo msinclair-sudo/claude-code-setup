@@ -5457,6 +5457,56 @@ class Log152(unittest.TestCase):
         self.assertEqual(self.brief("dev_dag", "own", "--for", "dev_dag", "--write", "x")[0],
                          hz.REFUSED)
 
+    def spawn(self, me, node):
+        self.ctx.me = self.ctx.branch = me
+        nodes = self.ctx.tree["nodes"]
+        idx = {"project": "p", "byBranch": {n: n for n in nodes}, "byWorktree": {},
+               "nodes": {n: {"worktree": f"/w/{n}", "branch": n, "parent": s.get("parent"),
+                             "rank": self.ctx.rank(n)} for n, s in nodes.items()}}
+        started, out = [], io.StringIO()
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "s" * 36}), \
+             mock.patch.multiple(
+                 hz, load_index=lambda *a, **k: idx, agents_json=lambda *a: [],
+                 read_roster=lambda p: None, grants_for=lambda c, n: [],
+                 launch_cmd=lambda *a: ["true"], assignment_for=lambda c, n: ("m", "e"),
+                 launch_bg=lambda cmd, cwd: (started.append(cwd), (True, ""))[1],
+                 catch_up=lambda *a, **k: ("current", {}), print_delta=lambda *a, **k: None), \
+             mock.patch("sys.argv", ["harness", "spawn", node]), \
+             redirect_stdout(out), mock.patch("sys.stderr", out):
+            try:
+                hz.main()
+            except SystemExit:
+                pass
+        return started, out.getvalue()
+
+    def test_rank_0_starts_a_node_on_the_task_it_briefed_directly(self):
+        self.brief("main", "environment-dag", "--for", "dev_dag", "--write", "build it")
+        started, out = self.spawn("main", "dev_dag")
+        self.assertEqual(started, ["/w/dev_dag"], out)
+        self.assertIn("starts on environment-dag", out)
+        (told,) = [m for m in self.mail("dev") if m["from"] == "main"]
+        self.assertEqual(told["priority"], "low")
+        self.assertIn("main started dev_dag on 'environment-dag'", told["text"])
+        self.assertIn("Nothing for you to start", told["text"])
+
+    def test_rank_0_does_not_start_a_node_on_someone_else_s_task(self):
+        self.brief("dev", "devs-own", "--for", "dev_dag", "--write", "dev's work")
+        started, out = self.spawn("main", "dev_dag")
+        self.assertEqual(started, [])
+        self.assertIn("not your child — dev starts it", out)
+        # Its own direct brief, queued behind the lead's: said, with how to put it first.
+        self.brief("main", "environment-dag", "--for", "dev_dag", "--write", "build it")
+        started, out = self.spawn("main", "dev_dag")
+        self.assertEqual(started, [])
+        self.assertIn("'environment-dag', which you briefed for it, is queued behind 'devs-own'", out)
+        self.assertIn("harness queue dev_dag --order environment-dag", out)
+        # A lead gained nothing: it starts its own children only.
+        self.brief("main", "leaf", "--for", "dev_dag_1", "--write", "x")
+        started, out = self.spawn("dev", "dev_dag_1")
+        self.assertEqual(started, [])
+        self.assertIn("not your child — dev_dag starts it", out)
+
     def test_the_lead_may_rewrite_it_and_rank_0_hears(self):
         self.brief("main", "environment-dag", "--for", "dev_dag", "--write", "build it")
         code, out = self.brief("dev", "environment-dag", "--write", "build it my way")

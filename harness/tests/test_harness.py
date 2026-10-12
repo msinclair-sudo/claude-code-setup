@@ -1303,7 +1303,21 @@ class Stale(unittest.TestCase):
 
     def test_nag_names_the_command_that_clears_it(self):
         """obs 65: the stale nag pointed at `sweep`, which only lists units."""
-        rows = [r for r in hz.rank0_owes(self.ctx, "main") if r[0] == "sweep"]
+        # Never counted at a prompt (2026-10-12: the count took 3 to 10 s on a
+        # live tree): rank 0's rows come from the count the ringer keeps.
+        slow = AssertionError("counted on the prompt path")
+        with mock.patch.object(hz, "stale_records", side_effect=slow), \
+             mock.patch.object(hz, "completed_units", side_effect=slow), \
+             mock.patch.object(hz, "ended_count", side_effect=slow):
+            self.assertEqual([r for r in hz.rank0_owes(self.ctx, "main") if r[0] == "sweep"], [])
+        with mock.patch.object(hz, "ended_count", return_value=3):
+            c = hz.sweep_counts(self.ctx, fresh=True)
+        self.assertEqual((c["units"], c["stale"], c["sessions"]), (0, 2, 3))
+        self.assertEqual(hz.sweep_counts(self.ctx)["stale"], 2)          # kept in a file
+        with mock.patch.object(hz, "stale_records", side_effect=slow), \
+             mock.patch.object(hz, "completed_units", side_effect=slow), \
+             mock.patch.object(hz, "ended_count", side_effect=slow):
+            rows = [r for r in hz.rank0_owes(self.ctx, "main") if r[0] == "sweep"]
         self.assertEqual([r[1:3] for r in rows], [("stale", "2 stale record(s)")])
         a = mock.Mock(stale=False, sessions=False, unit=None, all=True)
         out = io.StringIO()
@@ -1942,6 +1956,7 @@ class Halt(unittest.TestCase):
         def stop():
             o = io.StringIO()
             with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+                 mock.patch.object(hz, "hook_ctx", return_value=self.ctx), \
                  mock.patch.object(hz, "git", return_value=(0, "", "")), \
                  mock.patch.object(hz, "docs_apply_step"), \
                  mock.patch.object(hz, "bell_armed", return_value={"pid": 1}), \
@@ -3704,6 +3719,7 @@ class DoorbellHooks(unittest.TestCase):
         self.ctx.lock_path("main").parent.mkdir(parents=True, exist_ok=True)
         self.ctx.lock_path("main").write_text(json.dumps({"node": "main", "session_id": "sess-main"}))
         for p in [mock.patch.object(hz, "Ctx", return_value=self.ctx),
+                  mock.patch.object(hz, "hook_ctx", return_value=self.ctx),
                   mock.patch.object(hz, "git", return_value=(0, "", "")),
                   mock.patch.object(hz, "docs_apply_step", return_value=None),
                   mock.patch.object(hz, "reset_step", return_value=False),
@@ -3775,6 +3791,37 @@ class DoorbellHooks(unittest.TestCase):
             hz.cmd_hook_orient(mock.Mock())
         self.assertIn("from owner: re-file the delete", o.getvalue())
         self.assertEqual(hz.MAIL().pending(self.ctx.state, "main"), 0)
+
+    def test_a_slow_orientation_is_cut_short_and_the_mail_still_arrives(self):
+        # 2026-10-12: rank 0's prompt took 3 to 10 s, the hook was killed at 5 s,
+        # and the mail the ringer had woken the session for was never printed.
+        hz.ring_inbox(self.ctx.state, "main", "owner", "re-file the delete")
+        self.addCleanup(setattr, hz, "QUIET", hz.QUIET)
+        o, t0 = io.StringIO(), time.time()
+        with mock.patch.object(hz, "print_delta", side_effect=lambda *a: time.sleep(5)), \
+             mock.patch.object(hz, "HOOK_BUDGET", 0.3), \
+             mock.patch("sys.stdin", io.StringIO(json.dumps({"session_id": "sess-main"}))), \
+             redirect_stdout(o), self.assertRaises(SystemExit):
+            hz.cmd_hook_orient(mock.Mock())
+        self.assertLess(time.time() - t0, 2)
+        self.assertIn("skipped this prompt", o.getvalue())
+        self.assertIn("from owner: re-file the delete", o.getvalue())
+        self.assertEqual(hz.MAIL().pending(self.ctx.state, "main"), 0)
+        self.assertIn("main hook-orient over 0.3s", (self.ctx.dir / "hook_slow.log").read_text())
+
+    def test_the_budget_cuts_work_that_guards_against_every_exception(self):
+        def stubborn():
+            try:
+                time.sleep(5)
+            except Exception:                    # the guards inside the real work
+                pass
+        t0 = time.time()
+        self.assertFalse(hz.within_budget(0.2, stubborn))
+        self.assertLess(time.time() - t0, 2)
+        self.assertTrue(hz.within_budget(0.5, lambda: None))
+        t0 = time.time()
+        time.sleep(0.6)                          # and its alarm does not outlive it
+        self.assertGreater(time.time() - t0, 0.5)
 
     def test_the_tool_call_hook_finds_its_node_and_skips_subagents(self):
         M = hz.MAIL()
@@ -4928,20 +4975,32 @@ class TestQueue(unittest.TestCase):
         self.assertEqual(ex.call_args.args[1][2], "testd")
         self.assertIn("finishing what runs", out.getvalue())
 
-    def test_a_draining_runner_starts_nothing(self):
+    def test_a_draining_runner_opens_no_job_but_an_open_one_runs_out_its_arms(self):
+        # Log 153: "start nothing" left an open job's last arm waiting for good,
+        # so the job never closed and the restart never came: 45 minutes.
         jobs = [{"id": "j", "kind": "check", "t": time.time(), "requested_by": [],
                  "tests": {"a": hz.test_spec(2**20)}}]
         started = []
-        with mock.patch.object(hz, "testq_jobs", return_value=jobs), \
-             mock.patch.object(hz, "test_pool", return_value=(2**30, 8)), \
-             mock.patch.object(hz, "arm_seconds", return_value={}), \
-             mock.patch.object(hz, "slot_tickets", return_value=[]), \
-             mock.patch.object(hz, "halted", return_value=False), \
-             mock.patch.object(hz, "testd_ledger"), \
-             mock.patch.object(hz, "testd_start", side_effect=lambda *a: started.append(1)):
-            hz.testd_tick(self.ctx, {"open": {}, "running": {}, "slot": object(), "said": "",
-                                     "drain": True})
-        self.assertEqual(started, [])
+
+        def tick(is_open):
+            with mock.patch.object(hz, "testq_jobs", return_value=jobs), \
+                 mock.patch.object(hz, "test_pool", return_value=(2**30, 8)), \
+                 mock.patch.object(hz, "arm_seconds", return_value={}), \
+                 mock.patch.object(hz, "slot_tickets", return_value=[]), \
+                 mock.patch.object(hz, "halted", return_value=False), \
+                 mock.patch.object(hz, "testd_ledger"), \
+                 mock.patch.object(hz, "testd_open", side_effect=AssertionError("opened a job")), \
+                 mock.patch.object(hz, "testd_start",
+                                   side_effect=lambda ctx, S, j, name, *a: (
+                                       started.append(name),
+                                       j["tests"][name].update(state="running"))):
+                hz.testd_tick(self.ctx, {"open": {"j": {"job": jobs[0]}} if is_open else {},
+                                         "running": {}, "slot": object(), "said": "",
+                                         "drain": True})
+        tick(False)
+        self.assertEqual(started, [])                # a queued job is left for the new runner
+        tick(True)
+        self.assertEqual(started, ["a"])             # an open job's waiting arm still starts
 
     def test_an_outage_cannot_push_the_measured_runs_out_of_the_history(self):
         for i in range(5):
@@ -5368,6 +5427,62 @@ class LogEntries88to91(unittest.TestCase):
             self.assertTrue((root / "proj").exists())             # j2 still there
             hz.testq_teardown(self.ctx, {"dir": str(b)})
         self.assertFalse((root / "proj").exists())
+
+
+class HookPosition(unittest.TestCase):
+    """2026-10-12: a hook reads where it stands from the worktree's own files.
+    `Ctx()` starts three git processes, and under load on a slow disk those were
+    most of a prompt hook that has five seconds."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.repo, self.wt = self.root / "proj", self.root / "proj-dev"
+        self.g = lambda cwd, *a: subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=cwd, check=True,
+            capture_output=True)
+        self.repo.mkdir()
+        self.g(self.repo, "init", "-q", "-b", "main")
+        self.g(self.repo, "commit", "-q", "--allow-empty", "-m", "a")
+        self.g(self.repo, "worktree", "add", "-q", "-b", "dev", str(self.wt))
+        (self.wt / "src").mkdir()
+
+    def at(self, cwd):
+        """What git says there, through the ordinary constructor."""
+        was = os.getcwd()
+        os.chdir(cwd)
+        try:
+            return hz.Ctx()
+        finally:
+            os.chdir(was)
+
+    def test_it_agrees_with_git_in_a_checkout_a_worktree_and_a_folder_inside_one(self):
+        for cwd in (self.repo, self.wt, self.wt / "src"):
+            a, b = hz.Ctx.from_files(cwd), self.at(cwd)
+            for k in ("repo", "worktree", "branch", "slug", "state", "binding_path", "tree_path"):
+                self.assertEqual(getattr(a, k), getattr(b, k), (cwd, k))
+        with mock.patch.object(hz, "git", side_effect=AssertionError("git was started")):
+            self.assertEqual(hz.Ctx.from_files(self.wt).branch, "dev")
+
+    def test_what_it_cannot_read_plainly_it_leaves_to_git(self):
+        self.g(self.wt, "checkout", "-q", "--detach")
+        self.assertIsNone(hz.Ctx.from_files(self.wt))
+        outside = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, outside, True)
+        self.assertIsNone(hz.Ctx.from_files(outside))
+        # Not enrolled here: the hook asks git, as before.
+        was = os.getcwd()
+        os.chdir(self.repo)
+        try:
+            with mock.patch.object(hz, "HOME_STATE", self.root / "state"):
+                self.assertEqual(hz.hook_ctx().branch, "main")
+        finally:
+            os.chdir(was)
+        os.chdir(outside)
+        try:
+            self.assertIsNone(hz.hook_ctx())
+        finally:
+            os.chdir(was)
 
 
 class Log152(unittest.TestCase):

@@ -651,6 +651,49 @@ class Ctx:
         self.binding_path = self.state / "binding.json"
         self.tree_path = self.repo / ".harness" / "tree.json"
 
+    @classmethod
+    def from_files(cls, cwd=None):
+        """The same position as `Ctx()`, read from the worktree's own files with
+        no git process; None when they do not say plainly (a detached HEAD, a
+        layout this does not know), and the caller asks git instead.
+
+        For the hooks, which run at every prompt and every turn end under a
+        five-second limit. `Ctx()` is three git processes; on a disk where each
+        is a tenth of a second idle and far more under load, they were most of
+        what the prompt hook cost once its slow items were gone (2026-10-12:
+        3 to 7 s at load 19)."""
+        try:
+            here = Path(cwd or os.getcwd())
+            for d in [here, *here.parents]:
+                g = d / ".git"
+                if g.is_dir():
+                    gitdir = common = g
+                    break
+                if g.is_file():
+                    txt = g.read_text().strip()
+                    if not txt.startswith("gitdir:"):
+                        return None
+                    gitdir = Path(os.path.normpath(d / txt[7:].strip()))
+                    cd = gitdir / "commondir"
+                    common = Path(os.path.normpath(gitdir / cd.read_text().strip())) \
+                        if cd.exists() else gitdir
+                    break
+            else:
+                return None
+            head = (gitdir / "HEAD").read_text().strip()
+            if not head.startswith("ref: refs/heads/") or common.name != ".git":
+                return None
+            self = cls.__new__(cls)
+            self.repo, self.worktree = common.parent, d
+            self.branch = head[len("ref: refs/heads/"):]
+            self.slug = slug(self.repo)
+            self.state = HOME_STATE / self.slug
+            self.binding_path = self.state / "binding.json"
+            self.tree_path = self.repo / ".harness" / "tree.json"
+            return self
+        except Exception:
+            return None
+
     # R9 — enrolment takes two keys
     def require_enrolled(self):
         if not self.tree_path.exists():
@@ -3088,6 +3131,8 @@ def open_marks(ctx):
     has finished is indistinguishable from one still working — which is how a
     session ends up holding capacity with nothing to spend it on.
     """
+    if READ_MEMO is not None and "marks" in READ_MEMO:
+        return READ_MEMO["marks"]
     d = ctx.state / "marks"
     out = {}
     for p in (sorted(d.glob("*.json")) if d.is_dir() else []):
@@ -3098,6 +3143,8 @@ def open_marks(ctx):
         if rec.get("_closed_at"):
             continue
         out[p.stem] = rec
+    if READ_MEMO is not None:
+        READ_MEMO["marks"] = out
     return out
 
 
@@ -3461,21 +3508,46 @@ def rank0_owes(ctx, node):
             owed.append(("task", key, r.get("need") or key, time.time() - then))
     # A complete unit waits on rank 0's cleanup decision.
     # One line however many: a backlog of units must not become a page of nags.
+    # Read from the count the ringer keeps, never counted here: this runs at
+    # every prompt of rank 0's (sweep_counts).
     try:
-        n = len(completed_units(ctx))
-        sf, sn = stale_records(ctx)
-        m = len(sf) + len(sn)
+        c = sweep_counts(ctx) or {}
+        n, m, k = c.get("units") or 0, c.get("stale") or 0, c.get("sessions") or 0
         # One row per population, each naming the command that acts on it (obs 65).
         if n:
             owed.append(("sweep", "units", f"{n} complete unit(s)", 0))
         if m:
             owed.append(("sweep", "stale", f"{m} stale record(s)", 0))
-        k = ended_count(ctx)
         if k >= ENDED_NAG:
             owed.append(("sweep", "sessions", f"{k} ended session(s) still listed", 0))
     except Exception:
         pass
     return owed
+
+
+SWEEP_COUNT_EVERY = 300     # seconds between the ringer's recounts
+
+
+def sweep_counts(ctx, fresh=False):
+    """What a sweep would act on: {"units", "stale", "sessions", "at"}, or None
+    when it has never been counted.
+
+    Counting is slow and grows with the project: it reads every record, and
+    whether a record cites a job folder is a walk of every file under every
+    ended session's tmp/. Measured on biblion2, 2026-10-12: 77,000 files, 3 to
+    10 seconds, at every prompt of rank 0's, against a hook limit of 5; the
+    hook was killed, and the mail the ringer had woken the session for went
+    unprinted. So the count lives in a file. The ringer recounts it every
+    SWEEP_COUNT_EVERY, `harness sweep` recounts after it acts, and everything
+    on a prompt reads the file."""
+    f = Path(ctx.state) / "sweep_counts.json"
+    if not fresh:
+        return _read_json(f)
+    sf, sn = stale_records(ctx)
+    c = {"units": len(completed_units(ctx)), "stale": len(sf) + len(sn),
+         "sessions": ended_count(ctx), "at": time.time()}
+    _save(f, c)
+    return c
 
 
 # ── orientation, edge-triggered ──────────────────────────────────────────────
@@ -3882,27 +3954,106 @@ def cmd_hook_orient(a):
     # marked delivered only once it is printed and flushed (log 120: the slow
     # part ran after it, the hook hit its 5s limit, and the mail was logged as
     # shown and lost).
+    # One Ctx for both halves: each is three git calls, on a disk where a git
+    # call can be a tenth of a second. And what changed runs inside a budget:
+    # Claude Code kills this hook at 5 s and discards everything it printed, so
+    # one slow item used to cost the session its mail as well (2026-10-12: rank
+    # 0's sweep counts took 3 to 10 s, at every prompt).
+    ctx = node = None
     try:
-        print_delta()
+        ctx = hook_ctx()
+        if ctx is not None and ctx.tree_path.exists() and ctx.binding_path.exists():
+            ctx.tree = json.loads(ctx.tree_path.read_text())
+            node, _ = ctx.node()
+    except (Exception, SystemExit):
+        ctx = node = None
+    if node is None:
+        sys.exit(0)
+    try:
+        ctx.require_enrolled()          # a tree that does not validate still gets its mail
+        valid = True
+    except (Exception, SystemExit):
+        valid = False
+    global READ_MEMO
+    READ_MEMO = {}
+    try:
+        if valid and not within_budget(HOOK_BUDGET, lambda: print_delta(ctx, node)):
+            print(f"harness: what changed was not worked out within {HOOK_BUDGET:g}s and is "
+                  f"skipped this prompt (harness whoami --delta shows it). Mail, if any, "
+                  f"follows.", flush=True)
+            hook_slow(ctx, node)
     except (Exception, SystemExit):
         pass
+    READ_MEMO = None
     try:
-        if not git("rev-parse", "--git-dir")[0]:
-            ctx = Ctx()
-            if ctx.binding_path.exists():
-                ctx.tree = json.loads(ctx.tree_path.read_text())
-                node, _ = ctx.node()
-                sid = payload.get("session_id") or os.environ.get("CLAUDE_CODE_SESSION_ID")
-                who = MAIL().owner(ctx.state, node)
-                ensure_ringer(ctx.state)
-                if sid and (not who or who == sid) and MAIL().pending(ctx.state, node):
-                    got = MAIL().claim(ctx.state, node)
-                    if got:
-                        print(MAIL().render([m for _, m in got], node, sid), flush=True)
-                        MAIL().commit(ctx.state, node, got, "prompt")
+        sid = payload.get("session_id") or os.environ.get("CLAUDE_CODE_SESSION_ID")
+        who = MAIL().owner(ctx.state, node)
+        ensure_ringer(ctx.state)
+        if sid and (not who or who == sid) and MAIL().pending(ctx.state, node):
+            got = MAIL().claim(ctx.state, node)
+            if got:
+                print(MAIL().render([m for _, m in got], node, sid), flush=True)
+                MAIL().commit(ctx.state, node, got, "prompt")
     except (Exception, SystemExit):
         pass
     sys.exit(0)
+
+
+def hook_ctx():
+    """Where a hook stands, or None outside a git worktree. Read from the
+    worktree's files when they lead to an enrolled project; git is asked only
+    when they do not."""
+    ctx = Ctx.from_files()
+    if ctx is not None and ctx.binding_path.exists():
+        return ctx
+    if git("rev-parse", "--git-dir")[0]:
+        return None
+    return Ctx()
+
+
+# Seconds the prompt hook gives "what changed" before it moves on to the mail.
+# Claude Code allows the whole hook 5; starting python and compiling this file
+# is 0.2 s idle and 1.6 s at load 25 (measured 2026-10-12), and the mail needs
+# the rest.
+HOOK_BUDGET = 2.0
+
+
+class OverBudget(BaseException):
+    """The prompt hook's own alarm. A BaseException, so none of the `except
+    Exception` guards inside the work it interrupts can swallow it."""
+
+
+def within_budget(seconds, fn):
+    """Run fn(), giving up after `seconds`. True when it finished. Where an
+    alarm cannot be set (not the main thread), it simply runs."""
+    import signal
+
+    def ring(*_):
+        raise OverBudget()
+    try:
+        old = signal.signal(signal.SIGALRM, ring)
+        signal.setitimer(signal.ITIMER_REAL, seconds)
+    except Exception:
+        fn()
+        return True
+    try:
+        fn()
+        return True
+    except OverBudget:
+        return False
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old)
+
+
+def hook_slow(ctx, node):
+    """A prompt whose orientation ran out of time, on the record: a hook that is
+    cut short says nothing anyone but that session sees."""
+    try:
+        with open(Path(ctx.state) / "hook_slow.log", "a") as fh:
+            fh.write(f"{_now()} {node} hook-orient over {HOOK_BUDGET:g}s\n")
+    except Exception:
+        pass
 
 
 def cmd_hook_stop(a):
@@ -3936,10 +4087,13 @@ def cmd_hook_stop(a):
     # that still writes a notice into the transcript, on every turn, forever.
     # SystemExit is not an Exception, so the guard below would not have caught
     # it. Check first, and catch it anyway.
-    if git("rev-parse", "--git-dir")[0]:
+    try:
+        ctx = hook_ctx()
+    except (Exception, SystemExit):
+        return
+    if ctx is None:
         return
     try:
-        ctx = Ctx()
         if not ctx.tree_path.exists() or not ctx.binding_path.exists():
             return
         ctx.tree = json.loads(ctx.tree_path.read_text())
@@ -6620,8 +6774,13 @@ def testd_tick(ctx, S):
                 t["state"] in ("done", "cancelled") for t in job_tests(o["job"]).values()):
             testd_close(ctx, S, jid)
     testd_ledger(ctx, S)
-    if halted(ctx) or S.get("drain"):
+    if halted(ctx):
         return
+    # An update is waiting for the runner to restart: no new JOB opens, but a
+    # job already open runs out its arms. "Start nothing" left an open job's
+    # last arm unstarted for good, so the job never closed, the restart never
+    # came, and every check behind it stood still for 45 minutes (log 153).
+    draining = bool(S.get("drain"))
     # A `harness slot` command waiting goes before anything new (log 104): start
     # nothing, and once the running tests end let go of the slot.
     if any(t.get("state") == "waiting" for t in slot_tickets(ctx)):
@@ -6633,7 +6792,7 @@ def testd_tick(ctx, S):
     times = arm_seconds(ctx)
     order = []
     for j in sorted(testq_jobs(ctx, ("queued", "running")), key=testq_age_key):
-        if j.get("cancel"):
+        if j.get("cancel") or (draining and j["id"] not in S["open"]):
             continue
         j = S["open"][j["id"]]["job"] if j["id"] in S["open"] else j
         if j.get("kind") == "check" and not j.get("tests") and not j.get("arms"):
@@ -10183,6 +10342,8 @@ def tkey(name):
 def all_briefs(ctx):
     """Every brief, keyed by its file stem, each carrying the task id its writer
     typed. Callers print the id and match on the stem."""
+    if READ_MEMO is not None and "briefs" in READ_MEMO:
+        return READ_MEMO["briefs"]
     d = ctx.state / "briefs"
     out = {}
     for p in (sorted(d.glob("*.json")) if d.is_dir() else []):
@@ -10192,7 +10353,16 @@ def all_briefs(ctx):
             continue
         b.setdefault("task", p.stem)
         out[p.stem] = b
+    if READ_MEMO is not None:
+        READ_MEMO["briefs"] = out
     return out
+
+
+# One read of the briefs and of the marks per prompt. The prompt hook's "what
+# changed" asks for each several times over (seven and more on a lead), and each
+# asking read every file: a third of the hook's time on a live tree. Set only
+# while that read-only work runs; a command that writes never sees it.
+READ_MEMO = None
 
 
 def unactioned_briefs(ctx, node):
@@ -14314,6 +14484,19 @@ def cmd_sweep(a):
     """`sweep` lists complete units; `sweep <unit> --dry-run` shows one; with
     `--why` rank 0 runs it, or `--keep --why` declines it. Both are ledgered."""
     ctx = Ctx(); ctx.require_enrolled()
+    try:
+        return _sweep(ctx, a)
+    finally:
+        # A sweep that acted changes what is owed: recount, so the row in rank
+        # 0's orientation clears now and not at the ringer's next recount.
+        if not getattr(a, "dry_run", False):
+            try:
+                sweep_counts(ctx, fresh=True)
+            except (Exception, SystemExit):
+                pass
+
+
+def _sweep(ctx, a):
     if a.stale:
         return sweep_stale(ctx, a)
     if a.sessions:
@@ -18018,6 +18201,13 @@ def cmd_ringer(a):
                 ringer_catchup(ctx, S)
             except Exception as e:
                 print(f"{_now()} catch-up failed: {type(e).__name__}: {e}")
+            if time.time() - S.get("_sweep_at", 0) >= SWEEP_COUNT_EVERY:
+                # What a sweep would act on, counted here so no prompt has to.
+                S["_sweep_at"] = time.time()
+                try:
+                    sweep_counts(ctx, fresh=True)
+                except Exception as e:
+                    print(f"{_now()} sweep count failed: {type(e).__name__}: {e}")
 
     def stop(*_):
         passing.acquire(timeout=120)        # a stop waits for the pass in hand

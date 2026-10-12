@@ -3689,12 +3689,17 @@ def queue_items(ctx, node):
         c = bh.get("caught") or {}
         if c and not c.get("told") and time.time() - (c.get("at") or 0) < CAUGHT_NEWS:
             fl = c.get("files") or []
+            # Few files: by name. Many: the folders they fall under, so a lane
+            # sees whether what it builds from moved.
+            few = (c.get("nfiles") or 0) <= 5 or not c.get("dirs")
+            where = (": " + ", ".join(fl[:5]) + (", …" if (c.get("nfiles") or 0) > 5 else "")
+                     if few else " under " + ", ".join(c["dirs"]))
             out[f"caught:{str(c.get('tip'))[:12]}"] = (
                 f"caught up: {c.get('n')} commit(s) from {bh.get('parent')} were merged into "
                 f"your worktree at {time.strftime('%H:%M', time.localtime(c.get('at') or 0))} "
-                f"({c.get('nfiles')} file(s)"
-                + (": " + ", ".join(fl[:5]) + (", …" if (c.get("nfiles") or 0) > 5 else "")
-                   if fl else "") + ") — re-read any you had open")
+                f"({c.get('nfiles')} file(s)" + (where if fl else "")
+                + ") — re-read any you had open, and rebuild anything built from them. To keep "
+                  "your tree still until you present: harness catchup --hold \"<why>\"")
         if bh.get("n") and bh.get("kind") in ("dirty", "conflict", "git", "refused"):
             out[f"behind:{str(bh.get('parent_tip'))[:12]}:{bh['kind']}"] = (
                 f"{behind_words(bh)}. {behind_remedy(bh)}")
@@ -4683,6 +4688,11 @@ def cmd_mark(a):
             print(f"  checks passed at {_sha[:8]} "
                   f"({len(_rep.get('checks') or [])}/{len(_rep.get('checks') or [])})"
                   + ("   [worktree was dirty when they ran]" if _rep.get("dirty") else ""))
+        # A hold on merging into this node ran until it presented (log 154).
+        _h = hold_release(ctx, node)
+        if _h:
+            print(f"  the hold on merging into {node} has ended ({_h.get('by')}: "
+                  f"{_h.get('why')})")
         print(f"presented {a.task}  {cost}"
               + ("   node released" if released else ""))
         print(f"  It is NOT closed. {parent or 'your lead'} signs it off: "
@@ -8057,7 +8067,30 @@ def session_work(row):
     return None
 
 
-def catchup_block(ctx, idx, node, rows=None, own=False, tip=None):
+def hold_path(ctx, node):
+    return Path(ctx.state) / "behind" / f"{node}.hold.json"
+
+
+def catchup_hold(ctx, node):
+    """{by, why, at} while a hold stands on merging into this node, else None.
+
+    Log 154 (owner, 2026-10-12): the harness merges between turns whenever the
+    tree is clean, and a lane in the middle of a diagnosis whose result is a
+    count over repeated runs of ONE tree had 51 commits merged under it. Most
+    lanes want to be current; one that needs its tree to stand still says so.
+    Placed by the node or a node above it, with a reason, and it ends when the
+    node presents."""
+    return _read_json(hold_path(ctx, node))
+
+
+def hold_release(ctx, node):
+    """End a node's hold. -> the record it had, or None."""
+    h = catchup_hold(ctx, node)
+    hold_path(ctx, node).unlink(missing_ok=True)
+    return h
+
+
+def catchup_block(ctx, idx, node, rows=None, own=False, tip=None, ignore_hold=False):
     """Why nothing may merge into this node's worktree right now, as (kind,
     words), or None. `own` is the node's session acting in its own worktree:
     its turn is the one running, so only the tree itself is tested.
@@ -8070,6 +8103,9 @@ def catchup_block(ctx, idx, node, rows=None, own=False, tip=None):
     wt = sp.get("worktree")
     if not wt or not Path(wt).is_dir():
         return "nowt", "it has no worktree on this machine"
+    h = None if ignore_hold else catchup_hold(ctx, node)
+    if h:
+        return "held", f"held by {h.get('by')}: {h.get('why')}"
     if not own:
         if halted(ctx):
             return "halt", "the tree is halted"
@@ -8086,9 +8122,14 @@ def catchup_block(ctx, idx, node, rows=None, own=False, tip=None):
                     return "busy", f"its session is running {doing}"
         try:
             tip = tip or git("rev-parse", sp.get("branch") or "HEAD", cwd=wt)[1]
-            if any(j.get("kind") == "check" and j.get("sha") == tip
-                   for j in testq_jobs(ctx, ("queued", "running"))):
-                return "check", "a check of its commit is in the queue"
+            for j in testq_jobs(ctx, ("queued", "running")):
+                if j.get("kind") == "check" and j.get("sha") == tip:
+                    return "check", "a check of its commit is in the queue"
+                # Its own work of any kind (log 154): a lane's runs were queue
+                # copies of one commit, submitted as commands, and a merge
+                # between two of them split its count across two trees.
+                if any(r.get("node") == node for r in j.get("requested_by") or []):
+                    return "check", "it has work in the test queue"
         except Exception:
             pass
     rc, out, _ = git("--no-optional-locks", "status", "--porcelain=v2", "--branch",
@@ -8131,7 +8172,8 @@ def carry_presented(ctx, node, branch, prev, tip, parent, by):
     return carried
 
 
-def catch_up(ctx, idx, node, by, rows=None, own=False, keep_conflict=False, dry=False, b=None):
+def catch_up(ctx, idx, node, by, rows=None, own=False, keep_conflict=False, dry=False, b=None,
+             ignore_hold=False):
     """Merge a node's parent into its worktree, if nothing there can be
     disturbed by it. -> (status, info).
 
@@ -8155,7 +8197,8 @@ def catch_up(ctx, idx, node, by, rows=None, own=False, keep_conflict=False, dry=
         if not own else True
     if dry:
         # A dry run writes nothing: no record, no lock file.
-        why = catchup_block(ctx, idx, node, rows, own, tip=b.get("tip"))
+        why = catchup_block(ctx, idx, node, rows, own, tip=b.get("tip"),
+                            ignore_hold=ignore_hold)
         return ("blocked", dict(b, kind=why[0], why=why[1], occupied=occupied)) if why \
             else ("would", b)
     lock = behind_path(ctx, node).with_suffix(".lock")
@@ -8164,7 +8207,8 @@ def catch_up(ctx, idx, node, by, rows=None, own=False, keep_conflict=False, dry=
     if fh is None:
         return "blocked", dict(b, kind="busy", why="another catch-up is running there")
     try:
-        why = catchup_block(ctx, idx, node, rows, own, tip=b.get("tip"))
+        why = catchup_block(ctx, idx, node, rows, own, tip=b.get("tip"),
+                            ignore_hold=ignore_hold)
         if why:
             info = dict(b, kind=why[0], why=why[1], occupied=occupied)
             behind_write(ctx, node, info)
@@ -8194,10 +8238,26 @@ def catch_up(ctx, idx, node, by, rows=None, own=False, keep_conflict=False, dry=
         behind_write(ctx, node, {
             "n": 0, "parent": b["parent"], "tip": tip, "parent_tip": b["parent_tip"],
             "caught": {"at": time.time(), "n": b["n"], "prev": prev, "tip": tip, "by": by,
-                       "files": files[:8], "nfiles": len(files), "told": bool(own)}})
+                       "files": files[:8], "nfiles": len(files), "dirs": path_groups(files),
+                       "told": bool(own)}})
         return "caught", dict(b, prev=prev, tip=tip, files=files, carried=carried)
     finally:
         fh.close()
+
+
+def path_groups(files, depth=2, limit=10):
+    """The folders a set of files falls under, two levels deep, in order of
+    first appearance: enough for a lane to see whether what it builds from
+    moved (log 154: a merge that lands client sources invalidates a built
+    bundle, and the line named only a count)."""
+    out = []
+    for f in files:
+        parts = f.split("/")
+        g = "/".join(parts[:depth]) + "/" if len(parts) > depth else (
+            "/".join(parts[:-1]) + "/" if len(parts) > 1 else f)
+        if g not in out:
+            out.append(g)
+    return out[:limit] + (["…"] if len(out) > limit else [])
 
 
 def behind_when(b):
@@ -8248,6 +8308,7 @@ def behind_remedy(b):
         "conflict": "That is T7: harness catchup leaves the conflict in place for you to "
                     "collect. Tell your lead; do not resolve it",
         "refused": "harness catchup shows git's refusal in full",
+        "held": "It merges once you present, or after harness catchup --release",
         "git": "Put the worktree back on its node's branch, then: harness catchup",
     }.get((b or {}).get("kind"),
           "The harness merges it at your next turn end, or now: harness catchup")
@@ -8426,6 +8487,36 @@ def cmd_catchup(a):
     ctx = Ctx(); ctx.require_enrolled()
     idx = load_index(ctx, refresh=True)
     here = idx["byBranch"].get(ctx.branch)
+    if a.hold is not None or a.release:
+        # A hold on merging into a node: its own, or a node above it (log 154).
+        if len(a.node) > 1 or a.children or a.all:
+            die(REFUSED, "a hold is placed on one node at a time, with its own reason")
+        target = a.node[0] if a.node else here
+        if target is None:
+            die(NOT_ENROLLED, f"branch '{ctx.branch}' is not a node")
+        if target not in idx["nodes"]:
+            die(REFUSED, f"'{target}' is not a node")
+        if here and target != here and target not in subtree(ctx, here):
+            die(REFUSED, f"'{target}' is not below {here}. A hold is the node's own, or a "
+                         f"node above it places it.")
+        if a.release:
+            h = hold_release(ctx, target)
+            print(f"released: {target} is merged with its parent again whenever its tree allows"
+                  if h else f"{target} had no hold")
+            return
+        if not a.hold.strip():
+            die(REFUSED, 'say why: harness catchup --hold "one tree for the whole diagnosis"')
+        who = here or "operator"
+        _save(hold_path(ctx, target), {"by": who, "why": a.hold.strip(), "at": _now()})
+        print(f"held: nothing merges into {target} until it presents, or until\n"
+              f"  harness catchup --release" + (f" {target}" if target != here else "")
+              + f"\n  Why: {a.hold.strip()}\n  It shows in harness status, and a check from "
+                f"there says how far behind its commit is.")
+        if target != here:
+            ring_inbox(ctx.state, target, who,
+                       f"{who} placed a hold on merging into your worktree: {a.hold.strip()}. "
+                       f"It ends when you present.", "fyi")
+        return
     if not (a.node or a.children or a.all):
         if here is None:
             die(NOT_ENROLLED, f"branch '{ctx.branch}' is not a node")
@@ -8443,6 +8534,8 @@ def cmd_catchup(a):
             sys.exit(REFUSED)
         print(catchup_line(here, st, info))
         if st == "blocked":
+            if info.get("kind") == "held":
+                print("  To merge all the same: harness catchup --release, then harness catchup")
             sys.exit(REFUSED)
         return
     below = set(subtree(ctx, here)) if here else set(idx["nodes"])
@@ -8625,7 +8718,9 @@ def cmd_integrate(a):
         if behind != "0":
             # Occupancy and dirt were tested above, so this is the lead's own
             # act; the shared catch-up holds the node's lock against the ringer.
-            st, info = catch_up(ctx, idx, n, here, rows=rows, own=True)
+            # A hold ends when the node presents, and this node has; one its
+            # lead placed is the lead's own to pass.
+            st, info = catch_up(ctx, idx, n, here, rows=rows, own=True, ignore_hold=True)
             if st == "blocked":
                 print(f"skip {n:<12} could not be caught up: {info.get('why')}")
                 failed += 1; continue
@@ -11873,7 +11968,20 @@ def cmd_brief(a):
         f.write_text(json.dumps(b, indent=2) + "\n")
         print(f"suggested against revision {b.get('revision')} of {a.task} "
               f"({len(b['suggestions'])} total)")
-        print("  Your lead decides. Carry on with the brief as it stands meanwhile.")
+        writer = b.get("direct_by")
+        if writer and writer in ctx.tree["nodes"] and writer != me:
+            # Rank 0 wrote this brief past the node's lead: it is the one to
+            # answer, and nothing else shows it that a suggestion exists (a
+            # suggestion sat open two hours with the lead believing it unanswered).
+            ring_inbox(ctx.state, writer, me,
+                       f"{me} suggested a change to '{a.task}', the brief you wrote for it "
+                       f"(suggestion #{len(b['suggestions'])}): {a.suggest.strip()[:300]} — "
+                       f"harness brief {a.task}, then harness brief {a.task} --resolve "
+                       f"{len(b['suggestions'])}", "low")
+            print(f"  {writer} wrote this brief and decides; it has been told. Carry on with "
+                  f"the brief as it stands meanwhile.")
+        else:
+            print("  Your lead decides. Carry on with the brief as it stands meanwhile.")
         return
 
     if a.comment is not None:
@@ -12157,9 +12265,11 @@ def cmd_brief(a):
     if a.resolve:
         if b is None:
             die(REFUSED, f"no brief for '{a.task}'")
-        if ctx.tree["nodes"].get(b.get("node"), {}).get("parent") != me and \
-           not (b.get("node") == me and ctx.rank(me) == 0):
-            die(REFUSED, f"only '{b.get('node')}'s lead resolves its suggestions")
+        # The node's lead, or rank 0, which may write any brief and so may
+        # answer a suggestion against one (log 152: main wrote a brief for a
+        # node two ranks down and could not resolve the suggestion raised to it).
+        if ctx.tree["nodes"].get(b.get("node"), {}).get("parent") != me and ctx.rank(me) != 0:
+            die(REFUSED, f"only '{b.get('node')}'s lead, or rank 0, resolves its suggestions")
         ss = b.get("suggestions", [])
         if not 1 <= a.resolve <= len(ss):
             die(REFUSED, f"no suggestion #{a.resolve} (there are {len(ss)})")
@@ -18792,6 +18902,9 @@ def main():
     cu.add_argument("--children", action="store_true", help="each of your children")
     cu.add_argument("--all", action="store_true", help="every node below you, top down")
     cu.add_argument("--dry-run", action="store_true")
+    cu.add_argument("--hold", metavar="WHY",
+                    help="nothing merges into this node (or the one named) until it presents")
+    cu.add_argument("--release", action="store_true", help="end a hold")
     cl = add("claim", cmd_claim, roster=True, force=True)
     cl.add_argument("--strict-name", action="store_true",
                     help="refuse when the session name does not match <project>-<node>")

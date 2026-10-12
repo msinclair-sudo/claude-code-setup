@@ -5622,6 +5622,23 @@ class Log152(unittest.TestCase):
         self.assertEqual(started, [])
         self.assertIn("not your child — dev_dag starts it", out)
 
+    def test_a_suggestion_against_it_reaches_rank_0_which_may_resolve_it(self):
+        self.brief("main", "environment-dag", "--for", "dev_dag", "--write", "build it")
+        code, out = self.brief("dev_dag", "environment-dag", "--suggest", "split the loader out")
+        self.assertEqual(code, 0, out)
+        self.assertIn("main wrote this brief and decides; it has been told", out)
+        (m,) = self.mail("main")
+        self.assertEqual((m["from"], m["priority"]), ("dev_dag", "low"))
+        self.assertIn("split the loader out", m["text"])
+        self.assertIn("harness brief environment-dag --resolve 1", m["text"])
+        code, out = self.brief("main", "environment-dag", "--resolve", "1")
+        self.assertEqual(code, 0, out)
+        self.assertTrue(self.load("environment-dag")["suggestions"][0]["resolved_at"])
+        # A node that is neither its lead nor rank 0 still may not.
+        self.brief("dev_dag", "environment-dag", "--suggest", "another")
+        code, out = self.brief("dev_dag_1", "environment-dag", "--resolve", "2")
+        self.assertEqual(code, hz.REFUSED)
+
     def test_the_lead_may_rewrite_it_and_rank_0_hears(self):
         self.brief("main", "environment-dag", "--for", "dev_dag", "--write", "build it")
         code, out = self.brief("dev", "environment-dag", "--write", "build it my way")
@@ -5728,6 +5745,15 @@ class CatchUp(unittest.TestCase):
         job = self.ctx.dir / "testq" / "j1.json"
         job.write_text(json.dumps({"id": "j1", "kind": "check", "sha": tip, "state": "queued"}))
         self.assertEqual(self.up("dev")[1]["kind"], "check")       # the commit under test stays put
+        # Its own work of any kind, at any commit (log 154: a lane's runs were
+        # queue copies of one commit, submitted as commands).
+        job.write_text(json.dumps({"id": "j1", "kind": "cmd", "sha": "0" * 40, "state": "running",
+                                   "requested_by": [{"node": "dev"}]}))
+        st, info = self.up("dev")
+        self.assertEqual((info["kind"], info["why"]), ("check", "it has work in the test queue"))
+        job.write_text(json.dumps({"id": "j1", "kind": "cmd", "sha": "0" * 40, "state": "running",
+                                   "requested_by": [{"node": "dev_1"}]}))
+        self.assertEqual(self.up("dev", dry=True)[0], "would")     # someone else's is not its
         job.unlink()
         (self.ctx.dir / "halt.json").write_text(json.dumps({"at": hz._now(), "why": "stop"}))
         self.assertEqual(self.up("dev")[1]["kind"], "halt")
@@ -6172,6 +6198,71 @@ class CatchUp(unittest.TestCase):
         self.assertIn("review carried from " + tip[:8], out)
         self.assertEqual(self.git("dev", "rev-parse", "HEAD"), self.git("dev_1", "rev-parse", "HEAD"))
         self.assertEqual(hz.open_marks(self.ctx)["t"]["_caught_up_by"], "dev")
+
+    def test_a_hold_keeps_a_node_s_tree_still_until_it_presents(self):
+        # Log 154 (owner, 2026-10-12): merging between turns stays the rule, and
+        # a lane that needs one tree for a whole diagnosis says so.
+        sha = self.commit("dev", "d1")
+        code, out = self.run_as("dev_1", "catchup", "--hold", "one tree for the whole diagnosis")
+        self.assertEqual(code, 0, out)
+        self.assertIn("held: nothing merges into dev_1 until it presents", out)
+        st, info = self.up("dev_1")                                  # the ringer
+        self.assertEqual((st, info["kind"]), ("blocked", "held"))
+        self.assertEqual(info["why"], "held by dev_1: one tree for the whole diagnosis")
+        with redirect_stdout(io.StringIO()) as o:                    # its own check or task start
+            self.assertEqual(hz.own_catchup(self.ctx, "dev_1")[0], "blocked")
+        self.assertIn("held by dev_1", o.getvalue())
+        code, out = self.run_as("dev_1", "catchup")
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("harness catchup --release, then harness catchup", out)
+        self.assertIn("held by dev_1: one tree", self.run_as("dev_1", "behind")[1])
+        self.assertFalse(self.has("dev_1", sha))
+        # Its lead's integrate, after it has presented, is not held back.
+        self.assertEqual(self.up("dev_1", own=True, ignore_hold=True, dry=True)[0], "would")
+        # A node above may release it or place one; a node that is not above may not.
+        code, out = self.run_as("dev", "catchup", "--release", "dev_1")
+        self.assertIn("released: dev_1 is merged with its parent again", out)
+        self.assertEqual(self.up("dev_1")[0], "caught")
+        code, out = self.run_as("dev_1", "catchup", "--hold", "x", "dev")
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("'dev' is not below dev_1", out)
+        self.assertEqual(self.run_as("dev", "catchup", "--hold", " ", "dev_1")[0], hz.REFUSED)
+        code, out = self.run_as("dev", "catchup", "--hold", "bundle is being profiled", "dev_1")
+        self.assertEqual(code, 0, out)
+        (m,) = [json.loads(p.read_text())
+                for p in (self.ctx.dir / "doorbell" / "dev_1" / "inbox").glob("*.json")]
+        self.assertEqual((m["from"], m["priority"]), ("dev", "fyi"))
+        self.assertEqual(hz.catchup_hold(self.ctx, "dev_1")["by"], "dev")
+
+    def test_a_hold_ends_when_the_node_presents(self):
+        (self.ctx.dir / "briefs").mkdir()
+        (self.ctx.dir / "marks").mkdir()
+        (self.ctx.dir / "briefs" / "t.json").write_text(json.dumps({"task": "t", "node": "dev_1"}))
+        (self.ctx.dir / "marks" / "t.json").write_text(json.dumps({"_node": "dev_1"}))
+        self.run_as("dev_1", "catchup", "--hold", "one tree")
+        code, out = self.run_as("dev_1", "mark", "t", "--done",
+                                read_spend_or_none=lambda sid: (None, "no transcript"),
+                                lead_address=lambda ctx, p: (None, None),
+                                next_after=lambda *a: (None, False))
+        self.assertIn("presented t", out)
+        self.assertIn("the hold on merging into dev_1 has ended (dev_1: one tree)", out)
+        self.assertIsNone(hz.catchup_hold(self.ctx, "dev_1"))
+
+    def test_many_files_are_told_by_the_folders_they_fall_under(self):
+        self.assertEqual(hz.path_groups(["surface/client/src/a.js", "surface/client/b.js",
+                                         "tests/test_x.py", "README.md", "loader/db/x/y.py"]),
+                         ["surface/client/", "tests/", "README.md", "loader/db/"])
+        for i in range(7):
+            (self.wt["main"] / "surface" / "client").mkdir(parents=True, exist_ok=True)
+            (self.wt["main"] / "surface" / "client" / f"f{i}.js").write_text("x")
+        (self.wt["main"] / "tests").mkdir()
+        (self.wt["main"] / "tests" / "t.py").write_text("x")
+        self.git("main", "add", "-A"); self.git("main", "commit", "-qm", "many")
+        self.up("dev")
+        line = next(v for k, v in self.items("dev").items() if k.startswith("caught:"))
+        self.assertIn("(8 file(s) under surface/client/, tests/)", line)
+        self.assertIn("rebuild anything built from them", line)
+        self.assertIn('harness catchup --hold "<why>"', line)
 
     def test_a_fact_measured_on_a_behind_tree_says_so(self):
         self.commit("main", "m1")

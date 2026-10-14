@@ -453,17 +453,68 @@ class WaitChain(unittest.TestCase):
              mock.patch.object(hz, "queue", return_value=[]):
             return hz.queue_items(self.ctx, node)
 
-    def test_stalled_wait_reaches_the_rank_above(self):
+    def test_a_stalled_wait_is_its_lead_s_and_the_rank_above_sees_it_on_request(self):
+        # Log 173 (owner, 2026-10-15): the rank above is not prompted with what a
+        # lead below owes; that lead is nudged. `whoami --tree` shows it.
         self.wait(OLD)
         self.checking(os.getpid())
-        main = self.items("main")
-        self.assertIn("stuck:dev_2", main)
-        self.assertIn("dev: check running arm 7/23", main["stuck:dev_2"])
+        self.assertNotIn("stuck:dev_2", self.items("main"))
+        (line,) = hz.stuck_waits(self.ctx, "main")
+        self.assertIn("dev: check running arm 7/23", line)
         dev = self.items("dev")
         self.assertIn("asked:dev_2", dev)
-        self.assertNotIn("stuck:dev_2", dev)
+        self.assertEqual(hz.stuck_waits(self.ctx, "dev"), [])
         self.wait(time.strftime("%Y-%m-%dT%H:%M:%S%z"))
-        self.assertNotIn("stuck:dev_2", self.items("main"))
+        self.assertEqual(hz.stuck_waits(self.ctx, "main"), [])
+
+
+class OwedWake(unittest.TestCase):
+    """Log 173 (owner, 2026-10-15): an action a node owes wakes that node, after
+    five quiet minutes, and is not shown to the rank above at every prompt."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev"})
+        (self.ctx.dir / "marks").mkdir()
+        p = mock.patch.object(hz, "ensure_ringer", lambda s: None)
+        p.start(); self.addCleanup(p.stop)
+
+    def present(self, at=OLD, **more):
+        (self.ctx.dir / "marks" / "t.json").write_text(json.dumps(dict(
+            {"_node": "dev_1", "_task": "t", "_presented_at": at, "_presented_sha": "a" * 40},
+            **more)))
+
+    def inbox(self, n):
+        return sorted((self.ctx.dir / "doorbell" / n / "inbox").glob("*.json"))
+
+    def test_what_a_node_owes_is_its_own(self):
+        self.present()
+        (k, line), = hz.owed_now(self.ctx, "dev").items()
+        self.assertTrue(k.startswith("sign off:dev_1:t:"))
+        self.assertIn("harness mark t --close", line)
+        self.assertEqual(hz.owed_now(self.ctx, "main"), {})      # not main's to sign
+        self.present(_review_task="t.review")                    # the reviewer's (log 172)
+        self.assertEqual(hz.owed_now(self.ctx, "dev"), {})
+        self.present(at=time.strftime("%Y-%m-%dT%H:%M:%S%z"))     # just presented: mid-review
+        self.assertEqual(hz.owed_now(self.ctx, "dev"), {})
+
+    def test_it_rings_once_per_item_after_five_quiet_minutes(self):
+        self.present()
+        now = time.time()
+        with mock.patch.object(hz, "turn_end_at", return_value=now - 100):
+            self.assertIsNone(hz.owed_ring(self.ctx, "dev", "s", now))   # not quiet long enough
+        with mock.patch.object(hz, "turn_end_at", return_value=now - hz.OWED_IDLE - 1):
+            text = hz.owed_ring(self.ctx, "dev", "s", now)
+            self.assertIn("harness mark t --close", text)
+            (m,) = self.inbox("dev")
+            self.assertEqual(json.loads(m.read_text())["priority"], "low")   # resumes a sleeper
+            self.assertIsNone(hz.owed_ring(self.ctx, "dev", "s", now))       # once
+            self.assertEqual(self.inbox("main"), [])
+            self.present(_closed_at="2026")                                   # signed off
+            self.assertIsNone(hz.owed_ring(self.ctx, "dev", "s", now))
+            self.present()                                                    # owed again
+            self.assertIsNotNone(hz.owed_ring(self.ctx, "dev", "s", now))
+            self.assertEqual(len(self.inbox("dev")), 2)
+        self.assertIsNone(hz.owed_ring(self.ctx, "dev", "", now))           # no session at all
 
 
 class CloseAfter(unittest.TestCase):
@@ -3671,6 +3722,22 @@ class Ringer(unittest.TestCase):
              mock.patch.object(hz, "resume_session", side_effect=resume), \
              mock.patch("sys.stdout", io.StringIO()):
             return hz.ringer_tick(self.ctx, S, now)
+
+    def test_a_sleeping_lead_that_owes_a_sign_off_is_rung_and_resumed(self):
+        # Log 173: dev slept for hours on presentations nobody rang it for again.
+        p = mock.patch.object(hz, "ensure_ringer", lambda s: None)
+        p.start(); self.addCleanup(p.stop)
+        (self.ctx.dir / "marks").mkdir()
+        (self.ctx.dir / "marks" / "t.json").write_text(json.dumps(
+            {"_node": "dev_1", "_task": "t", "_presented_at": OLD, "_presented_sha": "a" * 40}))
+        self.own("dev", "s-dev")
+        self.own("main", "s-main")
+        now, resumed = time.time(), []
+        self.tick({}, now, ended=now - hz.OWED_IDLE - 1, resumed=resumed)
+        self.assertEqual([s for s, _ in resumed], ["s-dev"])     # main owes nothing here
+        mail = [json.loads(m.read_text()) for m in
+                (self.ctx.dir / "doorbell" / "dev" / "inbox").glob("*.json")]
+        self.assertIn("harness mark t --close", mail[0]["text"])
 
     def test_the_plan_for_every_kind_of_receiver_and_mail(self):
         hi, lo, fyi = ({"from": "dev", "priority": p, "text": "x"} for p in ("high", "low", "fyi"))
@@ -7022,6 +7089,19 @@ class CatchUp(unittest.TestCase):
             {"_node": "dev", "_task": "d", "_presented_at": hz._now(), "_presented_sha": mine}))
         code, out = self.run_as("main", "mark", "d", "--close")
         self.assertEqual(code, 0, out)
+
+    def test_rank_0_is_not_shown_what_a_lead_below_owes_unless_it_asks(self):
+        # Log 173: main's every prompt listed dev's unsigned presentations.
+        tip = self.commit("dev_1", "work")
+        (self.ctx.dir / "marks").mkdir(exist_ok=True)
+        (self.ctx.dir / "marks" / "t.json").write_text(json.dumps(
+            {"_node": "dev_1", "_task": "t", "_presented_at": OLD, "_presented_sha": tip}))
+        code, out = self.run_as("main", "whoami", "--no-check", read_roster=lambda p: None)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("unsigned", out)
+        code, out = self.run_as("main", "whoami", "--no-check", "--tree",
+                                read_roster=lambda p: None)
+        self.assertIn("unsigned t (dev_1, 3h", out)
 
     def test_a_hold_keeps_a_node_s_tree_still_until_it_presents(self):
         # Log 154 (owner, 2026-10-12): merging between turns stays the rule, and

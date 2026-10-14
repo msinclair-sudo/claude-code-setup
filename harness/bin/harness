@@ -1519,8 +1519,12 @@ def _whoami(a):
         # it stands in the node. Nothing can push ([[R4]]) — but the rank ABOVE
         # the lead is running, and recycling that lead is what makes it orient
         # and see the queue it owes.
+        # Log 173 (owner, 2026-10-15): it is THAT lead's, and the ringer now
+        # wakes it (owed_ring). The rank above is told only when it asks,
+        # `whoami --tree`, not at every resume, where it cost main tokens on
+        # every prompt and moved nothing.
         grand = {}
-        for t, r in open_marks(ctx).items():
+        for t, r in (open_marks(ctx).items() if getattr(a, "tree", False) else []):
             n = r.get("_node")
             lead = ctx.tree["nodes"].get(n, {}).get("parent")
             if not r.get("_presented_at") or lead not in kids or r.get("_review_task"):
@@ -1560,6 +1564,12 @@ def _whoami(a):
                       f"harness recycle {lead}")
     except Exception:
         pass
+    if getattr(a, "tree", False):
+        try:
+            for line in stuck_waits(ctx, node):
+                print(f"stuck    {line}")
+        except Exception:
+            pass
     try:
         fnd = open_findings(ctx, node)
         if fnd:
@@ -4065,6 +4075,114 @@ def rank0_owes(ctx, node):
     return owed
 
 
+def rank0_line(kind, ident, label, age):
+    """One line for a rank0_owes row, shared by the prompt hook and the ringer.
+    Selected by kind, with an explicit fallback. This was an if/else whose
+    else-branch hardcoded the word "block", so the day a third kind arrived it
+    would have described itself as a block and named a command that could not
+    find it."""
+    return {
+        "review": f"documenter batch {label} awaits your review ({human_age(age)})"
+                  f"  — harness pairs {ident}, then apply or --decline",
+        "approve": f"'{label}' waits on your approval ({human_age(age)})"
+                   f"  — harness brief {label} --approve",
+        "task": f"block '{label}' was answered {human_age(age)} ago and "
+                f"produced no task  — harness blocked --decided",
+        "sweep": f"{label} await a cleanup decision  — harness sweep"
+                 + (" --stale --dry-run" if ident == "stale" else
+                    " --sessions --dry-run" if ident == "sessions" else
+                    "  (then --dry-run, --why)"),
+    }.get(kind) or (f"'{label}' ({kind}) has been waiting {human_age(age)}"
+                    f"  — harness status")
+
+
+# ── log 173: an action a node owes wakes THAT node ───────────────────────────
+#
+# 2026-10-15: main's orientation listed three presentations unsigned for 4 to
+# 13 hours by dev, dev_migrate and dev_dag. Each lead had been rung when the
+# work was presented, read it, and ended its turn; nothing rang again, and a
+# lead that has gone to sleep is woken only by mail. Meanwhile main, which
+# signs none of them, was shown them at every prompt. The owner: "this should
+# cause an event like the fyi messages, after 5 minutes of no activity, if
+# there are actions they need to perform they are woken. however you should
+# not be getting hooks for this, as it's not your job."
+OWED_IDLE = 300            # quiet this long with an action owed: the node is rung
+
+
+def owed_now(ctx, node):
+    """The acts only this node can do, as {id: line}: its children's
+    presentations to sign off, their questions to answer, and for rank 0 the
+    batches, approvals and answered blocks it owes. Read from records alone,
+    so the ringer can ask it every minute."""
+    out = {}
+    kids = set(ctx.children(node))
+    for t, r in open_marks(ctx).items():
+        # A presentation in review is the reviewer's (log 172).
+        if r.get("_node") not in kids or not r.get("_presented_at") or r.get("_review_task"):
+            continue
+        then = _epoch(r["_presented_at"])
+        if then and time.time() - then >= OWED_IDLE:
+            out[f"sign off:{r['_node']}:{t}:{str(r.get('_presented_sha'))[:12]}"] = owed_line(
+                "sign off", r["_node"], mark_label(r, t), time.time() - then)
+    for k in sorted(kids):
+        try:
+            u = unanswered(ctx, node, k)
+        except Exception:
+            u = None
+        if u:
+            out[f"unanswered:{k}:{u[1][:40]}"] = owed_line("unanswered", k, u[1], u[0])
+    try:
+        for kind, ident, label, age in rank0_owes(ctx, node):
+            if kind in ("review", "approve", "task"):
+                out[f"{kind}:{ident}"] = rank0_line(kind, ident, label, age)
+    except Exception:
+        pass
+    return out
+
+
+def stuck_waits(ctx, node):
+    """Waits below this node's children that their own lead has not answered
+    past WAIT_STALL (obs 68), for `whoami --tree`: that lead is nudged for
+    them; this is the view from above, on request."""
+    _w = open_waits(ctx)
+    below = set(subtree(ctx, node))
+    out = []
+    for n, r in _w.items():
+        if r.get("parent") == node or n not in below:
+            continue
+        if time.time() - (_epoch(r.get("since")) or time.time()) > WAIT_STALL:
+            up = r.get("parent")
+            doing = node_activity(ctx, up, _w)
+            out.append(f"{n} has waited {wait_age(r.get('since'))} on {up}"
+                       + (f" — {up}: {doing}" if doing else ""))
+    return out
+
+
+def owed_ring(ctx, node, sid, now=None):
+    """Ring a node, once per item, for what it owes once it has been quiet
+    OWED_IDLE. The ring is low: an idle session is woken a minute later, and
+    one that has gone to sleep is resumed, as for any mail that asks for
+    something. -> the text rung, or None."""
+    now = time.time() if now is None else now
+    ended = turn_end_at(sid) if sid else None
+    if not ended or now - ended < OWED_IDLE:
+        return None
+    items = owed_now(ctx, node)
+    tf = bell_dir(ctx, node) / "owed.json"
+    told = set(_read_json(tf) or [])
+    new = [k for k in items if k not in told]
+    # What is no longer owed leaves the record, so it rings again if it comes back.
+    if set(told) != (told & set(items)) | set(new):
+        tf.parent.mkdir(parents=True, exist_ok=True)
+        tf.write_text(json.dumps(sorted((told & set(items)) | set(new))))
+    if not new:
+        return None
+    text = (f"owed by you, and nothing else will ask (log 173):\n"
+            + "\n".join(f"  {items[k]}" for k in new))
+    ring_inbox(ctx.state, node, "harness", text, "low")
+    return text
+
+
 SWEEP_COUNT_EVERY = 300     # seconds between the ringer's recounts
 
 
@@ -4266,42 +4384,18 @@ def queue_items(ctx, node):
         pass
     try:
         for kind, ident, label, age in rank0_owes(ctx, node):
-            # Selected by kind, with an explicit fallback. This was an
-            # if/else whose else-branch hardcoded the word "block", so the day a
-            # third kind arrived it would have described itself as a block and
-            # named a command that could not find it.
-            _line = {
-                "review": f"documenter batch {label} awaits your review ({human_age(age)})"
-                          f"  — harness pairs {ident}, then apply or --decline",
-                "approve": f"'{label}' waits on your approval ({human_age(age)})"
-                           f"  — harness brief {label} --approve",
-                "task": f"block '{label}' was answered {human_age(age)} ago and "
-                        f"produced no task  — harness blocked --decided",
-                "sweep": f"{label} await a cleanup decision  — harness sweep"
-                         + (" --stale --dry-run" if ident == "stale" else
-                            " --sessions --dry-run" if ident == "sessions" else
-                            "  (then --dry-run, --why)"),
-            }.get(kind)
-            out[f"{kind}:{ident}"] = _line or (
-                f"'{label}' ({kind}) has been waiting {human_age(age)}"
-                f"  — harness status")
+            out[f"{kind}:{ident}"] = rank0_line(kind, ident, label, age)
     except Exception:
         pass
     try:
         _w = open_waits(ctx)
-        _below = set(subtree(ctx, node))
         for n, r in _w.items():
             if r.get("parent") == node:
                 out[f"asked:{n}"] = (f"{n} is stopped waiting on you "
                                      f"({wait_age(r.get('since'))}): {r.get('asked')}")
-            elif n in _below and time.time() - (_epoch(r.get("since")) or time.time()) > WAIT_STALL:
-                # A wait the lead in between has not seen: it runs no harness
-                # command while a long job runs, so it is never told (obs 68).
-                up = r.get("parent")
-                doing = node_activity(ctx, up, _w)
-                out[f"stuck:{n}"] = (f"{n} has waited {wait_age(r.get('since'))} on {up}"
-                                     + (f" — {up}: {doing}" if doing else "")
-                                     + f". Message {up}, or answer {n} yourself")
+        # A wait on the lead in between is that lead's: the ringer nudges it
+        # (bell_nudge, owed_ring). The rank above sees it with whoami --tree
+        # (log 173), not at every prompt.
     except Exception:
         pass
     try:
@@ -19450,6 +19544,15 @@ def ringer_tick(ctx, S, now=None):
                 text = None
             if text:
                 ring_inbox(ctx.state, node, "harness", text)
+        if state in ("idle", "stopped") and \
+                now - S.setdefault("_owed", {}).get(node, 0) >= NUDGE_EVERY:
+            # What only this node can do, asleep or not (log 173).
+            S["_owed"][node] = now
+            try:
+                if owed_ring(ctx, node, (row or {}).get("sessionId") or sid, now):
+                    print(f"{_now()} {node} owes an action and was rung for it")
+            except Exception as e:
+                print(f"{_now()} owed check failed for {node}: {type(e).__name__}: {e}")
         mail = MAIL().unread(ctx.state, node)
         calls = read_calls(mail, node, sid)
         if not calls:
@@ -20282,6 +20385,9 @@ def main():
     add("contract", cmd_contract, roster=True)
     wh = add("whoami", cmd_whoami, roster=True)
     wh.add_argument("--no-check", action="store_true", help="skip the R7 name assertion")
+    wh.add_argument("--tree", action="store_true",
+                    help="also what the leads below owe: unsigned presentations, waits their "
+                         "lead has not answered (log 173: each is woken for its own)")
     wh.add_argument("--quiet", action="store_true",
                     help="print nothing and exit 0 when not enrolled (for SessionStart hooks)")
     bh = add("behind", cmd_behind)

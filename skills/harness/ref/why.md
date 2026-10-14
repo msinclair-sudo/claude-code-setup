@@ -192,7 +192,7 @@ A fast-forward works only while the child is an ancestor of you. Integrating the
 
 ### Signing off
 
-The gap between "signed off" and "started the next thing" used to be a command nobody ran, so `--close` recycles itself. The member has already stopped and released, so until you close, the work sits finished and invisible and the node empty. The rank above is told because nothing pushes and an idle lead runs no commands. An unsigned task leaves the next holder a list it cannot sort into live and dead. The cost was measured at presentation, so closing loses no number.
+The gap between "signed off" and "started the next thing" used to be a command nobody ran, so `--close` recycles itself. The member has already stopped and released, so until you close, the work sits finished and invisible and the node empty. The ringer rings you for it after five quiet minutes, because nothing else pushes and an idle lead runs no commands; the rank above is not told, since it cannot sign off for you (log 173). An unsigned task leaves the next holder a list it cannot sort into live and dead. The cost was measured at presentation, so closing loses no number.
 
 ### T7 / T8 — mediating a conflict
 

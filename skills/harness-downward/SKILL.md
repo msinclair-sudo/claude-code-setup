@@ -121,7 +121,7 @@ Before the first commit the child restates your plan in a few lines. Correct onl
 
 ## `T12` — answering
 
-Answer from scope, intent and seams. "I don't know, escalating" is correct; escalate under `T5`/`T9` rather than guess. Orientation lists children waiting on you (`harness waiting --list`), oldest first, with what is still moving. Answer the halted one before the one still working. Answer, then recycle, never the reverse. If a name stays on the list after you answered, the answer did not arrive; put it in the brief. A `stuck` line means a grandchild has waited over ten minutes on a child of yours that is busy (often on a long `harness check`, shown with its progress): message that child, or answer the grandchild yourself.
+Answer from scope, intent and seams. "I don't know, escalating" is correct; escalate under `T5`/`T9` rather than guess. Orientation lists children waiting on you (`harness waiting --list`), oldest first, with what is still moving. Answer the halted one before the one still working. Answer, then recycle, never the reverse. If a name stays on the list after you answered, the answer did not arrive; put it in the brief. A grandchild's wait on a child of yours is that child's to answer, and the ringer nudges it; you are not prompted with it. `harness whoami --tree` shows such waits (`stuck`, with what the child is doing) and your leads' unsigned presentations, when you want the view from above.
 
 ## `I9` — you own the seams
 
@@ -177,7 +177,7 @@ harness mark <task> --close        # sign off; recycles the child onto its next 
 harness mark <task> --close --no-recycle
 ```
 
-A child presents with `--done` and cannot close its own; presenting rings your doorbell, so review it then. If orientation says a child is "unwoken", the ringer woke it several times and its mail is still unread: look at it (`harness status`), and recycle it if it is stuck. A `harness hold <path> --until <task>` you place rings the lane doing that task and marks its wait on you answered. It never applies to that task's own checks: the lane's, or yours after integrating it (any commit carrying its `Task:` trailer). `whoami` lists what waits on you; `status` shows `awaiting sign-off`. Review first. `--close` refuses on a dirty worktree or an open unpresented mark; with nothing queued, nothing starts. Sign off promptly: after twenty minutes the rank above you is told, and your `Stop` hook blocks once while a sign-off is owed.
+A child presents with `--done` and cannot close its own; presenting rings your doorbell, so review it then. If orientation says a child is "unwoken", the ringer woke it several times and its mail is still unread: look at it (`harness status`), and recycle it if it is stuck. A `harness hold <path> --until <task>` you place rings the lane doing that task and marks its wait on you answered. It never applies to that task's own checks: the lane's, or yours after integrating it (any commit carrying its `Task:` trailer). `whoami` lists what waits on you; `status` shows `awaiting sign-off`. Review first. `--close` refuses on a dirty worktree or an open unpresented mark; with nothing queued, nothing starts. Sign off promptly: once you have been quiet five minutes with a sign-off owed, the ringer rings you for it (and resumes you if you have gone to sleep), once per item; your `Stop` hook blocks once while one is owed.
 
 ## Children behind you
 

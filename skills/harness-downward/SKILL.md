@@ -226,7 +226,7 @@ harness recycle <node> --at-quiet               # a lead too big to keep: reset 
 
 Recycle a child once its work has landed and after sign-off (`--close` does it for you), and replace a cold session rather than speaking to it. Leads too. Close the task record first or `--idle` reads the node as working. It refuses on a dirty worktree, unintegrated commits, a busy session, an unpresented mark and rank 0; take each refusal at face value. If a child asked only by message, answer before recycling.
 
-`--escalate` is available, not the default; prefer raising the node's starting effort in `tree.json`. A second failure is a finding. Don't `claude rm` a session yourself; ended sessions come off the list with `harness sweep --sessions`. Removing a node is `harness trim`, rank 0 only; ask for it as a `T5` request naming the node and the commit proving you hold its work.
+`--escalate` is available, not the default; prefer raising the node's starting effort in `tree.json`. A second failure is a finding. Don't `claude rm` a session yourself; the ringer takes finished sessions off the list, keeping each node's last three. Removing a node is `harness trim`, rank 0 only; ask for it as a `T5` request naming the node and the commit proving you hold its work.
 
 `orphan` in orientation means a child's session died mid-turn holding its task: `harness recycle <child>` resumes it (`--dry-run` shows the same; if it refuses for commits you have not taken, they are committed and safe, so add `--force`). A task you parked with `harness brief <task> --wait` is not nagged about.
 

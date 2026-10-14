@@ -15006,16 +15006,45 @@ def job_dirs():
     return out
 
 
-def record_texts(ctx):
+CITE_GRACE = 86400         # seconds a closed record's citations still protect
+
+
+def record_live(ctx, kind, f, now=None, _open=None):
+    """Does this record still need what it cites (owner, 2026-10-15: citations
+    go stale)? Open work does; closed work for CITE_GRACE after it last changed,
+    then its citations lapse and keep no session on Claude Code's list."""
+    try:
+        if (now or time.time()) - f.stat().st_mtime < CITE_GRACE:
+            return True
+    except OSError:
+        return False
+    if kind == "marks":
+        return not (_read_json(f) or {}).get("_closed_at")
+    if kind == "briefs":
+        b = _read_json(f) or {}
+        return not superseded(b) and task_state(ctx, b.get("task") or f.stem) not in (
+            "closed", "superseded", "abandoned")
+    if kind == "findings":
+        return f.stem in (_open if _open is not None else open_findings(ctx))
+    return False                                   # pairs: applied or returned by now
+
+
+def record_texts(ctx, live_only=False):
     """Every record that can cite a file, as (who, text, author sessions). Fact
-    observations are separate, because each has its own author."""
+    observations are separate, because each has its own author. `live_only`:
+    only records that still need what they cite (`record_live`); facts in the
+    store and the baseline always do, the archive never."""
     out = []
+    now = time.time()
+    _open = open_findings(ctx) if live_only else None
     def add(who, obj):
         t = obj if isinstance(obj, str) else json.dumps(obj)
         out.append((who, t, set(_SID8.findall(t)) | set(_FULLSID.findall(t))))
     for kind in ("findings", "briefs", "marks", "pairs"):
         d = ctx.state / kind
         for f in (d.glob("*.json") if d.is_dir() else []):
+            if live_only and not record_live(ctx, kind, f, now, _open):
+                continue
             add(f"{kind}/{f.stem}", f.read_text(errors="replace"))
     d = ctx.state / "facts"
     for f in (d.glob("*.json") if d.is_dir() else []):
@@ -15027,6 +15056,8 @@ def record_texts(ctx):
             add(f"facts/{f.stem}", o)
     if baseline_path(ctx).exists():
         add("checks/baseline", baseline_path(ctx).read_text())
+    if live_only:
+        return out                     # archived work is done with what it cited
     ad = archive_dir(ctx)
     for rf in (ad.glob("*/records.json") if ad.is_dir() else []):
         try:
@@ -15491,29 +15522,120 @@ def all_sessions():
     return json.loads(r.stdout)
 
 
-def ended_sessions(ctx, rows):
+# Owner, 2026-10-15: "finished sessions need to be deleted. a node can keep the
+# last 3 sessions as history but no more." biblion2 had 490 on Claude Code's
+# list, 475 of them finished, because nothing ran `sweep --sessions` unasked.
+SESSIONS_KEEP = 3          # finished sessions each node keeps on the list
+PRUNE_EVERY = 900          # seconds between the ringer's sweeps of the rest
+ENDED_STATES = ("done", "stopped", "failed")
+
+
+def session_slot(ctx, r, wts, prefix):
+    """Whose history a session is: a node's name, "documenter", "intermediary",
+    "gone" (started in a worktree since trimmed), or None when it is not this
+    project's: the owner's own sessions and design sessions are never ours."""
+    name, cwd = r.get("name") or "", r.get("cwd") or ""
+    if name == documenter_name(ctx.repo):
+        return "documenter"
+    im = intermediary_name(ctx.repo)
+    if name == im or name.startswith(im + "-"):
+        return "intermediary"
+    if not name.startswith(prefix):
+        return None
+    if cwd in wts:
+        return wts[cwd]
+    return "gone" if cwd and not Path(cwd).exists() else None
+
+
+def kept_sessions(ctx, rows):
+    """Sessions never taken off the list, however old: {session id: why}. A
+    node's holder above all: one that has ended its turn reads as finished, and
+    it is the session the ringer resumes when mail comes."""
+    keep = {}
+    for n in ctx.tree["nodes"]:
+        sid = (_read_json(ctx.lock_path(n)) or {}).get("session_id")
+        if sid:
+            keep[sid] = f"it holds {n}"
+        for kind, why in (("starts", "a start in flight on"),
+                          ("limits", "it waits out a usage limit on")):
+            sid = (_read_json(ctx.state_file(kind, n, ".json")) or {}).get("sid")
+            if sid:
+                keep.setdefault(sid, f"{why} {n}")
+    for t, r in open_marks(ctx).items():
+        if r.get("_session"):
+            keep.setdefault(r["_session"], f"it opened {t}, still open")
+    d = Path(ctx.state) / "asks"
+    open_asks = {f.stem for f in (d.glob("*.json") if d.is_dir() else [])
+                 if (_read_json(f) or {}).get("state") in ASK_OPEN}
+    for k, (_row, sid) in item_sessions(ctx.repo, rows).items():
+        if k in open_asks and sid:
+            keep.setdefault(sid, f"item {k} is open")
+    return keep
+
+
+def ended_sessions(ctx, rows, keep=SESSIONS_KEEP, refs=True):
     """This project's ended sessions still on Claude Code's list, as (row, why
-    kept or None). Every recycle and stop leaves one. Ours: named for the
-    project, as `spawn` names them, and started in a node's worktree or in one
-    that is gone (a trimmed node); anything else is the owner's. Kept: a record
-    cites a file in its job folder."""
+    kept or None). Every recycle and stop leaves one. Ours: a node's (named for
+    the project, as `spawn` names them, in its worktree or in one since
+    trimmed), the documenter's and the intermediary's; anything else is the
+    owner's. Kept: the `keep` newest of each (a trimmed node keeps none), a
+    session `kept_sessions` names, and one whose job folder a record cites."""
     live = {r.get("sessionId") for r in live_rows(rows)}
-    wts = set(load_index(ctx).get("byWorktree") or {}) | {str(ctx.repo)}
+    wts = dict(load_index(ctx).get("byWorktree") or {})
+    root = next((n for n, sp in ctx.tree["nodes"].items() if not sp.get("parent")), "main")
+    wts.setdefault(str(ctx.repo), root)
     prefix = ctx.repo.name + "-"
     me = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
-    jobs = job_dirs()
-    refs = job_refs(ctx, jobs=jobs)
-    out = []
+    held = kept_sessions(ctx, rows)
+    jobs = job_dirs() if refs else {}
+    cites = job_refs(ctx, texts=record_texts(ctx, live_only=True), jobs=jobs) if refs else {}
+    when = lambda r: r.get("startedAt") if isinstance(r.get("startedAt"), (int, float)) else 0
+    slots = {}
     for r in rows:
-        sid, cwd = r.get("sessionId") or "", r.get("cwd") or ""
+        sid = r.get("sessionId") or ""
         if not sid or sid in live or sid == me:
             continue
-        if not ((r.get("name") or "").startswith(prefix)
-                and (cwd in wts or not Path(cwd).exists())):
+        slot = session_slot(ctx, r, wts, prefix)
+        if slot is not None:
+            slots.setdefault(slot, []).append(r)
+    out = []
+    for slot, rs in slots.items():
+        history = 0
+        for r in sorted(rs, key=when, reverse=True):          # newest first
+            sid = r["sessionId"]
+            ref = cites.get(jobs.get(sid)) if jobs.get(sid) else None
+            if sid in held:
+                out.append((r, held[sid]))
+            elif ref:
+                out.append((r, ref["all"] or next(iter(ref["files"].values()), None)))
+            elif slot != "gone" and history < keep:
+                history += 1
+                out.append((r, f"one of {slot}'s last {keep}"))
+            else:
+                out.append((r, None))
+    return out
+
+
+def job_rows():
+    """Claude Code's background sessions read off their job folders, in the
+    roster's shape (no subprocess), with "live" for one that has not ended."""
+    out = []
+    for st in (JOBS.glob("*/state.json") if JOBS.is_dir() else []):
+        try:
+            d = json.loads(st.read_text())
+        except Exception:
             continue
-        ref = refs.get(jobs.get(sid)) if jobs.get(sid) else None
-        out.append((r, (ref["all"] or next(iter(ref["files"].values()), None))
-                       if ref else None))
+        try:
+            t = datetime.datetime.fromisoformat(
+                str(d.get("createdAt") or "").replace("Z", "+00:00")).timestamp() * 1000
+        except ValueError:
+            t = 0
+        out.append({"sessionId": d.get("sessionId") or st.parent.name, "name": d.get("name"),
+                    "cwd": d.get("cwd"), "startedAt": t, "state": d.get("state"),
+                    # A pid `live_rows` finds alive (this process) for one that
+                    # has not ended: the folder records a state, not a process.
+                    "_job": st.parent,
+                    "pid": os.getpid() if d.get("state") not in ENDED_STATES else None})
     return out
 
 
@@ -15522,26 +15644,16 @@ def ended_count(ctx):
     orientation: no subprocess, same rules, so the nag clears when it is run.
     Whether a record cites a job folder costs a scan of every tmp/ file (0.7s
     on a live tree), so that part is cached until a job folder or record changes."""
-    wts = set(load_index(ctx).get("byWorktree") or {}) | {str(ctx.repo)}
-    prefix = ctx.repo.name + "-"
-    cands = []
-    for st in (JOBS.glob("*/state.json") if JOBS.is_dir() else []):
-        try:
-            d = json.loads(st.read_text())
-        except Exception:
-            continue
-        cwd = d.get("cwd") or ""
-        if (d.get("state") in ("done", "stopped", "failed")
-                and (d.get("name") or "").startswith(prefix)
-                and (cwd in wts or not Path(cwd).exists())):
-            cands.append(st.parent)
+    cands = [r["_job"] for r, why in ended_sessions(ctx, job_rows(), keep=SESSIONS_KEEP, refs=False)
+             if why is None]
     if len(cands) < ENDED_NAG:
         return len(cands)
     newest = max((f.stat().st_mtime for k in ("findings", "briefs", "marks", "pairs", "facts")
                   for f in (ctx.state / k).glob("*.json")), default=0)
     for f in (archive_dir(ctx).glob("**/*.json") if archive_dir(ctx).is_dir() else []):
         newest = max(newest, f.stat().st_mtime)
-    key = f"{sorted(c.name for c in cands)}|{newest}"
+    # The hour too: a closed record's citations lapse with time alone (CITE_GRACE).
+    key = f"{sorted(c.name for c in cands)}|{newest}|{int(time.time() // 3600)}"
     cf = ctx.state / "ended_count.json"
     try:
         c = json.loads(cf.read_text())
@@ -15549,7 +15661,7 @@ def ended_count(ctx):
             return c["n"]
     except Exception:
         pass
-    refs = job_refs(ctx)
+    refs = job_refs(ctx, texts=record_texts(ctx, live_only=True))
     n = sum(1 for c in cands if c not in refs)
     try:
         cf.write_text(json.dumps({"key": key, "n": n}))
@@ -15559,16 +15671,22 @@ def ended_count(ctx):
 
 
 def sweep_sessions(ctx, a):
-    """`sweep --sessions`: this project's ended sessions off Claude Code's list."""
-    found = ended_sessions(ctx, all_sessions())
+    """`sweep --sessions`: this project's ended sessions off Claude Code's list,
+    but each node's last SESSIONS_KEEP and every session `kept_sessions` names.
+    `--auto` is the ringer's own run (owner, 2026-10-15): the rule is the
+    decision, so it needs no --why. Before it, the sweep waited on rank 0's
+    decision; it ran once (147 removed, 2026-10-05) and 475 piled up behind it."""
+    auto = bool(a.__dict__.get("auto"))
+    keep = a.__dict__.get("keep_last")
+    keep = SESSIONS_KEEP if keep is None else max(0, int(keep))
+    found = ended_sessions(ctx, all_sessions(), keep=keep)
     go = [r for r, why in found if not why]
     kept = [(r, why) for r, why in found if why]
     for r, why in (kept if a.dry_run else []):
-        print(f"  keep   {r.get('name') or '?'} [{r['sessionId'][:8]}]  — its job "
-              f"folder is cited by {why}")
+        print(f"  keep   {r.get('name') or '?'} [{r['sessionId'][:8]}]  — {why}")
     if kept and not a.dry_run:
-        print(f"  keep   {len(kept)}: a record cites a file in their job folder "
-              f"(--dry-run names them)")
+        print(f"  keep   {len(kept)}: each node's last {keep}, its holder, and any a record "
+              f"cites (--dry-run names them)")
     names = {}
     for r in go:
         names[r.get("name") or "?"] = names.get(r.get("name") or "?", 0) + 1
@@ -15576,11 +15694,13 @@ def sweep_sessions(ctx, a):
         print(f"  {c:>4}  {n}")
     print(f"  {len(go)} ended session(s) → claude rm. Their transcripts stay; "
           f"`claude --resume` still opens one.")
+    if auto and not a.dry_run:
+        a.why = f"each node keeps its last {keep}; the ringer removes the rest"
     if a.dry_run or not (a.why or "").strip():
         if not a.dry_run and go:
             print('\n  Nothing done. Decide: harness sweep --sessions --why "..."')
         return
-    by = sweep_decider(ctx)
+    by = "harness (ringer)" if auto else sweep_decider(ctx)
     gone, failed = [], []
     for r in go:
         ok, msg = claude_rm(r["sessionId"])
@@ -15593,6 +15713,30 @@ def sweep_sessions(ctx, a):
                              "failed": failed, "by": by, "why": a.why,
                              "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}) + "\n")
     print(f"removed {len(gone)} session(s)" + (f", {len(failed)} failed" if failed else ""))
+
+
+def prune_launch(ctx, S, now=None):
+    """The ringer's sweep of finished sessions, every PRUNE_EVERY: a detached
+    `harness sweep --sessions --auto`, so a long first pass (hundreds of
+    `claude rm`) never holds up a wake. One at a time. -> launched or not."""
+    now = now or time.time()
+    if now - S.get("_prune_at", 0) < PRUNE_EVERY:
+        return False
+    S["_prune_at"] = now
+    pf = Path(ctx.state) / "prune.pid"
+    try:
+        if _pid_exists(int(pf.read_text().strip())):
+            return False
+    except (OSError, ValueError):
+        pass
+    log = open(Path(ctx.state) / "doorbell" / "prune.log", "a")
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
+    p = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "sweep", "--sessions",
+                          "--auto"], cwd=str(ctx.repo), env=env, stdout=log, stderr=log,
+                         stdin=subprocess.DEVNULL, start_new_session=True)
+    log.close()                                # the child has its own handle
+    pf.write_text(str(p.pid))
+    return True
 
 
 def open_record_texts(ctx):
@@ -19805,6 +19949,14 @@ def cmd_ringer(a):
                     sweep_counts(ctx, fresh=True)
                 except Exception as e:
                     print(f"{_now()} sweep count failed: {type(e).__name__}: {e}")
+            # Finished sessions off Claude Code's list, each node keeping its
+            # last SESSIONS_KEEP (owner, 2026-10-15). Detached: a first pass
+            # over hundreds takes minutes.
+            try:
+                if prune_launch(ctx, S):
+                    print(f"{_now()} session sweep started (doorbell/prune.log)")
+            except Exception as e:
+                print(f"{_now()} session sweep not started: {type(e).__name__}: {e}")
 
     def stop(*_):
         passing.acquire(timeout=120)        # a stop waits for the pass in hand
@@ -20796,7 +20948,13 @@ def main():
                     help="facts and findings no open record needs (closed findings; uncited, old facts)")
     sw.add_argument("--older-than", metavar="DAYS", help="with --stale: fact age, default 14")
     sw.add_argument("--sessions", action="store_true",
-                    help="ended sessions on this project's nodes, off Claude Code's list")
+                    help="ended sessions on this project's nodes, off Claude Code's list; "
+                         f"each node keeps its last {SESSIONS_KEEP} and its holder")
+    sw.add_argument("--keep-last", dest="keep_last", type=int, metavar="N",
+                    help=f"with --sessions: finished sessions each node keeps (default "
+                         f"{SESSIONS_KEEP})")
+    sw.add_argument("--auto", action="store_true",
+                    help="with --sessions: the ringer's own run; the rule is the decision")
     sw.add_argument("--why", help="the decision, one line")
     ar = add("archive", cmd_archive)
     ar.add_argument("unit", nargs="?", help="a swept unit, or a task in one")

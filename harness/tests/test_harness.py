@@ -3043,7 +3043,7 @@ class EndedSessions(unittest.TestCase):
              mock.patch.object(hz, "job_refs", return_value={base / "j": {"all": "facts/x",
                                                                           "files": {}}}), \
              mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "me"}):
-            got = {r["sessionId"]: why for r, why in hz.ended_sessions(ctx, rows)}
+            got = {r["sessionId"]: why for r, why in hz.ended_sessions(ctx, rows, keep=0)}
         self.assertEqual(got, {"ended": None, "cited": "facts/x", "trimmed": None})
 
     def test_orientation_count_reads_job_folders(self):
@@ -3063,7 +3063,7 @@ class EndedSessions(unittest.TestCase):
         with mock.patch.object(hz, "JOBS", jobs), \
              mock.patch.object(hz, "job_refs", return_value={jobs / "2": {}}), \
              mock.patch.object(hz, "load_index", return_value={"byWorktree": {"/r-dev": "dev"}}), \
-             mock.patch.object(hz, "ENDED_NAG", 1):
+             mock.patch.object(hz, "ENDED_NAG", 1), mock.patch.object(hz, "SESSIONS_KEEP", 0):
             self.assertEqual(hz.ended_count(ctx), 2)
             with mock.patch.object(hz, "job_refs", side_effect=AssertionError):
                 self.assertEqual(hz.ended_count(ctx), 2)          # cached
@@ -7423,3 +7423,145 @@ class Reviewer(unittest.TestCase):
         code, out = self.run_as("dev", "brief", "t", "--uses", "ponytail-review")
         self.assertEqual(code, hz.REFUSED)
         self.assertIn("--uses goes in with --write", out)
+
+
+class SessionPrune(unittest.TestCase):
+    """Owner, 2026-10-15: finished sessions are deleted, and a node keeps its
+    last 3 as history. The sweep had run once by hand and 475 had piled up."""
+
+    def setUp(self):
+        base = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, base, True)
+        self.repo, self.wt = base / "proj", base / "proj-dev_1"
+        self.repo.mkdir(); self.wt.mkdir()
+        self.ctx = FakeCtx({"main": None, "dev_1": "main"})
+        self.ctx.repo = self.repo
+        self.base = base
+        self.real_job_refs = hz.job_refs
+        for p in (mock.patch.object(hz, "load_index",
+                                    return_value={"byWorktree": {str(self.wt): "dev_1"}}),
+                  mock.patch.object(hz, "live_rows", lambda rs: [r for r in rs if r.get("pid")]),
+                  mock.patch.object(hz, "job_dirs", return_value={}),
+                  mock.patch.object(hz, "job_refs", return_value={}),
+                  mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": ""})):
+            p.start(); self.addCleanup(p.stop)
+
+    def row(self, sid, t, name="proj-dev_1", cwd=None, **k):
+        return dict({"sessionId": sid, "name": name, "cwd": str(cwd or self.wt),
+                     "startedAt": t}, **k)
+
+    def chosen(self, rows, keep=3):
+        return {r["sessionId"]: why for r, why in hz.ended_sessions(self.ctx, rows, keep=keep)}
+
+    def test_each_node_keeps_its_last_three_and_no_more(self):
+        rows = [self.row(f"s{i}", i) for i in range(6)] + [self.row("live", 9, pid=1)]
+        got = self.chosen(rows)
+        self.assertEqual(sorted(s for s, w in got.items() if w is None), ["s0", "s1", "s2"])
+        self.assertEqual(got["s5"], "one of dev_1's last 3")
+        self.assertNotIn("live", got)                       # running: not finished
+        self.assertEqual(sorted(s for s, w in self.chosen(rows, keep=0).items() if w is None),
+                         ["s0", "s1", "s2", "s3", "s4", "s5"])
+
+    def test_what_is_never_removed_however_old(self):
+        hz._save(self.ctx.lock_path("dev_1"), {"session_id": "holder"})       # asleep holder
+        hz._save(self.ctx.state_file("starts", "dev_1", ".json"), {"sid": "starting"})
+        hz._save(self.ctx.state_file("limits", "dev_1", ".json"), {"sid": "limited"})
+        hz._save(self.ctx.state_file("marks", "t", ".json"), {"_node": "dev_1", "_session": "opener"})
+        hz._save(self.ctx.state_file("asks", "q1", ".json"), {"state": "asked"})
+        hz._save(self.ctx.state_file("asks", "q2", ".json"), {"state": "done"})
+        im = hz.intermediary_name(self.repo)
+        rows = [self.row(s, i) for i, s in enumerate(("holder", "starting", "limited", "opener"))]
+        rows += [self.row(f"new{i}", 10 + i) for i in range(3)]
+        rows += [self.row("q1a", 1, name=f"{im}-q1", cwd=self.base),
+                 self.row("q2a", 2, name=f"{im}-q2", cwd=self.base)]
+        rows += [self.row(f"d{i}", i, name=hz.documenter_name(self.repo), cwd=self.base)
+                 for i in range(5)]
+        rows += [self.row("trimmed", 20, name="proj-panel", cwd=self.base / "gone"),
+                 self.row("owner's", 1, name="my session"),
+                 self.row("design", 1, name="proj-design-x", cwd=self.base)]
+        got = self.chosen(rows, keep=3)
+        self.assertEqual(got["holder"], "it holds dev_1")
+        self.assertEqual(got["starting"], "a start in flight on dev_1")
+        self.assertEqual(got["limited"], "it waits out a usage limit on dev_1")
+        self.assertEqual(got["opener"], "it opened t, still open")
+        self.assertEqual(got["q1a"], "item q1 is open")
+        self.assertEqual(got["q2a"], "one of intermediary's last 3")
+        self.assertEqual(sorted(s for s, w in got.items() if w is None), ["d0", "d1", "trimmed"])
+        for s in ("new0", "new1", "new2"):                  # the protected do not use up the 3
+            self.assertEqual(got[s], "one of dev_1's last 3")
+        for s in ("owner's", "design"):
+            self.assertNotIn(s, got)
+
+    def test_the_ringer_s_run_needs_no_decision_and_is_ledgered(self):
+        rows = [self.row(f"s{i}", i) for i in range(5)]
+        gone = []
+        import argparse
+        a = argparse.Namespace(dry_run=False, why=None, auto=True, keep_last=None)
+        with mock.patch.object(hz, "all_sessions", return_value=rows), \
+             mock.patch.object(hz, "claude_rm", lambda sid: (gone.append(sid), (True, ""))[1]), \
+             mock.patch.object(hz, "sweep_decider", side_effect=AssertionError("asked")), \
+             redirect_stdout(io.StringIO()) as o:
+            hz.sweep_sessions(self.ctx, a)
+        self.assertEqual(sorted(gone), ["s0", "s1"])
+        self.assertIn("removed 2 session(s)", o.getvalue())
+        led = [json.loads(l) for l in (hz.archive_dir(self.ctx) / "ledger.jsonl").read_text().splitlines()]
+        self.assertEqual((led[-1]["by"], sorted(led[-1]["removed"])), ("harness (ringer)", ["s0", "s1"]))
+        # By hand it still waits on a decision.
+        a = argparse.Namespace(dry_run=False, why=None, auto=False, keep_last=None)
+        gone.clear()
+        with mock.patch.object(hz, "all_sessions", return_value=rows), \
+             mock.patch.object(hz, "claude_rm", lambda sid: (gone.append(sid), (True, ""))[1]), \
+             redirect_stdout(io.StringIO()) as o:
+            hz.sweep_sessions(self.ctx, a)
+        self.assertEqual(gone, [])
+        self.assertIn("Nothing done. Decide", o.getvalue())
+
+    def test_the_ringer_launches_one_sweep_every_interval(self):
+        (self.ctx.dir / "doorbell").mkdir()
+        launched = []
+
+        class P:
+            pid = os.getpid()                               # alive while the test runs
+        with mock.patch.object(hz.subprocess, "Popen", lambda *a, **k: launched.append(a) or P()):
+            S = {}
+            self.assertTrue(hz.prune_launch(self.ctx, S, now=10_000))
+            self.assertFalse(hz.prune_launch(self.ctx, S, now=10_000 + 60))          # too soon
+            self.assertFalse(hz.prune_launch(self.ctx, S, now=10_000 + hz.PRUNE_EVERY))  # still running
+            (self.ctx.dir / "prune.pid").write_text("999999999")                     # it ended
+            self.assertTrue(hz.prune_launch(self.ctx, S, now=10_000 + 2 * hz.PRUNE_EVERY))
+        self.assertEqual(len(launched), 2)
+        self.assertEqual(launched[0][0][-3:], ["sweep", "--sessions", "--auto"])
+
+    def test_the_count_reads_job_folders_by_the_same_rule(self):
+        jobs = self.base / "jobs"
+        for i in range(5):
+            (jobs / f"j{i}").mkdir(parents=True)
+            (jobs / f"j{i}" / "state.json").write_text(json.dumps(
+                {"sessionId": f"s{i}", "name": "proj-dev_1", "cwd": str(self.wt), "state": "done",
+                 "createdAt": f"2026-10-1{i}T00:00:00.000Z"}))
+        (jobs / "j9").mkdir()
+        (jobs / "j9" / "state.json").write_text(json.dumps(
+            {"sessionId": "s9", "name": "proj-dev_1", "cwd": str(self.wt), "state": "working"}))
+        with mock.patch.object(hz, "JOBS", jobs):
+            self.assertEqual(hz.ended_count(self.ctx), 2)    # s0, s1; s9 is working
+
+    def test_a_citation_lapses_when_its_record_is_done_with_it(self):
+        # A task record by an old session names a file in that session's tmp/:
+        # it protects the session while open, and for CITE_GRACE after it closes.
+        sid = "abcd1234-0000-4000-8000-000000000000"
+        jd = self.base / "jobs" / "abcd1234"
+        (jd / "tmp").mkdir(parents=True)
+        (jd / "tmp" / "report-on-x.md").write_text("x")
+        rows = [self.row(sid, 0)] + [self.row(f"new{i}", 10 + i) for i in range(3)]
+        mark = self.ctx.state_file("marks", "t", ".json")
+        text = {"_comments": [{"by": f"dev_1 (session {sid[:8]})", "text": "see report-on-x.md"}]}
+        with mock.patch.object(hz, "job_dirs", return_value={sid: jd, sid[:8]: jd}), \
+             mock.patch.object(hz, "job_refs", self.real_job_refs):
+            hz._save(mark, dict(text, _node="dev_1", _closed_at="2026-10-01"))
+            self.assertEqual(self.chosen(rows)[sid], "marks/t")               # just closed
+            old = time.time() - hz.CITE_GRACE - 60
+            os.utime(mark, (old, old))
+            self.assertIsNone(self.chosen(rows)[sid])                         # stale: lapsed
+            hz._save(mark, dict(text, _node="dev_1"))                         # open: needed
+            os.utime(mark, (old, old))
+            self.assertEqual(self.chosen(rows)[sid], "marks/t")

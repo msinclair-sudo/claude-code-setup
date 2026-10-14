@@ -1428,6 +1428,29 @@ archives, and with `--sessions` on every ended `<project>-<node>` session the
 list still carries — skipping any whose job folder a record cites. `claude stop`
 alone left 197 ended sessions listed on one tree in a month.
 
+**The ringer sweeps them, and each node keeps its last three** (owner,
+2026-10-15). A sweep that waited on rank 0's decision ran once (147 removed on
+2026-10-05), and 475 finished sessions were on biblion2's list ten days later.
+Every `PRUNE_EVERY` (15 minutes) the ringer starts a detached
+`harness sweep --sessions --auto`; the rule is the decision, ledgered as
+`harness (ringer)`. Each node, the documenter and the intermediary keep their
+newest `SESSIONS_KEEP` (3) finished sessions as history; a trimmed node keeps
+none. Never removed, however old: a node's holder (one that has ended its turn
+reads as finished, and is the session the ringer resumes), a start in flight, a
+node waiting out a usage limit, a session that opened a task still open, an
+open item's newest session, and any whose job folder a record still in use
+cites. **Citations go stale** (owner, 2026-10-15: "if the other sessions are
+being cited, then they can stay. but we need a method to be removing
+citations, as they go stale"): a citation protects while its record is open
+(an open brief, task or finding; a fact in the store; the test baseline), and
+for `CITE_GRACE` (one day) after a closed record last changed; then it lapses.
+Archived records protect nothing. A later task that needs an old file cites it
+itself, and its open record keeps it. Measured on biblion2 before the first
+run: of 475 finished sessions, 300 would go; 117 more were cited by records
+still in use. The owner's own sessions and design sessions are never the sweep's.
+`sweep --sessions --why "..."` by hand applies the same rule; `--keep-last N`
+changes the number.
+
 **Between tasks, not between sessions.** A member's queue is the ordered briefs written for it that no mark has opened. Its lead sets the order (`harness queue <node> --order`), because a member picking its own next task is picking its own work. When a task is signed off, the harness computes what happens to the node and prints it with the command already written: recycle, or carry on. Leaving that to be remembered is how one session ends up doing four tasks on one accumulating context, which is the thing this rule exists to prevent.
 
 **Priority is rank 0's; authorship is not.** A lead orders any queue below it: its children's, a sub-lead's, and that sub-lead's lanes' (owner, 2026-10-09: dev had to be able to reorder dev_tests' lanes). **Rank 0 orders anywhere in the tree.** A lead that orders past a sub-lead rings it with the new order and the reason, so it never briefs or sequences on the old one. This is deliberately a wider reach than a lead has over briefs — writing a grandchild's brief is refused because it skips the translation a rank exists to perform and rebuilds the drip feed one level down, whereas reordering changes no brief's text at all. It says which of them matters first, and what matters is rank 0's: it holds the charter, and it is the one talking to the operator.

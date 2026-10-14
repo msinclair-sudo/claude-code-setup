@@ -6803,6 +6803,24 @@ class CatchUp(unittest.TestCase):
         self.assertIn("dev caught up: 1 commit(s) from main", out)
         self.assertEqual(started, [(str(self.wt["dev"]), True)])           # merged BEFORE it starts
 
+    def test_the_stop_hook_counts_a_catch_up_as_no_work_and_a_split_task_as_nothing_to_present(self):
+        # Log 169: dev_dag was told at every turn end to present a segment it
+        # had split, and the only moves of its HEAD were the harness's catch-ups.
+        for d in ("marks", "briefs"):
+            (self.ctx.dir / d).mkdir(exist_ok=True)
+        self.ctx.me, self.ctx.branch, self.ctx.worktree = "dev_1", "dev_1", self.wt["dev_1"]
+        (self.ctx.dir / "marks" / "t.json").write_text(json.dumps(
+            {"_node": "dev_1", "_task": "t", "_sha": self.git("dev_1", "rev-parse", "HEAD")}))
+        self.assertEqual(hz.unreported(self.ctx, "dev_1"), [])
+        self.commit("dev", "from_the_lead.txt")
+        self.git("dev_1", "merge", "-q", "--no-edit", "dev")          # a catch-up
+        self.assertEqual(hz.unreported(self.ctx, "dev_1"), [])
+        self.commit("dev_1", "own_work.txt")                        # work of its own
+        self.assertEqual([(m, d) for _, m, d in hz.unreported(self.ctx, "dev_1")], [(True, False)])
+        (self.ctx.dir / "briefs" / "t_a.json").write_text(json.dumps(
+            {"task": "t-a", "node": "dev_1", "from": "t"}))           # now split into parts
+        self.assertEqual(hz.unreported(self.ctx, "dev_1"), [])
+
     def test_a_re_mark_keeps_the_task_s_comments(self):
         # Log 159: the command a restarted session is offered rebuilt the record
         # from nothing: 34 comments became 8, and 10 became 0.

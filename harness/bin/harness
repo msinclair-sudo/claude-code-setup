@@ -3475,10 +3475,25 @@ def unreported(ctx, node):
     out = []
     head = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
     dirty = bool(git("status", "--porcelain", cwd=ctx.worktree)[1].strip())
+    # A task split into parts is presented by no one: its lead closes it once
+    # every part is signed off (log 169: dev_dag was told at every turn end to
+    # present a segment it had split three ways).
+    split = {tkey(b.get("from")) for b in all_briefs(ctx).values() if b.get("from")}
+    parent = (ctx.tree["nodes"].get(node) or {}).get("parent")
+    pb = (ctx.tree["nodes"].get(parent) or {}).get("branch") or parent
     for t, r in open_marks(ctx).items():
         if r.get("_node") != node or r.get("_presented_at"):
             continue
+        if tkey(r.get("_task") or t) in split or tkey(t) in split:
+            continue
         moved = bool(r.get("_sha")) and r["_sha"] != head
+        if moved and pb:
+            # A HEAD moved only by merging the parent in (the harness's own
+            # catch-ups, log 139) holds no work of this node's.
+            rc, n, _ = git("rev-list", "--count", f"{r['_sha']}..HEAD", "--not", pb,
+                           cwd=ctx.worktree)
+            if rc == 0 and n.strip() == "0":
+                moved = False
         if moved or dirty:
             out.append((mark_label(r, t), moved, dirty))
     return out

@@ -5018,6 +5018,38 @@ class ItemMessages(unittest.TestCase):
         self.err.start()
         self.addCleanup(self.err.stop)
 
+    def test_a_command_run_through_the_harness_is_recorded_and_done_says_which_ran(self):
+        # Log 166: three commands, one ran, and nothing could say which.
+        self.rec.update(kind="action", asker_node="dev", runs=[
+            "echo first-out; exit 3", "cd /tmp", "echo second-out", "echo never run"])
+        self.path.write_text(json.dumps(self.rec))
+        with mock.patch("sys.stdout", io.StringIO()):
+            self.assertEqual(hz.ask_exec(self.pdir, self.path, self.rec, 1), 3)
+            self.assertEqual(hz.ask_exec(self.pdir, self.path, self.rec, 3), 0)
+        for n in (2, 0, 5):                                   # a cd; out of range
+            with self.assertRaises(SystemExit):
+                hz.ask_exec(self.pdir, self.path, self.rec, n)
+        self.assertIn("changes your shell's directory", sys.stderr.getvalue())
+        rec = json.loads(self.path.read_text())
+        self.assertEqual([(e["n"], e["exit"]) for e in rec["run_log"]], [(1, 3), (3, 0)])
+        self.assertIn("first-out", Path(rec["run_log"][0]["log"]).read_text())
+        words = [hz.run_word(r) for r in hz.runs_status(rec)]
+        self.assertTrue(words[0].startswith("exit 3 at "))
+        self.assertIn("output: ", words[0])
+        self.assertEqual(words[1], "a cd, typed by hand: not recorded")
+        self.assertTrue(words[2].startswith("exit 0 at "))
+        self.assertEqual(words[3], "no record of being run")
+        self.assertEqual([r["n"] for r in hz.runs_unclean(rec)], [1, 4])
+        self.assertEqual(len((hz.run_dir(self.pdir, "t-1") / "runs.jsonl").read_text().splitlines()), 2)
+        d = hz.ask_done(self.pdir, self.path, rec, "ran them")
+        self.assertEqual([r["n"] for r in d["unclean"]], [1, 4])
+        (m,) = hz.MAIL().unread(self.pdir, "dev")
+        self.assertIn("NOT every command is recorded as run cleanly (2 of 3)", m["text"])
+        self.assertIn("4. echo never run — no record of being run", m["text"])
+        line = json.loads((self.pdir / "owner" / "done.jsonl").read_text().splitlines()[-1])
+        self.assertEqual(len(line["run_log"]), 2)
+        self.assertEqual(json.loads(self.path.read_text())["state"], "done")
+
     def test_every_long_message_between_models_carries_a_tldr_and_the_owner_s_never(self):
         # Owner, 2026-10-14: the pane folds each model message to the line the
         # intermediary wrote, and never the owner's own.

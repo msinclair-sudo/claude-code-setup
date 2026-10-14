@@ -15488,6 +15488,127 @@ def _check_runs(runs, have=0):
     return runs
 
 
+# ── log 166: a command the owner runs from an action ask is recorded ────────
+#
+# The owner ran three commands for environment_dag-2 and clicked Done with the
+# note "command queued". One ran and one did not, and nothing could say which:
+# nothing held a run's exit status or its output. Now the owner's Copy button
+# copies `harness ask <id> --exec N`, which runs command N in the owner's own
+# terminal, shows its output as it comes, and keeps the start, the end, the
+# exit status and the output under the project's state. Done reports each.
+
+RUN_TAIL = 3000            # bytes of a run's output the viewer shows
+
+
+def run_dir(pdir, ask_id):
+    return Path(pdir) / "owner" / "runs" / re.sub(r"[^A-Za-z0-9_-]", "_", str(ask_id))
+
+
+def run_is_cd(cmd):
+    """A bare `cd`: it changes the owner's shell, so it is typed, not run here."""
+    return bool(re.fullmatch(r"\s*cd(\s+[^;&|]*)?", cmd or ""))
+
+
+def runs_status(rec):
+    """Each command of an action ask with its last recorded run, or None."""
+    log = rec.get("run_log") or []
+    out = []
+    for i, cmd in enumerate(rec.get("runs") or [], 1):
+        last = next((e for e in reversed(log) if e.get("n") == i and e.get("cmd") == cmd), None)
+        out.append({"n": i, "cmd": cmd, "cd": run_is_cd(cmd), "last": last})
+    return out
+
+
+def run_took(secs):
+    secs = int(secs or 0)
+    return f"{secs}s" if secs < 60 else human_age(secs)
+
+
+def run_word(r, path=True):
+    """One run's state, in a few words; `path` adds where a failed run's output is."""
+    e = r["last"]
+    if r["cd"]:
+        return "a cd, typed by hand: not recorded"
+    if e is None:
+        return "no record of being run"
+    when = str(e.get("started") or "")[11:16]
+    if e.get("exit") is None:
+        return f"started {when}, no end recorded"
+    return (f"exit {e['exit']} at {when} ({run_took(e.get('secs'))})"
+            + ("" if e["exit"] == 0 or not path else f"; output: {e.get('log')}"))
+
+
+def runs_unclean(rec):
+    """The runs Done should say something about: not recorded, or not exit 0."""
+    return [r for r in runs_status(rec) if not r["cd"]
+            and (r["last"] is None or r["last"].get("exit") != 0)]
+
+
+def ask_exec(pdir, path, rec, n):
+    """`harness ask <id> --exec N`, from the owner's terminal: run command N,
+    keep its output and how it ended. -> its exit status."""
+    if rec.get("kind") != "action" or rec.get("state") not in ASK_OPEN:
+        die(REFUSED, f"{rec['id']} is a {rec.get('kind')} ask, {rec.get('state')}: only an open "
+                     f"action ask has commands to run")
+    runs = rec.get("runs") or []
+    if not 1 <= n <= len(runs):
+        die(REFUSED, f"{rec['id']} has {len(runs)} command(s); --exec takes 1 to {len(runs)}")
+    cmd = runs[n - 1]
+    if run_is_cd(cmd):
+        die(REFUSED, f"command {n} is `{cmd}`: it changes your shell's directory, which a "
+                     f"command run for you cannot do. Type it as it is.")
+    d = run_dir(pdir, rec["id"])
+    d.mkdir(parents=True, exist_ok=True)
+    log = d / f"run-{n}-{time.strftime('%Y%m%d-%H%M%S')}.log"
+    started, t0 = _now(), time.time()
+    entry = {"n": n, "cmd": cmd, "started": started, "cwd": os.getcwd(), "log": str(log),
+             "exit": None}
+    _run_record(pdir, path, rec["id"], entry)
+    print(f"harness: running command {n} of {rec['id']}; its output is kept in {log}",
+          file=sys.stderr, flush=True)
+    code = None
+    with open(log, "wb") as fh:
+        fh.write(f"$ {cmd}\n# in {os.getcwd()}, started {started}\n".encode())
+        p = subprocess.Popen(["bash", "-c", cmd], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        out = getattr(sys.stdout, "buffer", None)
+        try:
+            while True:
+                chunk = os.read(p.stdout.fileno(), 4096)
+                if not chunk:
+                    break
+                fh.write(chunk); fh.flush()
+                if out:
+                    out.write(chunk); out.flush()
+            code = p.wait()
+        except KeyboardInterrupt:
+            code = p.wait()                  # the same ^C reached it
+            fh.write(b"\n# interrupted\n")
+    entry.update(ended=_now(), secs=int(time.time() - t0), exit=code)
+    _run_record(pdir, path, rec["id"], entry)
+    print(f"harness: command {n} of {rec['id']} exited {code} after "
+          f"{run_took(entry['secs'])}" + ("" if code == 0 else f"; output kept in {log}"),
+          file=sys.stderr)
+    return code
+
+
+def _run_record(pdir, path, ask_id, entry):
+    """Write a run's record into the ask as it stands now (its thread moves
+    while a long command runs), replacing this run's earlier record of the
+    same start. Kept beside the logs too, so it outlives the ask."""
+    try:
+        cur = json.loads(Path(path).read_text())
+    except Exception:
+        cur = None
+    if cur and cur.get("state") in ASK_OPEN:
+        log = [e for e in cur.get("run_log") or []
+               if not (e.get("n") == entry["n"] and e.get("started") == entry["started"])]
+        cur["run_log"] = log + [dict(entry)]
+        _save(Path(path), cur)
+    if entry.get("exit") is not None:
+        with open(run_dir(pdir, ask_id) / "runs.jsonl", "a") as fh:
+            fh.write(json.dumps(entry) + "\n")
+
+
 def ask_add_runs(path, rec, runs, by):
     """`ask <id> --run`: a command learned after the ask was filed (log 113). The
     owner sees commands only once the intermediary has briefed them, so a
@@ -16154,23 +16275,36 @@ def ask_done(pdir, path, rec, note=None):
         die(REFUSED, f"{rec['id']} is a {rec.get('kind')} ask, {rec.get('state')}. Done is for "
                      f"an open action ask;\n           a question is answered with --accept.")
     note = (note or "").strip()
+    status = runs_status(rec)
+    bad = runs_unclean(rec)
     d = {"id": rec["id"], "task": rec.get("task"), "question": rec.get("question"),
          "runs": rec.get("runs") or [], "note": note, "asker_node": rec.get("asker_node"),
-         "asked_by": rec.get("asked_by"), "done_at": _now()}
+         "asked_by": rec.get("asked_by"), "done_at": _now(),
+         "run_log": rec.get("run_log") or [],
+         "runs_status": [{"n": r["n"], "said": run_word(r)} for r in status]}
     f = Path(pdir) / "owner" / "done.jsonl"
     f.parent.mkdir(parents=True, exist_ok=True)
     with open(f, "a") as fh:
         fh.write(json.dumps(d) + "\n")
     _save(path, {"id": rec["id"], "task": rec.get("task"), "asker_node": rec.get("asker_node"),
-                 "state": "done", "at": _now(), "runs": d["runs"], "note": note})
+                 "state": "done", "at": _now(), "runs": d["runs"], "note": note,
+                 "run_log": d["run_log"], "runs_status": d["runs_status"]})
     evidence_clear(path, rec["id"])
     node = rec.get("asker_node")
     if node and node not in ("documenter", "operator", "owner"):
-        cmds = "; ".join(d["runs"])
-        ring_inbox(pdir, node, "owner",
-                   f"the owner ran {rec['id']} ({rec.get('question')})"
-                   + (f": {cmds[:300]}" if cmds else "") + (f". Note: {note}" if note else "")
-                   + ". Carry on with what waited on it.")
+        each = "; ".join(f"{r['n']}. {r['cmd'][:120]} — {run_word(r)}" for r in status)
+        text = f"the owner marked {rec['id']} done ({rec.get('question')})"
+        if bad:
+            text += (f". NOT every command is recorded as run cleanly ({len(bad)} of "
+                     f"{sum(1 for r in status if not r['cd'])}): check what it changed before "
+                     f"you rely on it")
+        if each:
+            text += f". Commands: {each}"
+        if note:
+            text += f". Note: {note}"
+        text += "." if bad else ". Carry on with what waited on it."
+        ring_inbox(pdir, node, "owner", text)
+    d["unclean"] = bad
     return d
 
 
@@ -16447,7 +16581,7 @@ def cmd_ask(a):
         a.msg, a.query = a.query, None
     verbs = [v for v in ("brief", "amend", "draft", "return_why", "merge", "accept",
                          "reject", "show", "evidence", "drop_evidence", "done", "msg", "to",
-                         "reply", "withdraw", "drop")
+                         "reply", "withdraw", "drop", "exec")
              if getattr(a, v) is not None and getattr(a, v) is not False]
     # --tldr goes with --reply or --to; alone, with --entry, it summarises a
     # message already in the thread.
@@ -16558,6 +16692,9 @@ def cmd_ask(a):
     if v in ("accept", "reject", "done", "drop") and sid:
         die(REFUSED, "only the owner signs a ruling or marks an action done — the GUI's "
                      "Issues tab, or a shell")
+    if v == "exec" and (sid or os.environ.get("HARNESS_INTERMEDIARY") == "1"):
+        die(REFUSED, "--exec runs a command handed to the owner, in the owner's own terminal; "
+                     "a session never runs one")
     pdir, repo, path, rec = ask_find(a.target, a.project)
     # An item session hands long text over as a file in its scratch folder (log 114).
     for k in ("reply", "text", "draft"):
@@ -16626,9 +16763,16 @@ def cmd_ask(a):
         ask_reject(path, rec)
         item_close_detached(pdir, rec["id"])
         print(f"rejected {rec['id']}; {rec.get('asker_node')} is told once not to ask again")
+    elif v == "exec":
+        sys.exit(ask_exec(pdir, path, rec, a.exec))
     elif v == "done":
-        ask_done(pdir, path, rec, a.text)
+        d = ask_done(pdir, path, rec, a.text)
         item_close_detached(pdir, rec["id"])
+        for line in d.get("runs_status") or []:
+            print(f"  command {line['n']}: {line['said']}")
+        if d.get("unclean"):
+            print(f"  {len(d['unclean'])} command(s) not recorded as run cleanly; the asker is "
+                  f"told so")
         print(f"closed {rec['id']}" if rec.get("asker_node") in ("owner", "operator", "documenter")
               else f"done {rec['id']}; {rec.get('asker_node')} is rung, and told when it next "
                    f"orients")
@@ -19985,6 +20129,9 @@ def main():
                     help="with --kind action: a command for the owner to run (repeat)")
     ak.add_argument("--done", action="store_true",
                     help="owner: the action's commands are run; --text adds a note")
+    ak.add_argument("--exec", type=int, metavar="N",
+                    help="owner: run the action's command N here, keeping its exit status "
+                         "and output (the Issues tab's Copy gives this line)")
     ak.add_argument("--msg", metavar="TEXT",
                     help="anyone: a message to this ask's intermediary (it is woken for it)")
     ak.add_argument("--query", metavar="TEXT", help=argparse.SUPPRESS)

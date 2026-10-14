@@ -74,7 +74,11 @@ that works around the harness itself (a `harness stop`, an edit to harness state
 fault: name it as one, with the log entry, in `## Harness`. Never run a command; check by
 reading.
 
-When the owner clicks Done, the asker is rung directly and your session is closed.
+The owner's Copy button gives `harness ask <id> --exec N` for each command (a bare `cd` as it
+is): it runs the command in their terminal and keeps when it ran, its exit status and its output.
+Write each command so it can run alone from the directory the brief names, and say in the brief
+which directory that is. When the owner clicks Done, the asker is rung directly with each
+command's state, and your session is closed.
 
 ## Conversations
 

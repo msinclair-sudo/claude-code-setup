@@ -143,6 +143,9 @@ cap, or with evidence it can't find.
 ```markdown
 ## Question
 One sentence the owner can answer, in plain words. (300)
+## TLDR
+What this item is, in a dozen words, as you would title an email. The owner's Issues list shows
+it under the item's name. Optional; without it the list shows the question. (90)
 ## Scope
 The charter feature this serves, traced through the chain, or the doc that places it. (1500)
 ## Situation

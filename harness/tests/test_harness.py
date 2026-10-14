@@ -2091,6 +2091,16 @@ class Ask(unittest.TestCase):
         _, errs = hz.parse_ask_brief(self.BRIEF.replace("X: faster", "x" * 801))
         self.assertEqual(errs, ["options #1: 801 chars, cap 800"])
 
+    def test_a_brief_may_carry_a_tldr_for_the_issues_list(self):
+        self.assertNotIn("tldr", hz.parse_ask_brief(self.BRIEF)[0])      # optional
+        with_it = self.BRIEF.replace("## Scope", "## TLDR\nShip the map now,\n  or wait?\n## Scope")
+        b, errs = hz.parse_ask_brief(with_it)
+        self.assertEqual((errs, b["tldr"]), ([], "Ship the map now, or wait?"))
+        _, errs = hz.parse_ask_brief(self.BRIEF.replace("## Scope", "## TLDR\n" + "w" * 91 + "\n## Scope"))
+        self.assertEqual(errs, ["tldr: 91 chars, cap 90"])
+        _, errs = hz.parse_ask_brief(self.BRIEF.replace("## Scope", "## TLDR\n\n## Scope"))
+        self.assertEqual(errs, ["tldr: empty (leave the section out instead)"])
+
     def test_draft_needs_ready_and_accept_attaches(self):
         r = self.open()
         with self.assertRaises(SystemExit):
@@ -2685,6 +2695,21 @@ class Intermediary(unittest.TestCase):
             self.assertEqual(hz.ask_find("u-1")[0], b)
             with self.assertRaises(SystemExit):
                 hz.ask_find("t-1")                                # in both
+
+    def test_the_issues_list_knows_when_each_item_last_moved_and_who_moved_it(self):
+        gp = Path(__file__).resolve().parents[1] / "bin" / "harness-gui"
+        ld = importlib.machinery.SourceFileLoader("harness_gui", str(gp))
+        gui = importlib.util.module_from_spec(importlib.util.spec_from_loader("harness_gui", ld))
+        ld.exec_module(gui)
+        t = lambda m: time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() - m * 60))
+        r = {"asked_at": t(300), "asker_node": "dev",
+             "thread": [{"at": t(200), "by": "intermediary"}, {"at": t(30), "by": "owner"}],
+             "history": [{"at": t(90), "by": "intermediary", "what": "briefed"}, "junk"]}
+        a = gui.ask_activity(r)
+        self.assertEqual((a["last_by"], a["active"]), ("owner", "30m"))
+        self.assertAlmostEqual(a["active_at"], time.time() - 1800, delta=5)
+        self.assertEqual(gui.ask_activity({"asked_at": t(5), "asked_by": "s1"})["last_by"], "s1")
+        self.assertIsNone(gui.ask_activity({})["active_at"])
 
     def test_gui_reports_each_projects_own(self):
         gp = Path(__file__).resolve().parents[1] / "bin" / "harness-gui"

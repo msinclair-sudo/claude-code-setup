@@ -388,6 +388,24 @@ def read_usage(now=None):
     return out if out["windows"] else None
 
 
+def ask_activity(r):
+    """When anything last happened on an item, and who did it: the Issues list
+    puts the most recently active first and outlines what is unread (owner,
+    2026-10-14). Read from the ask's own record: when it was asked, every line
+    of its thread, every step of its history."""
+    seen = [(r.get("asked_at"), r.get("asker_node") or r.get("asked_by"))]
+    seen += [(t.get("at"), t.get("by")) for t in (r.get("thread") or []) if isinstance(t, dict)]
+    seen += [(h.get("at"), h.get("by")) for h in (r.get("history") or []) if isinstance(h, dict)]
+    best = None
+    for at, by in seen:
+        e = CLI._epoch(at) if isinstance(at, str) else None
+        if e and (best is None or e >= best[0]):
+            best = (e, at, by)
+    if best is None:
+        return {"active_at": None, "active": "", "last_by": None}
+    return {"active_at": best[0], "active": CLI.wait_age(best[1]), "last_by": best[2]}
+
+
 def read_state():
     rows, roster_error = roster()
     # A LIST per worktree, not one session. Two sessions in one worktree is the
@@ -559,7 +577,7 @@ def read_state():
                 continue
             if r.get("state") in ASK_OPEN:
                 asks.append(dict(r, id=r.get("id") or af.stem,
-                                age=CLI.wait_age(r.get("asked_at"))))
+                                age=CLI.wait_age(r.get("asked_at")), **ask_activity(r)))
         asks.sort(key=lambda a: a.get("asked_at") or "")
         rulings = []
         for bf in (sorted(bd.glob("*.json")) if bd.is_dir() else []):
@@ -1012,6 +1030,49 @@ border:1px solid var(--line);border-radius:3px;letter-spacing:.06em;text-transfo
 #tabs a.due,.yours{color:#ffd08a}
 #tabs a.due{border-color:#ffd08a66}
 .owner{max-width:980px}
+/* The Issues page: the items on the left, the one you picked on the right
+   (owner, 2026-10-14). Each column scrolls on its own and the two fill the
+   window. Unread is a full outline and a bold name; read, a faint edge. */
+.owner.split{max-width:1500px;display:grid;grid-template-columns:minmax(270px,360px) minmax(0,1fr);
+gap:16px;height:var(--h,auto)}
+.ilist,.ipane{min-height:0;overflow-y:auto;overscroll-behavior:contain}
+.ilist{padding-right:4px}
+.ipane{background:var(--panel);border:1px solid var(--line);border-radius:4px}
+.iproj>h2{font-size:13px;margin:0 0 5px;color:var(--ink)}
+.iproj .ohead{flex-wrap:wrap;gap:4px 10px}
+.icard{border:1px solid color-mix(in srgb,var(--line) 70%,transparent);background:var(--panel);
+border-radius:4px;padding:7px 10px 6px;margin-bottom:6px;cursor:pointer}
+.icard:hover{border-color:var(--line2)}
+.icard.unread{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.icard.unread .ict{font-weight:700;color:var(--ink)}
+.icard.unread .ict::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;
+background:var(--ink);margin:0 6px 1px 0;vertical-align:middle}
+.icard.sel{background:color-mix(in srgb,var(--ink) 8%,var(--panel));border-color:var(--dim)}
+.icard.sel.unread{border-color:var(--ink)}
+.ic1{display:flex;gap:8px;align-items:baseline}
+.ict{flex:1;min-width:0;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ica{flex:none;color:var(--none);font-size:11px}
+.ictl{color:var(--dim);font-size:12px;margin:2px 0 4px;display:-webkit-box;-webkit-line-clamp:2;
+-webkit-box-orient:vertical;overflow:hidden}
+.icard.unread .ictl{color:var(--ink)}
+.ic3{display:flex;gap:8px;align-items:baseline;font-size:11px}
+.ic3 .akind{min-width:0;font-size:9.5px}
+.icm{color:var(--dim)}
+.icd{color:var(--warn)}
+.icw{margin-left:auto;color:var(--none);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.icard.rulc{margin-top:14px;border-style:dashed}
+.inew{color:var(--ink)}
+.ipnone{margin-bottom:10px}
+.ihead{padding:11px 13px 9px;border-bottom:1px solid var(--line)}
+.ih1{display:flex;gap:10px;align-items:baseline}
+.iht{font-weight:700;flex:1;min-width:0}
+.ihq{margin:5px 0 3px;white-space:pre-wrap;overflow-wrap:anywhere}
+.ipane .ask{border:none;background:none;margin:0}
+.ipane .abody{border-top:none;padding-top:8px}
+.ipane .rsec{padding:11px 13px}
+.ipempty{color:var(--none);padding:40px 20px;text-align:center}
+@media (max-width:900px){.owner.split{grid-template-columns:1fr;height:auto}
+.ilist{max-height:45vh}}
 /* A project's intermediary: beside its tree, never in it. It is not a node --
    it answers to the owner, not to a lead -- so it is drawn like a card and
    visibly not one: dashed, and off to the side. */
@@ -2104,10 +2165,16 @@ function charter(p) {
 // intermediary has briefed are the owner's move, and only the owner's button
 // signs one: the draft is the intermediary's, the signature is not.
 //
-// Which items are open is kept like the charter's folds, out of the DOM, so a
-// poll does not close the briefing you are reading.
-const AKEY = 'harness.askopen';
-const OPENA = new Set(load(AKEY));
+// A list on the left and the item on the right, like a mail client (owner,
+// 2026-10-14: "a lot of information on screen at once, and it's hard to
+// navigate"). Which item is shown, and which have been read, are kept out of
+// the DOM, so a poll neither changes the item you are reading nor marks one.
+const SKEY = 'harness.issue.sel', SEENKEY = 'harness.issue.seen';
+const RUL = '@rulings';      // the rulings, shown in the pane like an item
+let SEL = localStorage.getItem(SKEY) || '';
+let SEEN = {};               // item key -> the activity stamp last read
+try { SEEN = JSON.parse(localStorage.getItem(SEENKEY) || '{}') || {}; } catch (x) { SEEN = {}; }
+const STASH = {};            // item key -> what was typed there and not yet sent
 const AMSG = {};          // ask key -> the CLI's last refusal, shown on the item
 let FILTER = '';          // the rulings filter, applied client-side
 let LASTD = null;         // the last state read, so a keystroke can re-filter
@@ -2186,9 +2253,77 @@ function chainBlock(a) {
       '</div>').join('') + '</details>';
 }
 
-function askItem(slug, a) {
+// What the item waits on, in a word or two, and whether that is the owner.
+function moveOf(a) {
+  const runs = Array.isArray(a.runs) && a.runs.length;
+  const mine = runs || a.state === 'ready' || a.state === 'drafted';
+  const text = a.query_open ? 'intermediary looking'
+    : a.waiting_on ? 'asking ' + a.waiting_on
+    : a.kind === 'note' ? 'conversation'
+    : (a.brief || {}).out_of_scope ? 'out of scope'
+    : runs ? (a.state === 'ready' || a.state === 'drafted' ? 'yours to run' : 'being investigated')
+    : (mine ? 'yours' : 'being briefed');
+  return { text: text, mine: !!mine && !a.query_open && !a.waiting_on };
+}
+// The item's name: its task, read as words, and which of that task's items it is.
+function topicOf(a) {
+  const m = /-(\d+)$/.exec(a.id || '');
+  return String(a.task || a.id || '?').replace(/_/g, ' ') + (m ? ' #' + m[1] : '');
+}
+// One line on what it is: the intermediary's own when it wrote one, else the
+// question as it put it, else as the asker did.
+const tldrOf = a => (a.brief || {}).tldr || (a.brief || {}).question || a.question || '';
+const unread = (k, a) => !!a.active_at && a.last_by !== 'owner' && a.active_at > (SEEN[k] || 0);
+function markSeen(k, a) {
+  if (!a.active_at || (SEEN[k] || 0) >= a.active_at) return;
+  SEEN[k] = a.active_at;
+  const ks = Object.keys(SEEN);
+  if (ks.length > 300) ks.sort((x, y) => SEEN[x] - SEEN[y]).slice(0, ks.length - 300)
+    .forEach(x => delete SEEN[x]);
+  try { localStorage.setItem(SEENKEY, JSON.stringify(SEEN)); } catch (x) {}
+}
+
+// A card in the list: the topic, a line on what it is, how long since anything
+// happened on it. Unread is a full outline; read, a faint one.
+function issueCard(it, many) {
+  const a = it.a, k = it.k, mv = moveOf(a);
+  const cls = 'icard' + (unread(k, a) ? ' unread' : '') + (k === SEL ? ' sel' : '') +
+    (mv.mine ? ' mine' : '');
+  const when = a.active ? a.active + ' ago' : '';
+  return '<div class="' + cls + '" data-isel="' + esc(k) + '" data-live="icard:' + esc(k) + '">' +
+    '<div class="ic1"><span class="ict">' + esc(topicOf(a)) + '</span>' +
+      '<span class="ica" title="last activity' + (a.last_by ? ', by ' + esc(a.last_by) : '') +
+      '">' + esc(when) + '</span></div>' +
+    '<div class="ictl">' + esc(tldrOf(a)) + '</div>' +
+    '<div class="ic3"><span class="akind ' + esc(a.kind || '') + '">' + esc(a.kind || '?') +
+      '</span><span class="icm' + (mv.mine ? ' yours' : '') + '">' + esc(mv.text) + '</span>' +
+      (STASH[k] ? '<span class="icd" title="you typed something here and have not sent it">' +
+        'unsent</span>' : '') +
+      '<span class="icw">' + (many ? esc(it.p.project) + ' &middot; ' : '') +
+      esc(a.asker_node || a.asked_by || '?') + '</span></div></div>';
+}
+
+// The pane: the item's name and whole question, then everything the folded-out
+// item used to show, unchanged.
+function askPane(slug, a) {
+  const k = akey(slug, a.id), mv = moveOf(a);
+  const when = (a.age ? 'asked ' + esc(a.age) + ' ago' : '') +
+    (a.active ? ' &middot; last activity ' + esc(a.active) + ' ago' +
+      (a.last_by ? ' (' + esc(a.last_by === 'owner' ? 'you' : a.last_by) + ')' : '') : '');
+  const head = '<div class="ihead"><div class="ih1"><span class="akind ' + esc(a.kind || '') +
+    '">' + esc(a.kind || '?') + '</span><b class="iht">' + esc(topicOf(a)) + '</b>' +
+    '<span class="amove' + (mv.mine ? ' yours' : '') + '">' + esc(mv.text) + '</span></div>' +
+    '<div class="ihq">' + esc(a.question) + '</div>' +
+    '<div class="ln q">' + esc(a.asker_node || a.asked_by || '?') +
+    (when ? ' &middot; ' + when : '') +
+    ((a.evidence || []).length ? ' &middot; <span class="aev">' + a.evidence.length +
+      ' evidence</span>' : '') + '</div></div>';
+  return '<div class="ask open" data-live="ask:' + esc(k) + '">' + head + askBody(slug, a) +
+    '</div>';
+}
+
+function askBody(slug, a) {
   const k = akey(slug, a.id);
-  const open = OPENA.has(k);
   const runs = Array.isArray(a.runs) && a.runs.length ? a.runs : null;
   // Log 126: an action with no commands attached, or not yet briefed, had no
   // Done anywhere, so a thing the owner had already run could never be closed.
@@ -2197,22 +2332,8 @@ function askItem(slug, a) {
       '<button data-adone="' + esc(k) + '">Done</button>' : '';
   const mine = runs || a.state === 'ready' || a.state === 'drafted';
   const note = a.kind === 'note';
-  const move = a.query_open ? 'intermediary looking'
-    : a.waiting_on ? 'asking ' + a.waiting_on
-    : note ? 'conversation'
-    : (a.brief || {}).out_of_scope ? 'out of scope'
-    : runs ? (a.state === 'ready' || a.state === 'drafted' ? 'yours to run' : 'being investigated')
-    : (mine ? 'yours' : 'being briefed');
-  const row = '<div class="arow" data-atog="' + esc(k) + '">' +
-    '<span class="akind ' + esc(a.kind || '') + '">' + esc(a.kind || '?') + '</span>' +
-    '<span class="aq" title="' + esc(a.question) + '">' + esc(a.question) + '</span>' +
-    '<span class="ameta">' + esc(a.asker_node || a.asked_by || '?') +
-      (a.age ? ' &middot; ' + esc(a.age) : '') +
-      ((a.evidence || []).length ? ' &middot; <span class="aev">' + a.evidence.length +
-        ' evidence</span>' : '') + '</span>' +
-    '<span class="amove' + (mine ? ' yours' : '') + '">' + move + '</span></div>';
   let body = '';
-  if (open) {
+  {
     const b = a.brief || {};
     const sec = (t, v) => '<dt>' + t + '</dt><dd>' +
       (v ? esc(v) : '<span class="q">&mdash;</span>') + '</dd>';
@@ -2290,14 +2411,12 @@ function askItem(slug, a) {
         '<button data-aedit="' + esc(k) + '">Edit</button>' + doneCtl +
         '<button class="rej" data-arej="' + esc(k) + '">Reject</button>' + msg + '</div>';
     }
-    // Every item: its session, everything said about it, and a box to add to it.
-    body = '<div class="abody">' + chainBlock(a) + itemSession(slug, a) + body +
-      '<div data-live="thread:' + esc(k) + '">' + threadOf(a) +
-      (a.query_open ? '<div class="ln q">the intermediary is looking into it&hellip;</div>' : '') +
-      '</div>' + chatRow(k) + '</div>';
   }
-  return '<div class="ask' + (open ? ' open' : '') + '" data-live="ask:' + esc(k) + '">' +
-    row + body + '</div>';
+  // Every item: its session, everything said about it, and a box to add to it.
+  return '<div class="abody">' + chainBlock(a) + itemSession(slug, a) + body +
+    '<div data-live="thread:' + esc(k) + '">' + threadOf(a) +
+    (a.query_open ? '<div class="ln q">the intermediary is looking into it&hellip;</div>' : '') +
+    '</div>' + chatRow(k) + '</div>';
 }
 
 function rulingsList(d) {
@@ -2334,27 +2453,18 @@ function rulingsList(d) {
       btn(RPAGE + 1, 'older &rsaquo;', RPAGE < pages - 1) : '') + '</div>';
   return pager + rows + (pages > 1 ? pager : '');
 }
-// The rulings section: folded by default and remembered; the page and the
-// open rulings live here, not in the markup, so a poll's repaint keeps them.
+// The rulings: the page and the open rulings live here, not in the markup, so a
+// poll's repaint keeps them.
 const RPER = 20;
 let RPAGE = 0;
 const ROPEN = new Set();
-let RSHUT = localStorage.getItem('harness.rulings.open') !== '1';
 function redrawRulings() {
   const el = document.querySelector('[data-live="owner:rulings"]');
   if (el && LASTD) { el.innerHTML = rulingsList(LASTD); el._src = el.innerHTML; }
 }
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-rtog], [data-rpage], [data-rsec]');
+  const t = e.target.closest('[data-rtog], [data-rpage]');
   if (!t) return;
-  if (t.dataset.rsec != null) {
-    RSHUT = !RSHUT;
-    try { localStorage.setItem('harness.rulings.open', RSHUT ? '0' : '1'); } catch (x) {}
-    const sec = t.closest('.rsec');
-    sec.classList.toggle('shut', RSHUT);
-    t.querySelector('.tri').innerHTML = RSHUT ? '&#9656;' : '&#9662;';
-    return;
-  }
   if (t.dataset.rpage != null) RPAGE = Math.max(0, Number(t.dataset.rpage));
   else { const k = t.dataset.rtog; ROPEN.has(k) ? ROPEN.delete(k) : ROPEN.add(k); }
   redrawRulings();
@@ -2366,7 +2476,8 @@ function newNote(p) {
     esc(IMMSG['note:' + p.slug]) + '</div>' : '';
   return '<div class="ichat"><div data-live="note:' + esc(p.slug) + '">' + m + '</div>' +
     '<div class="row"><textarea class="ichatin" data-islug="' + esc(p.slug) + '" ' +
-    'placeholder="start a conversation &mdash; it opens an item with its own intermediary">' +
+    'title="it opens an item with its own intermediary" ' +
+    'placeholder="start a conversation">' +
     '</textarea><button data-inote="' + esc(p.slug) + '">Start</button></div></div>';
 }
 document.addEventListener('click', e => {
@@ -2398,23 +2509,132 @@ document.addEventListener('focusout', e => {
     EDITING.delete('chat:' + e.target.dataset.islug);
 });
 
-function ownerView(d) {
-  // Every project gets its intermediary's line, asks or not: the line is how
-  // the owner learns which one to start before anything is waiting on it.
-  const groups = (d.projects || []).map(p =>
-    '<div class="oproj"><h2>' + esc(p.project) + '</h2>' + ownerHead(p) + newNote(p) +
-    (p.asks || []).map(a => askItem(p.slug, a)).join('') + '</div>').join('');
-  const none = !(d.projects || []).some(p => (p.asks || []).length);
-  return '<div class="owner">' +
-    '<h3 class="osec">open asks</h3>' + groups +
-    (none ? '<div class="ln q" style="margin-bottom:18px">nothing open &mdash; ' +
-      'asks reach this page once an asker raises one</div>' : '') +
-    '<div class="rsec' + (RSHUT ? ' shut' : '') + '">' +
-    '<h3 class="osec" style="margin-top:26px"><span class="rtgl" data-rsec>' +
-    '<span class="tri">' + (RSHUT ? '&#9656;' : '&#9662;') + '</span> rulings</span>' +
-    '<input class="ofilter" placeholder="filter" value="' + esc(FILTER) + '" /></h3>' +
-    '<div class="rbody" data-live="owner:rulings">' + rulingsList(d) + '</div></div></div>';
+// Every open item across projects, the most recently active first.
+function issueItems(d) {
+  const out = [];
+  (d.projects || []).forEach(p => (p.asks || []).forEach(a =>
+    out.push({ p: p, a: a, k: akey(p.slug, a.id) })));
+  out.sort((x, y) => (y.a.active_at || 0) - (x.a.active_at || 0) ||
+                     String(x.k).localeCompare(String(y.k)));
+  return out;
 }
+
+function issuePane(d, items) {
+  if (SEL === RUL) {
+    return '<div class="rsec"><h3 class="osec">rulings' +
+      '<input class="ofilter" placeholder="filter" value="' + esc(FILTER) + '" /></h3>' +
+      '<div class="rbody" data-live="owner:rulings">' + rulingsList(d) + '</div></div>';
+  }
+  const it = (items || issueItems(d)).find(i => i.k === SEL);
+  if (it) return askPane(it.p.slug, it.a);
+  const n = (items || issueItems(d)).length;
+  return '<div class="ipempty">' + (n ? 'Pick an item on the left.' :
+    'Nothing is open. Asks reach this page once an asker raises one.') + '</div>';
+}
+
+function ownerView(d) {
+  const ps = d.projects || [];
+  const many = ps.length > 1;
+  const items = issueItems(d);
+  // An item ruled, rejected or closed is gone: so is its selection.
+  if (SEL && SEL !== RUL && !items.some(i => i.k === SEL)) setSel('');
+  // What is on screen is read, but only while someone can be looking at it.
+  const cur = items.find(i => i.k === SEL);
+  if (cur && document.hasFocus()) markSeen(cur.k, cur.a);
+  // Every project's intermediary line and conversation box, asks or not: the
+  // line is how the owner learns which one to start before anything waits.
+  const heads = ps.map(p => '<div class="iproj">' + (many ? '<h2>' + esc(p.project) + '</h2>' : '') +
+    ownerHead(p) + newNote(p) + '</div>').join('');
+  const nr = ps.reduce((s, p) => s + (p.rulings || []).length, 0);
+  const list = items.map(i => issueCard(i, many)).join('') ||
+    '<div class="ln q ipnone">nothing open</div>';
+  return '<div class="owner split">' +
+    '<div class="ilist" data-keep="ilist">' + heads +
+      '<h3 class="osec" data-live="owner:count">' + countLine(items) + '</h3>' +
+      list +
+      '<div class="icard rulc' + (SEL === RUL ? ' sel' : '') + '" data-isel="' + RUL + '">' +
+        '<div class="ic1"><span class="ict">Rulings</span><span class="ica">' + nr +
+        '</span></div><div class="ictl">every ruling you have made, newest first</div></div>' +
+    '</div>' +
+    '<div class="ipane" data-keep="pane:' + esc(SEL) + '">' + issuePane(d, items) + '</div>' +
+    '</div>';
+}
+
+function countLine(items) {
+  const nu = items.filter(i => unread(i.k, i.a)).length;
+  return 'open items &middot; ' + items.length +
+    (nu ? ' &middot; <span class="inew">' + nu + ' unread</span>' : '');
+}
+
+// What was typed in an item and not sent goes with you when you look at
+// another one, and comes back when you return to it.
+function stashFrom(k, pane) {
+  const v = sel => { const x = pane.querySelector(sel); return x ? x.value : ''; };
+  const dr = pane.querySelector('.adraft');
+  const s = { chat: v('.achat'), note: v('.anote'),
+              draft: dr && !dr.readOnly ? dr.value : null };
+  if (s.chat.trim() || s.note.trim() || s.draft != null) STASH[k] = s;
+  else delete STASH[k];
+}
+function restoreStash() {
+  const s = STASH[SEL], pane = document.querySelector('.ipane');
+  if (!s || !pane) return;
+  const put = (sel, val) => { const x = pane.querySelector(sel); if (x && val) x.value = val; };
+  put('.achat', s.chat); put('.anote', s.note);
+  const dr = pane.querySelector('.adraft');
+  if (dr && s.draft != null) {
+    dr.readOnly = false; dr.value = s.draft;
+    const ed = pane.querySelector('[data-aedit]');
+    if (ed) ed.textContent = 'Revert';
+    syncAccept(dr); fitDraft(dr);
+  }
+  delete STASH[SEL];
+  EDITING.add('ask:' + SEL);
+}
+function setSel(k) {
+  SEL = k;
+  try { localStorage.setItem(SKEY, k); } catch (x) {}
+}
+// Showing another item is done in place, from the last state read: no wait for
+// a poll, and nothing typed elsewhere on the page (a new conversation) is lost.
+function showSel(k) {
+  const pane = document.querySelector('.ipane');
+  if (SEL && SEL !== RUL && pane) stashFrom(SEL, pane);
+  EDITING.delete('ask:' + SEL); EDITING.delete('owner:filter');
+  setSel(k);
+  if (!pane || !LASTD) { LAST = ''; tick(); return; }
+  const items = issueItems(LASTD);
+  const cur = items.find(i => i.k === SEL);
+  if (cur) markSeen(cur.k, cur.a);
+  const many = (LASTD.projects || []).length > 1;
+  document.querySelectorAll('.ilist [data-isel]').forEach(c => {
+    const it = items.find(i => i.k === c.dataset.isel);
+    if (it) { c.outerHTML = issueCard(it, many); }
+    else c.classList.toggle('sel', c.dataset.isel === SEL);
+  });
+  const cnt = document.querySelector('[data-live="owner:count"]');
+  if (cnt) { cnt.innerHTML = countLine(items); cnt._src = cnt.innerHTML; }
+  pane.innerHTML = issuePane(LASTD, items);
+  pane.dataset.keep = 'pane:' + SEL;
+  pane.scrollTop = 0;
+  restoreStash(); fitDrafts(); fitSplit();
+}
+document.addEventListener('click', e => {
+  const c = e.target.closest('[data-isel]');
+  if (!c || c.dataset.isel === SEL) return;
+  showSel(c.dataset.isel);
+});
+window.addEventListener('focus', () => {
+  if (ROUTE() === 'issues') { LAST = ''; tick(); }
+});
+// The two columns fill the window below the header and scroll on their own.
+function fitSplit() {
+  const el = document.querySelector('.owner.split');
+  if (!el) return;
+  const top = el.getBoundingClientRect().top + window.scrollY;
+  el.style.setProperty('--h', Math.max(320, window.innerHeight - top - 16) + 'px');
+}
+window.addEventListener('resize', fitSplit);
 
 // The textarea is the one thing on this page a poll must not touch, so it is
 // held in EDITING from the moment it can hold the owner's words -- unlocked by
@@ -2437,7 +2657,7 @@ function ruleAsk(k, action, text) {
     .then(j => {
       if (j.ok) {
         delete AMSG[k];
-        if (action !== 'msg') { OPENA.delete(k); save(AKEY, OPENA); }
+        if (action !== 'msg' && SEL === k) setSel('');
         freeDraft(k); LAST = ''; tick(); return;
       }
       refused(k, j.message || 'refused');
@@ -2461,14 +2681,6 @@ function refused(k, m) {
 }
 
 document.addEventListener('click', e => {
-  const tg = e.target.closest('[data-atog]');
-  if (tg) {
-    const k = tg.dataset.atog;
-    // Folding an item away while its draft is unlocked would orphan the hold.
-    if (EDITING.has('ask:' + k)) return;
-    OPENA.has(k) ? OPENA.delete(k) : OPENA.add(k);
-    save(AKEY, OPENA); LAST = ''; tick(); return;
-  }
   const ed = e.target.closest('[data-aedit]');
   if (ed) {
     const ta = ed.closest('.abody').querySelector('.adraft');
@@ -2661,8 +2873,14 @@ function paint(h) {
   // The shape changed -- a node appeared, an item cleared -- so there is nothing
   // to patch into. This is the only path that rebuilds, and it is rare.
   if (keys(tpl) !== keys(root)) {
+    // A column that is still the same column keeps where it was scrolled to.
+    const kept = {};
+    root.querySelectorAll('[data-keep]').forEach(x => { kept[x.dataset.keep] = x.scrollTop; });
     root.innerHTML = h;
-    drawWaits(); fitDrafts(); phase();
+    root.querySelectorAll('[data-keep]').forEach(x => {
+      if (kept[x.dataset.keep] != null) x.scrollTop = kept[x.dataset.keep];
+    });
+    drawWaits(); fitDrafts(); fitSplit(); restoreStash(); phase();
     return;
   }
   Array.prototype.forEach.call(tpl.querySelectorAll('[data-live]'), fresh => {
@@ -2676,7 +2894,7 @@ function paint(h) {
       cur._src = fresh.innerHTML;
     }
   });
-  drawWaits(); fitDrafts(); phase();
+  drawWaits(); fitDrafts(); fitSplit(); phase();
 }
 tick(); setInterval(tick, 3000);
 </script></body></html>"""

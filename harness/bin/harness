@@ -15163,6 +15163,9 @@ ASK_SECTIONS = (("question", "question", 300),
 ASK_OOS_SECTIONS = (("question", "question", 300), ("scope", "scope", 1500),
                     ("situation", "situation", 2500), ("chain", "chain", 2500),
                     ("out of scope", "out_of_scope", 2500))
+# Optional, so a brief written without one still stands: a line the Issues
+# list shows under the item's name (owner, 2026-10-14).
+ASK_OPTIONAL = (("tldr", "tldr", 90),)
 ASK_CHECKED_MIN = 4
 ASK_ID_RE = re.compile(r"^[A-Za-z0-9_]+-\d+$")
 # Commands rank 0 hands the owner to run: an `action` ask carrying them, on the
@@ -15587,7 +15590,7 @@ def parse_ask_brief(text, kind=None):
     Prose keeps its paragraphs: lines join with a space, blank lines stay. A brief
     with `## Out of scope` is the short form (ASK_OOS_SECTIONS); otherwise every
     section is required, Commands only for an action ask."""
-    every = {h: (k, cap) for h, k, cap in ASK_SECTIONS + ASK_OOS_SECTIONS}
+    every = {h: (k, cap) for h, k, cap in ASK_SECTIONS + ASK_OOS_SECTIONS + ASK_OPTIONAL}
     secs, cur, errs = {}, None, []
     for line in (text or "").splitlines():
         m = re.match(r"^##\s+(.+?)\s*$", line)
@@ -15642,6 +15645,14 @@ def parse_ask_brief(text, kind=None):
             v = "\n\n".join(x for x in paras if x)
             if len(v) > cap:
                 errs.append(f"{h}: {len(v)} chars, cap {cap}")
+            out[k] = v
+    for h, k, cap in ASK_OPTIONAL:
+        v = " ".join(" ".join(l.strip() for l in secs.get(k) or []).split())
+        if k in secs and not v:
+            errs.append(f"{h}: empty (leave the section out instead)")
+        elif v and len(v) > cap:
+            errs.append(f"{h}: {len(v)} chars, cap {cap}")
+        elif v:
             out[k] = v
     if not oos and "harness" in out and not re.match(r"^\s*(yes|no)\b", out["harness"], re.I):
         errs.append("harness: start with yes or no — is the harness itself part of the cause?")
@@ -16286,6 +16297,8 @@ def ask_show(pdir, repo, rec):
     for line in render_chain(rec.get("chain")):
         print(line)
     br = rec.get("brief") or {}
+    if br.get("tldr"):
+        print(f"  tldr      {br['tldr']}")
     for h, k, _ in ASK_SECTIONS:
         if k in br and k != "question":
             v = br[k]

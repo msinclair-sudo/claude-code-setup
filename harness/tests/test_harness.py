@@ -4055,6 +4055,28 @@ class Held(unittest.TestCase):
             gui.mark_held(cctx, nodes)
             self.assertEqual(nodes[0]["held"], [])        # only its own ordering: not held
 
+    def test_a_lead_waiting_on_its_own_sign_off_is_not_held_by_the_child(self):
+        # Owner, 2026-10-15: dev read as held by dev_dag, because dev's next task
+        # waited on environment-dag, which dev_dag had presented and dev had not
+        # signed off. The sign-off is dev's own: owed, not held.
+        gp = Path(__file__).resolve().parents[1] / "bin" / "harness-gui"
+        ld = importlib.machinery.SourceFileLoader("harness_gui", str(gp))
+        gui = importlib.util.module_from_spec(importlib.util.spec_from_loader("harness_gui", ld))
+        ld.exec_module(gui)
+        cctx = mock.Mock(tree={"nodes": {"dev": {}, "dev_dag": {"parent": "dev"}}})
+        nodes = [{"name": "dev", "tasks": []}, {"name": "dev_dag", "tasks": []}]
+        q = {"dev": [{"task": "environment-dag.up-dev"}], "dev_dag": []}
+        why = {"environment-dag.up-dev": ["after environment-dag (presented on dev_dag)"]}
+        with mock.patch.object(gui.CLI, "queue", lambda c, n: q[n]), \
+             mock.patch.object(gui.CLI, "startable", lambda c, n: []), \
+             mock.patch.object(gui.CLI, "waits_on", lambda c, b: why.get(b["task"], [])):
+            gui.mark_held(cctx, nodes)
+        dev, dag = nodes
+        self.assertEqual(dev["held"], [])
+        self.assertEqual(dev["signoff"], [{"after": "environment-dag", "worker": "dev_dag",
+                                           "task": "environment-dag.up-dev"}])
+        self.assertEqual(dag["holding"], [])
+
 
 class SessionModel(unittest.TestCase):
     def test_last_real_model(self):

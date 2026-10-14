@@ -226,7 +226,7 @@ def mark_held(cctx, nodes):
     node's `held`, and the holder's `holding`."""
     by_name = {n["name"]: n for n in nodes}
     for n in nodes:
-        n["held"], n["holding"] = [], []
+        n["held"], n["holding"], n["signoff"] = [], [], []
     for n in nodes:
         if any(not t.get("presented") for t in n["tasks"]):
             continue                        # mid-task: it is working
@@ -238,6 +238,13 @@ def mark_held(cctx, nodes):
                 n["held"].append({"task": q[0]["task"], "until": r[6:]})
                 continue
             for h in held_by(cctx, n["name"], r, set()):
+                if h.get("own"):
+                    # Its own sign-off stands in the way, not another node:
+                    # owed, not held (owner, 2026-10-15: dev read as held by
+                    # dev_dag, whose work was waiting on dev).
+                    n["signoff"].append({"after": h["after"], "worker": h["worker"],
+                                         "task": q[0]["task"]})
+                    continue
                 n["held"].append(dict(h, task=q[0]["task"]))
                 if h["by"] in by_name:
                     by_name[h["by"]]["holding"].append(dict(
@@ -250,7 +257,8 @@ def held_by(cctx, me, reason, seen):
     another node (owner, 2026-10-06: held by means another node has to do
     something first). A gate on `me`'s own task is followed to whatever holds
     that task, and dropped if nothing outside `me` does. A gate on presented
-    work names the worker's lead, who has to sign it off."""
+    work names the worker's lead, who has to sign it off; when that lead is
+    `me`, nobody else holds it, and it comes back as `own`: a sign-off `me` owes."""
     m = re.match(r"after (\S+) \(([\w ]+) on ([^)]+)\)", reason)
     if not m or m.group(1) in seen:
         return []
@@ -262,7 +270,11 @@ def held_by(cctx, me, reason, seen):
                 for h in held_by(cctx, me, r, seen)]
     if state == "presented":
         lead = (cctx.tree["nodes"].get(worker) or {}).get("parent")
-        if lead and lead != me:
+        if lead == me:
+            # The worker has done its part; the sign-off is `me`'s own. Falling
+            # through named the worker as the holder, backwards.
+            return [{"after": after, "state": state, "own": True, "worker": worker}]
+        if lead:
             return [{"after": after, "state": state, "by": lead, "worker": worker}]
     return [{"after": after, "state": state, "by": worker}]
 
@@ -1695,6 +1707,11 @@ function card(n) {
       ? 'held by ' + h.by + ' · ' + h.task + ' starts after ' + (h.worker ? h.worker + '’s ' : 'its ') +
         h.after : 'held until ' + h.until + ' · ' + h.task) + '">&#9939; ' +
       esc(h.by || h.until) + '</span>'));
+  // A sign-off this node owes stands between it and its next task: its own
+  // act, so a mark of its own, not a hold by the child that presented.
+  (n.signoff || []).forEach(o => sym.push('<span class="g mail" data-tog="o:' + esc(key) +
+      '" title="sign off ' + esc(o.worker) + '’s ' + esc(o.after) + ' · then ' + esc(o.task) +
+      ' starts">&#9998; sign off ' + esc(o.after) + '</span>'));
   const owed = (n.awaited_by || []).concat((n.chains || []).map(p => p[0]));
   if (owed.length) sym.push('<span class="g wt2" title="' + esc(owed.join(', ')) +
       ' waiting on ' + esc(n.name) + '">&#8672; ' + owed.length + '</span>');
@@ -1726,6 +1743,10 @@ function card(n) {
           '</b>, presented and waiting on ' + esc(h.by) + '&rsquo;s sign-off'
         : ' starts after its <b>' + esc(h.after) + '</b> (' + esc(h.state) + ')')
       : 'held until <b>' + esc(h.until) + '</b> &middot; ' + esc(h.task)) + '</div>').join('');
+  if ((n.signoff || []).length && OPENV.has('o:' + key)) det += n.signoff.map(o =>
+      '<div class="det">' + esc(o.worker) + ' presented <b>' + esc(o.after) + '</b>; it waits on ' +
+      'your sign-off, and then <b>' + esc(o.task) + '</b> starts &middot; harness mark ' +
+      esc(o.after) + ' --close</div>').join('');
 
   // Signals keep their row: each carries an action.
   const VERB = {approval: 'approve', unanswered: 'spawn'};

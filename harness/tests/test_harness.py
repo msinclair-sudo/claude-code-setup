@@ -1636,6 +1636,24 @@ class Records(unittest.TestCase):
         self.assertEqual(hz.task_state(ctx, "p"), "abandoned")
 
 
+class SessionFiles(unittest.TestCase):
+    """Log 167: a session file outlives its session, and after a restart its pid
+    is taken by some other process. Only the process that wrote it counts."""
+
+    def test_a_session_file_whose_pid_was_reused_is_not_a_live_session(self):
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d, True)
+        me = os.getpid()
+        start = Path(f"/proc/{me}/stat").read_text().rsplit(")", 1)[-1].split()[19]
+        (d / "a.json").write_text(json.dumps({"pid": me, "sessionId": "real", "procStart": start}))
+        (d / "b.json").write_text(json.dumps({"pid": me, "sessionId": "old", "procStart": "1"}))
+        (d / "c.json").write_text(json.dumps({"pid": me, "sessionId": "nostart"}))   # not claude
+        (d / "d.json").write_text(json.dumps({"pid": 2 ** 22 + 7, "sessionId": "gone"}))
+        (d / "e.json").write_text("")
+        with mock.patch.object(hz, "SESSIONS", d):
+            self.assertEqual([x["sessionId"] for x in hz.live_sessions()], ["real"])
+
+
 class Log161(unittest.TestCase):
     """Log 161: one session per node, however it was started. A start is
     recorded while it is in flight, occupancy is read from two sources, and a

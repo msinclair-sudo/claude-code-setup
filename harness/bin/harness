@@ -1923,8 +1923,31 @@ def live_sessions():
             os.kill(d["pid"], 0)
         except Exception:
             continue
+        if not same_process(d):
+            continue
         out.append(d)
     return out
+
+
+def same_process(d):
+    """Is the process now holding this session file's pid the one that wrote
+    it? The files are named by pid and outlive their sessions, so after a
+    restart an ordinary short-lived process takes a dead session's pid and the
+    session reads as live: three times on 2026-10-14 the ringer reported a
+    second session in a worktree, from files dated 4 and 12 October whose pids
+    a `git` call had taken (log 167). The file records the process's start
+    time; /proc has the live one."""
+    pid, start = d.get("pid"), d.get("procStart")
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except OSError:
+        return True                           # no /proc: the signal is all there is
+    if start not in (None, ""):
+        return stat.rsplit(")", 1)[-1].split()[19] == str(start)
+    try:
+        return b"claude" in Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return False
 
 
 def interactive_in(worktree, exclude=()):

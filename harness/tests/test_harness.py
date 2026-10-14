@@ -497,6 +497,24 @@ class OwedWake(unittest.TestCase):
         self.present(at=time.strftime("%Y-%m-%dT%H:%M:%S%z"))     # just presented: mid-review
         self.assertEqual(hz.owed_now(self.ctx, "dev"), {})
 
+    def test_a_parked_sign_off_is_owed_by_nobody_until_the_wait_ends(self):
+        # Owner, 2026-10-15: dev's item waited on the owner, so dev parks it,
+        # with a time, rather than being rung for it.
+        self.assertEqual([hz.parse_span(x) for x in ("45m", "3h", "2d", "1h30m", "x", "")],
+                         [2700, 10800, 172800, 5400, None, None])
+        self.present()
+        (self.ctx.dir / "briefs").mkdir()
+        brief = self.ctx.dir / "briefs" / "t.json"
+        brief.write_text(json.dumps({"task": "t", "node": "dev_1", "wait": {
+            "why": "the owner runs the migration", "until": time.time() + 3600}}))
+        self.assertEqual(hz.owed_now(self.ctx, "dev"), {})
+        now = time.time()
+        with mock.patch.object(hz, "turn_end_at", return_value=now - hz.OWED_IDLE - 1):
+            self.assertIsNone(hz.owed_ring(self.ctx, "dev", "s", now))
+            brief.write_text(json.dumps({"task": "t", "node": "dev_1", "wait": {
+                "why": "x", "until": time.time() - 1}}))                  # the wait ran out
+            self.assertIn("harness mark t --close", hz.owed_ring(self.ctx, "dev", "s", now))
+
     def test_it_rings_once_per_item_after_five_quiet_minutes(self):
         self.present()
         now = time.time()
@@ -7102,6 +7120,30 @@ class CatchUp(unittest.TestCase):
         code, out = self.run_as("main", "whoami", "--no-check", "--tree",
                                 read_roster=lambda p: None)
         self.assertIn("unsigned t (dev_1, 3h", out)
+
+    def test_a_lead_parks_a_presentation_it_cannot_sign_off_yet_for_a_time(self):
+        # Owner, 2026-10-15: dev waited on the owner and was nagged for it.
+        tip = self.commit("dev_1", "work")
+        (self.ctx.dir / "marks").mkdir(exist_ok=True)
+        (self.ctx.dir / "briefs").mkdir(exist_ok=True)
+        (self.ctx.dir / "marks" / "t.json").write_text(json.dumps(
+            {"_node": "dev_1", "_task": "t", "_presented_at": OLD, "_presented_sha": tip}))
+        (self.ctx.dir / "briefs" / "t.json").write_text(json.dumps(
+            {"task": "t", "node": "dev_1", "text": "x", "written_by": "dev (session s)"}))
+        code, out = self.run_as("dev", "brief", "t", "--wait-for", "3h")
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("--wait-for goes with --wait", out)
+        code, out = self.run_as("dev", "brief", "t", "--wait", "x", "--wait-for", "9d")
+        self.assertEqual(code, hz.REFUSED)
+        code, out = self.run_as("dev", "brief", "t", "--wait", "the owner runs the migration",
+                                "--wait-for", "3h")
+        self.assertEqual(code, 0, out)
+        self.assertIn("Nothing asks for its sign-off", out)
+        self.assertIn("(3h", out)
+        self.assertEqual([o for o in hz.lead_owes(self.ctx, "dev") if o[0] == "sign off"], [])
+        code, out = self.run_as("dev", "whoami", "--no-check", read_roster=lambda p: None)
+        self.assertIn("parked   t's sign-off, until", out)
+        self.assertNotIn("sign off 1 presented", out)
 
     def test_a_hold_keeps_a_node_s_tree_still_until_it_presents(self):
         # Log 154 (owner, 2026-10-12): merging between turns stays the rule, and

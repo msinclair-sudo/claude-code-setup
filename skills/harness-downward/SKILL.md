@@ -245,7 +245,7 @@ harness finding <name> --to <child>                  # hand it down a rank
 harness finding <name> --ruled "<commit or doc ref>"  # answered by a document: closed, not declined
 ```
 
-**The wait pool** (log 109): `harness brief <task> --wait "until <condition>"` parks a task of a child's (or any, at rank 0) for 12 hours. It starts nowhere and nags nobody. Then it returns to the normal pool by itself and your stop hook says so once; to keep it waiting, park it again on purpose. `--wait none` takes it out now. Use it for a task held on something outside the tree, such as a ruling that says "not until the design exists", never to silence a nag you should act on.
+**The wait pool** (log 109): `harness brief <task> --wait "until <condition>"` parks a task of a child's (or any, at rank 0) for 12 hours, or for as long as `--wait-for 45m|3h|2d` says (at most 7 days). It starts nowhere and nags nobody. That includes a child's presentation you cannot sign off yet because it waits on someone else, such as the owner: parked, nothing rings you for its sign-off, and `whoami` shows it as one `parked` line until the wait ends. Then it returns to the normal pool by itself and your stop hook says so once; to keep it waiting, park it again on purpose. `--wait none` takes it out now. Use it for a task held on something outside the tree, such as a ruling that says "not until the design exists", never to silence a nag you should act on.
 
 A brief from a finding is gated on approval, unless rank 0 handed the finding down (that was the approval): `mark` refuses it and `recycle` skips it until approved. You cannot approve it; rank 0 sees it at orientation. Decline what you would not spend a session on. `--needs-approval` puts the same gate on any brief.
 

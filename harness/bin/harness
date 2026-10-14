@@ -1496,9 +1496,17 @@ def _whoami(a):
         pass
     try:
         kids = set(ctx.children(node))
-        waiting = sorted(mark_label(r, t) for t, r in open_marks(ctx).items()
-                         if r.get("_presented_at") and r.get("_node") in kids
-                         and not r.get("_review_task"))
+        _pres = [(t, r) for t, r in open_marks(ctx).items()
+                 if r.get("_presented_at") and r.get("_node") in kids
+                 and not r.get("_review_task")]
+        waiting = sorted(mark_label(r, t) for t, r in _pres if not parked_task(ctx, r, t))
+        # Parked by its lead (owner, 2026-10-15): one line, so it is not lost.
+        for t, r in _pres:
+            if parked_task(ctx, r, t):
+                _w = (load_brief(ctx, r.get("_task") or t)[1] or {}).get("wait") or {}
+                print(f"parked   {mark_label(r, t)}'s sign-off, until "
+                      f"{time.strftime('%m-%d %H:%M', time.localtime(_w.get('until') or 0))}: "
+                      f"{_w.get('why')}  (harness brief {mark_label(r, t)} --wait none ends it)")
         if waiting:
             print(f"sign off {len(waiting)} presented task(s) waiting on you: "
                   f"{', '.join(waiting)}")
@@ -1527,7 +1535,8 @@ def _whoami(a):
         for t, r in (open_marks(ctx).items() if getattr(a, "tree", False) else []):
             n = r.get("_node")
             lead = ctx.tree["nodes"].get(n, {}).get("parent")
-            if not r.get("_presented_at") or lead not in kids or r.get("_review_task"):
+            if not r.get("_presented_at") or lead not in kids or r.get("_review_task") \
+                    or parked_task(ctx, r, t):
                 continue
             then = _epoch(r.get("_presented_at"))
             if then is None:
@@ -3809,7 +3818,8 @@ def lead_owes(ctx, node):
     for t, r in marks.items():
         # A presentation with the reviewer is the reviewer's to read, not this
         # lead's to sign off (log 172); its review is owed here once presented.
-        if r.get("_node") in kids and r.get("_presented_at") and not r.get("_review_task"):
+        if r.get("_node") in kids and r.get("_presented_at") and not r.get("_review_task") \
+                and not parked_task(ctx, r, t):
             then = _epoch(r["_presented_at"])
             if then and time.time() - then > STALLED_SIGNOFF:
                 owed.append(("sign off", r["_node"], mark_label(r, t),
@@ -4118,8 +4128,9 @@ def owed_now(ctx, node):
     kids = set(ctx.children(node))
     for t, r in open_marks(ctx).items():
         # A presentation in review is the reviewer's (log 172).
-        if r.get("_node") not in kids or not r.get("_presented_at") or r.get("_review_task"):
-            continue
+        if r.get("_node") not in kids or not r.get("_presented_at") or r.get("_review_task") \
+                or parked_task(ctx, r, t):
+            continue                       # parked: waits on something else first
         then = _epoch(r["_presented_at"])
         if then and time.time() - then >= OWED_IDLE:
             out[f"sign off:{r['_node']}:{t}:{str(r.get('_presented_sha'))[:12]}"] = owed_line(
@@ -11648,6 +11659,22 @@ def briefed_unstarted(ctx, node):
 
 
 WAIT_FOR = 12 * 3600
+WAIT_MAX = 7 * 86400        # --wait-for at most this: a longer wait is a decision, not a pause
+
+
+def parse_span(s):
+    """'45m', '3h', '2d', '1h30m' -> seconds, or None."""
+    m = re.fullmatch(r"\s*(?:(\d+)d)?\s*(?:(\d+)h)?\s*(?:(\d+)m)?\s*", str(s or "").lower())
+    if not m or not any(m.groups()):
+        return None
+    d, h, mi = (int(x or 0) for x in m.groups())
+    return d * 86400 + h * 3600 + mi * 60 or None
+
+
+def parked_task(ctx, r, t):
+    """A task record's brief is in the wait pool: its sign-off, like its start,
+    is asked for by nothing until the wait ends (owner, 2026-10-15)."""
+    return parked(load_brief(ctx, (r or {}).get("_task") or t)[1])
 
 
 def parked(b):
@@ -12621,6 +12648,9 @@ def cmd_brief(a):
             "--band goes in with --write. It is an estimate of the plan, so it moves "
             "when\n           the plan does and the revision counter has to see it. "
             f"Rewrite it:\n           harness brief {a.task} --write - --band {a.band.upper()}")
+    if a.__dict__.get("wait_for") and a.wait is None:
+        die(REFUSED, f"--wait-for goes with --wait, which says what it waits on:\n"
+                     f"           harness brief {a.task} --wait \"<condition>\" --wait-for {a.wait_for}")
     if a.__dict__.get("uses") and not a.write:
         die(REFUSED, f"--uses goes in with --write, so the revision sees it:\n"
                      f"           harness brief {a.task} --write - --uses {','.join(a.uses)}")
@@ -13127,13 +13157,25 @@ def cmd_brief(a):
             return
         if not a.wait.strip():
             die(REFUSED, 'say what it waits on: harness brief <task> --wait "until ..."')
-        until = time.time() + WAIT_FOR
+        span = WAIT_FOR
+        if a.__dict__.get("wait_for"):
+            span = parse_span(a.wait_for)
+            if not span:
+                die(REFUSED, f"--wait-for {a.wait_for}: say how long, as 45m, 3h, 2d or 1h30m")
+            if span > WAIT_MAX:
+                die(REFUSED, f"--wait-for {a.wait_for} is longer than {human_age(WAIT_MAX)}. A wait "
+                             f"that long is a decision about the task: supersede it, or park "
+                             f"it again when this one ends")
+        until = time.time() + span
         b["wait"] = {"why": a.wait.strip(), "by": who, "by_node": me, "at": _now(), "until": until}
         b.pop("returned", None)
         f.write_text(json.dumps(b, indent=2) + "\n")
         print(f"parked '{a.task}' in the wait pool: {a.wait.strip()}")
-        print(f"  Nothing starts it and nothing nags about it until "
-              f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(until))} ({human_age(WAIT_FOR)}).")
+        _m = _read_json(ctx.state_file("marks", a.task, ".json")) or {}
+        _owed = _m.get("_presented_at") and not _m.get("_closed_at")
+        print(f"  Nothing {'asks for its sign-off' if _owed else 'starts it'} and nothing nags "
+              f"about it until {time.strftime('%Y-%m-%d %H:%M', time.localtime(until))} "
+              f"({human_age(span)}).")
         print(f"  Then it returns to the normal pool and your stop hook says so; to keep it "
               f"waiting, park it again.")
         return
@@ -20779,6 +20821,10 @@ def main():
                     help="park the task in the wait pool on a condition (log 109): it starts "
                          "nowhere and nags nobody for 12h, then returns to the normal pool "
                          "and the stop hook says so; 'none' takes it out now")
+    br.add_argument("--wait-for", dest="wait_for", metavar="45m|3h|2d",
+                    help="with --wait: how long it waits before it returns (default 12h, at "
+                         "most 7d). A presented task parked this way asks nobody for its "
+                         "sign-off until then")
     br.add_argument("--not-before", metavar="UTC",
                     help="the task starts no earlier than this UTC time: 00:05Z (the next "
                          "one) or 2026-10-05T00:05Z; 'none' clears (obs 70)")

@@ -141,6 +141,15 @@ The review prints the child's `harness check` report at that commit and what eac
 
 Still worth a read-only subagent per child, in parallel: is it caught up (`git merge-base --is-ancestor <your-branch> <child-branch>`), and does the diff do what the brief said and stop where it stopped. Merge sequentially yourself. No workflow script, and never give a subagent a node: it shares your session id, pid and cwd.
 
+## With a reviewer under you (log 172)
+
+A child with `"role": "reviewer"` in `tree.json` reads every change your workers present before you see it, with ponytail on, and makes the cuts on its own branch (owner, 2026-10-15). Then:
+
+- A worker's presentation goes to the reviewer as `<task>.review`; your doorbell gets an FYI, and nothing is owed by you yet. `integrate <worker>` is refused for it: the work reaches you through the review.
+- When the reviewer presents, read its note (`harness note <task>.review`). It replaces your read of the diff; no `harness review --record` is asked of you. Then `harness integrate <reviewer>`, which needs a passing check at its tip (its cuts are code nobody else read), and `harness mark <task>.review --close`, which signs off the worker's task with it.
+- Questions from workers still come to you, and so does everything about scope.
+- Start the reviewer like any lane when its queue holds a review and it has no session.
+
 ## `T4` — integrating
 
 ```bash

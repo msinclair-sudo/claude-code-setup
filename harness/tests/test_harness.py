@@ -4513,9 +4513,15 @@ class DoorbellHooks(unittest.TestCase):
                           if ev != "PostToolUse"}}
         (repo / ".claude" / "settings.json").write_text(json.dumps(conf))
         self.assertEqual(hz.session_hooks_missing(repo), ["PostToolUse (harness-mail)"])
-        conf["hooks"]["PostToolUse"] = [dict(hz.SESSION_HOOKS[-1][1])]
+        conf["hooks"]["PostToolUse"] = [dict(dict(hz.SESSION_HOOKS)["PostToolUse"])]
         (repo / ".claude" / "settings.json").write_text(json.dumps(conf))
         self.assertEqual(hz.session_hooks_missing(repo), [])
+        # Log 172: SubagentStart is wanted only where a node has a skill on.
+        del conf["hooks"]["SubagentStart"]
+        (repo / ".claude" / "settings.json").write_text(json.dumps(conf))
+        self.assertEqual(hz.session_hooks_missing(repo, {"nodes": {"a": {}}}), [])
+        self.assertEqual(hz.session_hooks_missing(repo, {"nodes": {"a": {"role": "reviewer"}}}),
+                         ["SubagentStart (harness hook-subagent)"])
 
 
 class Log108(unittest.TestCase):
@@ -7091,3 +7097,249 @@ class CatchUp(unittest.TestCase):
         self.assertEqual((obs["behind"], obs["behind_of"]), (1, "main"))
         self.assertIn("STALE    measured on a tree 1 commit(s) behind main",
                       self.run_as("dev", "fact", "peak")[1])
+
+
+SKILLS = Path(__file__).resolve().parents[1] / "skills"
+
+
+class RoleSkills(unittest.TestCase):
+    """Log 172: a node's role names the skills it works with, and the harness
+    injects them for that node only."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev", "dev_r": "dev"})
+        self.ctx.tree["nodes"]["dev_r"]["role"] = "reviewer"
+        p = mock.patch.object(hz, "skill_dirs", lambda worktree=None: [SKILLS])
+        p.start(); self.addCleanup(p.stop)
+
+    def test_a_reviewer_has_ponytail_on_and_its_sibling_has_nothing(self):
+        self.assertEqual(hz.on_words(self.ctx, "dev_r"), "ponytail (full)")
+        text = hz.on_text(self.ctx, "dev_r")
+        self.assertIn("PONYTAIL MODE ACTIVE — level: full", text)
+        self.assertIn("You are a lazy senior developer.", text)
+        self.assertIn("| **full** |", text)
+        self.assertNotIn("| **lite** |", text)              # other levels' rows dropped
+        self.assertNotIn("argument-hint", text)             # no frontmatter
+        self.assertEqual(hz.on_words(self.ctx, "dev_1"), "")
+        self.assertEqual(hz.role_of(self.ctx, "dev_r"), "reviewer")
+        self.assertEqual(hz.assignment_for(self.ctx, "dev_r"), ("opus", "medium"))
+        self.assertIn("harness-reviewer", hz.skills_for(self.ctx, "dev_r"))
+        self.assertTrue(hz.is_lane(self.ctx, "dev_r"))
+        self.assertEqual(hz.reviewer_of(self.ctx, "dev"), "dev_r")
+        # A node's own skills, with a level, and a skill that cannot be found.
+        self.ctx.tree["nodes"]["dev_1"]["skills"] = ["ponytail:ultra", "nope"]
+        self.assertEqual(hz.on_words(self.ctx, "dev_1"), "ponytail (ultra), nope")
+        text = hz.on_text(self.ctx, "dev_1")
+        self.assertIn("level: ultra", text)
+        self.assertIn("MISSING  skill 'nope'", text)
+
+    def test_the_tree_refuses_what_the_harness_cannot_act_on(self):
+        def bad(**nodes):
+            with self.assertRaises(SystemExit), mock.patch("sys.stderr", io.StringIO()):
+                hz.validate_tree({"nodes": nodes}, "tree.json")
+        bad(a={}, b={"parent": "a", "role": "boss"})
+        bad(a={}, b={"parent": "a", "skills": "ponytail"})
+        bad(a={"role": "reviewer"})
+        bad(a={}, b={"parent": "a", "role": "reviewer"}, c={"parent": "b"})
+        bad(a={}, b={"parent": "a", "role": "reviewer"}, c={"parent": "a", "role": "reviewer"})
+        hz.validate_tree({"nodes": {"a": {}, "b": {"parent": "a", "role": "reviewer",
+                                                    "skills": ["ponytail-audit"]}}}, "tree.json")
+
+    def test_a_subagent_gets_the_same_text(self):
+        self.ctx.me = "dev_r"
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             redirect_stdout(io.StringIO()) as o:
+            hz.cmd_hook_subagent(None)
+        out = json.loads(o.getvalue())["hookSpecificOutput"]
+        self.assertEqual(out["hookEventName"], "SubagentStart")
+        self.assertIn("PONYTAIL MODE ACTIVE", out["additionalContext"])
+        self.ctx.me = "dev_1"
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             redirect_stdout(io.StringIO()) as o:
+            hz.cmd_hook_subagent(None)
+        self.assertEqual(o.getvalue(), "")
+
+
+class Reviewer(unittest.TestCase):
+    """Log 172 (owner, 2026-10-15): a reviewer between a lead and its workers
+    reads every worker's change before the lead sees it, and makes the cuts on
+    its own branch; the lead reads the review and signs off."""
+
+    # CatchUp's real repositories and helpers, without re-running its tests.
+    git, commit, has, run_as = CatchUp.git, CatchUp.commit, CatchUp.has, CatchUp.run_as
+
+    def setUp(self):
+        CatchUp.setUp(self)
+        self.ctx.tree["nodes"]["dev_r"] = {"parent": "dev", "branch": "dev_r", "role": "reviewer"}
+        self.wt["dev_r"] = self.root / "wt-dev_r"
+        self.git("dev", "worktree", "add", "-q", "-b", "dev_r", str(self.wt["dev_r"]))
+        self.idx["nodes"]["dev_r"] = {"branch": "dev_r", "worktree": str(self.wt["dev_r"]),
+                                      "parent": "dev", "rank": 2}
+        for d in ("briefs", "marks"):
+            (self.ctx.dir / d).mkdir(exist_ok=True)
+        (self.ctx.dir / "briefs" / "t.json").write_text(json.dumps({"task": "t", "node": "dev_1"}))
+        for p in (mock.patch.object(hz, "skill_dirs", lambda worktree=None: [SKILLS]),
+                  mock.patch.object(hz, "ensure_ringer", lambda s: None)):
+            p.start(); self.addCleanup(p.stop)
+        self.op = dict(unreported=lambda *a: [], claim_conflict=lambda ctx, n: (None, "unclaimed"),
+                       read_spend_or_none=lambda sid: (None, "no transcript"),
+                       assignment_for=lambda ctx, n: ("m", "e"),
+                       lead_address=lambda ctx, p: (None, None))
+
+    def inbox(self, n):
+        return [hz._read_json(f) for f in
+                sorted((self.ctx.dir / "doorbell" / n / "inbox").glob("*.json"))]
+
+    def mark(self, node, *argv):
+        return self.run_as(node, "mark", *argv, **self.op)
+
+    def present_t(self):
+        self.assertEqual(self.mark("dev_1", "t")[0], 0)
+        sha = self.commit("dev_1", "work.py", "a = 1\nb = 2\n")
+        code, out = self.mark("dev_1", "t", "--done", "--note", "wrote work.py")
+        self.assertEqual(code, 0, out)
+        return sha, out
+
+    def review_t(self):
+        code, out = self.mark("dev_r", "t.review")
+        self.assertEqual(code, 0, out)
+        cut = self.commit("dev_r", "work.py", "a = 1\n")
+        return cut, out
+
+    def present_review(self):
+        return self.mark("dev_r", "t.review", "--done", "--applied", "ponytail-review",
+                         "--note", "b was unused; cut it")
+
+    def checked(self, node, sha):
+        f = hz.check_report_path(self.ctx, node, sha)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps({"sha": sha, "passed": True, "checks": [{}], "failed": 0}))
+
+    def test_a_worker_s_change_goes_to_the_reviewer_and_never_straight_to_the_lead(self):
+        sha, out = self.present_t()
+        self.assertIn("It goes to dev_r, the reviewer under dev, as 't.review'", out)
+        b = hz.load_brief(self.ctx, "t.review")[1]
+        self.assertEqual((b["node"], b["uses"]), ("dev_r", ["ponytail-review"]))
+        self.assertEqual(b["review_of"], {"task": "t", "node": "dev_1", "sha": sha, "lead": "dev"})
+        self.assertEqual(hz.open_marks(self.ctx)["t"]["_review_task"], "t.review")
+        self.assertTrue(any("review it before dev sees it" in m["text"] for m in self.inbox("dev_r")))
+        self.assertEqual([m["priority"] for m in self.inbox("dev") if "in review by" in m["text"]], ["fyi"])
+        self.assertEqual(hz.lead_owes(self.ctx, "dev"), [])     # nothing to sign off yet
+        hz.write_review(self.ctx, "dev_1", "dev_1", sha, "dev")  # even with a read of its own
+        code, out = self.run_as("dev", "integrate", "dev_1", read_roster=lambda p: None)
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("is in review by dev_r", out)
+        self.assertFalse(self.has("dev", sha))
+
+    def test_the_review_from_opening_to_sign_off(self):
+        sha, _ = self.present_t()
+        cut, out = self.review_t()
+        self.assertIn("took dev_1's 't' at " + sha[:8] + " into dev_r", out)
+        self.assertIn("this task uses ponytail-review", out)     # the procedure, printed
+        self.assertTrue(self.has("dev_r", sha))
+        self.assertTrue(self.has("dev_1", sha) and not self.has("dev_1", cut))   # untouched
+        code, out = self.mark("dev_r", "t.review", "--done", "--note", "x")
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("--applied ponytail-review", out)
+        code, out = self.mark("dev_r", "t.review", "--done", "--applied", "ponytail-review")
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("is a review: its note is what the lead reads", out)
+        code, out = self.present_review()
+        self.assertEqual(code, 0, out)
+        rev = hz.read_review(self.ctx, "dev_r", cut)
+        self.assertEqual((rev["kind"], rev["reviewed_by_node"]), ("reviewer", "dev_r"))
+        self.assertEqual(hz.open_marks(self.ctx)["t.review"]["_applied"], ["ponytail-review"])
+        ring = next(m["text"] for m in self.inbox("dev") if "reviewed" in m["text"])
+        self.assertIn("dev_r reviewed dev_1's 't'", ring)
+        self.assertIn("b was unused; cut it", ring)
+        # No passing check: the cuts are code nobody else read.
+        code, out = self.run_as("dev", "integrate", "dev_r", read_roster=lambda p: None)
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("integrates\n", out.replace("integrates on", "integrates\n"))
+        self.assertIn("nothing has checked it", out)
+        self.checked("dev_r", cut)
+        code, out = self.run_as("dev", "integrate", "dev_r", read_roster=lambda p: None)
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"check at {cut[:8]}: passed", out)
+        self.assertTrue(self.has("dev", sha) and self.has("dev", cut))
+        code, out = self.mark("dev", "t.review", "--close", "--no-recycle")
+        self.assertEqual(code, 0, out)
+        self.assertIn("signed off t for dev_1 with it", out)
+        self.assertEqual(hz.open_marks(self.ctx), {})
+
+    def test_one_review_at_a_time_and_on_the_commit_presented(self):
+        sha, _ = self.present_t()
+        self.review_t()
+        self.assertEqual(self.present_review()[0], 0)
+        (self.ctx.dir / "briefs" / "u.json").write_text(json.dumps({"task": "u", "node": "dev_1"}))
+        hz.write_review_brief(self.ctx, "u", "dev_1", sha, "dev", "dev_r", {})
+        code, out = self.mark("dev_r", "u.review")
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("holds 2 commit(s) dev has not integrated: your last review", out)
+        # A worker that presents again makes the brief stale until it is rewritten.
+        (self.ctx.dir / "marks" / "u.json").write_text(json.dumps(
+            {"_node": "dev_1", "_task": "u", "_presented_at": hz._now(), "_presented_sha": "f" * 40}))
+        self.git("dev_r", "reset", "-q", "--hard", "dev")
+        code, out = self.mark("dev_r", "u.review")
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("presented 'u' again, at ffffffff", out)
+
+    def test_the_gate_takes_the_reviewer_s_record_and_the_workers_inside_it(self):
+        repo = self.wt["main"]
+        (repo / ".harness").mkdir()
+        (repo / ".harness" / "tree.json").write_text(json.dumps({"nodes": {
+            "main": {"branch": "main", "kind": "doc"}, "dev": {"branch": "dev", "parent": "main"},
+            "dev_1": {"branch": "dev_1", "parent": "dev"},
+            "dev_r": {"branch": "dev_r", "parent": "dev", "role": "reviewer"}}}))
+        (repo / ".harness" / "manifest.json").write_text(json.dumps({"docs": []}))
+        home = self.root / "home"
+        state = home / ".claude" / "harness" / re.sub(r"[^A-Za-z0-9]", "-", str(repo))
+        guard = Path(__file__).resolve().parents[1] / "templates" / "hooks" / "_guard"
+        old = self.git("dev", "rev-parse", "HEAD")
+
+        def gate(new):
+            r = subprocess.run([sys.executable, str(guard), "--gate", "dev", new, old],
+                               cwd=self.wt["dev"], capture_output=True, text=True,
+                               env=dict(os.environ, HOME=str(home)))
+            return r.returncode, r.stderr
+
+        def put(kind, node, sha, rec):
+            f = state / kind / (re.sub(r"[^A-Za-z0-9]", "_", f"{node}-{sha}") + ".json")
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(json.dumps(rec))
+
+        w = self.commit("dev_1", "work.py")
+        self.git("dev_r", "merge", "-q", "--no-edit", w)
+        cut = self.commit("dev_r", "work.py", "cut\n")
+        (state / "marks").mkdir(parents=True)
+        (state / "marks" / "t.json").write_text(json.dumps({"_node": "dev_1", "_review_task": "t.review"}))
+        code, err = gate(w)                                # the worker, around its reviewer
+        self.assertEqual(code, 1)
+        self.assertIn("'dev_1' is in review by 'dev_r'", err)
+        code, err = gate(cut)                              # the reviewer, unrecorded
+        self.assertEqual(code, 1)
+        put("reviews", "dev_r", cut, {"reviewed_by_node": "dev_r", "kind": "reviewer"})
+        code, err = gate(cut)                              # recorded, unchecked
+        self.assertEqual(code, 1)
+        self.assertIn("nothing has passed a check", err)
+        put("checks", "dev_r", cut, {"passed": True})
+        code, err = gate(cut)                              # and dev_1 arrives inside it
+        self.assertEqual(code, 0, err)
+        put("reviews", "dev_r", cut, {"reviewed_by_node": "dev_r"})
+        code, err = gate(cut)                              # a reviewer's record must say so
+        self.assertEqual(code, 1)
+
+    def test_a_presentation_from_before_the_reviewer_integrates_as_before(self):
+        self.ctx.tree["nodes"]["dev_r"].pop("role")
+        sha, out = self.present_t()
+        self.assertNotIn("t.review", out)
+        self.ctx.tree["nodes"]["dev_r"]["role"] = "reviewer"
+        hz.write_review(self.ctx, "dev_1", "dev_1", sha, "dev")
+        code, out = self.run_as("dev", "integrate", "dev_1", read_roster=lambda p: None)
+        self.assertEqual(code, 0, out)
+        self.assertTrue(self.has("dev", sha))
+
+    def test_a_brief_s_uses_are_named_with_the_write(self):
+        code, out = self.run_as("dev", "brief", "t", "--uses", "ponytail-review")
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("--uses goes in with --write", out)

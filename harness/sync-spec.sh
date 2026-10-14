@@ -5,7 +5,7 @@
 #
 #     skills/harness/ref/spec.md
 #
-# The role skills (-upward, -downward, -root) deliberately carry none. They are
+# The role skills (-upward, -downward, -root, -reviewer) deliberately carry none. They are
 # never installed without `harness` and cannot function without it — `whoami` is
 # what names them — so a private copy bought no portability. It bought four files
 # to keep in step, and a session loading two roles reading the same 30 KB twice
@@ -19,7 +19,7 @@
 set -e
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CANON="$DIR/skills/harness/ref/spec.md"
-ROLES=(harness-upward harness-downward harness-root)
+ROLES=(harness-upward harness-downward harness-root harness-reviewer)
 MODE=check
 
 while [[ $# -gt 0 ]]; do
@@ -60,7 +60,7 @@ for r in "${ROLES[@]}"; do
 done
 
 if [[ $fail -eq 0 ]]; then
-    echo "ok — one spec, $(wc -c < "$CANON") bytes, $(( $(grep -c '^#\{2,3\} ' "$CANON") )) headings; 3 role skills point at it"
+    echo "ok — one spec, $(wc -c < "$CANON") bytes, $(( $(grep -c '^#\{2,3\} ' "$CANON") )) headings; ${#ROLES[@]} role skills point at it"
 else
     exit 1
 fi

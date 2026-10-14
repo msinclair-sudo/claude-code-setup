@@ -246,17 +246,82 @@ if "--gate" in sys.argv:
         sys.exit(0)                  # not an integration
 
     slug = re.sub(r"[^A-Za-z0-9]", "-", str(repo))
+    state = Path.home() / ".claude" / "harness" / slug
+
+    def _rec(kind, node, sha):
+        # Same sanitiser as Ctx.state_file in the CLI. If these two ever
+        # disagree the gate looks for a file the recorder never wrote, and
+        # refuses forever.
+        f = state / kind / (re.sub(r"[^A-Za-z0-9]", "_", f"{node}-{sha}") + ".json")
+        try:
+            return json.loads(f.read_text())
+        except Exception:
+            return None
+
+    # Log 172 (owner, 2026-10-15): a reviewer between a lead and its workers
+    # reads every worker's change and makes the cuts on its own branch. Its own
+    # record stands for the lead's, on a passing check, since the cuts are code
+    # nobody else read; and the workers' commits arriving inside its branch are
+    # covered by it. A worker whose change is with the reviewer may not arrive
+    # any other way.
+    rv = next((n for n in kids if tree["nodes"][n].get("role") == "reviewer"), None)
+
+    def _checked(node, sha):
+        # The report at the tip, or at the commit a catch-up merge was made on.
+        pb = tree["nodes"].get(gnode, {}).get("branch")
+        for _ in range(7):
+            rep = _rec("checks", node, sha)
+            if rep is not None:
+                return bool(rep.get("passed") or (rep.get("baseline") and not rep.get("new")))
+            rc, line, _e = git("rev-list", "--parents", "-n", "1", sha)
+            parts = line.split()
+            if rc or len(parts) != 3 or git("merge-base", "--is-ancestor", parts[2], pb)[0]:
+                return False
+            sha = parts[1]
+        return False
+
+    rv_tip = None
+    for hit, tip in hits:
+        if hit == rv:
+            data = _rec("reviews", hit, tip) or {}
+            if data.get("kind") == "reviewer" and data.get("reviewed_by_node") == hit:
+                if not _checked(hit, tip):
+                    refuse(f"'{hit}' is the reviewer under '{gnode}', and nothing has passed "
+                           f"a check at {tip[:8]}.",
+                           ["Its cuts are code nobody else read, so it integrates on a passing",
+                            f"check:  harness check   (from {hit}), then present again."])
+                rv_tip = tip
+
+    def _in_review(node):
+        d = state / "marks"
+        for f in (d.glob("*.json") if d.is_dir() else []):
+            try:
+                m = json.loads(f.read_text())
+            except Exception:
+                continue
+            if m.get("_node") == node and m.get("_review_task") and not m.get("_closed_at"):
+                return m["_review_task"]
+        return None
+
     # EVERY child that arrived, not the first one found. Two children can sit on
     # the same sha — one just created from the other, or two idle at the same
     # commit — and picking the first match in dict order let a review recorded
     # for one satisfy the gate for the other. A check that passes for the wrong
     # reason reads exactly like one that passed.
     for hit, tip in hits:
-        # Same sanitiser as Ctx.state_file in the CLI. If these two ever
-        # disagree the gate looks for a file the recorder never wrote, and
-        # refuses forever.
+        if hit == rv and rv_tip:
+            continue                 # its own record, checked above
+        if rv and hit != rv:
+            if rv_tip and _anc(tip, rv_tip):
+                continue             # it arrived inside the reviewer's branch
+            rt = _in_review(hit)
+            if rt:
+                refuse(f"'{hit}' is in review by '{rv}' ('{rt}'), and is arriving in "
+                       f"'{gnode}' around it.",
+                       [f"A worker's change reaches '{gnode}' through its reviewer:",
+                        f"    harness integrate {rv}   once '{rt}' is presented"])
         stem = re.sub(r"[^A-Za-z0-9]", "_", f"{hit}-{tip}")
-        rec = (Path.home() / ".claude" / "harness" / slug / "reviews" / (stem + ".json"))
+        rec = (state / "reviews" / (stem + ".json"))
         recover = ["",
                    "YOUR WORKING TREE MAY ALREADY BE UPDATED. git checks out a",
                    "fast-forward before the ref update this hook aborts, and there",

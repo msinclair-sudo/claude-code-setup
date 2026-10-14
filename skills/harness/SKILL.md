@@ -18,7 +18,7 @@ Position is derived from git, never declared. The CLI queries `claude agents --j
 1. `harness whoami` — derives the node, checks the platform contract, asserts the session name against the branch.
 2. `harness claim` — then work your queue until you are blocked on your lead or the operator. Claiming is not the end of the job.
 3. `harness doctor` — demands a refusal from the document guard. Exit 6: stop and report which arm failed. Green means the guard fires and the other hooks match what was installed; it does not prove the integration gate fires.
-4. Load exactly the skills `whoami` lists under `skills`. Nothing else.
+4. Load exactly the skills `whoami` lists under `skills`. Nothing else. A line `on <skill> (<level>)` means a skill your node's role makes active (log 172): its text is printed at the end of your orientation and is in force for the whole session, so there is nothing to load. A task whose brief `uses` a skill prints it when you open the task; apply it, and say so when you present (`--applied <skill>`, or `--not-applied "why"`).
 
 ```
 leaf      → harness + harness-upward

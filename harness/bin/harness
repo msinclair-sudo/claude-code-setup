@@ -713,6 +713,29 @@ def validate_tree(tree, path):
         m = sp.get("model")
         if m is not None and (not isinstance(m, str) or not m.strip()):
             die(CONTRACT, f"node '{n}' has an empty model.  Fix {path}")
+        # Log 172: a role the harness acts on, and skills it injects.
+        r = sp.get("role")
+        if r is not None and r not in ROLE_SKILLS:
+            die(CONTRACT, f"node '{n}' has role '{r}'; the roles a tree may name are "
+                          f"{', '.join(ROLE_SKILLS)}.  Fix {path}")
+        sk = sp.get("skills")
+        if sk is not None and (not isinstance(sk, list)
+                               or not all(isinstance(x, str) and x.strip() for x in sk)):
+            die(CONTRACT, f"node '{n}' has skills {sk!r}; it must be a list of skill names "
+                          f"(\"ponytail\", or \"ponytail:ultra\" for a level).  Fix {path}")
+        if r == "reviewer":
+            nodes = tree.get("nodes", {})
+            if not sp.get("parent"):
+                die(CONTRACT, f"node '{n}' is a reviewer with no lead; a reviewer reads "
+                              f"the work of its lead's other children.  Fix {path}")
+            if any(s.get("parent") == n for s in nodes.values()):
+                die(CONTRACT, f"node '{n}' is a reviewer and has children; a reviewer "
+                              f"leads no one.  Fix {path}")
+            twin = [o for o, s in nodes.items() if o != n and s.get("role") == "reviewer"
+                    and s.get("parent") == sp["parent"]]
+            if twin:
+                die(CONTRACT, f"'{sp['parent']}' has two reviewers, {n} and {twin[0]}; "
+                              f"every worker's change goes to one.  Fix {path}")
 
 
 def skills_for(ctx, name):
@@ -723,6 +746,8 @@ def skills_for(ctx, name):
         s.append("harness-downward")
     if ctx.rank(name) == 0:
         s.append("harness-root")
+    if (ctx.tree["nodes"][name].get("role")) == "reviewer":
+        s.append("harness-reviewer")
     return s
 
 
@@ -763,6 +788,9 @@ ROLE_DEFAULTS = {
     # Effort stays medium: coding is the one steep effort curve, `low` costs
     # ~8 points, and effort is a different dial from tier.
     "member":   ("sonnet",   "medium"),
+    # A reviewer judges and cuts other lanes' code: review is knowledge work
+    # (medium), and its cuts reach the lead unread by anyone else (log 172).
+    "reviewer": ("opus",     "medium"),
 }
 
 
@@ -780,7 +808,134 @@ def escalate(effort):
 def role_of(ctx, name):
     if ctx.rank(name) == 0:
         return "root"
+    # A role the tree names (log 172) wins over the one its place implies.
+    named = (ctx.tree["nodes"].get(name) or {}).get("role")
+    if named in ROLE_SKILLS:
+        return named
     return "lead" if ctx.children(name) else "member"
+
+
+def is_lane(ctx, name):
+    """A member or a reviewer: one task at a time in its own worktree, recycled
+    after sign-off, asking its lead rather than the owner."""
+    return role_of(ctx, name) in ("member", "reviewer")
+
+
+def reviewer_of(ctx, lead):
+    """The reviewer child of a lead, or None."""
+    return next((k for k in ctx.children(lead)
+                 if (ctx.tree["nodes"].get(k) or {}).get("role") == "reviewer"), None)
+
+
+# ── log 172: skills a node's role makes active ───────────────────────────────
+#
+# dev_dag_3 was set up to review the DAG lanes "using the skill ponytail". The
+# skill sat in its worktree, listed among some eighty others, and in 36
+# sessions nothing used it: the plugin works by injecting its text at session
+# start, and those hooks had been left out so it would touch no other node.
+# So the harness injects it, for the nodes given it and no other.
+#
+#   on    in force for the whole session: printed by `whoami` (SessionStart,
+#         also on compact) and by `hook-subagent` (SubagentStart);
+#   uses  a procedure a task applies: printed when the task opens, and its
+#         presentation says whether it was applied.
+#
+# A node gets them from its role ("role": "reviewer") and from "skills" in its
+# tree.json entry, which adds to `on`. "ponytail:ultra" names a level.
+ROLE_SKILLS = {
+    # Owner, 2026-10-15: a reviewer sits between a lead and its workers, reads
+    # every worker's change before the lead sees it, and makes the cuts itself.
+    "reviewer": {"on": ["ponytail"], "uses": ["ponytail-review"]},
+}
+SKILL_LEVELS = {"ponytail": "full"}          # the level a skill is on at by default
+
+
+def skill_dirs(worktree=None):
+    """Where a skill's text is found, in order: the harness's own copies, the
+    node's worktree, the user's skills."""
+    out = [HOME_STATE / "skills"]
+    if worktree:
+        out.append(Path(worktree) / ".claude" / "skills")
+    out.append(Path.home() / ".claude" / "skills")
+    return out
+
+
+def skill_text(name, worktree=None):
+    """-> (path, text) of a skill's SKILL.md, or (None, None)."""
+    for d in skill_dirs(worktree):
+        f = d / name / "SKILL.md"
+        if f.is_file():
+            try:
+                return f, f.read_text()
+            except OSError:
+                continue
+    return None, None
+
+
+def node_skills(ctx, name):
+    """{"on": [(skill, level)], "uses": [skill]} for a node, from its role and
+    its own "skills"."""
+    spec = ctx.tree["nodes"].get(name) or {}
+    base = ROLE_SKILLS.get(spec.get("role")) or {}
+    on, seen = [], set()
+    for s in list(base.get("on") or []) + list(spec.get("skills") or []):
+        skill, _, level = str(s).partition(":")
+        if skill and skill not in seen:
+            seen.add(skill)
+            on.append((skill, level or SKILL_LEVELS.get(skill, "")))
+    return {"on": on, "uses": list(base.get("uses") or [])}
+
+
+def skill_body(text, level=""):
+    """A SKILL.md as it is injected: no frontmatter, and of a levels table only
+    the row for the level in force, as ponytail's own hook does."""
+    body = re.sub(r"^---\n.*?\n---\s*\n", "", text, count=1, flags=re.S)
+    if level:
+        keep = []
+        for line in body.splitlines():
+            m = re.match(r"^\|\s*\*\*(.+?)\*\*\s*\|", line)
+            if m and m.group(1).strip().lower() != level.lower():
+                continue
+            keep.append(line)
+        body = "\n".join(keep)
+    return body.strip()
+
+
+def on_words(ctx, name):
+    """'ponytail (full)' for the skills line, or ''."""
+    return ", ".join(s + (f" ({lv})" if lv else "") for s, lv in node_skills(ctx, name)["on"])
+
+
+def on_text(ctx, name, worktree=None):
+    """The text of every skill on for this node, as it is injected, and a line
+    for each that cannot be found."""
+    out = []
+    role = (ctx.tree["nodes"].get(name) or {}).get("role")
+    for skill, level in node_skills(ctx, name)["on"]:
+        f, text = skill_text(skill, worktree)
+        if text is None:
+            out.append(f"MISSING  skill '{skill}' is on for {name} and no SKILL.md was found in "
+                       + ", ".join(str(d) for d in skill_dirs(worktree)))
+            continue
+        out.append(f"── {skill} is on for this node"
+                   + (f" (its role: {role})" if role else "") + f", from {f} ──\n"
+                   f"{skill.upper()} MODE ACTIVE" + (f" — level: {level}" if level else "")
+                   + "\nWhere it and this repository's CLAUDE.md disagree, CLAUDE.md holds.\n\n"
+                   + skill_body(text, level))
+    return "\n\n".join(out)
+
+
+def use_text(skills, worktree=None):
+    """A task's `uses`, printed when it opens."""
+    out = []
+    for skill in skills:
+        f, text = skill_text(skill, worktree)
+        if text is None:
+            out.append(f"MISSING  this task uses '{skill}' and no SKILL.md was found")
+            continue
+        out.append(f"── this task uses {skill} (from {f}); apply it, and say so when you "
+                   f"present: --applied {skill} ──\n\n" + skill_body(text))
+    return "\n\n".join(out)
 
 
 # Context per role (obs 60): when the parent is told, and where Claude Code's own
@@ -1063,6 +1218,10 @@ def _whoami(a):
     print(f"children {', '.join(kids) or '—'}")
     model, effort = assignment_for(ctx, node)
     print(f"skills   {', '.join(skills_for(ctx, node))}")
+    if on_words(ctx, node):
+        # Log 172: in force already; the text is at the end of this output.
+        print(f"on       {on_words(ctx, node)} — in force for this whole session; "
+              f"its text is at the end of this orientation")
     print(f"run as   {model}, effort {effort}   ({role_of(ctx, node)})")
     _warn, _ac = context_limits(ctx, node)
     _size = context_size(os.environ.get("CLAUDE_CODE_SESSION_ID", ""))
@@ -1302,7 +1461,10 @@ def _whoami(a):
         up = ctx.tree["nodes"].get(node, {}).get("parent")
         for t, r in sorted(mine.items()):
             lbl = mark_label(r, t)
-            if r.get("_presented_at"):
+            if r.get("_presented_at") and r.get("_review_task"):
+                print(f"open     {lbl} — presented, in review by {reviewer_of(ctx, up) or '?'} "
+                      f"('{r['_review_task']}'); {up} signs it off with the review")
+            elif r.get("_presented_at"):
                 print(f"open     {lbl} — presented, waiting on {up or 'rank 0'} to "
                       f"sign it off")
                 # A session spawned onto a node whose mark is already presented
@@ -1335,7 +1497,8 @@ def _whoami(a):
     try:
         kids = set(ctx.children(node))
         waiting = sorted(mark_label(r, t) for t, r in open_marks(ctx).items()
-                         if r.get("_presented_at") and r.get("_node") in kids)
+                         if r.get("_presented_at") and r.get("_node") in kids
+                         and not r.get("_review_task"))
         if waiting:
             print(f"sign off {len(waiting)} presented task(s) waiting on you: "
                   f"{', '.join(waiting)}")
@@ -1360,7 +1523,7 @@ def _whoami(a):
         for t, r in open_marks(ctx).items():
             n = r.get("_node")
             lead = ctx.tree["nodes"].get(n, {}).get("parent")
-            if not r.get("_presented_at") or lead not in kids:
+            if not r.get("_presented_at") or lead not in kids or r.get("_review_task"):
                 continue
             then = _epoch(r.get("_presented_at"))
             if then is None:
@@ -1554,6 +1717,27 @@ def _whoami(a):
         delta(ctx, node, os.environ.get("CLAUDE_CODE_SESSION_ID", ""), update=True)
     except Exception:
         pass
+    # Last, so the orientation above stays the first thing read: the skills
+    # this node works with, injected the way their own plugin's hook would
+    # (log 172). SessionStart runs this on compact too, so they survive it.
+    if on_words(ctx, node):
+        print()
+        print(on_text(ctx, node, ctx.worktree))
+
+
+def cmd_hook_subagent(a):
+    """SubagentStart: a subagent of a node session works under the same skills
+    the node has on (log 172), as ponytail's own SubagentStart hook did.
+    Silent anywhere else, and never an error."""
+    try:
+        ctx = Ctx(); ctx.require_enrolled()
+        node, _ = ctx.node()
+        text = on_text(ctx, node, getattr(ctx, "worktree", None)) if on_words(ctx, node) else ""
+    except BaseException:
+        return
+    if text:
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "SubagentStart",
+                                                 "additionalContext": text}}))
 
 
 def cmd_behind(a):
@@ -2510,13 +2694,27 @@ def cmd_doctor(a):
               + ("Add `paths` globs per arm and a `checks_ignore` list to the manifest."
                  if mine else "Tell rank 0, which owns the manifest."))
 
-    gone = session_hooks_missing(ctx.repo)
+    gone = session_hooks_missing(ctx.repo, ctx.tree)
     arm("session hooks registered in .claude/settings.json", not gone,
         "" if not gone else "absent: " + ", ".join(gone)
         + (f"  — the owner runs harness scaffold --force {ctx.repo} from a shell and "
            f"commits .claude/settings.json (a session is refused it as self-modification, "
            f"log 95): ask them with harness ask owner --kind action --run ..."
            if mine else "  — NOT yours to fix: report it to your lead"))
+
+    # Log 172: a skill a node is given and the harness cannot find is a node
+    # working without it, silently.
+    try:
+        _wts = {n: s.get("worktree") for n, s in (load_index(ctx).get("nodes") or {}).items()}
+    except Exception:
+        _wts = {}
+    _miss = [f"{n}: {s}" for n in ctx.tree["nodes"]
+             for s in [x for x, _ in node_skills(ctx, n)["on"]] + node_skills(ctx, n)["uses"]
+             if skill_text(s, _wts.get(n))[1] is None]
+    if any(node_skills(ctx, n)["on"] or node_skills(ctx, n)["uses"] for n in ctx.tree["nodes"]):
+        arm("every skill a node is given is found", not _miss,
+            "" if not _miss else "missing: " + ", ".join(_miss) + "  — install.sh puts the "
+            "harness's own in ~/.claude/harness/skills/")
 
     if fails and not (guard and guard.exists()):
         die(UNGUARDED, "hooksPath does not contain a usable _guard — this worktree "
@@ -3599,7 +3797,9 @@ def lead_owes(ctx, node):
     owed, marks = [], open_marks(ctx)
     kids = ctx.children(node)
     for t, r in marks.items():
-        if r.get("_node") in kids and r.get("_presented_at"):
+        # A presentation with the reviewer is the reviewer's to read, not this
+        # lead's to sign off (log 172); its review is owed here once presented.
+        if r.get("_node") in kids and r.get("_presented_at") and not r.get("_review_task"):
             then = _epoch(r["_presented_at"])
             if then and time.time() - then > STALLED_SIGNOFF:
                 owed.append(("sign off", r["_node"], mark_label(r, t),
@@ -4932,6 +5132,24 @@ def cmd_mark(a):
                          + ", ".join(f"{x['ref']} ({x['sha'][:8]})" for x in _miss)
                          + " in HEAD before presenting.\n           Catch up "
                            "(harness behind), then present again.")
+        # Log 172: a task whose brief names the skills it uses says whether
+        # they were applied. dev_dag_3's reports twice claimed ponytail that
+        # had not been used, and it struck the sentence itself.
+        _db = load_brief(ctx, a.task)[1] or {}
+        _uses = _db.get("uses") or []
+        _applied = list(dict.fromkeys(s.strip() for x in (a.__dict__.get("applied") or [])
+                                      for s in x.split(",") if s.strip()))
+        _notap = (a.__dict__.get("not_applied") or "").strip()
+        if _uses and not _applied and not _notap:
+            die(REFUSED, f"'{a.task}' uses {', '.join(_uses)}: its brief says so, and the "
+                         f"presentation says whether it was applied.\n"
+                         f"           harness mark {a.task} --done --applied {','.join(_uses)} "
+                         f"--note \"...\"\n           or --not-applied \"why\"")
+        if _db.get("review_of") and not a.note:
+            die(REFUSED, f"'{a.task}' is a review: its note is what the lead reads instead "
+                         f"of the diff.\n           harness mark {a.task} --done --applied "
+                         f"{','.join(_uses) or 'ponytail-review'} --note \"<findings, the cuts "
+                         f"made, what was not checked>\"")
         # Presenting must not be blocked by an unmeasurable cost either. A
         # member that cannot present is a member whose finished work is
         # invisible to everyone above it, which is a strictly worse outcome
@@ -4961,6 +5179,19 @@ def cmd_mark(a):
                 {"at": rec["_presented_at"], "by": rec["_presented_by"],
                  "text": a.note})
         _no_account = not a.note
+        if _applied:
+            rec["_applied"] = _applied
+        if _notap:
+            rec["_not_applied"] = _notap
+        # Log 172: under a lead with a reviewer, a worker's change goes to the
+        # reviewer first, and the lead sees it reviewed.
+        _lead = ctx.tree["nodes"].get(node, {}).get("parent")
+        _rv = reviewer_of(ctx, _lead) if _lead else None
+        _review = None
+        if _rv and _rv != node and role_of(ctx, node) == "member" and not _db.get("carries") \
+                and not rec.get("_delegated"):
+            _review = write_review_brief(ctx, a.task, node, rec["_presented_sha"], _lead, _rv, _db)
+            rec["_review_task"] = _review
         f.write_text(json.dumps(rec, indent=2) + "\n")
         # Presenting IS finishing with the node. The claim is on the worktree,
         # and a presented member has nothing left to write there, so holding it
@@ -4977,7 +5208,27 @@ def cmd_mark(a):
         except Exception:
             pass
         parent = ctx.tree["nodes"].get(node, {}).get("parent")
-        if parent:
+        _ro = _db.get("review_of") or {}
+        if _ro and parent:
+            # A reviewer presenting a review (log 172): its record stands where
+            # the lead's code review would, and the lead reads the note.
+            write_review(ctx, node, ctx.branch, rec["_presented_sha"], node, kind="reviewer")
+            ring_inbox(ctx.state, parent, node,
+                       f"{node} reviewed {_ro.get('node')}'s '{_ro.get('task')}' and presented "
+                       f"'{a.task}' at {rec['_presented_sha'][:8]}"
+                       + (f" (applied {', '.join(_applied)})" if _applied else
+                          f" (NOT applied: {_notap})" if _notap else "")
+                       + f": {clip(a.note or '', 400)}\n  Read it (harness note {a.task}), "
+                       f"then harness integrate {node}, then harness mark {a.task} --close. "
+                       f"No code review of your own is asked of you.")
+        elif _review:
+            ring_inbox(ctx.state, _rv, node,
+                       f"{node} presented '{a.task}' at {rec['_presented_sha'][:8]}: review it "
+                       f"before {parent} sees it: harness mark {_review}")
+            ring_inbox(ctx.state, parent, node,
+                       f"{node} presented '{a.task}' at {rec['_presented_sha'][:8]}; it is in "
+                       f"review by {_rv}, which presents it to you as '{_review}'.", "fyi")
+        elif parent:
             # The lead hears now, not from a nag twenty minutes on that its focus
             # may fold away: a lane whose session ends after presenting tells
             # nobody (obs 91: 2h43m).
@@ -5054,20 +5305,27 @@ def cmd_mark(a):
                   f"{_h.get('why')})")
         print(f"presented {a.task}  {cost}"
               + ("   node released" if released else ""))
-        print(f"  It is NOT closed. {parent or 'your lead'} signs it off: "
-              f"harness mark {a.task} --close")
+        if _review:
+            print(f"  It goes to {_rv}, the reviewer under {parent}, as '{_review}': "
+                  f"{_rv} reads it and makes the\n  cuts, then {parent} signs both off. "
+                  f"Questions still go to {parent}.")
+        else:
+            print(f"  It is NOT closed. {parent or 'your lead'} signs it off: "
+                  f"harness mark {a.task} --close")
         print(f"  You cannot close your own work — you cannot check it either (T4).")
         # Nothing above this line reaches anybody. See lead_address: the record
         # is inert until the lead takes a turn, and the lead has no reason to
         # take one. So the last act of presenting is to say so, out loud, to a
         # session that is running right now.
-        _lead, _lsid = lead_address(ctx, parent)
+        _tell = _rv if _review else parent
+        _lead, _lsid = lead_address(ctx, _tell)
         if _lead:
-            print(f"\n  NOT DONE YET — tell {parent}. It is running as '{_lead}'.")
+            print(f"\n  NOT DONE YET — tell {_tell}. It is running as '{_lead}'.")
             print(f"  Send this before you stop, in this turn:")
             print(f"    SendMessage(to: \"{_lead}\", message: \"{node}: '{a.task}' is "
                   f"presented at {rec['_presented_sha'][:8]} and waiting on your "
-                  f"sign-off — harness mark {a.task} --close\")")
+                  + (f"review — harness mark {_review}\")" if _review else
+                     f"sign-off — harness mark {a.task} --close\")"))
             print(f"  The record alone does not reach it. It is read when {parent} next")
             print(f"  takes a turn, and presenting gives it no reason to take one — which")
             print(f"  is exactly how finished work sits invisible for half an hour.")
@@ -5197,6 +5455,17 @@ def cmd_mark(a):
         cost = spend_line(d) if d else "not measured at presentation"
         f.write_text(json.dumps(rec, indent=2) + "\n")
         print(f"signed off {a.task} for {owner} at {rec['_closed_at']}  {cost}")
+        # Log 172: signing off a review signs off the work it reviewed, which
+        # arrived in this branch with it.
+        _ro = (load_brief(ctx, a.task)[1] or {}).get("review_of") or {}
+        _wf = ctx.state_file("marks", _ro.get("task", ""), ".json") if _ro else None
+        _w = _read_json(_wf) if _wf and _wf.exists() else None
+        if _w and _w.get("_presented_at") and not _w.get("_closed_at"):
+            _w.update(_closed_at=rec["_closed_at"], _closed_by=rec["_closed_by"],
+                      _closed_sha=rec["_closed_sha"], _closed_with=a.task)
+            _wf.write_text(json.dumps(_w, indent=2) + "\n")
+            print(f"signed off {_ro['task']} for {_ro.get('node')} with it: {owner} reviewed it "
+                  f"and it came in with {owner}'s branch")
         still = sorted(t for t, r in open_marks(ctx).items() if r.get("_node") == owner)
         if still:
             print(f"  {owner} still has {len(still)} open task(s): {', '.join(still)}")
@@ -5332,6 +5601,23 @@ def cmd_mark(a):
     if ((b.get("approval") or {}).get("state")) == "declined":
         die(REFUSED, f"'{a.task}' was declined by the operator: "
                      f"{(b['approval'].get('why'))}")
+    # Log 172: a review reaches the lead alone, so the next opens only once the
+    # last is integrated; and it reviews the worker's commit as presented.
+    _ro = b.get("review_of") or {}
+    if _ro:
+        _lb = (ctx.tree["nodes"].get(_ro.get("lead")) or {}).get("branch") or _ro.get("lead")
+        rc, _own, _ = git("rev-list", "--no-merges", "--count", f"{_lb}..HEAD", cwd=ctx.worktree)
+        if not rc and int(_own.strip() or 0):
+            die(REFUSED, f"{ctx.branch} holds {_own.strip()} commit(s) {_ro.get('lead')} has not "
+                         f"integrated: your last review.\n           A review reaches "
+                         f"{_ro.get('lead')} alone, so '{a.task}' opens once that is in. "
+                         f"Tell {_ro.get('lead')}:\n           harness integrate {node}")
+        _wr = _read_json(ctx.state_file("marks", _ro.get("task", ""), ".json")) or {}
+        if _wr.get("_presented_sha") and _wr["_presented_sha"] != _ro.get("sha"):
+            die(REFUSED, f"{_ro.get('node')} presented '{_ro.get('task')}' again, at "
+                         f"{_wr['_presented_sha'][:8]}, after this brief was written for "
+                         f"{str(_ro.get('sha'))[:8]}.\n           Its next presentation "
+                         f"rewrites this brief; read the new one: harness brief {a.task}")
     # I1, applied to the ledger rather than to the worktree.
     _holder, _cl = claim_conflict(ctx, node)
     if _cl == "held":
@@ -5415,6 +5701,24 @@ def cmd_mark(a):
         print("         " + ("That is T7: collect the conflict with harness catchup and tell "
                              "your lead; do not resolve it." if _st == "conflict" else
                              "Commit what is there, then: harness catchup"))
+    if _ro:
+        # Into the reviewer's own branch, never the worker's: the worker's
+        # worktree may still be live, and T2 forbids writing there.
+        rc, out, err = git("merge", "--no-edit", "-m",
+                           f"review: take {_ro.get('node')}'s {_ro.get('task')} at "
+                           f"{str(_ro.get('sha'))[:8]} (log 172)", _ro.get("sha"),
+                           cwd=ctx.worktree)
+        if rc:
+            git("merge", "--abort", cwd=ctx.worktree)
+            die(REFUSED, f"{_ro.get('node')}'s commit {str(_ro.get('sha'))[:8]} does not merge "
+                         f"cleanly into {ctx.branch}:\n           "
+                         + clip((err or out).strip().splitlines()[0] if (err or out).strip()
+                                else "git refused", 200)
+                         + f"\n           Nothing was merged. {_ro.get('node')} catches up "
+                           f"from {_ro.get('lead')} and presents again; tell "
+                           f"{_ro.get('lead')}.")
+        print(f"took {_ro.get('node')}'s '{_ro.get('task')}' at {str(_ro.get('sha'))[:8]} "
+              f"into {ctx.branch}. Review it:  git diff {_ro.get('lead')}...HEAD")
     tot["_sha"] = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
     f.write_text(json.dumps(tot, indent=2) + "\n")
     if _cl in ("unclaimed", "stale"):
@@ -5447,6 +5751,10 @@ def cmd_mark(a):
               f"harness brief {a.task} --band S|M|L")
     print(f"  brief revision {b.get('revision')} by {b.get('written_by')} "
           f"— read it: harness brief {a.task}")
+    # Log 172: the procedure the task applies, in context as the work starts.
+    if b.get("uses"):
+        print()
+        print(use_text(b["uses"], ctx.worktree))
 
 
 def load_checks(ctx):
@@ -6428,7 +6736,7 @@ def cmd_check(a):
     # One full run per change, at the lead (owner, 2026-10-08): a worker checks
     # only the arms its change touches, a lead runs the full set after merging.
     scope = None
-    if not a.arms and (a.changed or (not a.all and role_of(ctx, node) == "member")):
+    if not a.arms and (a.changed or (not a.all and is_lane(ctx, node))):
         sel, scope = changed_arms(ctx, node, checks)
         if sel == []:
             rep = make_check_report(node, sha, [], 0, None, arms=[], scoped=scope,
@@ -8032,7 +8340,7 @@ def cmd_spend(a):
         print("\n  No mark: this is the whole session, not a task's share (I10).")
 
 
-def write_review(ctx, node, branch, sha, by_node, carried_from=None):
+def write_review(ctx, node, branch, sha, by_node, carried_from=None, kind=None):
     """The record `_guard --gate` reads before it will let a fast-forward land.
 
     `reviewed_by_node` is the field that makes it a record of an ORACLE rather
@@ -8056,6 +8364,10 @@ def write_review(ctx, node, branch, sha, by_node, carried_from=None):
            "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
     if carried_from:
         rec["carried_from"] = carried_from
+    if kind:
+        # "reviewer": a reviewer's record of its own branch, which holds a
+        # worker's change it read and the cuts it made (log 172).
+        rec["kind"] = kind
     f.write_text(json.dumps(rec, indent=2) + "\n")
     return f
 
@@ -8601,6 +8913,10 @@ def carry_presented(ctx, node, branch, prev, tip, parent, by):
     if old and old.get("reviewed_by_node") == parent:
         write_review(ctx, node, branch, tip, parent, carried_from=prev)
         carried = prev
+    elif old and old.get("kind") == "reviewer" and old.get("reviewed_by_node") == node:
+        # A reviewer's own record (log 172) follows its branch the same way.
+        write_review(ctx, node, branch, tip, node, carried_from=prev, kind="reviewer")
+        carried = prev
     for stem, mrec in open_marks(ctx).items():
         if mrec.get("_node") == node and mrec.get("_presented_at") \
                 and mrec.get("_presented_sha") in (prev, None):
@@ -9114,6 +9430,13 @@ def cmd_integrate(a):
                       f"asked to take.\n     {'':<12} It presents with: harness mark <task> --done")
             failed += 1; continue
         mrec = marks[stem]
+        if mrec.get("_review_task"):
+            # Log 172: the lead never takes a worker's change unreviewed.
+            _rv = reviewer_of(ctx, here) or "the reviewer"
+            print(f"skip {n:<12} its '{mrec.get('_task') or stem}' is in review by {_rv}: its "
+                  f"work reaches you through\n     {'':<12} {_rv}'s review, "
+                  f"'{mrec['_review_task']}'. Once that is presented: harness integrate {_rv}")
+            failed += 1; continue
 
         rc, tip, _ = git("rev-parse", cb, cwd=ctx.repo)
         tip = tip.strip()
@@ -9272,10 +9595,21 @@ def integrated_check_line(ctx, n, tip):
 
 
 def review_refused(ctx, n, tip, here):
-    """Print integrate's refusal when `here` has recorded no review of `tip`."""
+    """Print integrate's refusal when `here` has recorded no review of `tip`.
+    A reviewer child's own record stands for its lead's (log 172; owner,
+    2026-10-15: the lead reads the review and signs off), on a passing check."""
     rev = read_review(ctx, n, tip)
     if rev is not None and rev.get("reviewed_by_node") == here:
         return False
+    if rev is not None and rev.get("kind") == "reviewer" and rev.get("reviewed_by_node") == n \
+            and reviewer_of(ctx, here) == n:
+        return reviewer_check_refused(ctx, n, tip)
+    if reviewer_of(ctx, here) == n:
+        print(f"skip {n:<12} no review is recorded at {tip[:8]}. {n} is your reviewer: its "
+              f"record is written when it\n     {'':<12} presents a review "
+              f"(harness mark <task>.review --done). Anything it\n     {'':<12} committed "
+              f"after that is unreviewed; it presents again.")
+        return True
     why = ("no review is recorded at this commit" if rev is None else
            f"the record was written by '{rev.get('reviewed_by_node')}', not by {here}")
     print(f"skip {n:<12} {why}.\n"
@@ -9283,6 +9617,25 @@ def review_refused(ctx, n, tip, here):
           f"it (T4):\n     {'':<12}   harness review {n} --record\n"
           f"     {'':<12} The gate would refuse this a moment later, with your "
           f"working tree\n     {'':<12} already updated. This refuses first.")
+    return True
+
+
+def reviewer_check_refused(ctx, n, tip):
+    """A reviewer's cuts are code no one else read, so its branch integrates on
+    a passing check at its tip (log 172). Prints the refusal; -> bool."""
+    rep, sha, _ = check_through_catchup(ctx, n, tip)
+    if rep is None:
+        rep = _read_json(shared_report_path(ctx, sha))
+    ok = rep is not None and (rep.get("passed") or (rep.get("baseline") and not rep.get("new"))) \
+        and not partial_line(rep)
+    if ok:
+        return False
+    why = ("nothing has checked it" if rep is None else partial_line(rep) if partial_line(rep)
+           else f"{rep.get('new')} new failure(s)" if rep.get("baseline")
+           else f"{rep.get('failed')} check(s) failed")
+    print(f"skip {n:<12} is your reviewer, and its cuts at {sha[:8]} are code nobody else "
+          f"read: it integrates\n     {'':<12} on a passing check, and {why}. It runs "
+          f"harness check and presents again.")
     return True
 
 
@@ -11523,7 +11876,7 @@ def wake_plan(ctx, task, at, rows):
     here = [r for r in rows if r.get("cwd") == wt]
     if not here:
         return "start", f"{node} has no session"
-    if role_of(ctx, node) != "member":
+    if not is_lane(ctx, node):
         return None, f"{node} is a live lead; it starts {task} at its next close"
     if any(r.get("status") == "busy" for r in here):
         return None, f"{node} is busy; it reaches {task} at its next close"
@@ -11800,7 +12153,9 @@ def cmd_queue(a):
         print(f"{n}{who}")
         for t in openm:
             r = open_marks(ctx)[t]
-            state = "presented, waiting on sign-off" if r.get("_presented_at") else "OPEN"
+            state = (f"presented, in review ({r['_review_task']})" if r.get("_review_task")
+                     and r.get("_presented_at") else
+                     "presented, waiting on sign-off" if r.get("_presented_at") else "OPEN")
             print(f"    ▸ {mark_label(r, t):<24} {state}")
         for gb in gated:
             print(f"    gate {gb['task']:<24} waiting on approval "
@@ -11990,6 +12345,52 @@ def carrier_task(task, node):
     return f"{task}.up-{node}"
 
 
+def review_task(task):
+    return f"{task}.review"
+
+
+def write_review_brief(ctx, task, worker, sha, lead, reviewer, b):
+    """A worker under a lead with a reviewer has presented (log 172): the
+    reviewer gets `<task>.review`, which takes the worker's presented commit
+    into its own branch, cuts it by ponytail's rules and presents it to the
+    lead. The worker's branch is never written to. A rewrite of an existing
+    review brief (the worker presented again) bumps its revision. -> the task."""
+    rt = review_task(task)
+    f, have = load_brief(ctx, rt)
+    now = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    uses = list((ROLE_SKILLS.get("reviewer") or {}).get("uses") or [])
+    rec = {"task": rt, "node": reviewer, "revision": (have or {}).get("revision", 0) + 1,
+           "text": (f"# {rt}: review {worker}'s '{task}' before {lead} sees it\n\n"
+                    f"{worker} presented '{task}' at {sha[:12]}. Opening this task merges that "
+                    f"commit into your branch, after catching you up from {lead}.\n\n"
+                    f"1. Review the change PR-style with ponytail-review (printed when this "
+                    f"opens): `git diff {lead}...HEAD`, the code it touches, the tests. Its "
+                    f"brief and account: `harness brief {task}`, `harness note {task}`.\n"
+                    f"2. Make the cuts yourself, on your branch, by ponytail's rules: the "
+                    f"smallest complete change, never cutting validation, error handling, "
+                    f"security or anything the brief asked for. Fix what is wrong the same way.\n"
+                    f"3. `harness check`, so {lead} integrates a checked commit.\n"
+                    f"4. Present: harness mark {rt} --done --applied {','.join(uses)} --note "
+                    f"\"<what you found, what you cut, what you did not check>\". The note is "
+                    f"what {lead} reads instead of the diff.\n\n"
+                    f"Questions about the work go to {lead}, as from any lane."),
+           "written_by": f"harness (review of {task})", "written_at": now,
+           "suggestions": (have or {}).get("suggestions", []),
+           "comments": (have or {}).get("comments", []),
+           "history": ((have or {}).get("history") or [])[-4:],
+           "uses": uses,
+           "review_of": {"task": task, "node": worker, "sha": sha, "lead": lead}}
+    if (b or {}).get("feature"):
+        rec["feature"] = b["feature"]
+    if have is None:
+        rec.update(next_seq(ctx, reviewer))
+    elif have.get("seq") is not None:
+        rec["seq"] = have["seq"]
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(rec, indent=2) + "\n")
+    return rt
+
+
 def finding_carriers(ctx, task, b, decider):
     """Finding-born work approved at rank 0 gets a way up (log 106). A node can
     present only a task it was briefed, and nobody between the lane and rank 0
@@ -12126,6 +12527,9 @@ def cmd_brief(a):
             "--band goes in with --write. It is an estimate of the plan, so it moves "
             "when\n           the plan does and the revision counter has to see it. "
             f"Rewrite it:\n           harness brief {a.task} --write - --band {a.band.upper()}")
+    if a.__dict__.get("uses") and not a.write:
+        die(REFUSED, f"--uses goes in with --write, so the revision sees it:\n"
+                     f"           harness brief {a.task} --write - --uses {','.join(a.uses)}")
 
     if a.feature and a.write is None:
         # Mapping a brief to the feature it serves, without rewriting the plan:
@@ -12366,6 +12770,22 @@ def cmd_brief(a):
             rec["coupled_why"] = a.why or (b or {}).get("coupled_why") or ""
         if band:
             rec["band"] = band
+        # Log 172: the skills this task's work applies. Printed when it opens,
+        # and its presentation says whether each was applied.
+        if a.__dict__.get("uses"):
+            want = [] if [x.lower() for x in a.uses] == ["none"] else \
+                list(dict.fromkeys(s.strip() for x in a.uses for s in x.split(",") if s.strip()))
+            gone = [s for s in want if skill_text(s, ctx.worktree)[1] is None]
+            if gone:
+                die(REFUSED, f"--uses {', '.join(gone)}: no such skill in "
+                             + ", ".join(str(d) for d in skill_dirs(ctx.worktree)))
+            if want:
+                rec["uses"] = want
+        elif (b or {}).get("uses"):
+            rec["uses"] = b["uses"]
+        for k in ("review_of",):
+            if (b or {}).get(k):
+                rec[k] = b[k]
         if (b or {}).get("seq") is not None:
             rec["seq"] = b["seq"]
         elif b is None:
@@ -13773,19 +14193,27 @@ SESSION_HOOKS = [
                                      "command": "~/.claude/harness/bin/harness hook-orient"}]}),
     ("PostToolUse", {"hooks": [{"type": "command", "timeout": 5,
                                 "command": "~/.claude/harness/bin/harness-mail"}]}),
+    # Log 172: a subagent works under the skills its node has on. JSON, since
+    # SubagentStart takes context only through hookSpecificOutput.
+    ("SubagentStart", {"hooks": [{"type": "command", "timeout": 5,
+                                  "command": "~/.claude/harness/bin/harness hook-subagent"}]}),
 ]
 
 
-def session_hooks_missing(repo):
-    """The SESSION_HOOKS commands absent from the repo's .claude/settings.json."""
+def session_hooks_missing(repo, tree=None):
+    """The SESSION_HOOKS commands absent from the repo's .claude/settings.json.
+    SubagentStart is wanted only in a tree where some node has a skill on."""
     try:
         conf = json.loads((Path(repo) / ".claude" / "settings.json").read_text())
     except Exception:
         conf = {}
     have = {(ev, h.get("command")) for ev, lst in (conf.get("hooks") or {}).items()
             for e in lst for h in e.get("hooks", [])}
+    nodes = (tree or {}).get("nodes") or {}
+    skilled = any(s.get("skills") or s.get("role") in ROLE_SKILLS for s in nodes.values())
     return [f"{ev} ({h['command'].split('/')[-1]})" for ev, entry in SESSION_HOOKS
-            for h in entry["hooks"] if (ev, h["command"]) not in have]
+            for h in entry["hooks"] if (ev, h["command"]) not in have
+            and (ev != "SubagentStart" or skilled)]
 
 
 def cmd_scaffold(a):
@@ -14595,7 +15023,7 @@ def sweep_plan(ctx, unit):
             continue
         why = ("live" if sid in live else
                "also worked outside the unit" if any(k not in tasks for k, _ in owned) else
-               "a lead or rank 0" if any(n and role_of(ctx, n) != "member"
+               "a lead or rank 0" if any(n and not is_lane(ctx, n)
                                          for _, n in owned if n in ctx.tree["nodes"]) else None)
         if why:
             plan["skipped"].append((sid[:8], why)); continue
@@ -15789,7 +16217,7 @@ def ask_open(ctx, task, kind, question, me, sid, runs=None):
     if documenter and tkey(task) != "docs":
         die(REFUSED, "the documenter asks on its standing task: harness ask docs --kind ... "
                      "--question \"...\"")
-    if sid and not documenter and role_of(ctx, me) == "member":
+    if sid and not documenter and is_lane(ctx, me):
         lead = ctx.tree["nodes"][me].get("parent")
         die(REFUSED, f"'{me}' is a lane. A lane asks its lead, and the lead decides "
                      f"whether it is the\n           owner's: harness waiting \"...\" "
@@ -19807,7 +20235,7 @@ def design_gate(a, default=lambda k: None):
     take rank 0's mail); read verbs see the tree as rank 0 does; the rest is
     refused."""
     global DESIGN_VIEW
-    if a.cmd in ("hook-stop", "hook-orient"):
+    if a.cmd in ("hook-stop", "hook-orient", "hook-subagent"):
         sys.exit(0)
     if a.cmd == "whoami":
         if a.__dict__.get("delta"):
@@ -19878,6 +20306,11 @@ def main():
     mk = add("mark", cmd_mark)
     mk.add_argument("task", help="task id, as recorded at T1")
     mk.add_argument("--note", help="what this task is")
+    mk.add_argument("--applied", action="append", metavar="SKILL[,SKILL]",
+                    help="with --done: the skills the brief's `uses` names that this work "
+                         "applied (log 172)")
+    mk.add_argument("--not-applied", dest="not_applied", metavar="WHY",
+                    help="with --done: why the brief's `uses` were not applied")
     mk.add_argument("--no-recycle", dest="no_recycle", action="store_true",
                     help="on --close, do not start the next task; leave the node as it is")
     mk.add_argument("--band", metavar="S|M|L",
@@ -20120,6 +20553,9 @@ def main():
                     help="the brief handed to you that this one splits")
     br.add_argument("--from-block", dest="from_block", metavar="NEED",
                     help="the answered block this task carries down")
+    br.add_argument("--uses", action="append", metavar="SKILL[,SKILL]",
+                    help="skills this task applies (log 172): printed when it opens; its "
+                         "presentation says --applied or --not-applied. none clears them")
     br.add_argument("--resolve", type=int, metavar="N", help="mark suggestion N addressed")
     br.add_argument("--history", action="store_true",
                     help="the revisions this brief replaced, newest first")
@@ -20223,6 +20659,7 @@ def main():
                     help="-- <command>: run it holding the project's test slot")
     add("hook-stop", cmd_hook_stop)
     add("hook-orient", cmd_hook_orient)
+    add("hook-subagent", cmd_hook_subagent)
     wh.add_argument("--delta", action="store_true",
                     help="print only what has changed since this session was last "
                          "told, and nothing when nothing has")

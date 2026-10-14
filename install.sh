@@ -360,6 +360,11 @@ if [[ -d "$SCRIPT_DIR/harness" ]]; then
     rm -rf "$HOME/.claude/harness/templates"
     cp -r "$SCRIPT_DIR/harness/templates" "$HOME/.claude/harness/templates"
     chmod +x "$HOME/.claude/harness/templates/hooks/"*
+    # Skills a node's role makes active (log 172: ponytail for a reviewer).
+    # Here, not in ~/.claude/skills, so no other session lists them; the
+    # harness injects them into the nodes that are given them.
+    rm -rf "$HOME/.claude/harness/skills"
+    cp -r "$SCRIPT_DIR/harness/skills" "$HOME/.claude/harness/skills"
     # On PATH, without editing anyone's shell profile. ~/.local/bin is on the
     # default PATH on every distro this targets and is already exported by the
     # stock .profile, so a symlink there is the whole job -- and `resolve()` in
@@ -385,6 +390,7 @@ if [[ -d "$SCRIPT_DIR/harness" ]]; then
     echo "  Installed harness CLI to $HOME/.claude/harness/bin/harness"
     echo "  Installed harness viewer  (harness gui)"
     echo "  Installed guard templates to $HOME/.claude/harness/templates/"
+    echo "  Installed role skills to $HOME/.claude/harness/skills/"
 fi
 
 

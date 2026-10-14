@@ -130,6 +130,8 @@ Every commit carries a `Task:` trailer.
 
 ## `T4` present and `T10` release
 
+Under a lead with a reviewer (log 172), you present exactly as below, and your work goes to the reviewer first: it reads it and cuts it on its own branch, never yours, and your lead signs both off. `--done` says so and names whom to tell. You get the cuts when you next catch up. Questions still go to your lead.
+
 Your lead reads your diff, records the read, and runs `git merge --ff-only`. That merge is refused without the record, and a record you wrote yourself is refused. A branch that is behind its lead fails it with `fatal: Not possible to fast-forward, aborting.`; `harness integrate` catches a released child up first. Never push.
 
 ```bash

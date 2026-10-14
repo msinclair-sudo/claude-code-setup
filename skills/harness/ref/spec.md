@@ -12,6 +12,9 @@
 | **Top lead** (rank 0) | documents, rulings, manifest | `main` and `dev` | the user |
 | **Lead** (rank *n*) | nothing directly — authors by request | one integration node | the lead one rank above |
 | **Member** (leaf) | code, within an assigned scope | one worktree | its lead |
+| **Reviewer** (leaf, optional) | cuts and fixes to its siblings' changes, on its own branch | one worktree | its lead |
+
+**Reviewer** (log 172; owner, 2026-10-15). A lead may have one child with `"role": "reviewer"` in `tree.json`. It sits between the lead and its workers: every change a member under that lead presents goes to it first, as a harness-written brief `<task>.review` (`uses: ponytail-review`), and it is rung instead of the lead. Opening the review catches the reviewer up from its lead and merges the worker's presented commit into the reviewer's own branch. The worker's branch and worktree are never written to (T2), and a review opens only once the reviewer's previous one is integrated. The reviewer reviews PR-style, makes the cuts and fixes itself with ponytail on (level full), runs `harness check`, and presents with `--applied ponytail-review --note`. That writes a review record of its own tip, `kind: "reviewer"`, and rings the lead with the note. The lead reads the note instead of the diff and records no review of its own. It integrates the reviewer on a passing check at its tip, because the cuts are code no one else read, and `--close` of `<task>.review` signs off the worker's task with it. `integrate <worker>` is refused for a change that is in review, and the gate refuses a worker arriving around its reviewer, but accepts one arriving inside the reviewer's branch. Questions and sign-off still go through the lead. A reviewer is a lane for every other purpose: scoped checks, recycling, asking its lead rather than the owner. A presentation made before the reviewer existed integrates as before.
 
 A lead is a member of the rank above it. Its own node is its contribution upward. Only rank 0 is special; every other rank is relative, and the structure repeats without change.
 
@@ -126,6 +129,8 @@ its construction warns you about.
 **Rule** The node is fast-forwarded to the worktree. The worktree is never fast-forwarded to the node — that direction is T2.
 **Enforcement** `git merge --ff-only <child>`, or `harness integrate <child> | --children`, which is that merge with the catch-up and the ordering around it. A contributor that has not caught up is refused with `fatal: Not possible to fast-forward, aborting.`
 **Fails when** Treated as a push. Pushing to a checked-out branch is rejected: `! [remote rejected] … (branch is currently checked out)`.
+
+**A reviewer's record stands for its lead's** (log 172). `review_refused` and the `_guard` gate accept, for a reviewer child, the reviewer's own `kind: "reviewer"` record at its tip, on a passing check there (the report at the tip or at the commit a catch-up merge was made on). The gate covers a worker's commits that arrive inside the reviewer's branch, and refuses a worker whose change is still in review arriving any other way.
 
 **Presenting rings the lead.** `harness mark <task> --done` rings the lead's doorbell at once, and orientation never folds a "presented, unsigned" line away under the owner's focus (obs 91: a lane presented, its session ended without a message, and the lead learned 2h43m later from a nag its focus had folded).
 
@@ -1136,6 +1141,8 @@ runs the full set once after merging, and the only other checks a lead runs are
 the absent member's during [[#T7 — Conflict escalation]].
 
 ### R12 — Model and effort are attributes of the node, not the operator
+
+**So are its role and its skills** (log 172). `"role": "reviewer"` gives a node `ponytail` on and `ponytail-review` for its review tasks; `"skills": ["ponytail", "x:ultra"]` adds skills on for any node, with an optional level. A skill on for a node is injected, not merely listed. The plugin it comes from works by its own SessionStart hook, and a skill left in a worktree's `.claude/skills/` was offered to dev_dag_3 in 36 sessions and never used. So `whoami` (SessionStart, which also fires on compact) prints its text at the end of orientation, under `<SKILL> MODE ACTIVE — level: <level>` with the other levels' table rows dropped, and `harness hook-subagent` (SubagentStart, JSON `additionalContext`) gives a subagent the same text. Texts are read from `~/.claude/harness/skills/` (the harness's own copies, deployed by `install.sh` and listed by no session), then the node's worktree `.claude/skills/`, then `~/.claude/skills/`; `doctor` names any it cannot find, and asks for the SubagentStart hook only where some node has a skill on. A brief may name the skills its task `uses` (`harness brief … --write - --uses <skill>`): they are printed when the task opens, and `--done` requires `--applied <skill>` or `--not-applied "why"`, recorded as `_applied` / `_not_applied`. ponytail is vendored at 9b58c1f (MIT) in `setup/harness/skills/`.
 
 A node records what it should be run as. `spawn` passes `--model` and `--effort`
 to each session it launches; `whoami` prints the pair so a session can see what

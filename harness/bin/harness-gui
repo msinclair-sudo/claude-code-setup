@@ -509,7 +509,9 @@ def read_state():
                                 "at": (r.get("_at") or "")[:19].replace("T", " ")})
             else:
                 tasks.setdefault(n, []).append(
-                    {"task": mf.stem, "presented": bool(r.get("_presented_at"))})
+                    {"task": mf.stem, "presented": bool(r.get("_presented_at")),
+                     # log 172: presented, and with the lead's reviewer
+                     "review": r.get("_review_task")})
         # A brief exists BEFORE its mark: the lead writes it, then the member
         # accepts. Without this the handed-out work is invisible until someone
         # picks it up, which is exactly the window a lead needs to see.
@@ -657,6 +659,7 @@ def read_state():
                 "kind": spec.get("kind"), "rank": _rank(tree, name), "worktree": wt,
                 # root is rank 0; a lead has children; everything else is a worker.
                 "role": ("root" if not spec.get("parent") else
+                         spec["role"] if spec.get("role") else       # log 172: reviewer
                          "lead" if any(x.get("parent") == name for x in tree.values())
                          else "worker"),
                 "indexed": name in idx.get("nodes", {}),
@@ -770,6 +773,7 @@ def read_state():
             mark_held(cctx, nodes)
             for n in nodes:
                 n["assigned"] = list(CLI.assignment_for(cctx, n["name"]))
+                n["skills_on"] = CLI.on_words(cctx, n["name"])     # log 172
         except Exception:
             pass
         # Doorbell mail not yet shown to the node's session, and whether the
@@ -939,6 +943,9 @@ border-bottom:1px dotted var(--none)}
 .hb{display:flex;flex-direction:column;align-items:flex-start}
 .hk{display:flex;gap:46px;align-items:flex-start;margin-top:30px}
 .hs{display:flex;flex-direction:column;align-items:flex-start;gap:14px;padding-left:26px}
+/* A reviewer heads its lead's column, set apart from the workers it reads. */
+.hs>.card.r-reviewer{outline:1px dashed var(--s-held);outline-offset:3px;margin-bottom:8px}
+.md2.skon{color:var(--s-held)}
 /* Every line is drawn on one overlay: the tree's own connectors, waits riding
    over them, and the roads from the tests and the intermediary. */
 .waits{position:absolute;left:0;top:0;pointer-events:none;overflow:visible}
@@ -1776,8 +1783,10 @@ function card(n) {
         b.open_suggestions + '</b>' : ''), 'pending', b.coupled_why) +
       n.briefed.filter(c => c.coupled_to === b.task).map(c => ' + ' +
         chip(c.task, esc(c.label || c.task), 'pending', c.coupled_why)).join(''));
-  const done = n.tasks.filter(t => t.presented).map(t => chip(t.task, '&#10003; ' + esc(t.task),
-      'dn', 'presented — waiting on its lead to sign off'))
+  const done = n.tasks.filter(t => t.presented).map(t => t.review
+      ? chip(t.task, '&#10003; ' + esc(t.task) + ' <span class="k">in review</span>', 'dn',
+             'presented — with the reviewer as ' + t.review + ', then its lead signs both off')
+      : chip(t.task, '&#10003; ' + esc(t.task), 'dn', 'presented — waiting on its lead to sign off'))
     .concat((n.split || []).filter(x => x.ready).map(x => chip(x.task, '&#10003; ' +
       esc(x.task) + ' <span class="k">' + x.done + '/' + x.total + '</span>', 'dn',
       'every part closed — harness mark ' + x.task + ' --close')));
@@ -1799,6 +1808,9 @@ function card(n) {
     esc(n.role || '') + '</span><span class="stw" title="' + word + (age ? ' ' + age : '') + '">' +
     STICON[st] + (age ? '<span class="sta">' + age + '</span>' : '') + '</span></div>' +
     '<div class="bd">' + (model ? '<div class="md2">' + model + '</div>' : '') +
+    // Log 172: the skills its role makes active, in force for every session.
+    (n.skills_on ? '<div class="md2 skon" title="in force for every session on this node">on ' +
+      esc(n.skills_on) + '</div>' : '') +
     (n.branch && n.branch !== n.name || !n.indexed ? '<div class="md2">' +
       (n.branch && n.branch !== n.name ? 'branch ' + esc(n.branch) : '') +
       (n.indexed ? '' : ' (not indexed)') + '</div>' : '') +
@@ -2046,7 +2058,10 @@ function tree(nodes, side) {
   const leaf = n => !kids[n.name];
   const block = n => {
     const ks = kids[n.name] || [];
-    const lv = ks.filter(leaf), inner = ks.filter(k => !leaf(k));
+    // A reviewer (log 172) heads its lead's column: under the lead, above the
+    // workers whose changes it reads before the lead sees them.
+    const lv = ks.filter(leaf).sort((x, y) => (y.role === 'reviewer') - (x.role === 'reviewer')),
+          inner = ks.filter(k => !leaf(k));
     return '<div class="hb">' + card(n) + (ks.length ? '<div class="hk">' +
       (lv.length ? '<div class="hs">' + lv.map(card).join('') + '</div>' : '') +
       inner.map(block).join('') + '</div>' : '') + '</div>';

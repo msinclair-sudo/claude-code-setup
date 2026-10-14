@@ -917,31 +917,23 @@ border-bottom:1px dotted var(--none)}
 .proj>h2{font-size:14px;margin:0 0 2px}
 .proj>.repo{color:var(--none);font-size:11px;margin-bottom:6px;word-break:break-all}
 
-/* Top-to-bottom tree: depth runs DOWN the page, siblings sit side by side.
-   Pure CSS, no layout library — each li draws the half-connectors above it and
-   each nested ul draws the stem down from its parent. */
+/* The tree hangs (owner, 2026-10-14, concept F): a lead's workers stack in a
+   column under it, indented on a spine, and only a node with children of its
+   own takes a new column. The width grows with the leads, not the sessions.
+   Cards are unchanged; drawWaits draws every line from where they landed. */
 .scroll{overflow-x:auto;padding-bottom:6px}
-.tree ul{position:relative;padding:22px 0 0;margin:0;display:flex;
-justify-content:center;list-style:none}
-.tree li{position:relative;padding:22px 9px 0;list-style:none;text-align:center}
-.tree li::before,.tree li::after{content:'';position:absolute;top:0;right:50%;
-border-top:1px solid var(--line);width:50%;height:22px}
-.tree li::after{right:auto;left:50%;border-left:1px solid var(--line)}
-.tree li:only-child::before,.tree li:only-child::after{display:none}
-.tree li:only-child{padding-top:22px}
-.tree li:first-child::before,.tree li:last-child::after{border:0 none}
-.tree li:last-child::before{border-right:1px solid var(--line);border-radius:0 6px 0 0}
-.tree li:first-child::after{border-radius:6px 0 0 0}
-.tree>ul{padding-top:0}
-.tree>ul>li{padding-top:0}
-.tree>ul>li::before,.tree>ul>li::after{display:none}
-.tree ul ul::before{content:'';position:absolute;top:0;left:50%;
-border-left:1px solid var(--line);width:0;height:22px}
-/* A wait between a child and its lead is drawn over the connectors, child to
-   lead, in the wait colour (drawWaits). */
 .tree{position:relative}
+.tree.hang{display:flex;gap:46px;align-items:flex-start;padding-bottom:48px}
+.hb{display:flex;flex-direction:column;align-items:flex-start}
+.hk{display:flex;gap:46px;align-items:flex-start;margin-top:30px}
+.hs{display:flex;flex-direction:column;align-items:flex-start;gap:14px;padding-left:26px}
+/* Every line is drawn on one overlay: the tree's own connectors, waits riding
+   beside them, and the roads from the tests and the intermediary. */
 .waits{position:absolute;left:0;top:0;pointer-events:none;overflow:visible}
-.waits path{fill:none;stroke:var(--wait);stroke-width:2.5}
+.waits path{fill:none;stroke:var(--wait);stroke-width:2}
+.waits path.conn{stroke:var(--line2);stroke-width:1}
+.waits circle{stroke:none}
+.waits circle.test{fill:var(--busy)}.waits circle.msg{fill:var(--wait)}
 .waits path.held{stroke:var(--held);stroke-dasharray:6 4}
 .waits path.msg{stroke:var(--wait);stroke-width:1.6;stroke-dasharray:2 4;stroke-linecap:round}
 .oos{color:var(--warn);font-weight:700;letter-spacing:.06em;margin:4px 0}
@@ -1104,7 +1096,10 @@ background:var(--ink);margin:0 6px 1px 0;vertical-align:middle}
 .tspace{position:relative;display:flex;gap:26px;align-items:flex-start;width:max-content;
   min-width:100%}
 .tspace>.tree{flex:1}
-.sidecol{width:240px;flex:none;padding-top:22px}
+.sidecol{width:240px;flex:none;align-self:stretch;display:flex;flex-direction:column}
+/* Tests and the intermediary sit at the bottom, where their roads start. */
+.sidebot{margin-top:auto;padding-top:10px;display:flex;flex-direction:column;gap:10px}
+.sidebot .card{margin-top:0}
 .card.interm{display:block;max-width:none;overflow:hidden}
 .card.interm code{color:var(--busy);overflow-wrap:anywhere}
 .card.doc{margin-top:10px}
@@ -1311,8 +1306,6 @@ border-radius:7px}
 h1,.proj>h2{font-family:var(--serif)}
 .proj>h2{font-size:19px}
 h1{font-size:16px}
-/* The tree's own lines, a step brighter than the card edges used to be. */
-.tree li::before,.tree li::after,.tree ul ul::before{border-color:var(--line2)}
 </style></head><body>
 <header><h1>harness</h1><span id="usage"></span><span id="age"></span><nav id="tabs"></nav></header>
 <main id="root"><div class="empty">loading...</div></main>
@@ -2026,13 +2019,22 @@ function tree(nodes, side) {
     if (n.parent && by[n.parent]) (kids[n.parent] = kids[n.parent] || []).push(n);
     else roots.push(n);
   });
-  const li = n => '<li>' + card(n) +
-    (kids[n.name] ? '<ul>' + kids[n.name].map(li).join('') + '</ul>' : '') + '</li>';
+  // A block is a card and, under it, one row: its childless children stacked
+  // in a column (.hs), then a block for each child that has children of its
+  // own (.hb). Only those take a column of their own.
+  const leaf = n => !kids[n.name];
+  const block = n => {
+    const ks = kids[n.name] || [];
+    const lv = ks.filter(leaf), inner = ks.filter(k => !leaf(k));
+    return '<div class="hb">' + card(n) + (ks.length ? '<div class="hk">' +
+      (lv.length ? '<div class="hs">' + lv.map(card).join('') + '</div>' : '') +
+      inner.map(block).join('') + '</div>' : '') + '</div>';
+  };
   // The side cards share the tree's scrolling space, on its left, so a line
   // from one to a node is drawn in the same coordinates as the tree's own.
   return '<div class="treerow"><div class="scroll"><div class="tspace">' +
          (side ? '<div class="sidecol">' + side + '</div>' : '') +
-         '<div class="tree"><ul>' + roots.map(li).join('') + '</ul></div></div></div></div>';
+         '<div class="tree hang">' + roots.map(block).join('') + '</div></div></div></div>';
 }
 
 // The account's 5h and 7d limits, beside the name, as the terminal shows them.
@@ -2128,7 +2130,8 @@ async function tick() {
                    : ' <span class="q">names no node</span>') +
           (o.at ? ' <span class="q">&middot; ' + esc(o.at) + '</span>' : '') +
           '</li>').join('') + '</ul>' : '') +
-      tree(p.nodes, intermCard(p) + docCard(p) + testCard(p)) + '</div></div></div>';
+      tree(p.nodes, docCard(p) + '<div class="sidebot">' + testCard(p) + intermCard(p) +
+           '</div>') + '</div></div></div>';
   }).join('');
   if (!d.projects.length) h += '<div class="empty">no enrolled projects on this machine</div>';
   paint(h);
@@ -2941,12 +2944,73 @@ window.addEventListener('hashchange', () => {
 // IN by tagging it, and forgetting to tag one shows up as a stale number, which
 // is visible. The exclude list it replaces failed the other way -- forgetting to
 // exempt something ate your work silently.
-// The path from each waiting card up to its lead's card: up from the child,
-// across, and down into the lead, over the tree's own connectors.
+// Every line on the tree, from where the cards landed (concept F, owner
+// 2026-10-14). The cards keep their size, so nothing here assumes a grid:
+//   connectors  a spine down a lead's left for its stacked workers, a bus to
+//               the top of each child that has children of its own;
+//   waits       beside those connectors, from the waiting card to its lead;
+//   roads       one line leaves the tests card and one the intermediary's, runs
+//               under the tree, and climbs the gap right of each column it
+//               serves, with a tap into each card. A gap between two columns
+//               has no card in it from there to the bottom, so no road crosses
+//               a card, however many jobs run.
+const SPINE = 12, RIDE = 5, TAP = {test: 16, msg: 28}, TRACK = {test: -6, msg: 6};
+const headOf = hb => hb && hb.firstElementChild;
+function treeParent(c) {
+  // -> {p: the lead's card, hb: its block, stacked} or null at a root.
+  const box = c.parentElement;
+  if (box && box.classList.contains('hs')) {
+    const hb = box.parentElement.parentElement;
+    return {p: headOf(hb), hb, stacked: true};
+  }
+  const hk = box && box.parentElement;
+  if (box && box.classList.contains('hb') && hk && hk.classList.contains('hk')) {
+    const hb = hk.parentElement;
+    return {p: headOf(hb), hb, stacked: false};
+  }
+  return null;
+}
 function drawWaits() {
   document.querySelectorAll('.tspace').forEach(t => {
     t.querySelectorAll('svg.waits').forEach(x => x.remove());
-    const box = t.getBoundingClientRect(), ds = [];
+    const box = t.getBoundingClientRect(), ds = [], dots = [];
+    const R = el => { const r = el.getBoundingClientRect();
+      return {l: r.left - box.left, r: r.right - box.left, t: r.top - box.top,
+              b: r.bottom - box.top}; };
+    const tr = t.querySelector('.tree.hang');
+    if (tr) observeTree(t);
+    // The tree's own connectors.
+    t.querySelectorAll('.tree.hang .hb').forEach(hb => {
+      const hk = hb.querySelector(':scope > .hk');
+      if (!hk) return;
+      const p = R(headOf(hb)), sx = p.l + SPINE, bus = R(hk).t - 15;
+      const stack = [...hk.querySelectorAll(':scope > .hs > .card')].map(R);
+      const inner = [...hk.querySelectorAll(':scope > .hb')].map(x => R(headOf(x)));
+      const low = Math.max(stack.length ? stack[stack.length - 1].t + 18 : 0,
+                           inner.length ? bus : 0);
+      let d = 'M' + sx + ' ' + p.b + 'V' + low;
+      stack.forEach(c => { d += 'M' + sx + ' ' + (c.t + 18) + 'H' + c.l; });
+      inner.forEach(c => { d += 'M' + sx + ' ' + bus + 'H' + (c.l + 20) + 'V' + c.t; });
+      ds.push(['conn', d]);
+    });
+    // A wait or hold, beside the connectors between the two cards: -> points,
+    // or null when the two are not a lead and its child, or two siblings.
+    const climb = c => {
+      const up = treeParent(c);
+      if (!up) return null;
+      const a = R(c), p = R(up.p), x = p.l + SPINE + RIDE;
+      if (up.stacked) return {p: up.p, pts: [[a.l, a.t + 18 + RIDE], [x, a.t + 18 + RIDE], [x, p.b]]};
+      const bus = R(up.hb.querySelector(':scope > .hk')).t - 15 + RIDE;
+      return {p: up.p, pts: [[a.l + 20 + RIDE, a.t], [a.l + 20 + RIDE, bus], [x, bus], [x, p.b]]};
+    };
+    const line = pts => 'M' + pts.map(q => q[0] + ' ' + q[1]).join('L');
+    const rides = (c, lead) => {
+      const a = climb(c), b = climb(lead);
+      if (a && a.p === lead) return line(a.pts);
+      if (b && b.p === c) return line(b.pts.slice().reverse());
+      if (a && b && a.p === b.p) return line(a.pts.slice(0, -1).concat(b.pts.slice(0, -1).reverse()));
+      return null;
+    };
     t.querySelectorAll('.wto, .hto').forEach(m => {
       const c = m.closest('.card');
       const key = c && c.dataset.live || '';
@@ -2954,9 +3018,12 @@ function drawWaits() {
       const lead = m.dataset.on &&
         t.querySelector('[data-live="card:' + slug + ':' + m.dataset.on + '"]');
       if (!lead) return;
+      const cls = m.classList.contains('hto') ? 'held' : '';
+      const ride = rides(c, lead);
+      if (ride) { ds.push([cls, ride]); return; }
       const a = c.getBoundingClientRect(), b = lead.getBoundingClientRect();
-      // Three shapes, by where the waited-on card sits. Each runs along the
-      // tree's own branch bar, 22px above the lower row, and never through a card.
+      // Anything further apart than a lead and its child, or two siblings:
+      // three shapes, by where the waited-on card sits.
       //   above (its lead):   waiting card's top -> bar -> lead's bottom
       //   below (its child):  waiting card's bottom -> bar over the child -> child's top
       //   same row (sibling): both tops, bar above the higher of the two
@@ -2969,32 +3036,60 @@ function drawWaits() {
       } else {
         y1 = a.top - box.top; y2 = b.top - box.top; ym = Math.min(y1, y2) - 22;
       }
-      ds.push([m.classList.contains('hto') ? 'held' : '',
-               'M' + x1 + ' ' + y1 + 'V' + ym + 'H' + x2 + 'V' + y2]);
+      ds.push([cls, 'M' + x1 + ' ' + y1 + 'V' + ym + 'H' + x2 + 'V' + y2]);
     });
-    // The intermediary messaged a node and waits on its reply, or the test
-    // queue is running a node's job: a dotted line from the card's right edge,
-    // along the gutter, over the node's row and down into it.
-    t.querySelectorAll('.ito, .tto').forEach(m => {
-      const c = m.closest('.card');
-      const slug = (c && c.dataset.live || '').split(':')[1];
-      const n = t.querySelector('[data-live="card:' + slug + ':' + m.dataset.on + '"]');
-      if (!n) return;
-      const a = c.getBoundingClientRect(), b = n.getBoundingClientRect();
-      const mr = m.getBoundingClientRect();
-      const x1 = a.right - box.left, y1 = mr.top + mr.height / 2 - box.top, gx = x1 + 13;
-      const x2 = b.left + b.width / 2 - box.left, y2 = b.top - box.top;
-      ds.push([m.classList.contains('tto') ? 'test' : 'msg', 'M' + x1 + ' ' + y1 + 'H' + gx + 'V' + (y2 - 11) + 'H' + x2 + 'V' + y2]);
+    // The roads. The test queue runs a node's job (.tto), or the intermediary
+    // messaged a node and waits on its reply (.ito): one line out of each
+    // source card, from its first marked row.
+    const bottom = tr ? Math.max(...[...tr.querySelectorAll('.card')].map(c => R(c).b)) : 0;
+    ['test', 'msg'].forEach((kind, i) => {
+      const marks = [...t.querySelectorAll(kind === 'test' ? '.tto' : '.ito')];
+      if (!marks.length || !tr) return;
+      const src = marks[0].closest('.card');
+      const slug = (src.dataset.live || '').split(':')[1];
+      const s = R(src), mr = R(marks[0]);
+      const road = bottom + 18 + i * 12, out = s.r + 8 + i * 10;
+      const risers = {};
+      new Set(marks.map(m => m.dataset.on)).forEach(on => {
+        const n = t.querySelector('.tree [data-live="card:' + slug + ':' + on + '"]');
+        if (!n) return;
+        // The column it stands in: its stack, or its own block when it heads one.
+        const col = n.parentElement;
+        const gx = Math.round(R(col).r + 23 + TRACK[kind]);
+        const b = R(n), y = b.t + TAP[kind];
+        (risers[gx] = risers[gx] || []).push(y);
+        ds.push([kind, 'M' + gx + ' ' + y + 'H' + b.r]);
+        dots.push([kind, b.r, y]);
+      });
+      const xs = Object.keys(risers).map(Number);
+      if (!xs.length) return;
+      let d = 'M' + s.r + ' ' + (mr.t + mr.b) / 2 + 'H' + out + 'V' + road + 'H' + Math.max(...xs);
+      xs.forEach(x => { d += 'M' + x + ' ' + road + 'V' + Math.min(...risers[x]);
+                        dots.push([kind, x, road]); });
+      ds.push([kind, d]);
     });
     if (!ds.length) return;
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('class', 'waits');
     svg.setAttribute('width', t.scrollWidth); svg.setAttribute('height', t.scrollHeight);
-    svg.innerHTML = ds.map(([c, d]) => '<path class="' + c + '" d="' + d + '"/>').join('');
+    svg.innerHTML = ds.map(([c, d]) => '<path class="' + c + '" d="' + d + '"/>').join('') +
+      dots.map(([c, x, y]) => '<circle class="' + c + '" cx="' + x + '" cy="' + y + '" r="3"/>').join('');
     t.appendChild(svg);
   });
 }
 window.addEventListener('resize', drawWaits);
+// A card that grows (a fold opened, a line added by a poll) moves everything
+// below and beside it, so the lines follow any change of size, once a frame.
+let REDRAW = 0;
+const TREE_RO = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => {
+  if (!REDRAW) REDRAW = requestAnimationFrame(() => { REDRAW = 0; drawWaits(); });
+});
+function observeTree(t) {
+  if (!TREE_RO) return;
+  [t, ...t.querySelectorAll('.card')].forEach(el => {
+    if (!el._ro) { el._ro = true; TREE_RO.observe(el); }
+  });
+}
 
 function paint(h) {
   // Nothing is replaced while prose is being written into this page. The

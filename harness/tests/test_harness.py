@@ -6889,6 +6889,112 @@ class CatchUp(unittest.TestCase):
         self.assertEqual(self.git("dev", "rev-parse", "HEAD"), self.git("dev_1", "rev-parse", "HEAD"))
         self.assertEqual(hz.open_marks(self.ctx)["t"]["_caught_up_by"], "dev")
 
+    # Log 171: dev_tests' integrate ended dev_tests_1's session, which cancelled
+    # its queued check, and then refused for want of a record, because the task
+    # had been signed off a minute before it was integrated.
+    def job(self, jid, kind, sha, node="dev_1"):
+        j = {"id": jid, "kind": kind, "sha": sha, "state": "queued", "command": "x",
+             "requested_by": [{"node": node}], "at": hz._now()}
+        (hz.testq_dir(self.ctx) / f"{jid}.json").write_text(json.dumps(j))
+        return lambda: hz._read_json(hz.testq_dir(self.ctx) / f"{jid}.json")
+
+    def presented(self, tip, **more):
+        (self.ctx.dir / "marks").mkdir(exist_ok=True)
+        (self.ctx.dir / "marks" / "t.json").write_text(json.dumps(dict(
+            {"_node": "dev_1", "_task": "t", "_presented_at": hz._now(), "_presented_sha": tip},
+            **more)))
+
+    def test_integrate_refuses_before_it_ends_a_lane_and_says_it_was_signed_off_early(self):
+        tip = self.commit("dev_1", "work")
+        self.presented(tip, _closed_at="2026-10-14T22:38:33+1100", _closed_by="dev (session a)")
+        hz.write_review(self.ctx, "dev_1", "dev_1", tip, "dev")
+        check = self.job("j1", "check", tip)
+        row = [{"cwd": str(self.wt["dev_1"]), "sessionId": "c" * 36, "status": "idle"}]
+        stopped = []
+        code, out = self.run_as("dev", "integrate", "dev_1", read_roster=lambda p: None,
+                                agents_json=lambda *a: row, live_rows=lambda r: r,
+                                finished_released=lambda *a: True,
+                                stop_session_row=lambda c, n, r: stopped.append(n) or (True, []))
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("was signed off at 2026-10-14T22:38:33+1100 by dev (session a)", out)
+        self.assertIn("git merge --ff-only dev_1", out)
+        self.assertEqual(stopped, [])                       # nobody was ended for a refusal
+        self.assertEqual(check()["state"], "queued")
+        # Unreviewed is refused before the stop too.
+        self.presented(tip)
+        self.ctx.state_file("reviews", f"dev_1-{tip}", ".json").unlink()
+        code, out = self.run_as("dev", "integrate", "dev_1", read_roster=lambda p: None,
+                                agents_json=lambda *a: row, live_rows=lambda r: r,
+                                finished_released=lambda *a: True,
+                                stop_session_row=lambda c, n, r: stopped.append(n) or (True, []))
+        self.assertIn("no review is recorded at this commit", out)
+        self.assertEqual(stopped, [])
+
+    def test_stopping_a_lane_keeps_its_check_and_records_why_it_cancels_the_rest(self):
+        tip = self.commit("dev_1", "work")
+        check, probe = self.job("j1", "check", tip), self.job("j2", "command", tip)
+        other = self.job("j3", "command", tip, node="dev")
+        ok = subprocess.CompletedProcess([], 0, "", "")
+        with mock.patch.object(hz.subprocess, "run", return_value=ok), \
+             mock.patch.object(hz.time, "sleep"):
+            done, lines = hz.stop_session_row(self.ctx, "dev_1", {"sessionId": "c" * 36, "pid": None})
+        self.assertTrue(done)
+        self.assertEqual(check()["state"], "queued")
+        self.assertIn(f"its queued check j1 stays: it checks {tip[:8]}, not the session",
+                      "\n".join(lines))
+        self.assertEqual((probe()["state"], probe()["why"]), ("cancelled", "dev_1's session was stopped"))
+        self.assertEqual(other()["state"], "queued")
+
+    def test_a_presented_commit_s_check_rings_the_lead_as_well(self):
+        tip = self.commit("dev_1", "work")
+        p = mock.patch.object(hz, "ensure_ringer", lambda s: None)
+        p.start(); self.addCleanup(p.stop)
+        (self.ctx.dir / "index.json").write_text(json.dumps(self.idx))
+        self.presented(tip)
+        inbox = lambda n: list((self.ctx.dir / "doorbell" / n / "inbox").glob("*.json"))
+        job = {"id": "j1", "kind": "check", "sha": tip, "state": "done",
+               "requested_by": [{"node": "dev_1"}]}
+        rep = {"checks": [{}, {}], "failed": 0, "held": 0}
+        hz.testq_ring(self.ctx, job, rep, 0)
+        self.assertEqual((len(inbox("dev_1")), len(inbox("dev"))), (1, 1))
+        self.assertIn("yours to read", hz._read_json(inbox("dev")[0])["text"])
+        # A commit nobody presented rings only who asked.
+        other = self.commit("dev_1", "more")
+        hz.testq_ring(self.ctx, dict(job, sha=other), rep, 0)
+        self.assertEqual((len(inbox("dev_1")), len(inbox("dev"))), (2, 1))
+
+    def test_a_lead_signs_off_only_what_it_has_integrated_and_integrate_says_what_was_checked(self):
+        tip = self.commit("dev_1", "work")
+        self.presented(tip)
+        hz.write_review(self.ctx, "dev_1", "dev_1", tip, "dev")
+        code, out = self.run_as("dev", "mark", "t", "--close")
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("1 commit(s) of it are not in dev yet", out)
+        self.assertIn("harness integrate dev_1", out)
+        self.job("j1", "check", tip)
+        code, out = self.run_as("dev", "integrate", "dev_1", read_roster=lambda p: None)
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"NOT CHECKED yet at {tip[:8]}: check j1 is queued", out)
+        code, out = self.run_as("dev", "mark", "t", "--close")
+        self.assertEqual(code, 0, out)
+        self.assertIn("signed off t", out)
+        # A reported check is named on the integrate line.
+        tip2 = self.commit("dev_1", "more")
+        self.presented(tip2)
+        hz.write_review(self.ctx, "dev_1", "dev_1", tip2, "dev")
+        f = hz.check_report_path(self.ctx, "dev_1", tip2)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps({"sha": tip2, "passed": True, "checks": [{}], "failed": 0}))
+        code, out = self.run_as("dev", "integrate", "dev_1", read_roster=lambda p: None)
+        self.assertIn(f"check at {tip2[:8]}: passed", out)
+        # A document root signs off code it never merges: not held to it.
+        self.ctx.tree["nodes"]["main"]["kind"] = "doc"
+        mine = self.commit("dev", "lead's own")
+        (self.ctx.dir / "marks" / "d.json").write_text(json.dumps(
+            {"_node": "dev", "_task": "d", "_presented_at": hz._now(), "_presented_sha": mine}))
+        code, out = self.run_as("main", "mark", "d", "--close")
+        self.assertEqual(code, 0, out)
+
     def test_a_hold_keeps_a_node_s_tree_still_until_it_presents(self):
         # Log 154 (owner, 2026-10-12): merging between turns stays the rule, and
         # a lane that needs one tree for a whole diagnosis says so.

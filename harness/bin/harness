@@ -2688,9 +2688,17 @@ def stop_session_row(ctx, n, r):
         out.append(f"         and killed {len(alive)} process(es) it left running: "
                    + ", ".join(_proc_name(p_) for p_ in alive[:5]))
     for j in testq_jobs(ctx, ("queued",)):
-        if [x.get("node") for x in j["requested_by"]] == [n]:
-            testq_cancel(ctx, j)
-            out.append(f"         and cancelled its queued test job {j['id']}")
+        if [x.get("node") for x in j["requested_by"]] != [n]:
+            continue
+        if j.get("kind") == "check":
+            # Log 171: a check is of a commit, not of a session. Cancelling it
+            # when integrate ended a lane that had presented left its lead
+            # integrating a commit nothing had checked, and nobody was told.
+            out.append(f"         its queued check {j['id']} stays: it checks "
+                       f"{j['sha'][:8]}, not the session")
+            continue
+        testq_cancel(ctx, j, why=f"{n}'s session was stopped")
+        out.append(f"         and cancelled its queued test job {j['id']}")
     return True, out
 
 
@@ -5167,6 +5175,21 @@ def cmd_mark(a):
         if not rec.get("_presented_at") and not rec.get("_delegated"):
             print(f"note: '{a.task}' was never presented — closing work nobody said "
                   f"was finished")
+        # Log 171: signed off before it was integrated, the record stopped
+        # presenting anything, `integrate` refused for want of one, and the lead
+        # merged by hand past every check integrate makes.
+        # A document node signs off code it never merges (biblion2's main is
+        # hundreds of dev's commits behind dev), so only a code lead is held to it.
+        _code = all((ctx.tree["nodes"].get(x) or {}).get("kind", "code") != "doc"
+                    for x in (node, owner))
+        _ahead = (unintegrated(ctx, rec["_presented_sha"])
+                  if rec.get("_presented_sha") and owner != node and _code else 0)
+        if _ahead and not a.force:
+            die(REFUSED, f"'{a.task}' presented {rec['_presented_sha'][:8]}, and "
+                         f"{_ahead} commit(s) of it are not in {ctx.branch} yet.\n"
+                         f"           Integrate first, then sign off:  harness integrate "
+                         f"{owner}\n           --force signs off work this branch does "
+                         f"not hold (a squash, or work taken another way).")
         rec["_closed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
         rec["_closed_by"] = f"{node} (session {sid[:8]})" if sid else f"{node} (operator)"
         rec["_closed_sha"] = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
@@ -7566,16 +7589,54 @@ def testq_ring(ctx, job, rep, code):
     else:
         text = (f"test job {job['id']} (`{(job.get('command') or '')[:60]}`) exited {code} — "
                 f"output: {testq_dir(ctx) / (job['id'] + '.out')}")
+    told = set()
     for r in job.get("requested_by") or []:
         n = r.get("node")
-        if n and n not in ("operator", "owner"):
+        if n and n not in ("operator", "owner") and n not in told:
             ring_inbox(ctx.state, n, "test queue", text)
+            told.add(n)
+    # Log 171: a lane that presented this very commit has handed it up, and
+    # its session may be gone; the check is now its lead's to read.
+    if job.get("kind") == "check" and job.get("sha"):
+        for lead in presented_leads(ctx, [r.get("node") for r in job.get("requested_by") or []],
+                                    job["sha"]):
+            if lead not in told:
+                ring_inbox(ctx.state, lead, "test queue", text + " (a commit presented "
+                           "to you, so the result is yours to read)")
+                told.add(lead)
 
 
-def testq_cancel(ctx, job):
+def presented_by(ctx, sha):
+    """The nodes whose task record, open or closed, presented `sha`."""
+    out = []
+    d = Path(ctx.state) / "marks"
+    for f in sorted(d.glob("*.json")) if d.is_dir() else []:
+        rec = _read_json(f) or {}
+        if rec.get("_presented_sha") == sha and rec.get("_node") and rec["_node"] not in out:
+            out.append(rec["_node"])
+    return out
+
+
+def presented_leads(ctx, nodes, sha):
+    """The leads of those `nodes` that presented `sha`. Read from the index,
+    since the runner's context stands in no node and has no tree."""
+    who = presented_by(ctx, sha)
+    tree = (_read_json(Path(ctx.state) / "index.json") or {}).get("nodes") or {}
+    leads = []
+    for n in nodes:
+        p = (tree.get(n) or {}).get("parent") if n in who else None
+        if p and p not in leads:
+            leads.append(p)
+    return leads
+
+
+def testq_cancel(ctx, job, why=None):
     """Cancel a queued job, or kill a running one's arm; the runner tears it down."""
     if job.get("state") == "queued":
-        job.update(state="cancelled", finished=_now())
+        # Recorded: a job that went `cancelled` with no reason left its lead
+        # blaming the wrong command for it (log 171).
+        job.update(state="cancelled", finished=_now(),
+                   why=why or "cancelled with harness test --cancel")
         testq_save(ctx, job)
         return "cancelled (it had not started)"
     if job.get("state") == "running":
@@ -9033,6 +9094,47 @@ def cmd_integrate(a):
         if (ahead.strip() or "0") == "0":
             print(f"     {n:<12} nothing to integrate — already in {here}"); continue
 
+        # Log 171: every refusal that needs nobody stopped comes first. Ending
+        # the lane's session below and THEN refusing for want of a record
+        # cancelled its queued check and took nothing.
+        stem = next((k for k, r in marks.items()
+                     if r.get("_node") == n and r.get("_presented_at")), None)
+        if stem is None:
+            early = closed_unmerged(ctx, n, cb)
+            if early:
+                print(f"skip {n:<12} its task '{early.get('_task')}' was signed off at "
+                      f"{early.get('_closed_at')} by {early.get('_closed_by')},\n"
+                      f"     {'':<12} before its commit {early['_presented_sha'][:8]} was "
+                      f"integrated, so no open record presents it.\n"
+                      f"     {'':<12} Integrate first and sign off after; this time:  "
+                      f"git merge --ff-only {cb}")
+            else:
+                print(f"skip {n:<12} has commits ahead but no PRESENTED task record.\n"
+                      f"     {'':<12} Work that was never offered upward is not work you were "
+                      f"asked to take.\n     {'':<12} It presents with: harness mark <task> --done")
+            failed += 1; continue
+        mrec = marks[stem]
+
+        rc, tip, _ = git("rev-parse", cb, cwd=ctx.repo)
+        tip = tip.strip()
+        if mrec.get("_presented_sha") and mrec["_presented_sha"] != tip \
+                and mrec["_presented_sha"] in catchup_chain(ctx.repo, tip, ctx.branch):
+            # Only catch-up merges stand between what it presented and its tip,
+            # and the record did not follow them (a pass that was killed between
+            # the merge and the write). The merges are this node's own history:
+            # carry the presentation and its review across now.
+            carry_presented(ctx, n, cb, mrec["_presented_sha"], tip, here, here)
+            mrec = open_marks(ctx).get(stem) or mrec
+        if mrec.get("_presented_sha") and mrec["_presented_sha"] != tip:
+            print(f"skip {n:<12} has committed since it presented "
+                  f"({mrec['_presented_sha'][:8]} → {tip[:8]}).\n"
+                  f"     {'':<12} Anything committed after presenting was never offered "
+                  f"upward. It\n     {'':<12} presents again, or you are integrating "
+                  f"something nobody showed you.")
+            failed += 1; continue
+        if review_refused(ctx, n, tip, here):
+            failed += 1; continue
+
         holders = [r for r in rows if r.get("cwd") == cw]
         if holders and finished_released(ctx, n, holders) and a.dry_run:
             # Log 117: the dry run ended the live session it was only meant to
@@ -9078,33 +9180,6 @@ def cmd_integrate(a):
                   f"Look before you merge over it: {cw}")
             failed += 1; continue
 
-        stem = next((k for k, r in marks.items()
-                     if r.get("_node") == n and r.get("_presented_at")), None)
-        if stem is None:
-            print(f"skip {n:<12} has commits ahead but no PRESENTED task record.\n"
-                  f"     {'':<12} Work that was never offered upward is not work you were "
-                  f"asked to take.\n     {'':<12} It presents with: harness mark <task> --done")
-            failed += 1; continue
-        mrec = marks[stem]
-
-        rc, tip, _ = git("rev-parse", cb, cwd=ctx.repo)
-        tip = tip.strip()
-        if mrec.get("_presented_sha") and mrec["_presented_sha"] != tip \
-                and mrec["_presented_sha"] in catchup_chain(ctx.repo, tip, ctx.branch):
-            # Only catch-up merges stand between what it presented and its tip,
-            # and the record did not follow them (a pass that was killed between
-            # the merge and the write). The merges are this node's own history:
-            # carry the presentation and its review across now.
-            carry_presented(ctx, n, cb, mrec["_presented_sha"], tip, here, here)
-            mrec = open_marks(ctx).get(stem) or mrec
-        if mrec.get("_presented_sha") and mrec["_presented_sha"] != tip:
-            print(f"skip {n:<12} has committed since it presented "
-                  f"({mrec['_presented_sha'][:8]} → {tip[:8]}).\n"
-                  f"     {'':<12} Anything committed after presenting was never offered "
-                  f"upward. It\n     {'':<12} presents again, or you are integrating "
-                  f"something nobody showed you.")
-            failed += 1; continue
-
         rc, behind, _ = git("rev-list", "--count", f"{cb}..{ctx.branch}", cwd=ctx.repo)
         behind = behind.strip() or "0"
         if a.dry_run:
@@ -9142,15 +9217,7 @@ def cmd_integrate(a):
             carried = info.get("carried")
             mrec = open_marks(ctx).get(stem) or mrec
 
-        rev = read_review(ctx, n, tip)
-        if rev is None or rev.get("reviewed_by_node") != here:
-            why = ("no review is recorded at this commit" if rev is None else
-                   f"the record was written by '{rev.get('reviewed_by_node')}', not by {here}")
-            print(f"skip {n:<12} {why}.\n"
-                  f"     {'':<12} A member cannot check its own work, so the lead reads "
-                  f"it (T4):\n     {'':<12}   harness review {n} --record\n"
-                  f"     {'':<12} The gate would refuse this a moment later, with your "
-                  f"working tree\n     {'':<12} already updated. This refuses first.")
+        if review_refused(ctx, n, tip, here):
             failed += 1; continue
 
         rc, out, err = git("merge", "--ff-only", cb, cwd=pw)
@@ -9167,6 +9234,7 @@ def cmd_integrate(a):
         done += 1
         print(f"  ✓  {n:<12} {here} → {tip[:8]}"
               + (f"  (review carried from {carried[:8]})" if carried else ""))
+        print(f"     {'':<12} {integrated_check_line(ctx, n, tip)}")
         task = mrec.get("_task") or stem
         print(f"     {'':<12} sign it off, which also starts its next task: "
               f"harness mark {task} --close")
@@ -9175,6 +9243,69 @@ def cmd_integrate(a):
         print(f"\nintegrated {done}" + (f", refused {failed}" if failed else ""))
     if failed:
         sys.exit(REFUSED)
+
+
+def integrated_check_line(ctx, n, tip):
+    """What check the commit integrate just took has (log 171): a lead that
+    integrates on a review alone should see that it did."""
+    rep, sha, _ = check_through_catchup(ctx, n, tip)
+    if rep is None:
+        rep = _read_json(shared_report_path(ctx, sha))
+    if rep is None:
+        q = next((j for j in testq_jobs(ctx, ("queued", "running"))
+                  if j.get("kind") == "check" and j.get("sha") in (sha, tip)), None)
+        if q:
+            return (f"NOT CHECKED yet at {sha[:8]}: check {q['id']} is {q['state']}"
+                    f" — harness test")
+        return (f"NOT CHECKED at {sha[:8]}: nothing has run or queued the check set "
+                f"on it.  harness check")
+    total = len(rep.get("checks") or [])
+    bad = (rep.get("failed") or 0) + (rep.get("held") or 0)
+    if rep.get("baseline"):
+        word = (f"{rep['new']} NEW failure(s) against baseline {rep['baseline'][:8]}"
+                if rep.get("new") else f"no new failures against baseline {rep['baseline'][:8]}")
+    else:
+        word = "passed" if not bad and rep.get("passed", True) else f"{bad} of {total} not passed"
+    return (f"check at {sha[:8]}: {word}"
+            + (f" ({partial_line(rep)})" if partial_line(rep) else "")
+            + f" — harness check --report {sha[:8]}")
+
+
+def review_refused(ctx, n, tip, here):
+    """Print integrate's refusal when `here` has recorded no review of `tip`."""
+    rev = read_review(ctx, n, tip)
+    if rev is not None and rev.get("reviewed_by_node") == here:
+        return False
+    why = ("no review is recorded at this commit" if rev is None else
+           f"the record was written by '{rev.get('reviewed_by_node')}', not by {here}")
+    print(f"skip {n:<12} {why}.\n"
+          f"     {'':<12} A member cannot check its own work, so the lead reads "
+          f"it (T4):\n     {'':<12}   harness review {n} --record\n"
+          f"     {'':<12} The gate would refuse this a moment later, with your "
+          f"working tree\n     {'':<12} already updated. This refuses first.")
+    return True
+
+
+def closed_unmerged(ctx, n, cb):
+    """A record of n's, already signed off, whose presented commit has work not
+    yet in this branch (log 171: closed before it was integrated), or None."""
+    d = Path(ctx.state) / "marks"
+    for f in sorted(d.glob("*.json")) if d.is_dir() else []:
+        rec = _read_json(f) or {}
+        sha = rec.get("_presented_sha")
+        if rec.get("_node") != n or not rec.get("_closed_at") or not sha \
+                or rec.get("_abandoned_at"):
+            continue
+        if unintegrated(ctx, sha):
+            return rec
+    return None
+
+
+def unintegrated(ctx, sha):
+    """Commits of `sha`'s own not in this worktree's HEAD. Merges are left out:
+    a catch-up merge's other side is the parent's history, already here."""
+    rc, out, _ = git("rev-list", "--no-merges", "--count", f"HEAD..{sha}", cwd=ctx.worktree)
+    return int(out.strip() or 0) if not rc else 0
 
 
 STOP_SETTLE = 6.0     # seconds to wait for a stopped session to leave the roster

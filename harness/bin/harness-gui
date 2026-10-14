@@ -1145,9 +1145,27 @@ resize:none;overflow:hidden;field-sizing:content}
 .arun button.cp{margin-top:0;padding:5px 10px}
 .arun pre{flex:1;margin:0;padding:6px 9px;background:var(--field);border:1px solid var(--line);
   white-space:pre-wrap;word-break:break-all;color:var(--ink)}
-.athr{margin:5px 0;padding-left:8px;border-left:2px solid var(--line);white-space:pre-wrap}
+.athr{margin:5px 0;padding-left:8px;border-left:2px solid var(--line)}
 .athr.im{border-left-color:var(--busy)}
 .athr.nd{border-left-color:var(--wait)}
+/* The owner's own words: never folded, and the thing the eye finds first. */
+.athr.me{border-left:3px solid #ffd08a;background:color-mix(in srgb,#ffd08a 7%,transparent);
+padding:4px 8px;margin:9px 0}
+.athr.me b{color:#ffd08a}
+.athr .tfull{white-space:pre-wrap;overflow-wrap:anywhere}
+.athr.fold .thd{cursor:pointer;display:flex;gap:7px;align-items:baseline;min-width:0}
+.athr.fold .thd:hover .tsum{color:var(--ink)}
+.athr.fold b{flex:none}
+.athr .tri{color:var(--dim);font-size:11px;width:10px;flex:none}
+.tsum{color:var(--dim);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.athr.open .tsum{white-space:normal}
+.tsum.tauto{font-style:italic;color:var(--none)}
+.athr.fold.open .tfull{margin:3px 0 6px 17px}
+.tnew{font-size:10px;color:var(--bg);background:var(--ink);border-radius:3px;padding:0 4px;
+flex:none}
+.tctl{font-size:11px;color:var(--none);margin:8px 0 2px}
+.tall{color:var(--dim);cursor:pointer;border-bottom:1px dotted currentColor}
+.tall:hover{color:var(--ink)}
 .isess{margin:2px 0 6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .athr b{font-weight:400;color:var(--dim);font-size:11px}
 .anote{flex:1;background:var(--field);color:var(--ink);border:1px solid var(--line);padding:4px 7px}
@@ -2219,16 +2237,83 @@ function ownerHead(p) {
 const lines = v => Array.isArray(v) ? v.map(x => typeof x === 'string' ? x
                                        : JSON.stringify(x)).join('\n') : String(v ?? '');
 
-// Everything said about an item, by anyone, and the box to add to it.
-function threadOf(a) {
-  return (a.thread || []).map(t => {
+// Everything said about an item, by anyone (owner, 2026-10-14: "way too much
+// text to read"). A message between the models is folded to the one line the
+// intermediary wrote for it, and opens on a click; the owner's own are always
+// whole, so what they said, and where they are up to, stands out.
+const TKEY = 'harness.thread.open';
+const TOPEN = new Set(load(TKEY));
+const LASTREAD = {};         // item key -> when it had last been read, before this look
+const FOLD_FREE = 160;       // a message this short is shown whole: it is its own TLDR
+const tsec = at => { const t = Date.parse(String(at || '').replace(/([+-]\d\d)(\d\d)$/, '$1:$2'));
+                     return isNaN(t) ? 0 : t / 1000; };
+const tid = (k, t, i) => k + '|' + i + '|' + (t.at || '');
+function threadOf(a, k) {
+  const th = a.thread || [];
+  const since = LASTREAD[k];
+  const folds = th.map((t, i) => [t, i]).filter(([t]) => t.by !== 'owner' &&
+    String(t.text || '').length > FOLD_FREE);
+  const allOpen = folds.length && folds.every(([t, i]) => TOPEN.has(tid(k, t, i)));
+  const ctl = folds.length ? '<div class="tctl">' + th.length + ' message' +
+    (th.length === 1 ? '' : 's') + ' &middot; <span class="tall" data-tall="' + esc(k) + '">' +
+    (allOpen ? 'fold all' : 'open all') + '</span></div>' : '';
+  return ctl + th.map((t, i) => {
     const who = t.by === 'owner' ? 'you' : esc(t.by);
-    const to = t.to ? ' &rarr; ' + esc(t.to) : '';
-    return '<div class="athr ' + (t.by === 'owner' ? 'me' : t.by === 'intermediary' ? 'im' : 'nd') +
-      '"><b>' + who + to + ' &middot; ' + esc(String(t.at || '').slice(11, 16)) + '</b> ' +
-      esc(t.text) + '</div>';
+    const to = t.to ? ' &rarr; ' + esc(t.to === 'owner' ? 'you' : t.to) : '';
+    const fresh = since != null && t.by !== 'owner' && tsec(t.at) > since
+      ? ' <span class="tnew">new</span>' : '';
+    const head = '<b>' + who + to + ' &middot; ' + esc(String(t.at || '').slice(11, 16)) + '</b>';
+    const cls = t.by === 'owner' ? 'me' : t.by === 'intermediary' ? 'im' : 'nd';
+    const text = String(t.text || '');
+    if (t.by === 'owner' || text.length <= FOLD_FREE) {
+      return '<div class="athr ' + cls + '"><div class="thd">' + head + fresh + '</div>' +
+        '<div class="tfull">' + esc(text) + '</div></div>';
+    }
+    const id = tid(k, t, i), open = TOPEN.has(id);
+    const sum = t.tldr ? '<span class="tsum">' + esc(t.tldr) + '</span>'
+      : open ? '<span class="tsum tauto">no TLDR yet</span>'
+      : '<span class="tsum tauto" title="no TLDR yet: the start of the message">' +
+        esc(text.slice(0, 140).replace(/\s+/g, ' ')) + '&hellip;</span>';
+    return '<div class="athr fold ' + cls + (open ? ' open' : '') + '">' +
+      '<div class="thd" data-ttog="' + esc(id) + '" data-tk="' + esc(k) + '">' +
+      '<span class="tri">' + (open ? '&#9662;' : '&#9656;') + '</span>' + head + fresh +
+      ' ' + sum + '</div>' + (open ? '<div class="tfull">' + esc(text) + '</div>' : '') +
+      '</div>';
   }).join('');
 }
+// Fold or open in place, from the last state read: nothing else on the page moves.
+function redrawThread(k) {
+  const el = document.querySelector('[data-live="thread:' + k + '"]');
+  if (!el || !LASTD) return;
+  const it = issueItems(LASTD).find(i => i.k === k);
+  if (!it) return;
+  el.innerHTML = threadBlock(it.a, k);
+  el._src = el.innerHTML;
+}
+function threadBlock(a, k) {
+  return threadOf(a, k) +
+    (a.query_open ? '<div class="ln q">the intermediary is looking into it&hellip;</div>' : '');
+}
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-ttog], [data-tall]');
+  if (!t) return;
+  if (t.dataset.tall != null) {
+    const k = t.dataset.tall;
+    const it = LASTD && issueItems(LASTD).find(i => i.k === k);
+    if (!it) return;
+    const ids = (it.a.thread || []).map((x, i) => [x, i]).filter(([x]) => x.by !== 'owner' &&
+      String(x.text || '').length > FOLD_FREE).map(([x, i]) => tid(k, x, i));
+    const open = ids.every(id => TOPEN.has(id));
+    ids.forEach(id => open ? TOPEN.delete(id) : TOPEN.add(id));
+    save(TKEY, TOPEN); redrawThread(k);
+    return;
+  }
+  if (getSelection && String(getSelection()).length) return;   // selecting text, not folding
+  const id = t.dataset.ttog;
+  TOPEN.has(id) ? TOPEN.delete(id) : TOPEN.add(id);
+  if (TOPEN.size > 2000) [...TOPEN].slice(0, TOPEN.size - 2000).forEach(x => TOPEN.delete(x));
+  save(TKEY, TOPEN); redrawThread(t.dataset.tk);
+});
 function chatRow(k) {
   return '<div class="row"><textarea class="achat" data-akey="' + esc(k) + '" ' +
     'placeholder="message this item&rsquo;s intermediary &mdash; it wakes for it">' +
@@ -2276,6 +2361,9 @@ const tldrOf = a => (a.brief || {}).tldr || (a.brief || {}).question || a.questi
 const unread = (k, a) => !!a.active_at && a.last_by !== 'owner' && a.active_at > (SEEN[k] || 0);
 function markSeen(k, a) {
   if (!a.active_at || (SEEN[k] || 0) >= a.active_at) return;
+  // What arrived since the last look is marked "new" for as long as the item
+  // stays open (the first look marks nothing: everything would be new).
+  if (SEEN[k]) LASTREAD[k] = SEEN[k];
   SEEN[k] = a.active_at;
   const ks = Object.keys(SEEN);
   if (ks.length > 300) ks.sort((x, y) => SEEN[x] - SEEN[y]).slice(0, ks.length - 300)
@@ -2414,9 +2502,8 @@ function askBody(slug, a) {
   }
   // Every item: its session, everything said about it, and a box to add to it.
   return '<div class="abody">' + chainBlock(a) + itemSession(slug, a) + body +
-    '<div data-live="thread:' + esc(k) + '">' + threadOf(a) +
-    (a.query_open ? '<div class="ln q">the intermediary is looking into it&hellip;</div>' : '') +
-    '</div>' + chatRow(k) + '</div>';
+    '<div data-live="thread:' + esc(k) + '">' + threadBlock(a, k) + '</div>' + chatRow(k) +
+    '</div>';
 }
 
 function rulingsList(d) {

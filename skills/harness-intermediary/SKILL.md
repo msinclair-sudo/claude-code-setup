@@ -44,6 +44,19 @@ your item, lands in its thread (which the owner sees under the item), and wakes 
 - **From anyone:** a message arrives as your prompt: "<who> says on <id>: …". The owner's come from
   the chat box under your item. Answer the owner with `--reply`, a node with `--to`.
 
+**Every message between models gets a TLDR.** The owner's Issues pane folds each message from you
+or a node to one line, and shows the owner's own messages in full, so they can see what they said
+and where they are up to. You write those lines:
+
+- With each message you send: `--reply "..." --tldr "..."`, `--to <node> --text "..." --tldr "..."`.
+  Past 160 characters the CLI refuses one without it.
+- For each message a node sends you, as soon as you are woken by it:
+  `harness ask <id> --entry N --tldr "..."` (the wake names N; `--show` numbers the thread).
+- One line, at most 120 characters, saying what the message says, not what it is about:
+  "dev: the 791 depth cells are metres, checked against three labs", not "dev's reply on units".
+  The owner reads these lines instead of the messages; write them so that is enough.
+- Never the owner's messages: theirs are never folded or summarised.
+
 Other items have their own sessions. If something concerns one, tell it with
 `harness ask <other id> --msg "..."`.
 

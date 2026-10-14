@@ -16170,7 +16170,47 @@ def ask_msg(path, rec, by, text):
     _save(path, rec)
 
 
-def ask_to(pdir, repo, path, rec, node, text):
+# Every message between the models in an item's thread carries a one-line TLDR
+# the intermediary writes, and the owner's Issues pane folds each message to it,
+# so what the owner said stands out and they can see where they are up to
+# (owner, 2026-10-14). The owner's own words are never folded or summarised.
+THREAD_TLDR_CAP = 120
+THREAD_TLDR_FREE = 160     # a message this short is its own TLDR
+
+
+def thread_tldr(text, tldr, how):
+    """The TLDR for a message the intermediary sends, or a refusal."""
+    tldr = " ".join((tldr or "").split())
+    if len(tldr) > THREAD_TLDR_CAP:
+        die(REFUSED, f"the --tldr is {len(tldr)} chars; the cap is {THREAD_TLDR_CAP}")
+    if not tldr and len(text) > THREAD_TLDR_FREE:
+        die(REFUSED, f"a message of {len(text)} chars needs a --tldr: one line, at most "
+                     f"{THREAD_TLDR_CAP} chars, saying what it says. The owner's Issues pane "
+                     f"folds every message to its TLDR.\n           {how} --tldr \"...\"")
+    return tldr or None
+
+
+def ask_tldr(path, rec, n, tldr):
+    """The intermediary's TLDR for message N of the thread, written after the
+    fact: what a node sent it, or one of its own from before TLDRs were asked."""
+    th = rec.get("thread") or []
+    if not isinstance(n, int) or not 1 <= n <= len(th):
+        die(REFUSED, f"--entry takes a message number, 1 to {len(th)} "
+                     f"(harness ask {rec['id']} --show numbers them)")
+    t = th[n - 1]
+    if t.get("by") == "owner":
+        die(REFUSED, "that is the owner's own message; theirs are never summarised")
+    tldr = " ".join((tldr or "").split())
+    if not tldr:
+        die(REFUSED, 'the TLDR is empty: --entry N --tldr "..."')
+    if len(tldr) > THREAD_TLDR_CAP:
+        die(REFUSED, f"the --tldr is {len(tldr)} chars; the cap is {THREAD_TLDR_CAP}")
+    t["tldr"] = tldr
+    _save(path, rec)
+    return t
+
+
+def ask_to(pdir, repo, path, rec, node, text, tldr=None):
     """The intermediary asks a node about its item: logged in the thread, and
     the node's doorbell rings. Its `--msg` back wakes the item's session."""
     text = (text or "").strip()
@@ -16178,6 +16218,7 @@ def ask_to(pdir, repo, path, rec, node, text):
         die(REFUSED, 'say what you need: --to <node> --text "..."')
     if len(text) > CHAT_CAP:
         die(REFUSED, f"{len(text)} chars; the cap is {CHAT_CAP}")
+    tldr = thread_tldr(text, tldr, f'harness ask {rec["id"]} --to {node} --text "..."')
     try:
         nodes = json.loads((Path(repo) / ".harness" / "tree.json").read_text()).get("nodes", {})
     except Exception:
@@ -16185,8 +16226,8 @@ def ask_to(pdir, repo, path, rec, node, text):
     if node not in nodes:
         die(REFUSED, f"'{node}' is not a node of {Path(repo).name} "
                      f"({', '.join(sorted(nodes)) or 'tree unreadable'})")
-    rec.setdefault("thread", []).append({"by": "intermediary", "to": node, "at": _now(),
-                                         "text": text})
+    rec.setdefault("thread", []).append(dict({"by": "intermediary", "to": node, "at": _now(),
+                                              "text": text}, **({"tldr": tldr} if tldr else {})))
     rec["waiting_on"] = node
     _ask_log(rec, "intermediary", f"asked {node}")
     _save(path, rec)
@@ -16195,7 +16236,7 @@ def ask_to(pdir, repo, path, rec, node, text):
                f"Answer: harness ask {rec['id']} --msg \"...\"")
 
 
-def ask_reply(path, rec, text, by="intermediary"):
+def ask_reply(path, rec, text, by="intermediary", tldr=None):
     """The intermediary answers the owner under the ask, or (on an action ask
     not yet looked at) says what its commands do."""
     text = (text or "").strip()
@@ -16203,7 +16244,9 @@ def ask_reply(path, rec, text, by="intermediary"):
         die(REFUSED, 'the reply is empty: --reply "..."')
     if len(text) > 2000:
         die(REFUSED, f"the reply is {len(text)} chars; the cap is 2000")
-    rec.setdefault("thread", []).append({"by": by, "at": _now(), "text": text})
+    tldr = thread_tldr(text, tldr, f'harness ask {rec["id"]} --reply "..."')
+    rec.setdefault("thread", []).append(dict({"by": by, "at": _now(), "text": text},
+                                             **({"tldr": tldr} if tldr else {})))
     rec["query_open"] = False
     # An action is ready only when briefed (owner, 2026-10-06): a reply is a
     # message, and owner-7 reached the owner as one.
@@ -16310,8 +16353,12 @@ def ask_show(pdir, repo, rec):
         print(f"  draft     {rec['draft']}")
     for i, c in enumerate(rec.get("runs") or [], 1):
         print(f"  run {i}     {c}")
-    for t in rec.get("thread") or []:
-        print(f"  {t.get('by'):<12}{str(t.get('at'))[:16]}  {t.get('text')}")
+    for i, t in enumerate(rec.get("thread") or [], 1):
+        print(f"  {i:>2} {str(t.get('by')):<12}{str(t.get('at'))[:16]}  {t.get('text')}")
+        if t.get("tldr"):
+            print(f"     tldr: {t['tldr']}")
+        elif t.get("by") != "owner" and len(str(t.get("text") or "")) > THREAD_TLDR_FREE:
+            print(f"     no tldr yet: harness ask {rec['id']} --entry {i} --tldr \"...\"")
     if rec.get("query_open"):
         print("  (the owner's question above waits for your --reply)")
     ed = evidence_dir(Path(pdir) / "asks" / f"{rec['id']}.json", rec["id"])
@@ -16379,6 +16426,12 @@ def cmd_ask(a):
                          "reject", "show", "evidence", "drop_evidence", "done", "msg", "to",
                          "reply", "withdraw", "drop")
              if getattr(a, v) is not None and getattr(a, v) is not False]
+    # --tldr goes with --reply or --to; alone, with --entry, it summarises a
+    # message already in the thread.
+    if getattr(a, "tldr", None) is not None and not ({"reply", "to"} & set(verbs)):
+        verbs.append("tldr")
+    if getattr(a, "entry", None) is not None and "tldr" not in verbs:
+        die(REFUSED, '--entry N goes with --tldr "...": the TLDR for message N')
     flag = lambda v: "--" + {"return_why": "return"}.get(v, v).replace("_", "-")
     if a.caption is not None and not a.evidence:
         die(REFUSED, "--caption goes with --evidence PATH")
@@ -16470,7 +16523,7 @@ def cmd_ask(a):
         return
     v = verbs[0]
     im_verbs = ("brief", "amend", "draft", "return_why", "merge", "evidence", "drop_evidence",
-                "reply", "to")
+                "reply", "to", "tldr")
     if v in im_verbs and os.environ.get("HARNESS_INTERMEDIARY") != "1":
         die(REFUSED, f"{flag(v)} is the intermediary's, and this is not it "
                      f"(HARNESS_INTERMEDIARY is unset).")
@@ -16569,21 +16622,30 @@ def cmd_ask(a):
             except (SystemExit, Exception):
                 by = f"session {sid[:8]}"
         ask_msg(path, rec, by, a.msg)
-        how = ("Answer the owner with `harness ask {i} --reply \"...\"`; it shows under the ask."
+        n = len(rec.get("thread") or [])
+        how = ("Answer the owner with `harness ask {i} --reply \"...\" --tldr \"...\"`; it shows "
+               "under the ask."
                if by == "owner" else
-               "Answer it with `harness ask {i} --to " + by + " \"...\"` if it needs one.")
+               ("First give it a TLDR for the owner's pane: harness ask {i} --entry " + str(n) +
+                " --tldr \"...\". " if len(a.msg.strip()) > THREAD_TLDR_FREE else "") +
+               "Answer it with `harness ask {i} --to " + by + " --text \"...\"` if it needs one.")
         item_wake_detached(pdir, rec["id"], f"{by} says on {rec['id']}: {a.msg.strip()}\n"
                                             + how.format(i=rec["id"]))
         print(f"sent to {rec['id']}'s intermediary; "
               + ("its answer shows under the ask" if by == "owner" else
                  "an answer rings your doorbell"))
+    elif v == "tldr":
+        if a.entry is None:
+            die(REFUSED, '--tldr goes with --reply or --to, or names a message with --entry N')
+        t = ask_tldr(path, rec, a.entry, a.tldr)
+        print(f"message {a.entry} ({t.get('by')}) now reads, folded: {t['tldr']}")
     elif v == "to":
-        ask_to(pdir, repo, path, rec, a.to, a.text)
+        ask_to(pdir, repo, path, rec, a.to, a.text, a.tldr)
         print(f"sent to {a.to}: {ring_report(ProjCtx(pdir, repo), a.to)}. Its answer "
               f"wakes you. End your turn with `harness ask --idle` if there is nothing "
               f"else to do.")
     elif v == "reply":
-        ask_reply(path, rec, a.reply)
+        ask_reply(path, rec, a.reply, tldr=a.tldr)
         print(f"replied on {rec['id']}; the owner sees it under the ask")
 
 
@@ -19911,6 +19973,11 @@ def main():
                     help="the asker (or rank 0, or the owner) takes the ask back")
     ak.add_argument("--reply", metavar="TEXT",
                     help="intermediary: answer the owner under the ask")
+    ak.add_argument("--tldr", metavar="TEXT",
+                    help="intermediary: one line on what the message says, with --reply or "
+                         "--to (needed past 160 chars); or with --entry N for message N")
+    ak.add_argument("--entry", type=int, metavar="N",
+                    help="with --tldr: the thread message it summarises (--show numbers them)")
     ak.add_argument("--idle", action="store_true",
                     help="intermediary: its last step on every wake")
     ak.add_argument("--brief", metavar="FILE",

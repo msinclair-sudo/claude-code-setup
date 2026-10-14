@@ -5000,6 +5000,30 @@ class ItemMessages(unittest.TestCase):
         self.err.start()
         self.addCleanup(self.err.stop)
 
+    def test_every_long_message_between_models_carries_a_tldr_and_the_owner_s_never(self):
+        # Owner, 2026-10-14: the pane folds each model message to the line the
+        # intermediary wrote, and never the owner's own.
+        long = "dev checked the 791 depth cells against three labs' own sheets. " * 4
+        with self.assertRaises(SystemExit):
+            hz.ask_reply(self.path, self.rec, long)                     # needs one
+        self.assertIn("needs a --tldr", sys.stderr.getvalue())
+        with self.assertRaises(SystemExit):
+            hz.ask_reply(self.path, self.rec, long, tldr="x" * 121)
+        hz.ask_reply(self.path, self.rec, long, tldr="the depths are metres, checked")
+        hz.ask_reply(self.path, self.rec, "yes.")                         # short: its own TLDR
+        hz.ask_to(self.pdir, self.repo, self.path, self.rec, "dev", long, tldr="  check   the labs ")
+        hz.ask_msg(self.path, self.rec, "dev", long)
+        hz.ask_msg(self.path, self.rec, "owner", long)
+        th = json.loads(self.path.read_text())["thread"]
+        self.assertEqual([t.get("tldr") for t in th],
+                         ["the depths are metres, checked", None, "check the labs", None, None])
+        t = hz.ask_tldr(self.path, self.rec, 4, "dev: all 791 are metres")   # a node's, afterwards
+        self.assertEqual(json.loads(self.path.read_text())["thread"][3]["tldr"], t["tldr"])
+        for n in (5, 0, 9):                                               # the owner's; out of range
+            with self.assertRaises(SystemExit):
+                hz.ask_tldr(self.path, self.rec, n, "x")
+        self.assertIn("never summarised", sys.stderr.getvalue())
+
     def test_to_rings_the_node_and_its_msg_clears_the_wait(self):
         hz.ask_to(self.pdir, self.repo, self.path, self.rec, "dev", "which test failed?")
         self.assertEqual(self.rec["waiting_on"], "dev")

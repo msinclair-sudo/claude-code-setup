@@ -436,7 +436,11 @@ def stop_cause(sid, tail=128 * 1024):
         text = " ".join(x.get("text") or "" for x in m.get("content") or []
                         if isinstance(x, dict))
         if e.get("isApiErrorMessage") and e.get("error") == "rate_limit":
-            return {"cause": "limit", "until": _reset_epoch(text), "text": text[:160]}
+            # "resets 4:50pm" is the next 4:50pm after it was SAID. Read against
+            # the clock instead, it moved to tomorrow the moment it passed, and
+            # a limit from two days before still read "until 16:50" (2026-10-14).
+            return {"cause": "limit", "until": _reset_epoch(text, _epoch(e.get("timestamp"))),
+                    "text": text[:160]}
         if m.get("stop_reason") == "refusal" or refusal or (
                 e.get("isApiErrorMessage") and "safeguard" in text.lower()):
             for back in lines[max(0, i - 10):i]:          # its refusal record comes first
@@ -452,30 +456,14 @@ def stop_cause(sid, tail=128 * 1024):
 
 
 def stop_cause_step(ctx, node, cause):
-    """The stopped session's own Stop hook acts, because nothing else runs: a
-    usage limit stops every session at once (log 122), so the session schedules
-    its own restart and tells rank 0 once per limit; a refusal-wedged one tells
-    its lead it needs a fresh session (log 125)."""
+    """A refusal-wedged session's Stop hook tells its lead it needs a fresh
+    session (log 125). A usage limit is not handled here: a limit stop runs no
+    Stop hook, so the ringer looks for it (`ringer_limits`)."""
     d = ctx.state / "limits"
     d.mkdir(parents=True, exist_ok=True)
     f = d / f"{node}.json"
     rec = _read_json(f) or {}
-    if cause["cause"] == "limit":
-        until = cause.get("until") or (time.time() + 3600)
-        if abs((rec.get("until") or 0) - until) < 60:
-            return                         # this limit is already scheduled
-        _save(f, {"until": until, "at": _now(), "text": cause.get("text")})
-        launch_limit_wake(ctx, node, until + 120)
-        root = next((n for n, sp in ctx.tree["nodes"].items() if not sp.get("parent")), None)
-        told = d / f"_told-{int(until) // 60}"
-        if root and root != node and not told.exists():
-            told.write_text(_now())
-            ring_inbox(ctx.state, root, "harness",
-                       f"usage limit: {node} stopped until "
-                       f"{time.strftime('%H:%M', time.localtime(until))}; it restarts itself "
-                       f"then, and so does every node that hit it (log 122). harness status "
-                       f"shows them.")
-    elif cause["cause"] == "refusal":
+    if cause["cause"] == "refusal":
         if rec.get("refusal") == cause.get("request"):
             return
         _save(f, {"refusal": cause.get("request"), "at": _now()})
@@ -485,44 +473,6 @@ def stop_cause_step(ctx, node, cause):
                        f"{node}'s session was wedged by an API refusal (request "
                        f"{cause.get('request')}); it can't continue. Recycle it: harness "
                        f"recycle {node} --force. Not the owner's to clear (log 125).")
-
-
-def launch_limit_wake(ctx, node, at):
-    log = ctx.state_file("limits", f"{node}-wake", ".log")
-    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
-    try:
-        with open(log, "a") as fh:
-            subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "limitwake", node,
-                              "--at", str(int(at))], cwd=str(ctx.repo), env=env, stdout=fh,
-                             stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                             start_new_session=True)
-    except Exception:
-        pass
-
-
-def cmd_limitwake(a):
-    """`harness limitwake <node> --at EPOCH` (detached, from a limited session's
-    Stop hook): at that time, if the node is still stopped on the limit, recycle
-    it so a fresh session resumes its work; if the limit moved, wait again."""
-    time.sleep(max(0, a.at - time.time()))
-    ctx = Ctx(); ctx.require_enrolled()
-    if halted(ctx):
-        print(f"{_now()} halted; {a.node} left alone"); return
-    how, det = node_running(ctx, a.node)
-    sid = (det or {}).get("session_id") or (det or {}).get("sessionId")
-    cause = stop_cause(sid) if sid else None
-    f = ctx.state / "limits" / f"{a.node}.json"
-    if how is not None and not cause:
-        f.unlink(missing_ok=True)
-        print(f"{_now()} {a.node} is going again; nothing to do"); return
-    if cause and cause["cause"] == "limit" and (cause.get("until") or 0) > time.time():
-        launch_limit_wake(ctx, a.node, cause["until"] + 120)
-        print(f"{_now()} still limited until {cause['until']}; waiting again"); return
-    f.unlink(missing_ok=True)
-    r = subprocess.run([sys.executable, str(Path(__file__).resolve()), "recycle", a.node,
-                        "--force"], cwd=str(ctx.repo), capture_output=True, text=True,
-                       env={k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"})
-    print(f"{_now()} recycled {a.node} after its usage limit:\n{r.stdout}{r.stderr}")
 
 
 def stop_wait_on(st):
@@ -1308,7 +1258,7 @@ def _whoami(a):
             print(f"           harness mark {x['task']} --abandon \"nothing was "
                   f"left of it\"")
             print(f"           harness mark {x['task']} --force   "
-                  f"(you are doing it, from here)")
+                  f"(you are doing it, from here; its comments are kept)")
         stuck = [k for k in ctx.children(node)
                  if stopped_without_asking(ctx, k, rows, here.get(k, False))]
         if stuck:
@@ -1711,6 +1661,7 @@ def cmd_claim(a):
     except FileExistsError:
         held = json.loads(lock.read_text())
         if held["ref"] == self_ref:
+            start_clear(ctx, node)
             print(f"already held by this session ({node})"); return
         if holder_alive(held, rows):
             die(REFUSED, f"'{node}' is held by {held['name']} [{held['ref']}], "
@@ -1734,6 +1685,7 @@ def cmd_claim(a):
                              "host": held.get("host"),
                              "claimed_at": held.get("claimed_at")}
         lock.write_text(json.dumps(rec, indent=2))
+        start_clear(ctx, node)                  # the start in flight has landed (log 161)
         # Deliberately not "resumed": a resumed conversation and a fresh session
         # replacing a stopped one are indistinguishable from here, and only one
         # of them was true. Say what was observed instead of picking.
@@ -1742,6 +1694,7 @@ def cmd_claim(a):
         return
     with os.fdopen(fd, "w") as fh:
         json.dump(rec, fh, indent=2)
+    start_clear(ctx, node)
     print(f"claimed {node} as {self_name} [{self_ref}]")
 
 
@@ -1803,10 +1756,14 @@ def cmd_status(a):
         pass
     d = ctx.state / "locks"
     locks = sorted(d.glob("*.lock")) if d.is_dir() else []
-    claimed, unassigned = set(), []
+    claimed, unassigned, _holders = set(), [], {}
     for p in locks:
         h = json.loads(p.read_text())
-        live = {True: "live", False: "gone", None: "unknown"}[holder_alive(h, rows)]
+        # No process is three states (log 162): "gone" for all of them sent
+        # leads to spawn beside a session a ring would have resumed.
+        _hs, _hat = holder_state(h, rows)
+        live = "DEAD" if _hs == "dead" else _hs
+        _holders[h["node"]] = (h.get("session_id") or h.get("ref"), _hs)
         # A stopped session is live, and calling it `live` is true and useless.
         # It reports `status: idle` — the same word as a session with nothing to
         # do — so the one state that needs a human at the keyboard rendered as
@@ -1840,9 +1797,13 @@ def cmd_status(a):
         _bh = _behind.get(h["node"])
         if _bh and _bh["n"]:
             work += f"   {behind_words(_bh, short=True)}"
-        if live == "gone" and last_write(h["ref"]):
-            work += time.strftime("   (process gone, last write %H:%M)",
-                                  time.localtime(last_write(h["ref"])))
+        _hm = time.strftime("%H:%M", time.localtime(_hat)) if _hat else "?"
+        if live == "asleep":
+            work += f"   (turn ended {_hm}; a ring resumes it)"
+        elif live == "limited":
+            work += f"   (usage limit until {_hm}; the ringer restarts it then)"
+        elif live == "DEAD":
+            work += f"   (no process, stopped mid-turn; last write {_hm})"
         nc = sum(len(tasks_rec.get(x, {}).get("_comments") or []) for x in open_here)
         if nc:
             work += f"   ({nc} comment(s) — harness note <task>)"
@@ -1861,13 +1822,34 @@ def cmd_status(a):
     # The state that follows a release: the lock is gone, the session is not.
     # `release` drops a claim; it does not end a session, so a released node can
     # still be standing there, addressable, constrained by no rule in the tree.
+    #
+    # And the state `status` could not show at all (log 161): a live session
+    # in a worktree whose lock names someone else. Beside a holder that has
+    # gone it is a fresh start that has not claimed yet; beside a live holder
+    # it is a second session, the thing the lock exists to prevent.
     try:
         idx = load_index(ctx, refresh=True)
-        for r in live_rows(agents_json(read_roster(a.roster))):
-            n = idx["byWorktree"].get(r.get("cwd", ""))
-            if n and n not in claimed:
-                print(f"  {n:<12} {(r.get('name') or '?'):<22} [{r['sessionId']}]  "
-                      f"OCCUPIED but unclaimed — released the node, kept the session")
+        _files = live_sessions()
+        for n in idx["nodes"]:
+            _sid, _hs = _holders.get(n, (None, None))
+            _in = sessions_in(ctx, idx, n, rows, _files)
+            _mine = {r.get("sessionId") for r in rivals(ctx, n, _in)}
+            for r in _in:
+                if r.get("sessionId") == _sid or (n in claimed
+                                                  and r.get("sessionId") not in _mine):
+                    continue                    # the holder, or the owner's own in the repository
+                tag = f"  {n:<12} {(r.get('name') or '?'):<22} [{r.get('sessionId')}]  "
+                if n not in claimed:
+                    print(tag + "OCCUPIED but unclaimed — released the node, kept the session")
+                elif _hs == "live":
+                    print(tag + f"SECOND SESSION beside the holder — harness stop {n} --surplus")
+                else:
+                    print(tag + "in the worktree, not claimed yet — the lock still names "
+                                "the session above")
+        for n in idx["nodes"]:
+            _st = start_standing(ctx, n)
+            if _st:
+                print(f"  {n:<12} {start_words(_st)}")
     except Exception:
         pass
 
@@ -2195,12 +2177,6 @@ def cmd_spawn(a):
         refuse_if_halted(ctx, "spawning")
     idx = load_index(ctx, refresh=True)
     rows = live_rows(agents_json(read_roster(a.roster)))
-    by_wt = idx["byWorktree"]
-    occupied = {}
-    for r in rows:
-        n = by_wt.get(r.get("cwd", ""))
-        if n:
-            occupied.setdefault(n, []).append(r)
     # "This session" must mean a SESSION, not a directory. `here` is derived from
     # the branch of the cwd, so an operator standing in a node's worktree in a
     # plain shell was told "skip main — this session" about a node whose session
@@ -2254,9 +2230,17 @@ def cmd_spawn(a):
                          f"first: harness queue {n} --order {_behind[0]} --why \"...\""
                          if _behind else ""))
                 skipped += 1; continue
-        if n in occupied:
-            who = occupied[n][0].get("name") or "?"
+        there = sessions_in(ctx, idx, n, rows)
+        if there:
+            who = there[0].get("name") or "?"
             print(f"  skip {n:<12} occupied by {who}"); skipped += 1; continue
+        _st = start_standing(ctx, n)
+        if _st:
+            # One start per node (log 161): whoever began it has a minute or
+            # more before its session claims, and a second one in that gap is
+            # how four nodes came to hold two sessions each.
+            print(f"  skip {n:<12} {start_words(_st)} — one session per node")
+            skipped += 1; continue
         name = f"{idx['project']}-{n}"
         model, effort = assignment_for(ctx, n)
         model, effort = a.model or model, a.effort or effort
@@ -2322,8 +2306,25 @@ def cmd_spawn(a):
         if a.dry_run:
             print(f"  would spawn {name:<18} {model}/{effort:<7} in {sp['worktree']}{reach}")
         else:
-            ok, why = launch_bg(cmd, sp["worktree"])
+            _st = start_take(ctx, n, "spawn", here or "operator")
+            if _st:
+                print(f"  skip {n:<12} {start_words(_st)} — one session per node")
+                skipped += 1; continue
+            # The old session, if it only ended its turn, is being replaced and
+            # not resumed: say so, since a ring would have brought it back.
+            try:
+                _old = json.loads(ctx.lock_path(n).read_text())
+                _how, _at = holder_state(_old, rows)
+                if _how == "asleep":
+                    print(f"       {n:<12} retiring {str(_old.get('session_id'))[:8]}, which "
+                          f"had only ended its turn"
+                          + (time.strftime(" at %H:%M", time.localtime(_at)) if _at else "")
+                          + " (a ring would have resumed it)")
+            except Exception:
+                pass
+            ok, why = launch_bg(cmd, sp["worktree"], env=launch_env(n))
             if not ok:
+                start_clear(ctx, n)
                 print(f"  NOT started {name:<14} Claude Code refused: {why}")
                 skipped += 1; continue
             stopped_path(ctx, n).unlink(missing_ok=True)
@@ -2670,6 +2671,247 @@ def stop_session_row(ctx, n, r):
     return True, out
 
 
+# ── log 161: one session per node, however it was started ────────────────────
+#
+# Three things start a session: `spawn`, `recycle`, and the ringer's resume of
+# a session whose process has gone. None knew of the others. 2026-10-14, after
+# the machine came back: main spawned dev, dev spawned its leads, and the
+# ringer resumed each node's OLD session seconds later, because a fresh session
+# takes a minute to claim and until then the lock still names the old one. Four
+# nodes had two live sessions in one worktree, and the unclaimed one of each
+# wrote notes and spawned a lane, since only `claim` ever asked who holds.
+
+START_GRACE = 300          # seconds a start may stand unclaimed before another may begin
+
+
+def aux_session(ctx, row):
+    """A session that is nobody's node session: a warm spare (named after its
+    own job id), the intermediary, the documenter, or a design session."""
+    name = str(row.get("name") or "")
+    if not name:
+        return False
+    if name == row.get("jobId"):
+        return True
+    repo = getattr(ctx, "repo", None)
+    if not repo:
+        return False
+    return (name in (intermediary_name(repo), documenter_name(repo))
+            or name.startswith(f"{Path(repo).name}-design-"))
+
+
+def sessions_in(ctx, idx, node, rows=None, files=None):
+    """Every live background session standing in a node's worktree.
+
+    Two sources, because one was not enough: `spawn` read the roster alone, and
+    a second spawn of dev_migrate_1 a minute after the first printed "spawned"
+    with the first's session running (2026-10-14; why its row was missing is not
+    known). The roster (`rows`, already live) and the session files are both
+    read, and a session in either counts. The owner's own chat is interactive
+    and is not a node's session."""
+    out, seen = [], set()
+    for r in node_sessions(idx, node, rows or []):
+        if aux_session(ctx, r) or r.get("kind") == "interactive":
+            continue
+        seen.add(r.get("sessionId"))
+        out.append(r)
+    try:
+        files = live_sessions() if files is None else files
+    except Exception:
+        files = []
+    for d in node_sessions(idx, node, files):
+        if d.get("sessionId") in seen or d.get("kind") == "interactive" or aux_session(ctx, d):
+            continue
+        if not pid_alive(d.get("pid")):
+            continue
+        seen.add(d.get("sessionId"))
+        out.append(d)
+    return out
+
+
+def rivals(ctx, node, rows):
+    """Of the sessions in a node's worktree, those that are sessions OF the
+    node, so that two of them is one too many. A node below rank 0 has a
+    worktree of its own and nobody else belongs in it. Rank 0's is the
+    repository itself, where the owner runs sessions for other things, so
+    there only a session carrying the node's own name counts."""
+    try:
+        root = not (ctx.tree["nodes"].get(node) or {}).get("parent")
+    except Exception:
+        root = False
+    if not root:
+        return list(rows)
+    repo = getattr(ctx, "repo", None)
+    expected = f"{ctx.tree.get('project') or (Path(repo).name if repo else '')}-{node}"
+    return [r for r in rows if r.get("name") == expected]
+
+
+def start_path(ctx, node):
+    return ctx.state_file("starts", node, ".json")
+
+
+def start_standing(ctx, node, now=None):
+    """{how, by, at, sid} while a start of this node is in flight, else None.
+
+    It ends when the node is claimed (`claim` removes it), when the session it
+    resumed is the lock's holder and is running, or after START_GRACE: by then
+    a session that started is in the worktree and is seen there."""
+    p = start_path(ctx, node)
+    rec = _read_json(p)
+    if not rec:
+        return None
+    now = time.time() if now is None else now
+    over = now - (rec.get("at") or 0) > START_GRACE
+    if not over and rec.get("how") == "resume" and rec.get("sid"):
+        try:
+            held = json.loads(ctx.lock_path(node).read_text())
+            over = held.get("session_id") == rec["sid"] and holder_alive(held) is True
+        except Exception:
+            pass
+    if over:
+        p.unlink(missing_ok=True)
+        return None
+    return rec
+
+
+def start_take(ctx, node, how, by, sid=None):
+    """Record that a session is being started in this node. -> None when this
+    caller has the start, or the record of the one already in flight, and then
+    the caller starts nothing."""
+    p = start_path(ctx, node)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    for _ in range(2):
+        st = start_standing(ctx, node)
+        if st:
+            return st
+        try:
+            fd = os.open(p, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            continue
+        with os.fdopen(fd, "w") as fh:
+            json.dump({"how": how, "by": by, "at": time.time(), "sid": sid}, fh)
+        return None
+    return start_standing(ctx, node) or {"how": "start", "by": "another command",
+                                         "at": time.time()}
+
+
+def start_clear(ctx, node):
+    start_path(ctx, node).unlink(missing_ok=True)
+
+
+def start_words(rec, now=None):
+    now = time.time() if now is None else now
+    return (f"a start is in flight ({rec.get('how')} by {rec.get('by')}, "
+            f"{human_age(max(0, now - (rec.get('at') or now)))} ago)")
+
+
+def holder_state(held, rows=None):
+    """What became of a lock's holder: (state, at).
+
+    "live", or "unknown" on another host. With no process there are three
+    things it can be, and `status` printed "gone" for all of them (log 162):
+    "asleep", its turn ended and Claude Code let the idle process go, which the
+    ringer resumes when mail arrives; "limited", stopped at a usage limit that
+    has not reset yet; or "dead", it stopped in the middle of a turn or was
+    wedged by a refusal. `at` is when the turn ended, when the limit resets, or
+    the last write."""
+    alive = holder_alive(held, rows)
+    if alive:
+        return "live", None
+    if alive is None:
+        return "unknown", None
+    sid = held.get("session_id") or held.get("ref")
+    cause = stop_cause(sid) if sid else None
+    if cause and cause["cause"] == "limit" and (cause.get("until") or 0) > time.time():
+        return "limited", cause["until"]
+    if cause and cause["cause"] == "refusal":
+        return "dead", last_write(sid)      # wedged: only a fresh session clears it
+    ended = turn_end_at(sid) if sid else None
+    if ended:
+        return "asleep", ended
+    return "dead", last_write(sid)
+
+
+def node_env():
+    """The node this session was started for, when the harness started it."""
+    return os.environ.get("HARNESS_NODE") or None
+
+
+def launch_env(node):
+    """The environment a node's session starts in: no session id of the
+    caller's, and the node it is for, which is how a session that finds itself
+    second in a worktree is known to be a node's session and not the owner's."""
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
+    env["HARNESS_NODE"] = node
+    return env
+
+
+def second_session(ctx, node=None, sid=None):
+    """The lock when this session is a node's session standing in a worktree
+    that a DIFFERENT live session holds, else None.
+
+    The intermediary, the documenter and a design session are not node
+    sessions, and neither is a session the owner started in the repository for
+    something else: only one the harness started (HARNESS_NODE) or one carrying
+    the node's own session name is refused."""
+    sid = sid or os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if not sid or os.environ.get("HARNESS_INTERMEDIARY") == "1" \
+            or os.environ.get("HARNESS_DOCUMENTER") == "1" or design_env():
+        return None
+    try:
+        node = node or ctx.node()[0]
+        held = json.loads(ctx.lock_path(node).read_text())
+    except (Exception, SystemExit):
+        return None
+    if not held.get("session_id") or held["session_id"] == sid:
+        return None
+    if node_env() != node:
+        expected = f"{ctx.tree.get('project', Path(ctx.repo).name)}-{node}"
+        mine = next((d for d in live_sessions() if d.get("sessionId") == sid), None)
+        if not mine or mine.get("name") != expected:
+            return None
+    if holder_alive(held) is not True:
+        return None
+    return held
+
+
+def second_line(node, held):
+    return (f"SECOND SESSION: {node} is held by {held.get('name') or '?'} "
+            f"[{str(held.get('session_id'))[:8]}] (pid {held.get('pid') or '?'}), which is "
+            f"live. You are a second session in its worktree (log 161): every write is "
+            f"refused. Do nothing here and end your turn.")
+
+
+# What a second session may still run: questions, and the claim that tells it
+# so. Everything else writes a record, takes mail or starts something.
+SECOND_READS = {"status", "whoami", "behind", "claim", "contract", "queue"}
+
+
+def second_gate(a):
+    """Refuse a write from a second session. Hooks and the harness's own
+    detached commands are not gated: a hook that dies breaks the session, and
+    the detached ones carry no session id."""
+    cmd = getattr(a, "cmd", "") or ""
+    if not os.environ.get("CLAUDE_CODE_SESSION_ID") or cmd.startswith("hook-"):
+        return
+    if cmd in SECOND_READS:
+        return
+    if cmd == "note" and not getattr(a, "add", None):
+        return
+    if cmd == "doorbell" and getattr(a, "status", False):
+        return
+    try:
+        ctx = Ctx.from_files()
+        if ctx is None or not ctx.binding_path.exists() or not ctx.tree_path.exists():
+            return
+        ctx.tree = json.loads(ctx.tree_path.read_text())
+        node = ctx.node()[0]
+        held = second_session(ctx, node)
+    except (Exception, SystemExit):
+        return
+    if held:
+        die(REFUSED, second_line(node, held))
+
+
 def node_running(ctx, node, rows=None):
     """Is a session running in this node? One answer for orientation, spawn and
     integrate (log 105: the hooks said "no running session, spawn it" from the
@@ -2682,9 +2924,10 @@ def node_running(ctx, node, rows=None):
     if held and holder_alive(held, rows) is not False:
         return "claimed", held
     try:
-        wt = ((load_index(ctx).get("nodes") or {}).get(node) or {}).get("worktree")
+        idx = load_index(ctx)
         rows = rows if rows is not None else cached_roster(ctx)
-        row = next((r for r in rows if wt and r.get("cwd") == wt), None)
+        there = sessions_in(ctx, idx, node, rows)
+        row = there[0] if there else None
     except Exception:
         row = None
     if row:
@@ -2727,11 +2970,12 @@ def cmd_stop(a):
         targets = a.node
     if not targets:
         die(REFUSED, "name at least one node, or pass --children")
-    occ = {}
-    for r in rows:
-        n = by_wt.get(r.get("cwd", ""))
-        if n:
-            occ.setdefault(n, []).append(r)
+    try:
+        _files = live_sessions()
+    except Exception:
+        _files = []
+    occ = {n: sessions_in(ctx, idx, n, rows, _files) for n in targets if n in idx["nodes"]}
+    surplus = getattr(a, "surplus", False) is True
     stopped_n = 0
     for n in targets:
         if n not in idx["nodes"]:
@@ -2739,7 +2983,35 @@ def cmd_stop(a):
         sessions = occ.get(n, [])
         if not sessions:
             print(f"  skip {n:<12} nobody there"); continue
+        keep = None
+        if surplus:
+            # Two sessions in one worktree (log 161): the one in the lock stays.
+            # With no live holder there is nothing to tell them apart by, so
+            # the caller names the one to keep. In rank 0's worktree only the
+            # node's own sessions are in question, never the owner's others.
+            sessions = rivals(ctx, n, sessions)
+            ids = [str(r.get("sessionId")) for r in sessions]
+            want = getattr(a, "keep", None)
+            if want:
+                keep = next((i for i in ids if i.startswith(want)), None)
+                if keep is None:
+                    print(f"  skip {n:<12} no session there matches --keep {want}: "
+                          f"{', '.join(i[:8] for i in ids)}"); continue
+            else:
+                try:
+                    keep = json.loads(ctx.lock_path(n).read_text()).get("session_id")
+                except Exception:
+                    keep = None
+                if keep not in ids:
+                    print(f"  skip {n:<12} none of the {len(ids)} session(s) there holds the "
+                          f"node, so there is no telling which is surplus. Name the one to "
+                          f"keep: harness stop {n} --surplus --keep <id>   "
+                          f"({', '.join(i[:8] for i in ids)})"); continue
+            if len(ids) < 2:
+                print(f"  skip {n:<12} one session there, and it is the one to keep"); continue
         for r in sessions:
+            if keep and r["sessionId"] == keep:
+                print(f"  keep {n:<12} {r.get('name') or '?'} [{r['sessionId'][:8]}]"); continue
             if r["sessionId"] == mine:
                 print(f"  skip {n:<12} that is this session"); continue
             label = f"{r.get('name') or '?'} [{r['sessionId'][:8]}]"
@@ -2759,12 +3031,12 @@ def cmd_stop(a):
             stopped_n += 1
     verb = "would stop" if a.dry_run else "stopped"
     print(f"{verb} {stopped_n}")
-    if not a.dry_run and stopped_n:
+    if not a.dry_run and stopped_n and not surplus:
         print("  their locks remain until each node is claimed again — "
               "`harness status` shows them as stale")
     # Recorded, so the hooks don't read a deliberate stop as an outage (log 115).
     mark = [n for n in targets if n in idx["nodes"] and n != here]
-    if not a.dry_run and mark:
+    if not a.dry_run and mark and not surplus:
         rec = {"by": here if mine and here else "shell", "at": _now(),
                "why": (getattr(a, "why", None) if isinstance(getattr(a, "why", None), str)
                        else "").strip()}
@@ -3293,7 +3565,14 @@ def lead_owes(ctx, node):
             _held = json.loads(ctx.lock_path(k).read_text())
         except Exception:
             _held = None
-        _dead = _held is not None and holder_alive(_held) is False
+        # No process is three states, not one (log 162): a session that ended
+        # its turn is asleep and a ring resumes it, so nothing is owed for it
+        # that would not be owed for an idle one; one at a usage limit waits
+        # for the limit; only a dead one needs a session started.
+        _state, _until = holder_state(_held) if _held is not None else (None, None)
+        _dead = _state == "dead"
+        if _state == "limited":
+            owed.append(("limit", k, time.strftime("%H:%M", time.localtime(_until)), 0))
         _lw = last_write((_held or {}).get("ref")) if _dead else None
         _gone = time.time() - _lw if _lw else 0
         _unread = 0
@@ -3307,8 +3586,15 @@ def lead_owes(ctx, node):
         if own:
             # A session that ended holding its task is not "mid-task" (obs 63,
             # 64): say so now, not when a message to it bounces.
-            if _dead and _gone > 120:
+            # A parked task nags nobody (log 162): its lead put it in the wait
+            # pool and was still told, every turn, to recycle the lane.
+            if _dead and _gone > 120 and not parked(load_brief(ctx, own[0])[1]):
                 owed.append(("orphan", k, own[0], _gone))
+            elif _state == "asleep" and _until and time.time() - _until > ASLEEP_AFTER \
+                    and not parked(load_brief(ctx, own[0])[1]):
+                # Asleep is not down, but an hour asleep with a task open and
+                # nothing waking it is worth one line: said once, never a block.
+                owed.append(("asleep", k, own[0], time.time() - _until))
             continue                       # mid-task, nothing owed
         # A lead whose subtree holds an open mark is waiting on it, not idle
         # (obs 19, 22, 27) -- unless the lead itself has gone.
@@ -3328,7 +3614,7 @@ def lead_owes(ctx, node):
         except Exception:
             held = None
         how, row = node_running(ctx, k)
-        alive = False if how is None else True
+        alive = how is not None or _state in ("asleep", "limited")
         if how == "unclaimed":
             # A session is in the worktree without a claim: spawn would refuse
             # it as occupied, so never tell the lead to spawn (log 105).
@@ -3372,7 +3658,8 @@ def lead_owes(ctx, node):
             cause = None
         if cause and cause["cause"] == "refusal":
             owed.append(("wedged", k, str(cause.get("request")), 0))
-        elif cause and cause["cause"] == "limit":
+        elif cause and cause["cause"] == "limit" and (
+                not cause.get("until") or cause["until"] > time.time()):
             until = cause.get("until")
             owed.append(("limit", k, time.strftime("%H:%M", time.localtime(until))
                          if until else "unknown", 0))
@@ -3414,7 +3701,9 @@ def lead_owes(ctx, node):
     return owed
 
 
-HALT_SILENT = {"orphan", "down", "start", "lingering", "heavy", "wedged", "limit", "stale"}
+HALT_SILENT = {"orphan", "down", "start", "lingering", "heavy", "wedged", "limit", "stale",
+               "asleep"}
+ASLEEP_AFTER = 3600        # a child asleep this long holding an open task is mentioned, once
 
 
 def subtree(ctx, node):
@@ -3433,13 +3722,13 @@ def owed_line(kind, child, task, age):
         "sign off": f"{child} presented '{task}' {human_age(age)} ago, unsigned"
                     f"  — harness mark {task} --close",
         "start": f"{child} quiet {human_age(age)}, '{task}' queued"
-                 f"  — message it to start (SendMessage)",
+                 f"  — ring it to start: harness ring {child} -",
         "down": f"{child} has no running session, {task}"
                 f"  — harness spawn {child}",
         "wedged": f"{child} was wedged by an API refusal (request {task}); it can't go on"
                   f"  — harness recycle {child} --force (not the owner's, log 125)",
-        "limit": f"{child} stopped at its usage limit until {task}; it restarts itself then"
-                 f" (log 122)",
+        "limit": f"{child} stopped at its usage limit until {task}; the ringer restarts it "
+                 f"then (log 122)",
         "unwoken": f"{child} has {task}; the ringer woke it and it has not read them"
                    f"  — harness status, then harness recycle {child}",
         "unanswered": f"{child} asked you {human_age(age)} ago and has had no reply; it is "
@@ -3448,8 +3737,13 @@ def owed_line(kind, child, task, age):
                      f"{task}  — harness integrate {child} ends it and merges (log 105)",
         "heavy": f"{child} at {task} context"
                  f"  — harness recycle {child} --at-quiet",
-        "orphan": f"{child}'s session ended {human_age(age)} ago holding '{task}' open"
-                  f"  — harness recycle {child} (it resumes the task)",
+        "orphan": f"{child}'s session died {human_age(age)} ago holding '{task}' open"
+                  f"  — harness recycle {child} (it resumes the task; if that refuses for "
+                  f"commits its parent has not taken, they are committed and safe: add "
+                  f"--force). Not wanted yet? harness brief {task} --wait \"<condition>\"",
+        "asleep": f"{child} has slept {human_age(age)} holding '{task}' open, and nothing is "
+                  f"waking it  — if it should carry on: harness ring {child} -   "
+                  f"(waiting on purpose? harness brief {task} --wait \"<condition>\")",
         "stale": f"{child} has been {task} for {human_age(age)}"
                  + ("  — a conflict is yours to mediate: T7 if you issued both tasks, T8 if "
                     "they were authored below you" if "conflicts with" in str(task) else
@@ -3812,12 +4106,13 @@ def queue_items(ctx, node):
     # The item's task is the third field of a node row, else the second.
     def task_of(k):
         parts = k.split(":")
-        return parts[2] if parts[0] in ("sign off", "start", "down", "orphan",
+        return parts[2] if parts[0] in ("sign off", "start", "down", "orphan", "asleep",
                                         "unanswered") else parts[1]
     kept = {k: v for k, v in out.items()
             if k.startswith(("asked:", "comment:", "handed:", "heavy:", "sweep:", "uncovered:",
                              "caught:", "behind:", "stale:",
                              "orphan:", "down:", "unanswered:", "wedged:", "limit:", "stuck:",
+                             "asleep:",
                              "ruled:", "rejected:",
                              "returned:",
                              "docs:", "review:", "done:", "imask:", "sign off:"))
@@ -3979,6 +4274,13 @@ def cmd_hook_orient(a):
         valid = True
     except (Exception, SystemExit):
         valid = False
+    try:
+        _sec = second_session(ctx, node, payload.get("session_id"))
+        if _sec:
+            print("harness: " + second_line(node, _sec), flush=True)
+            sys.exit(0)
+    except Exception:
+        pass
     global READ_MEMO
     READ_MEMO = {}
     try:
@@ -4194,7 +4496,7 @@ def cmd_hook_stop(a):
         # a child that has been idle for ninety seconds.
         fam = focus_family(ctx)
         owed = [o for o in lead_owes(ctx, node) if o[0] != "heavy"
-                and o[0] != "limit"
+                and o[0] not in ("limit", "asleep")
                 and (o[0] in ("orphan", "down", "unanswered", "wedged", "stale")
                      or in_focus(fam, o[2]))]
         if owed:
@@ -4518,6 +4820,11 @@ def synth_delegated_mark(ctx, a, node, f, verb):
     print()
 
 
+# What a re-mark carries into the new record: everything that is about the
+# task and not about the session's position in it (log 159).
+REMARK_KEEPS = ("_comments", "_delegated")
+
+
 def cmd_mark(a):
     """Record the token position when a T1 is accepted, so the actual at T10 is a
     subtraction rather than an apportionment.
@@ -4607,6 +4914,7 @@ def cmd_mark(a):
             rec.setdefault("_comments", []).append(
                 {"at": rec["_presented_at"], "by": rec["_presented_by"],
                  "text": a.note})
+        _no_account = not a.note
         f.write_text(json.dumps(rec, indent=2) + "\n")
         # Presenting IS finishing with the node. The claim is on the worktree,
         # and a presented member has nothing left to write there, so holding it
@@ -4635,6 +4943,11 @@ def cmd_mark(a):
                           f"(harness review {node} --task {a.task} shows only its commits; "
                           f"never merge {node} for it, log 124)" if carries else
                           f"harness review {node}, then harness mark {a.task} --close"))
+        if _no_account and parent:
+            # The ring has gone and the lead reads the note with it (log 165).
+            print(f"  no account went with this, and {parent} is rung now: it reads "
+                  f"`harness note {a.task}` and finds nothing.\n  Write it at once: harness "
+                  f"note {a.task} --add \"...\"   (next time: --done --note \"...\")")
         if rec.get("_model"):
             print(f"ran as {rec['_model']}, effort {rec.get('_effort')}")
         if rec.get("_band") and rec.get("_delta"):
@@ -4771,7 +5084,7 @@ def cmd_mark(a):
         print(f"  It does NOT return to the queue — parking it was deliberate. The "
               f"brief is\n  untouched and still readable; if the work is still "
               f"wanted, its lead rewrites it\n  or `harness mark {a.task} --force` "
-              f"opens it again from here.")
+              f"opens it again from here, with its comments.")
         return
 
     if a.close:
@@ -4977,7 +5290,19 @@ def cmd_mark(a):
                "_session": sid, "_unmeasured": _nospend}
     if f.exists() and not a.force:
         die(REFUSED, f"{a.task} is already marked at {json.loads(f.read_text()).get('_at')} "
-                     f"— use --force to re-mark, which discards the earlier position")
+                     f"— use --force to re-mark: the session and the spend baseline start "
+                     f"again from here, and the task's comments are kept")
+    # A re-mark is a new POSITION, and that is all it replaces (log 159): the
+    # record was rebuilt from nothing, so a restarted session taking over a
+    # dead one's task, on the command orientation offers it, threw away every
+    # comment on the note. 34 became 8 on one task and 10 became 0 on another.
+    _kept = {}
+    if f.exists():
+        try:
+            _old = json.loads(f.read_text())
+        except Exception:
+            _old = {}
+        _kept = {k: _old[k] for k in REMARK_KEEPS if _old.get(k)}
     # The estimate is the lead's and it arrives on the brief, which is where the
     # lead made it. Entering it here was the defect: it put a lead's refusal in
     # front of a member, who may not split the task and can dissolve the
@@ -5012,6 +5337,15 @@ def cmd_mark(a):
     tot["_note"] = a.note or ""
     tot["_node"] = node
     tot["_branch"] = ctx.branch
+    if f.exists():
+        tot.update(_kept)
+        tot["_remarked_from"] = {"session": _old.get("_session"), "at": _old.get("_at")}
+        # A member's own band is a statement about the task, not about the
+        # session that made it.
+        if not a.band and _old.get("_band_source") == "member":
+            for k in ("_band", "_band_source", "_band_brief"):
+                if _old.get(k):
+                    tot[k] = _old[k]
     # A task starts on its lead's current tree (log 139). When that cannot be,
     # the task still opens, and its record keeps how far behind it began.
     _st, _info = own_catchup(ctx, node)
@@ -5030,6 +5364,9 @@ def cmd_mark(a):
               f"harness claim {node}")
     print(f"marked {a.task} on {node} at {tot['_at']}  "
           f"({tot['_records']} records, {spend_line(tot)} so far)")
+    if _kept.get("_comments"):
+        print(f"  kept {len(_kept['_comments'])} comment(s) from the earlier mark "
+              f"— harness note {a.task}")
     if tot.get("_unmeasured"):
         print(f"note     {tot['_unmeasured']}. The task is open and its POSITION is "
               f"recorded;\n         only the cost baseline is missing, so --done will "
@@ -8013,6 +8350,8 @@ def node_sessions(idx, node, rows):
     worktree is never counted as its parent's."""
     wts = {n: str(sp.get("worktree")) for n, sp in (idx.get("nodes") or {}).items()
            if sp.get("worktree")}
+    for w, n in (idx.get("byWorktree") or {}).items():
+        wts.setdefault(n, str(w))
     out = []
     for r in rows or []:
         cwd = str(r.get("cwd") or "")
@@ -8063,6 +8402,8 @@ def session_work(row):
         cl = cmdline(p)
         if comm in QUIET_COMMANDS or (b"/harness" in cl and (b"--wait" in cl or b"doorbell" in cl)):
             continue
+        if re.fullmatch(r"\d+(\.\d+)+", comm) and b"claude" in cl:
+            comm = "claude"                     # its file is named for its version
         return comm or "a command"
     return None
 
@@ -8343,6 +8684,10 @@ def catchup_line(node, status, info, parent=None):
     return ""
 
 
+REFUSED_TRIES = 5          # passes in a row that retry a merge git refused
+REFUSED_EVERY = 600        # and after those, seconds between tries
+
+
 def catchup_pass(ctx, idx=None, rows=None, by="harness", only=None, dry=False, skip=None,
                  tips=None, memo=None, hold=()):
     """Every node below rank 0, from the top down, so one change at rank 0
@@ -8376,17 +8721,32 @@ def catchup_pass(ctx, idx=None, rows=None, by="harness", only=None, dry=False, s
         if b is None:
             continue
         pair = (b.get("tip"), b.get("parent_tip"))
+        mem = skip.get(n) if skip is not None else None
+        if isinstance(mem, dict):
+            # A refusal: tried again each pass, then less often.
+            wait = (mem.get("pair") == list(pair) and mem.get("tries", 0) >= REFUSED_TRIES
+                    and time.time() - (mem.get("at") or 0) < REFUSED_EVERY)
+        else:
+            wait = mem is not None and tuple(mem) == pair
         if b["n"] and n in hold:
             st, info = "blocked", dict(b, kind="busy", why="its session was just woken")
-        elif b["n"] and skip is not None and skip.get(n) == pair:
+        elif b["n"] and wait:
             st, info = ("conflict" if was.get("kind") == "conflict" else "blocked"), dict(was or b)
         else:
             st, info = catch_up(ctx, idx, n, by, rows=rows, dry=dry, b=b)
             if skip is not None:
-                # A merge that conflicted, or that git refused, is not tried
-                # again until a branch moves: each try writes into the worktree.
-                if st == "conflict" or info.get("kind") == "refused":
+                # A merge that conflicted is not tried again until a branch
+                # moves: each try writes into the worktree. One that git
+                # refused IS tried again, because most refusals pass: dev got
+                # "fatal: stash failed" three times in two days, was remembered
+                # like a conflict, and came current only because its own
+                # session merged a minute later (found 2026-10-14).
+                if st == "conflict":
                     skip[n] = pair
+                elif info.get("kind") == "refused":
+                    k = mem.get("tries", 0) if isinstance(mem, dict) \
+                        and mem.get("pair") == list(pair) else 0
+                    skip[n] = {"pair": list(pair), "tries": k + 1, "at": time.time()}
                 else:
                     skip.pop(n, None)
         if st == "caught" and tips is not None:
@@ -8893,11 +9253,12 @@ def cmd_recycle(a):
     if not targets:
         die(REFUSED, "name at least one node, or pass --children / --idle / --cold")
 
-    occ = {}
-    for r in rows:
-        n = by_wt.get(r.get("cwd", ""))
-        if n:
-            occ.setdefault(n, []).append(r)
+    # Everyone in each worktree, from the roster and the session files (log 161).
+    try:
+        _files = live_sessions()
+    except Exception:
+        _files = []
+    occ = {n: sessions_in(ctx, idx, n, rows, _files) for n in targets if n in idx["nodes"]}
 
     done = 0
     for n in targets:
@@ -9010,6 +9371,12 @@ def cmd_recycle(a):
         # (log 123: a reset stopped dev and then found nothing to start, so no
         # successor came; the lanes waited an hour).
         start = next_start(ctx, n)
+        _st = start_standing(ctx, n)
+        if _st:
+            print(f"  skip {n:<12} {start_words(_st)} — one session per node; nothing stopped")
+            if a.when_idle and not a.dry_run:
+                reset_outcome(ctx, n, "a start is in flight")
+            continue
         _past = getattr(a, "past_ceiling", False) is True
         if start["skip"] and not a.force and not _past:
             print(f"  skip {n:<12} {start['skip']}  (--force starts it anyway); "
@@ -9038,7 +9405,7 @@ def cmd_recycle(a):
                     and not a.force:
                 print(f"  skip {n:<12} stopped at its usage limit until "
                       f"{time.strftime('%H:%M', time.localtime(cause['until']))}; a fresh "
-                      f"session would hit the same limit. It restarts itself then (log 122).")
+                      f"session would hit the same limit. The ringer restarts it then (log 122).")
                 unstopped.append(label); continue
             if cause and cause["cause"] == "refusal":
                 # Log 125: it read as STOPPED AT A PROMPT and an owner ask was
@@ -9124,8 +9491,13 @@ def cmd_recycle(a):
                 print(f"       {catchup_line(n, _st, _info)}")
         except Exception:
             pass
-        ok, why = launch_bg(cmd, sp["worktree"])
+        _st = start_take(ctx, n, "recycle", (here if mine else None) or "harness")
+        if _st:
+            print(f"  NOT started {n:<12} {start_words(_st)}; its old session is stopped")
+            continue
+        ok, why = launch_bg(cmd, sp["worktree"], env=launch_env(n))
         if not ok:
+            start_clear(ctx, n)
             # The old session is already stopped: say so plainly, and leave the
             # pending reset to retry.
             print(f"  NOT started {n:<12} Claude Code refused: {why}\n"
@@ -9433,7 +9805,7 @@ def grants_for(ctx, node):
             if not r.get("revoked_at")]
 
 
-def launch_bg(cmd, cwd):
+def launch_bg(cmd, cwd, env=None):
     """Run a `claude --bg` line and say whether a session started: (ok, why).
     It used to be fired and forgotten with its output thrown away, so a refusal
     ("Workspace not trusted", a bad flag) still printed "spawned" (2026-10-11).
@@ -9441,7 +9813,7 @@ def launch_bg(cmd, cwd):
     not return in two minutes is taken as started, as before."""
     try:
         x = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=120,
-                           stdin=subprocess.DEVNULL)
+                           stdin=subprocess.DEVNULL, env=env)
     except subprocess.TimeoutExpired:
         return True, ""
     except Exception as e:
@@ -10855,7 +11227,7 @@ def next_start(ctx, node):
                     f"Brief it one (harness brief <task> --for {node}"
                     + (" --feature <f>" if feats else "") + " --write \"...\"), "
                     f"or tell it what to do: harness ring {node} -",
-            "skip": None}
+            "skip": None, "empty": True}
 
 
 def next_seq(ctx, node):
@@ -10931,12 +11303,22 @@ def cmd_claimcheck(a):
     seconds, ring rank 0 and the node's lead if no session has claimed it."""
     time.sleep(max(0, a.within))
     ctx = Ctx(); ctx.require_enrolled()
-    how, _ = node_running(ctx, a.node)
+    how, det = node_running(ctx, a.node)
     if how == "claimed":
         print(f"{_now()} {a.node} claimed"); return
-    text = (f"{a.node} was recycled {human_age(a.within)} ago and no session has claimed it"
-            + (" (one is in its worktree, unclaimed)" if how == "unclaimed" else "")
-            + f" — harness spawn {a.node}, or read resets/{a.node}.log (log 123)")
+    if how == "unclaimed":
+        # A session is there. Offering `spawn` put a second one beside it (log
+        # 161, 11:40: rank 0 was told to spawn a lane that was busy working).
+        sid = str((det or {}).get("sessionId") or "")
+        if not turn_ended(sid):
+            print(f"{_now()} {a.node}: {sid[:8]} is in its worktree, mid-turn, unclaimed; "
+                  f"nothing said"); return
+        text = (f"{a.node} was recycled {human_age(a.within)} ago; a session [{sid[:8]}] is "
+                f"in its worktree and has not claimed the node. Do not spawn another: ring "
+                f"it (harness ring {a.node} -), or look at it (claude attach {sid[:8]})")
+    else:
+        text = (f"{a.node} was recycled {human_age(a.within)} ago and no session has claimed "
+                f"it — harness spawn {a.node}, or read resets/{a.node}.log (log 123)")
     told = set()
     for n, sp in ctx.tree["nodes"].items():
         if not sp.get("parent"):
@@ -12477,7 +12859,13 @@ def cmd_note(a):
     cs = ((b or {}).get("comments") or []) + ((rec or {}).get("_comments") or [])
     cs.sort(key=lambda c: c.get("at") or "")
     if not cs:
-        print("  no comments")
+        # Said with what it means (log 165): a lead read "no comments" 17 s
+        # before its lane wrote the account it had presented without.
+        if rec is not None and rec.get("_presented_at"):
+            print(f"  no comments: presented {_when(rec['_presented_at'])} with no --note, "
+                  f"and nothing has been written since")
+        else:
+            print("  no comments")
         return
     print(f"  {len(cs)} comment(s):")
     for c in cs:
@@ -18124,11 +18512,12 @@ def wake_session(row, text):
         return False
 
 
-def resume_session(sid, text, cwd):
+def resume_session(sid, text, cwd, node=None):
     """Bring back a session Claude Code stopped while it was idle, with the wake
     as its next prompt. Only for a session with no live process: for a running
     one `--resume` may start a copy."""
-    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
+    env = launch_env(node) if node else \
+        {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
     try:
         x = subprocess.run(["claude", "--bg", "--resume", sid, text], cwd=str(cwd), env=env,
                            capture_output=True, text=True, timeout=120)
@@ -18214,12 +18603,21 @@ def ringer_tick(ctx, S, now=None):
     for node in ctx.tree["nodes"]:
         sid = MAIL().owner(ctx.state, node)
         row = live.get(sid) if sid else None
-        if row is None and not sid:
-            # Not claimed yet: mail goes to whoever is in the worktree at its
-            # next prompt, so a session there is worth waking. A warm spare is
-            # named after its own job id and is nobody's session.
-            row = next((r for r in live.values() if wts.get(node) and r.get("cwd") == wts[node]
-                        and r.get("name") and r.get("name") != r.get("jobId")), None)
+        # Everyone standing in the worktree. A warm spare is named after its
+        # own job id and is nobody's session.
+        there = [r for r in live.values() if wts.get(node) and r.get("cwd") == wts[node]
+                 and r.get("name") and r.get("name") != r.get("jobId")]
+        if row is None and there:
+            # Not claimed yet, or the lock names a session that has gone: mail
+            # goes to whoever is in the worktree at its next prompt, so that
+            # session is the one to wake. With a lock this used to fall through
+            # to "resume the old holder", beside the fresh one (log 161).
+            row = there[0]
+        try:
+            ringer_double(ctx, S, node, sid, rivals(ctx, node, [
+                r for r in there if r.get("kind") != "interactive" and not aux_session(ctx, r)]))
+        except Exception as e:
+            print(f"{_now()} two-session check failed for {node}: {type(e).__name__}: {e}")
         state = "none"
         if row:
             any_live = True
@@ -18255,8 +18653,25 @@ def ringer_tick(ctx, S, now=None):
         if not act:
             continue
         text = wake_text(node, calls)
+        lim = (S.get("_limited") or {}).get(node)
+        if lim or act == "resume":
+            # One start per node (log 161): not beside a start in flight, and
+            # not beside a session the roster knows and the session files do
+            # not. And nothing is woken or resumed into a usage limit: the
+            # limit's own step restarts the node when it resets.
+            no = ("it is at a usage limit until "
+                  + time.strftime("%H:%M", time.localtime(lim["until"]))) if lim \
+                else resume_block(ctx, node, sid)
+            if no:
+                if S.setdefault("_noresume", {}).get(node) != no:
+                    S["_noresume"][node] = no
+                    print(f"{_now()} {node} has mail and is not resumed: {no}")
+                continue
+            S.get("_noresume", {}).pop(node, None)
         ok = wake_session(row, text) if act == "wake" else \
-            resume_session(sid, text, wts.get(node) or ctx.repo)
+            resume_session(sid, text, wts.get(node) or ctx.repo, node)
+        if act == "resume" and not ok:
+            start_clear(ctx, node)
         tries = (last or {}).get("tries", 0) + 1
         S[node] = {"sig": sig, "tries": tries, "at": now,
                    "first": (last or {}).get("first", now)}
@@ -18268,6 +18683,159 @@ def ringer_tick(ctx, S, now=None):
             (d / "unwoken.json").write_text(json.dumps(
                 {"since": S[node]["first"], "tries": tries, "unread": len(calls)}))
     return any_live
+
+
+def resume_block(ctx, node, sid):
+    """Why the ringer may not resume this node's old session now, or None, in
+    which case the start is recorded as the ringer's."""
+    try:
+        idx = load_index(ctx)
+        there = sessions_in(ctx, idx, node, live_rows(agents_json()))
+    except Exception:
+        there = []
+    if there:
+        return (f"a session is already in its worktree "
+                f"[{str(there[0].get('sessionId'))[:8]}], not claimed yet")
+    st = start_take(ctx, node, "resume", "the ringer", sid)
+    return start_words(st) if st else None
+
+
+def ringer_double(ctx, S, node, sid, there):
+    """Two live sessions in one worktree: tell the node's lead and rank 0, once
+    per pair (log 161: nothing said so, and a lead's own `claude stop` of the
+    surplus one was refused by the permission checker)."""
+    seen = S.setdefault("_double", {})
+    key = sorted(str(r.get("sessionId")) for r in there)
+    f = ctx.state_file("starts", f"{node}-double", ".json")
+    if len(there) < 2:
+        if seen.pop(node, None) is not None:
+            f.unlink(missing_ok=True)
+        return None
+    if seen.get(node) == key or (_read_json(f) or {}).get("sids") == key:
+        seen[node] = key
+        return None
+    seen[node] = key
+    f.parent.mkdir(parents=True, exist_ok=True)
+    _save(f, {"sids": key, "at": _now()})
+
+    def who(r):
+        return f"{r.get('name') or '?'} [{str(r.get('sessionId'))[:8]}] pid {r.get('pid')}"
+    holder = next((r for r in there if r.get("sessionId") == sid), None)
+    if holder:
+        rest = [r for r in there if r is not holder]
+        text = (f"TWO live sessions are in {node}'s worktree (log 161). {who(holder)} holds "
+                f"the node; {', '.join(who(r) for r in rest)} does not, and its writes are "
+                f"refused. Stop the surplus: harness stop {node} --surplus")
+    else:
+        text = (f"TWO live sessions are in {node}'s worktree (log 161) and neither holds "
+                f"the node, so neither can claim it: {', '.join(who(r) for r in there)}. "
+                f"Keep one: harness stop {node} --surplus --keep <id>")
+    told = {n for n, sp in ctx.tree["nodes"].items() if not sp.get("parent")}
+    parent = ctx.tree["nodes"].get(node, {}).get("parent")
+    if parent:
+        told.add(parent)
+    told.discard(node)
+    for n in sorted(told):
+        ring_inbox(ctx.state, n, "harness", text)
+    print(f"{_now()} two sessions in {node}'s worktree; told {', '.join(sorted(told)) or 'nobody'}")
+    return text
+
+
+LIMIT_EVERY = 60          # seconds between the ringer's looks for usage limits
+LIMIT_LATE = 1800         # a limit that reset longer ago than this is not acted on
+LIMIT_RETRY = 600         # between attempts to restart one node after its limit
+
+
+def ringer_limits(ctx, S, now=None):
+    """Usage limits (log 122). -> True while a node waits on one.
+
+    The limited session's own Stop hook used to schedule its restart, and a
+    limit stop runs no Stop hook: on biblion2 the folder that hook writes was
+    never made, so "it restarts itself then" was never true (found 2026-10-14).
+    The ringer is the one process that outlives the sessions, so it looks:
+    each node whose holder stopped on a limit is recorded, rank 0 is told once
+    per limit, the ordinary resume is held off until the limit resets, and two
+    minutes after that the node gets a fresh session, by `recycle`, the one
+    path a start takes. Not rank 0 (it is never recycled; mail resumes it),
+    not a node with nothing to open, and not a limit that reset long ago while
+    nothing was running: after a day's outage what starts is for rank 0 to say."""
+    now = time.time() if now is None else now
+    d = ctx.state / "limits"
+    limited, waiting = {}, False
+    if halted(ctx):
+        S["_limited"] = limited
+        return False
+    root = next((n for n, sp in ctx.tree["nodes"].items() if not sp.get("parent")), None)
+    for node in ctx.tree["nodes"]:
+        f = ctx.state_file("limits", node, ".json")
+        rec = _read_json(f) or {}
+        sid = MAIL().owner(ctx.state, node)
+        cause = stop_cause(sid) if sid else None
+        if not cause or cause["cause"] != "limit":
+            if rec.get("until"):
+                f.unlink(missing_ok=True)       # it is going again, or was replaced
+            continue
+        if node == root or stopped(ctx, node):
+            continue
+        until = cause.get("until") or rec.get("until") or now + 3600
+        if abs((rec.get("until") or 0) - until) >= 60:
+            rec = {"until": until, "at": _now(), "text": cause.get("text"), "sid": sid}
+            d.mkdir(parents=True, exist_ok=True)
+            _save(f, rec)
+            told = d / f"_told-{int(until) // 60}"
+            if root and not told.exists() and now < until:
+                told.write_text(_now())
+                ring_inbox(ctx.state, root, "harness",
+                           f"usage limit: {node} stopped until "
+                           f"{time.strftime('%H:%M', time.localtime(until))}; the ringer "
+                           f"restarts it then, and every node that hit it (log 122). "
+                           f"harness status shows them.")
+        if now < until + 120:
+            limited[node] = rec
+            waiting = True
+            continue
+        if rec.get("left"):
+            continue                            # decided once: it is left as it is
+        if now - (until + 120) > LIMIT_LATE:
+            _save(f, dict(rec, left="late"))
+            print(f"{_now()} {node}'s usage limit reset at "
+                  f"{time.strftime('%m-%d %H:%M', time.localtime(until))}, long before this "
+                  f"ringer looked; not restarted")
+            continue
+        limited[node] = rec                     # the restart is this step's, not a resume's
+        if now - (rec.get("tried") or 0) < LIMIT_RETRY:
+            continue
+        try:
+            ns = next_start(ctx, node)
+            skip = ns["skip"]
+            if not skip and ns.get("empty"):
+                # Nothing of its own to open: worth a session only if lanes
+                # below it hold work it leads. Mail still resumes it, as ever.
+                below = set(subtree(ctx, node))
+                if not any(r.get("_node") in below for r in open_marks(ctx).values()):
+                    skip = "nothing is queued for it"
+        except Exception:
+            skip = None
+        if skip:
+            _save(f, dict(rec, left=skip))
+            limited.pop(node, None)
+            print(f"{_now()} {node}'s usage limit has reset; not restarted: {skip}")
+            continue
+        _save(f, dict(rec, tried=now))
+        r = limit_recycle(ctx, node)
+        print(f"{_now()} {node}'s usage limit has reset; recycle: {r[:300]}")
+    S["_limited"] = limited
+    return waiting
+
+
+def limit_recycle(ctx, node):
+    """Start a fresh session for a node whose usage limit has reset: `recycle
+    --force`, as its own process so a refusal there cannot end the ringer."""
+    r = subprocess.run([sys.executable, str(Path(__file__).resolve()), "recycle", node,
+                        "--force"], cwd=str(ctx.repo), capture_output=True, text=True,
+                       env={k: v for k, v in os.environ.items()
+                            if k != "CLAUDE_CODE_SESSION_ID"})
+    return " | ".join(x.strip() for x in (r.stdout + r.stderr).splitlines() if x.strip())
 
 
 def ringer_stamp(path):
@@ -18340,7 +18908,13 @@ def cmd_ringer(a):
             os.execv(sys.executable, [sys.executable, str(me), "ringer"])
         try:
             ctx.tree = json.loads(ctx.tree_path.read_text())
-            if ringer_tick(ctx, S):
+            if time.time() - S.get("_limits_at", 0) >= LIMIT_EVERY:
+                S["_limits_at"] = time.time()
+                try:
+                    S["_limit_wait"] = ringer_limits(ctx, S)
+                except Exception as e:
+                    print(f"{_now()} limit check failed: {type(e).__name__}: {e}")
+            if ringer_tick(ctx, S) or S.get("_limit_wait"):
                 quiet_since = time.time()
         except Exception as e:
             print(f"{_now()} tick failed: {type(e).__name__}: {e}")
@@ -18920,7 +19494,8 @@ def main():
                     help="on --close, do not start the next task; leave the node as it is")
     mk.add_argument("--band", metavar="S|M|L",
                     help="the estimated size in new tokens (I10); XL is refused")
-    mk.add_argument("--force", action="store_true", help="re-mark, discarding the earlier position")
+    mk.add_argument("--force", action="store_true",
+                    help="re-mark: a new session and spend baseline; the task's comments are kept")
     mk.add_argument("--done", action="store_true",
                     help="present it as finished and record what it cost; your lead closes it")
     mk.add_argument("--requeue-after", metavar="TASK",
@@ -18954,9 +19529,6 @@ def main():
     ig.add_argument("--dry-run", action="store_true")
     ig.add_argument("--roster", metavar="FILE",
                     help="a `claude agents --json` capture, for testing")
-    lw = add("limitwake", cmd_limitwake)
-    lw.add_argument("node")
-    lw.add_argument("--at", type=float, required=True)
     cc = add("claimcheck", cmd_claimcheck)
     cc.add_argument("node")
     cc.add_argument("--within", type=int, default=CLAIM_CHECK)
@@ -19042,6 +19614,10 @@ def main():
     st.add_argument("--children", action="store_true", help="every child of this node")
     st.add_argument("--why", metavar="TEXT",
                     help="why, in the owner's words when it is theirs; recorded with the stop")
+    st.add_argument("--surplus", action="store_true",
+                    help="two sessions in one worktree: stop every one but the node's holder")
+    st.add_argument("--keep", metavar="ID",
+                    help="with --surplus, the session to keep when none holds the node")
     st.add_argument("--dry-run", action="store_true")
     sp = add("spawn", cmd_spawn)
     sp.add_argument("node", nargs="*",
@@ -19391,6 +19967,7 @@ def main():
     if design_env():
         design_gate(a, sub.choices[a.cmd].get_default)
     read_dash_from_stdin(a)
+    second_gate(a)
     # No delta footer: nags belong to orientation (whoami, hook-orient), and a
     # command asked a question answers only that question (obs 13).
     a.fn(a)

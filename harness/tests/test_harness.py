@@ -1507,14 +1507,36 @@ class StopCause(unittest.TestCase):
         self.write(self.LIMIT, {"type": "user", "message": {"content": "carry on"}})
         self.assertIsNone(hz.stop_cause("s"))                 # prompted since
 
-    def test_the_limited_session_schedules_its_own_restart_once(self):
-        with mock.patch.object(hz, "launch_limit_wake") as wake:
-            for _ in range(2):
-                hz.stop_cause_step(self.ctx, "dev_1", {"cause": "limit", "until": time.time() + 600})
-        wake.assert_called_once()
-        rung = list((self.ctx.dir / "doorbell" / "main" / "inbox").glob("*.json"))
-        self.assertEqual(len(rung), 1)
-        self.assertIn("usage limit", json.loads(rung[0].read_text())["text"])
+    def test_a_reset_time_is_read_against_when_it_was_said(self):
+        # Read against the clock, "resets 6:10pm" moved to tomorrow once it
+        # passed, so a limit two days old still read as standing.
+        said = dict(self.LIMIT, timestamp="2026-10-12T04:17:05.000Z")
+        self.write({"type": "user", "message": {"content": "go"}}, said, self.END)
+        c = hz.stop_cause("s")
+        self.assertEqual(time.strftime("%Y-%m-%d %H:%M", time.localtime(c["until"]))[11:], "18:10")
+        self.assertLess(c["until"], time.time())
+        with mock.patch.object(hz, "holder_alive", return_value=False), \
+             mock.patch.object(hz, "turn_end_at", return_value=1234.0):
+            self.assertEqual(hz.holder_state({"session_id": "s"}), ("asleep", 1234.0))
+
+    def test_no_process_is_asleep_limited_or_dead(self):
+        held = {"session_id": "s"}
+        with mock.patch.object(hz, "holder_alive", return_value=False):
+            self.write({"type": "user", "message": {"content": "go"}}, self.LIMIT, self.END)
+            st, until = hz.holder_state(held)
+            self.assertEqual(st, "limited")
+            self.assertGreater(until, time.time())
+            self.write(*self.REFUSAL, self.END)
+            self.assertEqual(hz.holder_state(held)[0], "dead")           # wedged: needs a fresh one
+            self.write({"type": "assistant", "message": {"content": [{"type": "text", "text": "done"}]}},
+                       dict(self.END, timestamp="2026-10-14T00:00:00.000Z"))
+            self.assertEqual(hz.holder_state(held)[0], "asleep")
+            self.write({"type": "assistant", "message": {"content": [{"type": "text", "text": "mid"}]}})
+            self.assertEqual(hz.holder_state(held)[0], "dead")
+        with mock.patch.object(hz, "holder_alive", return_value=True):
+            self.assertEqual(hz.holder_state(held), ("live", None))
+        with mock.patch.object(hz, "holder_alive", return_value=None):
+            self.assertEqual(hz.holder_state(held), ("unknown", None))
 
     def test_a_refusal_rings_the_lead_not_the_owner(self):
         hz.stop_cause_step(self.ctx, "dev_1", {"cause": "refusal", "request": "req_1"})
@@ -1612,6 +1634,377 @@ class Records(unittest.TestCase):
         (ctx.dir / "marks" / "p.json").write_text(json.dumps(
             {"_closed_at": "2026", "_abandoned_at": "2026"}))
         self.assertEqual(hz.task_state(ctx, "p"), "abandoned")
+
+
+class Log161(unittest.TestCase):
+    """Log 161: one session per node, however it was started. A start is
+    recorded while it is in flight, occupancy is read from two sources, and a
+    session that finds itself second in a worktree can write nothing."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev"})
+        self.addCleanup(shutil.rmtree, self.ctx.dir, True)
+        self.ctx.repo = self.ctx.dir / "p"
+        self.ctx.tree["project"] = "p"
+        (self.ctx.dir / "locks").mkdir()
+        nodes = self.ctx.tree["nodes"]
+        self.idx = {"project": "p", "byBranch": {n: n for n in nodes},
+                    "byWorktree": {f"/w/{n}": n for n in nodes},
+                    "nodes": {n: {"worktree": f"/w/{n}", "branch": n, "parent": s.get("parent"),
+                                  "rank": self.ctx.rank(n), "children": self.ctx.children(n)}
+                              for n, s in nodes.items()}}
+
+    def own(self, node, sid, **more):
+        self.ctx.lock_path(node).write_text(json.dumps(
+            dict({"node": node, "session_id": sid, "ref": sid, "name": f"p-{node}", "pid": 4242,
+                  "host": HOST}, **more)))
+
+    def row(self, node, sid, **more):
+        return dict({"sessionId": sid, "cwd": f"/w/{node}", "name": f"p-{node}", "pid": 1,
+                     "status": "idle", "kind": "background"}, **more)
+
+    def test_one_start_in_flight_and_what_ends_it(self):
+        take, standing = hz.start_take, hz.start_standing
+        self.assertIsNone(take(self.ctx, "dev", "spawn", "main"))
+        st = take(self.ctx, "dev", "resume", "the ringer", "s-old")
+        self.assertEqual((st["how"], st["by"]), ("spawn", "main"))
+        self.assertRegex(hz.start_words(st), r"a start is in flight \(spawn by main, \S+ ago\)")
+        self.assertIsNone(standing(self.ctx, "dev_1"))                  # one node's is not another's
+        hz.start_clear(self.ctx, "dev")
+        self.assertIsNone(standing(self.ctx, "dev"))
+        take(self.ctx, "dev", "spawn", "main")
+        self.assertIsNone(standing(self.ctx, "dev", now=time.time() + hz.START_GRACE + 1))
+        self.assertIsNone(take(self.ctx, "dev", "recycle", "harness"))  # lapsed: free again
+        hz.start_clear(self.ctx, "dev")
+        # A resume has landed once the session it resumed holds the node and runs.
+        take(self.ctx, "dev", "resume", "the ringer", "s-1")
+        self.own("dev", "s-1")
+        with mock.patch.object(hz, "holder_alive", return_value=False):
+            self.assertIsNotNone(standing(self.ctx, "dev"))
+        with mock.patch.object(hz, "holder_alive", return_value=True):
+            self.assertIsNone(standing(self.ctx, "dev"))
+
+    def test_a_claim_clears_the_start(self):
+        hz.start_take(self.ctx, "dev", "spawn", "main")
+        self.ctx.me, self.ctx.worktree = "dev", "/w/dev"
+        me = {"sessionId": "s-new", "name": "p-dev"}
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.multiple(hz, read_roster=lambda p: None, require_contract=lambda r: None,
+                                 agents_json=lambda r: [], self_row=lambda rows: me,
+                                 interactive_in=lambda *a, **k: []), \
+             redirect_stdout(io.StringIO()):
+            hz.cmd_claim(mock.Mock(roster=None, strict_name=False, force=False))
+        self.assertEqual(json.loads(self.ctx.lock_path("dev").read_text())["session_id"], "s-new")
+        self.assertIsNone(hz.start_standing(self.ctx, "dev"))
+
+    def spawn(self, node, rows=(), files=(), me="main", ok=True, sid="s" * 36, cmd="spawn", extra=()):
+        self.ctx.me = self.ctx.branch = me
+        started, out = [], io.StringIO()
+
+        def launch(cmd_, cwd, env=None):
+            started.append((cwd, (env or {}).get("HARNESS_NODE"), "CLAUDE_CODE_SESSION_ID" in (env or {})))
+            return (True, "") if ok else (False, "Workspace not trusted")
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": sid}), \
+             mock.patch.multiple(
+                 hz, load_index=lambda *a, **k: self.idx, agents_json=lambda *a: list(rows),
+                 live_rows=lambda r: r, live_sessions=lambda: list(files), pid_alive=lambda p: True,
+                 read_roster=lambda p: None, grants_for=lambda c, n: [],
+                 launch_cmd=lambda *a: ["true"], assignment_for=lambda c, n: ("m", "e"),
+                 launch_bg=launch, catch_up=lambda *a, **k: ("current", {}),
+                 startable=lambda c, n: [{"task": "t"}], print_delta=lambda *a, **k: None,
+                 next_start=lambda c, n: {"skip": None, "line": "starts on t"},
+                 git=lambda *a, **k: (0, "", ""), launch_claim_check=lambda *a: None,
+                 reset_outcome=lambda *a, **k: None, open_marks=lambda c: {}), \
+             mock.patch("sys.argv", ["harness", cmd, node, *extra]), \
+             redirect_stdout(out), mock.patch("sys.stderr", out):
+            try:
+                hz.main()
+            except SystemExit:
+                pass
+        return started, out.getvalue()
+
+    def test_a_second_spawn_stops_on_the_first_s_start(self):
+        started, out = self.spawn("dev")
+        self.assertEqual(started, [("/w/dev", "dev", False)])           # it knows whose node it is
+        self.assertIn("spawned p-dev", out)
+        started, out = self.spawn("dev")
+        self.assertEqual(started, [])
+        self.assertIn("skip dev", out)
+        self.assertIn("a start is in flight (spawn by main", out)
+        hz.start_clear(self.ctx, "dev")
+        started, out = self.spawn("dev", ok=False)                      # refused: nothing stands
+        self.assertIn("NOT started", out)
+        self.assertIsNone(hz.start_standing(self.ctx, "dev"))
+
+    def test_a_session_the_roster_does_not_list_still_occupies(self):
+        # 2026-10-14: a second spawn of dev_migrate_1, a minute after the
+        # first, printed "spawned" with the first's session running.
+        started, out = self.spawn("dev", files=[self.row("dev", "s-1")])
+        self.assertEqual(started, [])
+        self.assertIn("occupied by p-dev", out)
+        self.assertEqual(len(hz.sessions_in(self.ctx, self.idx, "dev", [self.row("dev", "s-1")],
+                                            [self.row("dev", "s-1")])), 1)   # one session, two sources
+        with mock.patch.object(hz, "pid_alive", return_value=True):
+            for aux in ({"kind": "interactive"}, {"name": "p-design-x"}, {"name": "j1", "jobId": "j1"},
+                        {"name": hz.documenter_name(self.ctx.repo)},
+                        {"name": hz.intermediary_name(self.ctx.repo)}):
+                self.assertEqual(hz.sessions_in(self.ctx, self.idx, "dev", [],
+                                                [self.row("dev", "s-x", **aux)]), [], aux)
+            self.assertEqual(hz.sessions_in(self.ctx, self.idx, "dev", [],
+                                            [self.row("dev_1", "s-kid")]), [])   # the child's, not its
+
+    def test_spawn_says_when_it_retires_a_session_that_was_only_asleep(self):
+        self.own("dev", "s-old-1234")
+        with mock.patch.object(hz, "holder_state", return_value=("asleep", 0.0)):
+            started, out = self.spawn("dev")
+        self.assertEqual(len(started), 1)
+        self.assertIn("retiring s-old-12, which had only ended its turn", out)
+        hz.start_clear(self.ctx, "dev")
+        with mock.patch.object(hz, "holder_state", return_value=("dead", 0.0)):
+            self.assertNotIn("retiring", self.spawn("dev")[1])
+
+    def test_a_recycle_stops_on_a_start_in_flight_and_records_its_own(self):
+        hz.start_take(self.ctx, "dev_1", "resume", "the ringer", "s-old")
+        started, out = self.spawn("dev_1", me="dev", cmd="recycle")
+        self.assertEqual(started, [])
+        self.assertIn("a start is in flight (resume by the ringer", out)
+        self.assertIn("nothing stopped", out)
+        hz.start_clear(self.ctx, "dev_1")
+        started, out = self.spawn("dev_1", me="dev", cmd="recycle")
+        self.assertEqual(started, [("/w/dev_1", "dev_1", False)])
+        self.assertEqual(hz.start_standing(self.ctx, "dev_1")["how"], "recycle")
+
+    def second(self, sid="s-2", env=None, files=(), alive=True):
+        with mock.patch.dict(os.environ, dict({"CLAUDE_CODE_SESSION_ID": sid}, **(env or {}))), \
+             mock.patch.object(hz, "holder_alive", return_value=alive), \
+             mock.patch.object(hz, "live_sessions", return_value=list(files)), \
+             mock.patch.object(hz, "design_env", return_value=None):
+            for k in ("HARNESS_INTERMEDIARY", "HARNESS_DOCUMENTER", "HARNESS_NODE"):
+                if k not in (env or {}):
+                    os.environ.pop(k, None)
+            return hz.second_session(self.ctx, "dev")
+
+    def test_who_is_a_second_session(self):
+        self.own("dev", "s-1")
+        started_here = {"HARNESS_NODE": "dev"}
+        self.assertEqual(self.second(env=started_here)["session_id"], "s-1")
+        self.assertIsNone(self.second(sid="s-1", env=started_here))               # the holder itself
+        self.assertIsNone(self.second(env=started_here, alive=False))             # the holder has gone
+        self.assertIsNone(self.second())                                          # the owner's own session
+        self.assertIsNone(self.second(env={"HARNESS_NODE": "dev_1"}))             # another node's
+        named = [self.row("dev", "s-2")]
+        self.assertIsNotNone(self.second(files=named))                            # by the node's name
+        self.assertIsNone(self.second(files=[self.row("dev", "s-2", name="something else")]))
+        for aux in ("HARNESS_INTERMEDIARY", "HARNESS_DOCUMENTER"):
+            self.assertIsNone(self.second(env=dict(started_here, **{aux: "1"})))
+        line = hz.second_line("dev", json.loads(self.ctx.lock_path("dev").read_text()))
+        self.assertIn("SECOND SESSION: dev is held by p-dev [s-1] (pid 4242)", line)
+        self.assertIn("end your turn", line)
+
+    def gate(self, cmd, **flags):
+        a = mock.Mock(cmd=cmd, add=None, status=False)
+        for k, v in flags.items():
+            setattr(a, k, v)
+        (self.ctx.dir / "tree.json").write_text(json.dumps(self.ctx.tree))
+        self.ctx.binding_path = self.ctx.tree_path = self.ctx.dir / "tree.json"
+        self.ctx.me = "dev"
+        err = io.StringIO()
+        with mock.patch.object(hz.Ctx, "from_files", return_value=self.ctx), \
+             mock.patch.object(hz, "second_session", return_value={"session_id": "s-1", "name": "p-dev"}), \
+             mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "s-2"}), \
+             mock.patch("sys.stderr", err):
+            try:
+                hz.second_gate(a)
+            except SystemExit:
+                return err.getvalue() or "refused"
+        return None
+
+    def test_a_second_session_s_writes_are_refused_and_its_questions_are_not(self):
+        for cmd, flags in (("note", {"add": "x"}), ("spawn", {}), ("mark", {}), ("brief", {}),
+                           ("ring", {}), ("doorbell", {"read": True}), ("release", {})):
+            self.assertIn("SECOND SESSION", self.gate(cmd, **flags) or "", cmd)
+        for cmd, flags in (("status", {}), ("whoami", {}), ("behind", {}), ("claim", {}),
+                           ("note", {}), ("doorbell", {"status": True}), ("hook-stop", {}),
+                           ("hook-orient", {})):
+            self.assertIsNone(self.gate(cmd, **flags), cmd)
+
+    def stop(self, rows, **flags):
+        stopped = []
+        self.ctx.me = self.ctx.branch = "main"
+        a = mock.Mock(children=False, node=["dev"], dry_run=False, surplus=True, keep=None, why=None)
+        for k, v in flags.items():
+            setattr(a, k, v)
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.multiple(hz, load_index=lambda *a, **k: self.idx, agents_json=lambda *a: rows,
+                                 live_rows=lambda r: r, live_sessions=lambda: [],
+                                 stop_session_row=lambda c, n, r: (stopped.append(r["sessionId"]),
+                                                                   (True, []))[1]), \
+             mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "x"}), \
+             redirect_stdout(io.StringIO()) as out:
+            hz.cmd_stop(a)
+        return stopped, out.getvalue()
+
+    def test_stop_surplus_stops_everyone_but_the_holder(self):
+        rows = [self.row("dev", "s-a"), self.row("dev", "s-b"), self.row("dev", "s-c")]
+        self.own("dev", "s-b")
+        stopped, out = self.stop(rows)
+        self.assertEqual(stopped, ["s-a", "s-c"])
+        self.assertIn("keep dev", out)
+        self.assertFalse(hz.stopped_path(self.ctx, "dev").exists())      # the node is not "stopped on purpose"
+        self.own("dev", "s-gone")                                        # nobody there holds it
+        stopped, out = self.stop(rows)
+        self.assertEqual(stopped, [])
+        self.assertIn("harness stop dev --surplus --keep <id>", out)
+        stopped, out = self.stop(rows, keep="s-c")
+        self.assertEqual(stopped, ["s-a", "s-b"])
+        stopped, out = self.stop([self.row("dev", "s-b")], keep="s-b")
+        self.assertEqual(stopped, [])
+        self.assertIn("one session there", out)
+
+    def test_in_rank_0_s_worktree_only_the_node_s_own_sessions_are_rivals(self):
+        # The repository is rank 0's worktree, and the owner runs other things there.
+        mine, twin = self.row("main", "s-main"), self.row("main", "s-twin")
+        other = self.row("main", "s-job", name="fix the importer")
+        self.assertEqual(hz.rivals(self.ctx, "main", [mine, other, twin]), [mine, twin])
+        self.assertEqual(hz.rivals(self.ctx, "dev", [self.row("dev", "a", name="x")]),
+                         [self.row("dev", "a", name="x")])       # a lane's worktree is its own
+        self.own("main", "s-main")
+        stopped, out = self.stop([mine, other, twin], node=["main"])
+        self.assertEqual(stopped, ["s-twin"])
+
+    def claimcheck(self, running, ended=True):
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.object(hz, "node_running", return_value=running), \
+             mock.patch.object(hz, "turn_ended", return_value=ended), \
+             mock.patch.object(hz.time, "sleep"), redirect_stdout(io.StringIO()):
+            hz.cmd_claimcheck(mock.Mock(node="dev_1", within=180))
+        return [m["text"] for m in hz.MAIL().unread(self.ctx.state, "main")]
+
+    def test_the_unclaimed_ring_never_offers_a_spawn_beside_a_session(self):
+        # 11:40 on 2026-10-14: rank 0 was told to spawn a lane that was working.
+        self.assertEqual(self.claimcheck(("unclaimed", {"sessionId": "s-9abcdefg"}), ended=False), [])
+        (text,) = self.claimcheck(("unclaimed", {"sessionId": "s-9abcdefg"}))
+        self.assertIn("Do not spawn another", text)
+        self.assertIn("harness ring dev_1 -", text)
+        self.assertNotIn("harness spawn", text)
+        self.assertTrue(any("harness spawn dev_1" in t for t in self.claimcheck((None, None))))
+
+    def owes(self, state, marks=None, brief=None, gone=600, at=900):
+        self.own("dev_1", "s-1")
+        with mock.patch.multiple(
+                hz, holder_state=lambda h, rows=None: (state, time.time() + at),
+                last_write=lambda sid: time.time() - gone,
+                open_marks=lambda c: marks if marks is not None else {"t": {"_node": "dev_1"}},
+                load_brief=lambda c, t: (None, brief), startable=lambda c, k: [],
+                node_running=lambda c, k, rows=None: (None, None),
+                unanswered=lambda *a: None, unwoken=lambda *a: None,
+                context_limits=lambda c, k: (None, None), stopped=lambda c, k: None,
+                halted=lambda c: None):
+            return [o[0] for o in hz.lead_owes(self.ctx, "dev")]
+
+    def test_only_a_dead_session_is_an_orphan_and_a_parked_task_nags_nobody(self):
+        self.assertEqual(self.owes("dead"), ["orphan"])
+        self.assertEqual(self.owes("asleep", at=-60), [])    # a ring resumes it: nothing is owed
+        long = -hz.ASLEEP_AFTER - 60
+        self.assertEqual(self.owes("asleep", at=long), ["asleep"])      # but hours of it is said
+        self.assertIn("harness ring dev_1 -", hz.owed_line("asleep", "dev_1", "t", 7200))
+        self.assertEqual(self.owes("limited"), ["limit"])
+        self.assertEqual(self.owes("live"), [])
+        parked = {"wait": {"until": time.time() + 3600, "why": "until modules.py moves"}}
+        self.assertEqual(self.owes("dead", brief=parked), [])           # log 162
+        self.assertEqual(self.owes("asleep", at=long, brief=parked), [])
+        self.assertEqual(self.owes("dead", brief={"wait": {"until": time.time() - 1}}), ["orphan"])
+        line = hz.owed_line("orphan", "dev_1", "t", 600)
+        self.assertIn("harness recycle dev_1", line)
+        self.assertIn("add --force", line)
+        self.assertIn('harness brief t --wait "<condition>"', line)
+        self.assertIn("the ringer restarts it then", hz.owed_line("limit", "dev_1", "16:50", 0))
+
+    def test_status_says_asleep_or_dead_and_shows_a_session_beside_a_stale_lock(self):
+        self.own("dev", "s-dev")
+        self.own("dev_1", "s-old")
+        (self.ctx.dir / "locks" / "main.lock").write_text(json.dumps(
+            {"node": "main", "session_id": "s-main", "ref": "s-main", "name": "p-main", "host": HOST}))
+        states = {"s-dev": ("asleep", 0.0), "s-old": ("dead", 0.0), "s-main": ("live", None)}
+        rows = [self.row("main", "s-main"), self.row("dev_1", "s-fresh"), self.row("main", "s-twin")]
+        hz.start_take(self.ctx, "dev", "resume", "the ringer", "s-dev")
+        out = io.StringIO()
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.multiple(
+                 hz, read_roster=lambda p: None, agents_json=lambda *a: rows, live_rows=lambda r: r,
+                 live_sessions=lambda: [], load_index=lambda *a, **k: self.idx,
+                 holder_state=lambda h, rows=None: states[h["session_id"]],
+                 is_stopped=lambda r: False, open_marks=lambda c: {}, open_waits=lambda c: {},
+                 behind_seen=lambda *a, **k: None, context_size=lambda sid: 1000,
+                 node_activity=lambda *a, **k: "", start_standing=lambda c, n, now=None: (
+                     {"how": "resume", "by": "the ringer", "at": time.time()} if n == "dev" else None)), \
+             redirect_stdout(out):
+            try:
+                hz.cmd_status(mock.Mock(roster=None))
+            except Exception:
+                pass                              # what follows the session table is not under test
+        text = out.getvalue()
+        line = lambda node: next(l for l in text.splitlines() if l.startswith(f"  {node} "))
+        self.assertIn("asleep", line("dev"))
+        self.assertIn("a ring resumes it", line("dev"))
+        self.assertIn("DEAD", line("dev_1"))
+        self.assertIn("stopped mid-turn", line("dev_1"))
+        self.assertNotIn("gone", text)
+        self.assertRegex(text, r"dev_1 +p-dev_1 +\[s-fresh\] +in the worktree, not claimed yet")
+        self.assertRegex(text, r"main +p-main +\[s-twin\] +SECOND SESSION beside the holder "
+                               r"— harness stop main --surplus")
+        self.assertRegex(text, r"dev +a start is in flight \(resume by the ringer")
+
+    def test_the_prompt_hook_tells_a_second_session_and_hands_it_nothing(self):
+        self.own("dev", "s-1")
+        hz.ring_inbox(self.ctx.state, "dev", "main", "for the holder only")
+        (self.ctx.dir / "tree.json").write_text(json.dumps(self.ctx.tree))
+        self.ctx.binding_path = self.ctx.tree_path = self.ctx.dir / "tree.json"
+        self.ctx.me = "dev"
+        out = io.StringIO()
+        with mock.patch.object(hz, "hook_ctx", return_value=self.ctx), \
+             mock.patch.object(hz, "QUIET", False), \
+             mock.patch.object(hz, "holder_alive", return_value=True), \
+             mock.patch.object(hz, "print_delta") as delta, \
+             mock.patch.object(hz, "ensure_ringer"), \
+             mock.patch.dict(os.environ, {"HARNESS_NODE": "dev", "CLAUDE_CODE_SESSION_ID": "s-2"}), \
+             mock.patch("sys.stdin", io.StringIO(json.dumps({"session_id": "s-2"}))), \
+             redirect_stdout(out), self.assertRaises(SystemExit):
+            hz.cmd_hook_orient(mock.Mock())
+        self.assertIn("harness: SECOND SESSION: dev is held by p-dev [s-1]", out.getvalue())
+        self.assertNotIn("for the holder only", out.getvalue())
+        delta.assert_not_called()
+        self.assertEqual(len(hz.MAIL().unread(self.ctx.state, "dev")), 1)     # still the holder's
+
+    def test_a_presented_task_with_no_note_says_so(self):
+        # Log 165: a lead read "no comments" 17 s before the lane wrote its account.
+        (self.ctx.dir / "marks").mkdir()
+        (self.ctx.dir / "marks" / "t.json").write_text(json.dumps(
+            {"_node": "dev_1", "_at": OLD, "_session": "s", "_presented_at": OLD}))
+        out = io.StringIO()
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.object(hz, "load_brief", return_value=(None, None)), redirect_stdout(out):
+            hz.cmd_note(mock.Mock(task="t", add=None))
+        self.assertRegex(out.getvalue(), r"no comments: presented .* with no --note")
+
+    def test_claude_is_named_claude_not_by_its_version_folder(self):
+        kid = subprocess.Popen(["sleep", "30"])
+        self.addCleanup(lambda: (kid.kill(), kid.wait()))
+        real = Path.read_bytes
+
+        def cmdline(self_):
+            p = str(self_)
+            if p == f"/proc/{kid.pid}/cmdline":
+                return b"/home/u/.local/share/claude/versions/2.1.296\x00agents\x00--json"
+            if p == "/proc/77/cmdline":
+                return b"bash\x00-c\x00source /x/shell-snapshots/s.sh"
+            return real(self_)
+        with mock.patch.object(hz, "proc_children", return_value=({1: [77], 77: [kid.pid]}, {})), \
+             mock.patch.object(Path, "read_bytes", cmdline), \
+             mock.patch.object(Path, "read_text", lambda self_, *a, **k: (
+                 "bash\n" if str(self_) == "/proc/77/comm" else "2.1.296\n")):
+            self.assertEqual(hz.session_work({"pid": 1}), "claude")
 
 
 if __name__ == "__main__":
@@ -3217,12 +3610,15 @@ class Ringer(unittest.TestCase):
     def own(self, node, sid):
         (self.ctx.dir / "locks" / f"{node}.lock").write_text(json.dumps({"session_id": sid}))
 
-    def tick(self, S, now, ended=None, ok=True, resumed=None):
+    def tick(self, S, now, ended=None, ok=True, resumed=None, roster=()):
         def wake(row, text):
             self.sent.append((row["sessionId"], text)); return ok
-        def resume(sid, text, cwd):
+        def resume(sid, text, cwd, node=None):
             (resumed if resumed is not None else self.sent).append((sid, text)); return ok
         with mock.patch.object(hz, "live_sessions", return_value=self.rows), \
+             mock.patch.object(hz, "agents_json", return_value=list(roster)), \
+             mock.patch.object(hz, "live_rows", side_effect=lambda r: r), \
+             mock.patch.object(hz, "pid_alive", return_value=True), \
              mock.patch.object(hz, "load_index", return_value={"nodes": {
                  n: {"worktree": f"/w/{n}"} for n in self.ctx.tree["nodes"]}}), \
              mock.patch.object(hz, "bell_nudge", return_value=None), \
@@ -3345,6 +3741,143 @@ class Ringer(unittest.TestCase):
         resumed.clear()
         self.tick({}, 2000, resumed=resumed)
         self.assertEqual(resumed, [])
+
+    def test_the_session_that_is_there_is_woken_not_the_holder_that_has_gone(self):
+        # Log 161: a fresh spawn takes a minute to claim, the lock still named
+        # the old session, and the ringer resumed that one beside it.
+        self.own("dev_1", "s-old")
+        self.rows = [{"sessionId": "s-new", "status": "idle", "cwd": "/w/dev_1",
+                      "name": "p-dev_1", "messagingSocketPath": "/b"}]
+        hz.ring_inbox(self.ctx.state, "dev_1", "dev", "go")
+        resumed = []
+        self.tick({}, 1000, resumed=resumed)
+        self.assertEqual(resumed, [])
+        self.assertEqual([s for s, _ in self.sent], ["s-new"])
+
+    def test_nothing_is_resumed_while_a_start_is_in_flight(self):
+        self.own("dev_1", "s-old")
+        hz.ring_inbox(self.ctx.state, "dev_1", "dev", "go")
+        self.assertIsNone(hz.start_take(self.ctx, "dev_1", "spawn", "dev"))
+        resumed, S = [], {}
+        self.tick(S, 1000, resumed=resumed)
+        self.assertEqual(resumed, [])
+        self.assertIn("a start is in flight (spawn by dev", S["_noresume"]["dev_1"])
+        hz.start_clear(self.ctx, "dev_1")
+        self.tick(S, 1001, resumed=resumed)
+        self.assertEqual([s for s, _ in resumed], ["s-old"])
+        st = hz.start_standing(self.ctx, "dev_1")                # the resume is a start too
+        self.assertEqual((st["how"], st["by"], st["sid"]), ("resume", "the ringer", "s-old"))
+
+    def test_nothing_is_resumed_beside_a_session_only_the_roster_knows(self):
+        self.own("dev_1", "s-old")
+        hz.ring_inbox(self.ctx.state, "dev_1", "dev", "go")
+        resumed = []
+        self.tick({}, 1000, resumed=resumed,
+                  roster=[{"sessionId": "s-new", "cwd": "/w/dev_1", "name": "p-dev_1", "pid": 1}])
+        self.assertEqual(resumed, [])
+        self.assertIsNone(hz.start_standing(self.ctx, "dev_1"))
+
+    def test_a_resume_that_fails_leaves_no_start_standing(self):
+        self.own("dev_1", "s-old")
+        hz.ring_inbox(self.ctx.state, "dev_1", "dev", "go")
+        self.tick({}, 1000, ok=False, resumed=[])
+        self.assertIsNone(hz.start_standing(self.ctx, "dev_1"))
+
+    def test_two_sessions_in_one_worktree_ring_the_lead_and_rank_0_once(self):
+        self.own("dev_1", "s-a")
+        self.rows = [{"sessionId": sid, "status": "busy", "cwd": "/w/dev_1", "name": "p-dev_1",
+                      "pid": pid} for sid, pid in (("s-a", 11), ("s-b", 12))]
+        S = {}
+        self.tick(S, 1000)
+        self.tick(S, 1001)
+        for n in ("dev", "main"):
+            (m,) = hz.MAIL().unread(self.ctx.state, n)
+            self.assertIn("TWO live sessions are in dev_1's worktree", m["text"])
+            self.assertIn("p-dev_1 [s-a] pid 11 holds the node", m["text"])
+            self.assertIn("harness stop dev_1 --surplus", m["text"])
+            self.assertNotIn("--keep", m["text"])
+        self.assertEqual(hz.MAIL().unread(self.ctx.state, "dev_1"), [])
+        # A new ringer does not say it again, and neither holding it reads differently.
+        self.tick({}, 1002)
+        self.assertEqual(len(hz.MAIL().unread(self.ctx.state, "dev")), 1)
+        self.own("dev_1", "s-gone")
+        self.rows[1]["sessionId"] = "s-c"
+        self.tick(S, 1003)
+        (m,) = [m for m in hz.MAIL().unread(self.ctx.state, "dev") if "neither" in m["text"]]
+        self.assertIn("neither holds the node", m["text"])
+        self.assertIn("--surplus --keep <id>", m["text"])
+
+    def limits(self, S, now, cause, start=None, recycled=None):
+        with mock.patch.object(hz, "stop_cause", side_effect=lambda sid: cause if sid == "s-1" else None), \
+             mock.patch.object(hz, "next_start", return_value=start or {"skip": None, "line": "t"}), \
+             mock.patch.object(hz, "limit_recycle",
+                               side_effect=lambda ctx, n: (recycled.append(n), "recycled 1")[1]), \
+             mock.patch("sys.stdout", io.StringIO()) as out:
+            return hz.ringer_limits(self.ctx, S, now), out.getvalue()
+
+    def test_a_usage_limit_is_waited_out_by_the_ringer_then_the_node_is_started_once(self):
+        # Log 122 again: the Stop hook that scheduled the restart never runs at
+        # a limit stop, so nothing ever restarted.
+        self.own("dev_1", "s-1")
+        hz.ring_inbox(self.ctx.state, "dev_1", "dev", "go")
+        now, S, rec = 10_000, {}, []
+        cause = {"cause": "limit", "until": now + 600, "text": "resets soon"}
+        for _ in range(2):
+            waiting, _o = self.limits(S, now, cause, recycled=rec)
+        self.assertTrue(waiting)                               # the ringer stays up for it
+        self.assertEqual(rec, [])
+        (m,) = hz.MAIL().unread(self.ctx.state, "main")        # rank 0 hears once
+        self.assertIn("usage limit: dev_1 stopped until", m["text"])
+        self.assertIn("the ringer restarts it then", m["text"])
+        resumed = []
+        self.tick(S, now + 1, resumed=resumed)                 # mail does not resume it into the limit
+        self.assertEqual(resumed, [])
+        self.assertIn("usage limit", S["_noresume"]["dev_1"])
+        waiting, _o = self.limits(S, now + 600 + 130, cause, recycled=rec)
+        self.assertEqual((waiting, rec), (False, ["dev_1"]))
+        self.limits(S, now + 600 + 200, cause, recycled=rec)   # not again inside the retry gap
+        self.assertEqual(rec, ["dev_1"])
+        self.limits(S, now + 600 + 130 + hz.LIMIT_RETRY + 1, cause, recycled=rec)
+        self.assertEqual(rec, ["dev_1", "dev_1"])
+        self.limits(S, now + 2000, None, recycled=rec)         # going again: the record goes
+        self.assertFalse(self.ctx.state_file("limits", "dev_1", ".json").exists())
+
+    def test_a_limit_that_reset_long_ago_or_a_node_with_nothing_to_open_is_left(self):
+        self.own("dev_1", "s-1")
+        now, rec = 100_000, []
+        late = {"cause": "limit", "until": now - 7200, "text": "x"}
+        _w, out = self.limits({}, now, late, recycled=rec)
+        self.assertEqual(rec, [])
+        self.assertIn("not restarted", out)
+        self.assertEqual(hz.MAIL().unread(self.ctx.state, "main"), [])   # no promise about the past
+        self.assertEqual(hz._read_json(self.ctx.state_file("limits", "dev_1", ".json"))["left"], "late")
+        self.ctx.state_file("limits", "dev_1", ".json").unlink()
+        due = {"cause": "limit", "until": now - 200, "text": "x"}
+        _w, out = self.limits({}, now, due, start={"skip": "every queued task waits", "line": ""},
+                              recycled=rec)
+        self.assertEqual(rec, [])
+        self.assertIn("not restarted: every queued task waits", out)
+        # An empty queue is worth a session only for a lead whose lanes hold work.
+        self.ctx.state_file("limits", "dev_1", ".json").unlink()
+        empty = {"skip": None, "line": "nothing queued", "empty": True}
+        with mock.patch.object(hz, "open_marks", return_value={}):
+            S = {}
+            _w, out = self.limits(S, now, due, start=empty, recycled=rec)
+        self.assertEqual(rec, [])
+        self.assertIn("not restarted: nothing is queued for it", out)
+        self.assertNotIn("dev_1", S["_limited"])              # so mail resumes it, as ever
+
+    def test_rank_0_and_a_halted_tree_are_never_restarted_for_a_limit(self):
+        self.own("main", "s-1")
+        rec = []
+        self.limits({}, 5000, {"cause": "limit", "until": 4000, "text": "x"}, recycled=rec)
+        self.assertEqual(rec, [])
+        self.own("dev_1", "s-1")
+        hp = hz.halt_path(self.ctx)
+        hp.parent.mkdir(parents=True, exist_ok=True)
+        hp.write_text(json.dumps({"at": "2026-10-09T23:20:00+1100", "why": "x"}))
+        self.limits({}, 4200, {"cause": "limit", "until": 4000, "text": "x"}, recycled=rec)
+        self.assertEqual(rec, [])
 
     def test_ring_takes_a_priority_and_says_what_happens(self):
         self.ctx.me = "dev"
@@ -5585,7 +6118,7 @@ class Log152(unittest.TestCase):
                  hz, load_index=lambda *a, **k: idx, agents_json=lambda *a: [],
                  read_roster=lambda p: None, grants_for=lambda c, n: [],
                  launch_cmd=lambda *a: ["true"], assignment_for=lambda c, n: ("m", "e"),
-                 launch_bg=lambda cmd, cwd: (started.append(cwd), (True, ""))[1],
+                 launch_bg=lambda cmd, cwd, env=None: (started.append(cwd), (True, ""))[1],
                  catch_up=lambda *a, **k: ("current", {}), print_delta=lambda *a, **k: None), \
              mock.patch("sys.argv", ["harness", "spawn", node]), \
              redirect_stdout(out), mock.patch("sys.stderr", out):
@@ -5786,7 +6319,7 @@ class CatchUp(unittest.TestCase):
         now = hz.behind_now(self.ctx, self.idx, "dev")
         self.assertEqual((now["n"], now["kind"]), (1, "conflict"))
 
-    def test_a_merge_git_refuses_is_recorded_in_its_words_and_tried_once(self):
+    def test_a_merge_git_refuses_is_recorded_in_its_words_and_tried_again(self):
         self.commit("main", "new.txt", "main's\n")
         (self.wt["dev"] / "new.txt").write_text("an untracked file in the way\n")
         tip = self.git("dev", "rev-parse", "HEAD")
@@ -5795,12 +6328,23 @@ class CatchUp(unittest.TestCase):
         self.assertIn("git refused the merge:", info["why"])
         self.assertIn("new.txt", info["why"])
         self.assertEqual(self.git("dev", "rev-parse", "HEAD"), tip)
+        # Most refusals pass (dev: "fatal: stash failed", three times), so it is
+        # tried again each pass, then every ten minutes; only a conflict waits
+        # for a branch to move.
         skip = {}
         with mock.patch.object(hz, "catch_up", wraps=hz.catch_up) as cu:
+            for _ in range(hz.REFUSED_TRIES + 3):
+                res = hz.catchup_pass(self.ctx, idx=self.idx, rows=[], skip=skip, only={"dev"})
+            self.assertEqual(cu.call_count, hz.REFUSED_TRIES)
+            self.assertEqual((res[0][1], res[0][2]["kind"]), ("blocked", "refused"))
+            skip["dev"]["at"] -= hz.REFUSED_EVERY + 1
             hz.catchup_pass(self.ctx, idx=self.idx, rows=[], skip=skip, only={"dev"})
+            self.assertEqual(cu.call_count, hz.REFUSED_TRIES + 1)
+            (self.wt["dev"] / "new.txt").unlink()            # the reason passes: it merges
+            skip["dev"]["at"] -= hz.REFUSED_EVERY + 1
             res = hz.catchup_pass(self.ctx, idx=self.idx, rows=[], skip=skip, only={"dev"})
-        self.assertEqual(cu.call_count, 1)                 # not written into again and again
-        self.assertEqual((res[0][1], res[0][2]["kind"]), ("blocked", "refused"))
+        self.assertEqual(res[0][1], "caught")
+        self.assertNotIn("dev", skip)
 
     def test_a_presented_node_keeps_its_record_and_review(self):
         tip = self.commit("dev_1", "work")
@@ -6155,9 +6699,38 @@ class CatchUp(unittest.TestCase):
             read_roster=lambda p: None, startable=lambda ctx, n: [{"task": "t"}],
             grants_for=lambda ctx, n: [], launch_cmd=lambda *a: ["true"],
             assignment_for=lambda ctx, n: ("m", "e"),
-            launch_bg=lambda cmd, cwd: (started.append((cwd, self.has("dev", sha))), (True, ""))[1])
+            launch_bg=lambda cmd, cwd, env=None: (
+                started.append((cwd, self.has("dev", sha))), (True, ""))[1])
         self.assertIn("dev caught up: 1 commit(s) from main", out)
         self.assertEqual(started, [(str(self.wt["dev"]), True)])           # merged BEFORE it starts
+
+    def test_a_re_mark_keeps_the_task_s_comments(self):
+        # Log 159: the command a restarted session is offered rebuilt the record
+        # from nothing: 34 comments became 8, and 10 became 0.
+        (self.ctx.dir / "briefs").mkdir()
+        (self.ctx.dir / "marks").mkdir()
+        (self.ctx.dir / "briefs" / "t.json").write_text(json.dumps({"task": "t", "node": "dev_1"}))
+        mf = self.ctx.dir / "marks" / "t.json"
+        mf.write_text(json.dumps({
+            "_node": "dev_1", "_session": "dead-session", "_at": "2026-10-12T09:00:00+1100",
+            "_band": "S", "_band_source": "member", "_band_brief": "M", "_delegated": ["t.up-dev"],
+            "_comments": [{"at": "x", "by": "dev", "text": "the handover"},
+                          {"at": "y", "by": "main", "text": "a ruling"}]}))
+        opened = dict(unreported=lambda *a: [], claim_conflict=lambda ctx, n: (None, "unclaimed"),
+                      read_spend_or_none=lambda sid: (None, "no transcript"),
+                      assignment_for=lambda ctx, n: ("m", "e"))
+        code, out = self.run_as("dev_1", "mark", "t", **opened)
+        self.assertNotEqual(code, 0)
+        self.assertIn("the task's comments are kept", out)
+        code, out = self.run_as("dev_1", "mark", "t", "--force", **opened)
+        self.assertEqual(code, 0, out)
+        self.assertIn("kept 2 comment(s) from the earlier mark", out)
+        rec = json.loads(mf.read_text())
+        self.assertEqual([c["text"] for c in rec["_comments"]], ["the handover", "a ruling"])
+        self.assertEqual(rec["_delegated"], ["t.up-dev"])
+        self.assertEqual((rec["_band"], rec["_band_source"], rec["_band_brief"]), ("S", "member", "M"))
+        self.assertEqual(rec["_remarked_from"]["session"], "dead-session")
+        self.assertEqual(rec["_session"], "s" * 36)
 
     def test_a_task_starts_on_the_lead_s_current_tree(self):
         (self.ctx.dir / "briefs").mkdir()

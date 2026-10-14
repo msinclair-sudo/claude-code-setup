@@ -219,7 +219,9 @@ Recycle a child once its work has landed and after sign-off (`--close` does it f
 
 `--escalate` is available, not the default; prefer raising the node's starting effort in `tree.json`. A second failure is a finding. Don't `claude rm` a session yourself; ended sessions come off the list with `harness sweep --sessions`. Removing a node is `harness trim`, rank 0 only; ask for it as a `T5` request naming the node and the commit proving you hold its work.
 
-`orphan` in orientation means a child's session ended holding its task: `harness recycle <child>` resumes it (`--dry-run` shows the same). A requirement you send a child by message dies with its session; put it on the task too (`harness note <task> --add -`).
+`orphan` in orientation means a child's session died mid-turn holding its task: `harness recycle <child>` resumes it (`--dry-run` shows the same; if it refuses for commits you have not taken, they are committed and safe, so add `--force`). A task you parked with `harness brief <task> --wait` is not nagged about.
+
+`status` has three words for a child with no process. `asleep`: its turn ended and it sleeps; ring it (`harness ring <child> -`) and it resumes, so never spawn it. Orientation mentions a child once when it has slept an hour holding an open task. `limited`: at a usage limit; the ringer restarts it when the limit resets. `DEAD`: recycle it. `spawn` and `recycle` skip a child with `a start is in flight`: wait for it to claim. If you are rung that two sessions are in a child's worktree, run `harness stop <child> --surplus`. A requirement you send a child by message dies with its session; put it on the task too (`harness note <task> --add -`).
 
 You are on the same rule. If being recycled would lose something, write it into a brief, fact or finding now. When rank 0 sweeps a finished unit, its briefs, marks and notes leave the board for the archive (`harness archive`); cite a `tmp/` path in a fact or finding if it must survive.
 

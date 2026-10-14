@@ -140,6 +140,7 @@ harness spend <task-id>
 
 `--done` records the work, releases the node and tells you what comes next. It does not close the task: `--close` refuses you by rank, and the task is closed by whoever issued it, which is your lead even when you are a lead yourself, never the operator.
 
+- **Present with `--note`.** `--done` rings your lead at once, and your lead reads `harness note <task>` with the ring: an account written a moment later arrives after it was read as empty.
 - **Then tell your lead.** `--done` prints the message and the name to send it to. Send it before you stop; your lead may have no turn in which to notice. If your lead is not running, it says so and there is nothing to send.
 - **coupled** next task: `--done` says so; read it and open it in this session.
 - otherwise you are done. Stop. Do not wait or poll for sign-off, and do not open anything else; your lead recycles the node.
@@ -155,6 +156,10 @@ You never commit a document. Submit the change as data, a JSON list of `{file, o
 ## Late instructions, and being recycled (`R13`)
 
 An instruction that arrives after the state it assumed has changed (undo a recycle, revive a context): say what the state is and stop. Do not reconstruct.
+
+If your prompt opens with `SECOND SESSION`, another live session holds your node and you were started beside it. Every write is refused. Do nothing and end your turn; your lead has been told.
+
+Taking over a task a dead session left open is `harness mark <task> --force`: the session and spend baseline start again from you, and the task's comments are kept.
 
 Your session ends after your work lands. Nothing survives except commits, your report, and the ledger. Do not plan across tasks; anything that matters beyond this commit goes to your lead or into the commit message before you present. If the Stop hook says a reset of your node is pending, write whatever you hold only in context into the records (`harness note`, `brief`, `--after`), then end your turn; you are replaced at the next quiet one.
 

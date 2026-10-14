@@ -928,13 +928,13 @@ border-bottom:1px dotted var(--none)}
 .hk{display:flex;gap:46px;align-items:flex-start;margin-top:30px}
 .hs{display:flex;flex-direction:column;align-items:flex-start;gap:14px;padding-left:26px}
 /* Every line is drawn on one overlay: the tree's own connectors, waits riding
-   beside them, and the roads from the tests and the intermediary. */
+   over them, and the roads from the tests and the intermediary. */
 .waits{position:absolute;left:0;top:0;pointer-events:none;overflow:visible}
 .waits path{fill:none;stroke:var(--wait);stroke-width:2}
-.waits path.conn{stroke:var(--line2);stroke-width:1}
+.waits path.conn{stroke:color-mix(in srgb,var(--line2) 65%,var(--dim));stroke-width:1}
 .waits circle{stroke:none}
 .waits circle.test{fill:var(--busy)}.waits circle.msg{fill:var(--wait)}
-.waits path.held{stroke:var(--held);stroke-dasharray:6 4}
+.waits path.held{stroke:var(--held)}
 .waits path.msg{stroke:var(--wait);stroke-width:1.6;stroke-dasharray:2 4;stroke-linecap:round}
 .oos{color:var(--warn);font-weight:700;letter-spacing:.06em;margin:4px 0}
 .achain{margin:4px 0 8px;font-size:11px}.achain summary{cursor:pointer;color:var(--dim)}
@@ -2948,13 +2948,13 @@ window.addEventListener('hashchange', () => {
 // 2026-10-14). The cards keep their size, so nothing here assumes a grid:
 //   connectors  a spine down a lead's left for its stacked workers, a bus to
 //               the top of each child that has children of its own;
-//   waits       beside those connectors, from the waiting card to its lead;
+//   waits       over those connectors, from the waiting card to its lead;
 //   roads       one line leaves the tests card and one the intermediary's, runs
 //               under the tree, and climbs the gap right of each column it
 //               serves, with a tap into each card. A gap between two columns
 //               has no card in it from there to the bottom, so no road crosses
 //               a card, however many jobs run.
-const SPINE = 12, RIDE = 5, TAP = {test: 16, msg: 28}, TRACK = {test: -6, msg: 6};
+const SPINE = 12, TAP = {test: 16, msg: 28}, TRACK = {test: -6, msg: 6};
 const headOf = hb => hb && hb.firstElementChild;
 function treeParent(c) {
   // -> {p: the lead's card, hb: its block, stacked} or null at a root.
@@ -2993,15 +2993,16 @@ function drawWaits() {
       inner.forEach(c => { d += 'M' + sx + ' ' + bus + 'H' + (c.l + 20) + 'V' + c.t; });
       ds.push(['conn', d]);
     });
-    // A wait or hold, beside the connectors between the two cards: -> points,
+    // A wait or hold, drawn over the branch between the two cards (owner,
+    // 2026-10-14: on the branch, solid, not beside it): -> points,
     // or null when the two are not a lead and its child, or two siblings.
     const climb = c => {
       const up = treeParent(c);
       if (!up) return null;
-      const a = R(c), p = R(up.p), x = p.l + SPINE + RIDE;
-      if (up.stacked) return {p: up.p, pts: [[a.l, a.t + 18 + RIDE], [x, a.t + 18 + RIDE], [x, p.b]]};
-      const bus = R(up.hb.querySelector(':scope > .hk')).t - 15 + RIDE;
-      return {p: up.p, pts: [[a.l + 20 + RIDE, a.t], [a.l + 20 + RIDE, bus], [x, bus], [x, p.b]]};
+      const a = R(c), p = R(up.p), x = p.l + SPINE;
+      if (up.stacked) return {p: up.p, pts: [[a.l, a.t + 18], [x, a.t + 18], [x, p.b]]};
+      const bus = R(up.hb.querySelector(':scope > .hk')).t - 15;
+      return {p: up.p, pts: [[a.l + 20, a.t], [a.l + 20, bus], [x, bus], [x, p.b]]};
     };
     const line = pts => 'M' + pts.map(q => q[0] + ' ' + q[1]).join('L');
     const rides = (c, lead) => {

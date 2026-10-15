@@ -190,7 +190,11 @@ def tests_queue(pdir, repo):
                     "who": [r.get("node") for r in j.get("requested_by") or []],
                     "arm": j.get("arm"), "done": j.get("done_arms"), "total": j.get("total"),
                     "running_arms": [dict(r, mem=CLI.fmt_mem(r["mem"]) if r.get("mem") else None,
-                                          cap=CLI.fmt_mem(r["cap"]) if r.get("cap") else None)
+                                          cap=CLI.fmt_mem(r["cap"]) if r.get("cap") else None,
+                                          # The bar: memory in use of its cap.
+                                          frac=(min(1.0, r["mem"] / r["cap"])
+                                                if r.get("mem") and r.get("cap") else None),
+                                          age=CLI.wait_age(r.get("started")))
                                      for r in j.get("running_arms") or []],
                     "arms": j.get("arms"), "queue": j.get("queue") or "normal",
                     "eta": CLI.testq_wait_estimate(c, j),
@@ -962,7 +966,27 @@ border-bottom:1px dotted var(--none)}
 .untr{color:var(--warn)}
 .halt{border:1px solid var(--warn);background:var(--warnbg);color:var(--warn);border-radius:8px;
 padding:8px 12px;margin:6px 0 10px;font-weight:600}
-.waits path.test{stroke:var(--busy);stroke-width:1.6;stroke-dasharray:2 4;stroke-linecap:round}
+/* A running job's line is solid; a queued job's is the same colour, faded. */
+.waits path.test{stroke:var(--busy);stroke-width:2}
+.waits path.testq{stroke:var(--busy);stroke-width:1.5;opacity:.32}
+.waits circle.testq{fill:var(--busy);opacity:.32}
+/* The tests card: how many run and wait, then each running test. */
+.tstat{display:flex;gap:18px;margin:5px 0 4px}
+.tn{display:flex;align-items:baseline;gap:5px;color:var(--dim);font-size:11px}
+.tn b{font-size:22px;font-weight:600;line-height:1;color:var(--none)}
+.tn.on b{color:var(--busy)}.tn.wq b{color:var(--ink)}
+.tpulse{width:7px;height:7px;border-radius:50%;background:var(--busy);align-self:center;
+animation:sti-pulse 1.4s ease-in-out infinite}
+.tjob{border-left:2px solid var(--busy);padding-left:8px;margin-top:7px}
+.tjob>.ln:first-child{margin-top:0}
+.tarm{display:grid;grid-template-columns:1fr auto auto;gap:0 8px;font-size:11px;
+margin-top:4px;color:var(--ink);align-items:baseline}
+.tarm .an{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tarm .am,.tarm .at{color:var(--dim);font-variant-numeric:tabular-nums}
+.tarm .tb{grid-column:1/-1;height:3px;background:var(--line);border-radius:2px;
+overflow:hidden;margin-top:2px}
+.tarm .tb i{display:block;height:100%;background:var(--busy)}
+.tarm .tb i.hot{background:var(--warn)}
 .tq{margin-top:4px;border-top:1px solid var(--line);padding-top:3px}
 .tqh{color:var(--dim);font-size:10px;letter-spacing:.05em;text-transform:uppercase}
 .tqn{display:inline-block;min-width:14px;color:var(--dim)}
@@ -1966,29 +1990,44 @@ function testCard(p) {
     ? (j.arms ? esc(j.arms.join(', ')) + ' of ' : 'check ') + '<code>' + esc(j.sha) + '</code>'
     : '<code>' + esc(j.command) + '</code>';
   const tag = j => j.queue === 'priority' ? '<b class="prio">priority</b> ' : '';
+  // Whoever asked is marked, so drawWaits runs a line to that node: solid
+  // from a running job (.tto), faded from a queued one (.tqo).
   const who = (j, mark) => j.who.map(n => mark
-    ? '<span class="tto" data-on="' + esc(n) + '"><b>' + esc(n) + '</b></span>'
+    ? '<span class="' + mark + '" data-on="' + esc(n) + '"><b>' + esc(n) + '</b></span>'
     : esc(n)).join(', ');
-  // Tests from several jobs run at once (the memory ledger, 2026-10-09): a
-  // line for the ledger, then one per running job.
-  const headOf = run => '<div class="ln">running: ' + tag(run) + who(run, true) + ' &middot; ' + what(run) +
-      // Arms side by side (2026-10-09): how many, each with its memory and cap.
-      (run.running_arms && (run.running_arms.length > 1 || run.running_arms.some(r => r.cap))
-        ? ' &middot; ' + run.running_arms.length + ' running, ' + (run.done || 0) + '/' +
-          run.total + ' done <span class="q">' + run.running_arms.map(r => esc(r.arm) +
-            (r.mem ? ' ' + esc(r.mem) : '') + (r.cap ? '/' + esc(r.cap) : '')).join(', ') + '</span>'
-        : run.total ? ' &middot; arm ' + ((run.done || 0) + 1) + '/' + run.total +
-        (run.arm ? ' <span class="q">' + esc(run.arm) + '</span>' : '') : '') +
-      ' &middot; ' + esc(run.since || '') +
+  // How many tests run now, and how many jobs wait, at a glance (owner,
+  // 2026-10-16: it was hard to see). A job runs its arms side by side.
+  const arms = j => (j.running_arms || []).length
+    ? j.running_arms : [{arm: j.arm || (j.kind === 'check' ? 'check' : 'command')}];
+  const nrun = runs.reduce((n, j) => n + arms(j).length, 0);
+  const stat = '<div class="tstat"><span class="tn' + (nrun ? ' on' : '') + '">' +
+    (nrun ? '<i class="tpulse"></i>' : '') + '<b>' + nrun + '</b>' +
+    (nrun === 1 ? 'test' : 'tests') + ' running</span><span class="tn' + (q.length ? ' wq' : '') +
+    '"><b>' + q.length + '</b>queued</span></div>';
+  // One block per running job: who asked and what, then a row per test with
+  // its memory against its cap and how long it has run.
+  const armRow = r => {
+    const pc = r.frac != null ? Math.round(r.frac * 100) : null;
+    return '<div class="tarm"><span class="an">' + esc(r.arm || '?') + '</span>' +
+      '<span class="am">' + (r.mem ? esc(r.mem) + (r.cap ? '/' + esc(r.cap) : '') : '') + '</span>' +
+      '<span class="at">' + esc(r.age || '') + '</span>' +
+      (pc != null ? '<div class="tb" title="memory ' + pc + '% of its cap"><i' +
+        (pc >= 85 ? ' class="hot"' : '') + ' style="width:' + pc + '%"></i></div>' : '') + '</div>';
+  };
+  const headOf = run => '<div class="tjob"><div class="ln">' + tag(run) + who(run, 'tto') +
+      ' &middot; ' + what(run) + ' &middot; ' + esc(run.since || '') +
       (run.over ? ' &middot; <b class="over">over its estimate by ' + dur(run.over) + '</b>'
-       : run.eta != null ? ' &middot; done in ~' + dur(run.eta) : '') + '</div>';
+       : run.eta != null ? ' &middot; done in ~' + dur(run.eta) : '') + '</div>' +
+      arms(run).map(armRow).join('') +
+      (run.total ? '<div class="ln q">' + (run.done || 0) + ' of ' + run.total + ' done</div>' : '') +
+      '</div>';
   // Tests not under the system's memory cap: said here, always, whatever runs.
   const caps = t.caps ? '<div class="ln"><b class="' + (t.caps.how === 'watch' ? 'capw' : 'over') +
     '" title="' + esc(t.caps.line) + '">' + (t.caps.how === 'watch'
       ? 'caps: the harness&rsquo;s own watch' : 'MEMORY CAPS OFF') + '</b></div>' : '';
-  const head = caps + (runs.length
+  const head = stat + caps + (runs.length
     ? (t.ledger ? '<div class="ln q">' + t.ledger + '</div>' : '') + runs.map(headOf).join('')
-    : '<div class="ln q">nothing running</div>');
+    : '');
   // `harness slot` commands: holding the slot or waiting for it, before the
   // queue (log 104: three of the owner's writes showed nowhere).
   const slots = (t.slots || []).map(x => '<div class="ln' + (x.state === 'holding' ? '' : ' q') +
@@ -1998,10 +2037,10 @@ function testCard(p) {
   const list = q.length
     ? '<div class="tq"><div class="tqh">queue &middot; ' + q.length + '</div>' +
       q.map((j, i) => '<div class="ln"><span class="tqn">' + (i + 1) + '</span>' + tag(j) +
-        who(j, false) + ' &middot; ' + what(j) + ' <span class="q">&middot; waiting ' +
+        who(j, 'tqo') + ' &middot; ' + what(j) + ' <span class="q">&middot; waiting ' +
         esc(j.since || '') + (j.eta != null ? ', done in ~' + dur(j.eta) : '') +
         '</span></div>').join('') + '</div>'
-    : '<div class="ln q">queue empty</div>';
+    : '';
   const last = t.last ? '<div class="ln q">last: ' + esc(t.last.id) + ' ' +
     esc(t.last.state) + (t.last.at ? ' at ' + esc(t.last.at) : '') + '</div>' : '';
   return '<div class="card interm doc ' + (run || (t.slots || []).length ? 'busy' : '') +
@@ -2990,7 +3029,11 @@ window.addEventListener('hashchange', () => {
 //               serves, with a tap into each card. A gap between two columns
 //               has no card in it from there to the bottom, so no road crosses
 //               a card, however many jobs run.
-const SPINE = 12, TAP = {test: 16, msg: 28}, TRACK = {test: -6, msg: 6};
+// Where a road meets a card (TAP, down from its top), how far left of the
+// card's block its riser runs (TRACK), and how far out of its source card it
+// turns down (OUT).
+const SPINE = 12, TAP = {test: 14, testq: 22, msg: 30},
+      TRACK = {test: 8, testq: 14, msg: 20}, OUT = {test: 12, testq: 5, msg: 8};
 const headOf = hb => hb && hb.firstElementChild;
 function treeParent(c) {
   // -> {p: the lead's card, hb: its block, stacked} or null at a root.
@@ -3060,43 +3103,44 @@ function drawWaits() {
       if (ride) { ds.push([cls, ride]); return; }
       const a = c.getBoundingClientRect(), b = lead.getBoundingClientRect();
       // Anything further apart than a lead and its child, or two siblings:
-      // three shapes, by where the waited-on card sits.
-      //   above (its lead):   waiting card's top -> bar -> lead's bottom
-      //   below (its child):  waiting card's bottom -> bar over the child -> child's top
-      //   same row (sibling): both tops, bar above the higher of the two
-      const x1 = a.left + a.width / 2 - box.left, x2 = b.left + b.width / 2 - box.left;
-      let y1, y2, ym;
-      if (b.bottom <= a.top + 4) {
-        y1 = a.top - box.top; y2 = b.bottom - box.top; ym = y1 - 22;
-      } else if (b.top >= a.bottom - 4) {
-        y1 = a.bottom - box.top; y2 = b.top - box.top; ym = y2 - 22;
-      } else {
-        y1 = a.top - box.top; y2 = b.top - box.top; ym = Math.min(y1, y2) - 22;
-      }
-      ds.push([cls, 'M' + x1 + ' ' + y1 + 'V' + ym + 'H' + x2 + 'V' + y2]);
+      // out of the waiting card's left, up its block's left gutter to a bar
+      // in the gap above the lower of the two rows, across, and down the
+      // other block's gutter into the waited-on card's left (owner,
+      // 2026-10-16: every line enters a card on its left).
+      const y1 = a.top - box.top, y2 = b.top - box.top;
+      const ym = b.bottom <= a.top + 4 ? y1 - 22 : b.top >= a.bottom - 4 ? y2 - 22
+        : Math.min(y1, y2) - 22;
+      const ga = Math.round(R(c.closest('.hb') || c).l - 8),
+            gb = Math.round(R(lead.closest('.hb') || lead).l - 8);
+      const ax = a.left - box.left, bx = b.left - box.left;
+      ds.push([cls, 'M' + ax + ' ' + (y1 + 18) + 'H' + ga + 'V' + ym + 'H' + gb +
+                    'V' + (y2 + 18) + 'H' + bx]);
     });
-    // The roads. The test queue runs a node's job (.tto), or the intermediary
-    // messaged a node and waits on its reply (.ito): one line out of each
-    // source card, from its first marked row.
+    // The roads. The test queue runs a node's job (.tto) or holds one queued
+    // (.tqo, faded), or the intermediary messaged a node and waits on its
+    // reply (.ito): one line out of each source card, from its first marked row.
     const bottom = tr ? Math.max(...[...tr.querySelectorAll('.card')].map(c => R(c).b)) : 0;
-    ['test', 'msg'].forEach((kind, i) => {
-      const marks = [...t.querySelectorAll(kind === 'test' ? '.tto' : '.ito')];
+    const MARK = {test: '.tto', testq: '.tqo', msg: '.ito'};
+    ['test', 'testq', 'msg'].forEach((kind, i) => {
+      const marks = [...t.querySelectorAll(MARK[kind])];
       if (!marks.length || !tr) return;
       const src = marks[0].closest('.card');
       const slug = (src.dataset.live || '').split(':')[1];
       const s = R(src), mr = R(marks[0]);
-      const road = bottom + 18 + i * 12, out = s.r + 8 + i * 10;
+      // The queued road leaves the card nearest it: its rows sit below the
+      // running ones, so it never crosses the running road's drop.
+      const road = bottom + 18 + i * 12, out = s.r + OUT[kind];
       const risers = {};
       new Set(marks.map(m => m.dataset.on)).forEach(on => {
         const n = t.querySelector('.tree [data-live="card:' + slug + ':' + on + '"]');
         if (!n) return;
-        // The column it stands in: its stack, or its own block when it heads one.
-        const col = n.parentElement;
-        const gx = Math.round(R(col).r + 23 + TRACK[kind]);
+        // Every line enters a card on its left (owner, 2026-10-16): up the
+        // gutter left of the block the card stands in, then across.
+        const gx = Math.round(R(n.closest('.hb')).l - TRACK[kind]);
         const b = R(n), y = b.t + TAP[kind];
         (risers[gx] = risers[gx] || []).push(y);
-        ds.push([kind, 'M' + gx + ' ' + y + 'H' + b.r]);
-        dots.push([kind, b.r, y]);
+        ds.push([kind, 'M' + gx + ' ' + y + 'H' + b.l]);
+        dots.push([kind, b.l, y]);
       });
       const xs = Object.keys(risers).map(Number);
       if (!xs.length) return;

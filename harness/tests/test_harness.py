@@ -25,6 +25,12 @@ _SRC = Path(__file__).resolve().parents[1] / "bin" / "harness"
 _ld = importlib.machinery.SourceFileLoader("harness_cli", str(_SRC))
 hz = importlib.util.module_from_spec(importlib.util.spec_from_loader("harness_cli", _ld))
 _ld.exec_module(hz)
+# No test writes the operator's own state (2026-10-16: wait events from tests
+# were landing in ~/.claude/harness/inbox.jsonl). A test that needs a home of
+# its own still patches this.
+import atexit as _ax, tempfile as _tf
+hz.HOME_STATE = Path(_tf.mkdtemp(prefix="harness-test-home-"))
+_ax.register(shutil.rmtree, hz.HOME_STATE, True)
 
 HOST = socket.gethostname()
 OLD = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() - 3 * 3600))
@@ -7889,6 +7895,83 @@ class WaitEdges(unittest.TestCase):
             hz.cmd_waits(argparse.Namespace(node=None, owes=False, stale=False, json=False))
         self.assertIn("dev_2 (t2)", out.getvalue())
         self.assertIn("gated by  dev_1 (t1)", out.getvalue())
+
+
+class StaleWaits(unittest.TestCase):
+    """Owner, 2026-10-16: nothing cleared a wait when its cause went away; 12 of
+    biblion2's 13 open blocks waited on work signed off days before."""
+
+    E = lambda self, h: time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() - h * 3600))
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev"})
+        self.ctx.repo = self.ctx.dir
+        self.addCleanup(shutil.rmtree, self.ctx.dir, True)
+        p = mock.patch.object(hz, "unanswered", return_value=None)
+        p.start(); self.addCleanup(p.stop)
+
+    def w(self, rel, obj):
+        f = self.ctx.dir / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(obj))
+
+    def stale(self, via):
+        return {e["id"]: e["stale"] for e in hz.waits(self.ctx, infer="off") if e["via"] == via}
+
+    def test_a_wait_is_stale_once_answered_or_presented_past(self):
+        self.w("waiting/dev_1/dev.json", {"node": "dev_1", "on": "dev", "asked": "?", "since": self.E(3)})
+        self.assertEqual(list(self.stale("waiting").values()), [None])
+        self.w("marks/t.json", {"_node": "dev_1", "_task": "t", "_at": self.E(4),
+                                "_presented_at": self.E(1)})
+        self.assertEqual(list(self.stale("waiting").values()), ["dev_1 has presented since"])
+
+    def test_a_block_is_stale_once_its_work_is_signed_off(self):
+        self.w("marks/t.json", {"_node": "dev_1", "_task": "t", "_at": self.E(5)})
+        self.w("blocks/dev_1-a.json", {"node": "dev_1", "need": "a", "raised_at": self.E(3)})
+        self.w("blocks/dev_1-b.json", {"node": "dev_1", "need": "b", "raised_at": self.E(3),
+                                       "for": "u"})
+        self.w("briefs/u.json", {"task": "u", "node": "dev_1"})
+        self.assertEqual(self.stale("block"), {"block:dev_1-a": None, "block:dev_1-b": None})
+        self.w("marks/t.json", {"_node": "dev_1", "_task": "t", "_at": self.E(5),
+                                "_closed_at": self.E(1)})
+        self.w("marks/u.json", {"_node": "dev_1", "_task": "u", "_closed_at": self.E(1)})
+        s = self.stale("block")
+        self.assertEqual(s["block:dev_1-a"], "t, open when it was raised, is signed off")
+        self.assertEqual(s["block:dev_1-b"], "u, which it blocked, is closed")
+
+    def test_settle_ends_what_is_stale_on_the_record_and_leaves_answers_to_rank_0(self):
+        self.w("marks/t.json", {"_node": "dev_1", "_task": "t", "_at": self.E(5),
+                                "_presented_at": self.E(2), "_closed_at": self.E(1)})
+        self.w("waiting/dev_1/dev.json", {"node": "dev_1", "on": "dev", "asked": "?", "since": self.E(3)})
+        self.w("blocks/dev_1-a.json", {"node": "dev_1", "need": "a", "raised_at": self.E(3)})
+        self.w("blocks/dev_1-b.json", {"node": "dev_1", "need": "b", "raised_at": self.E(3),
+                                       "comments": [{"by": "operator", "text": "yes"}]})
+        self.w("behind/dev.hold.json", {"by": "dev (session x)", "why": "one tree"})
+        self.w("briefs/p.json", {"task": "p", "node": "dev_1",
+                                 "defer": {"why": "after t", "by_node": "dev",
+                                           "until": time.time() + 3600, "lift": {"task": "t"}}})
+        dry = hz.settle_waits(self.ctx, dry=True)
+        self.assertEqual(sorted(d for _, d, _ in dry), ["cleared", "lifted", "resolved", "unfrozen"])
+        self.assertTrue((self.ctx.dir / "waiting/dev_1/dev.json").exists())    # dry: nothing written
+        done = hz.settle_waits(self.ctx, by="harness (ringer)")
+        self.assertEqual(sorted(d for _, d, _ in done), ["cleared", "lifted", "resolved", "unfrozen"])
+        self.assertFalse((self.ctx.dir / "waiting/dev_1/dev.json").exists())
+        a = hz._read_json(self.ctx.dir / "blocks/dev_1-a.json")
+        self.assertEqual((a["resolved_by"], a["stale_reason"]),
+                         ("harness (ringer)", "t, open when it was raised, is signed off"))
+        self.assertNotIn("resolved_at", hz._read_json(self.ctx.dir / "blocks/dev_1-b.json"))
+        self.assertIsNone(hz.catchup_hold(self.ctx, "dev"))
+        self.assertFalse(hz.parked(hz.load_brief(self.ctx, "p")[1]))
+        led = [json.loads(x) for x in hz.waits_ledger_path(self.ctx).read_text().splitlines()]
+        self.assertEqual(len(led), 4)
+        self.assertEqual(hz.settle_waits(self.ctx), [])                         # once only
+
+    def test_status_marks_a_stale_block_and_drops_the_blanket_grant(self):
+        self.w("marks/t.json", {"_node": "dev_1", "_task": "t", "_at": self.E(5), "_closed_at": self.E(1)})
+        self.w("blocks/dev_1-a.json", {"node": "dev_1", "need": "a ring", "raised_at": self.E(3)})
+        e = [e for e in hz.waits(self.ctx, infer="off") if e["via"] == "block"][0]
+        self.assertEqual(e["on"], "owner")
+        self.assertIn("signed off", e["stale"])
 
 
 WAITS = hz.waits

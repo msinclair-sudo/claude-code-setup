@@ -2063,14 +2063,26 @@ def cmd_status(a):
             print(f"    {n:<12} {behind_words(_behind[n], short=True)}")
         print("  A session started there is caught up first; or now: harness catchup --all")
 
-    blocked = open_blocks(ctx)
+    try:
+        blocked = [e for e in waits(ctx, infer="off") if e["via"] == "block"]
+    except Exception:
+        blocked = []
     if blocked:
-        print(f"\n  {len(blocked)} blocked:")
-        for r in blocked.values():
-            need = (r.get("need") or "").strip().splitlines()[0][:90] if r.get("need") else ""
-            print(f"    {r.get('node', '?'):<12} {need}")
-        print("  Nobody is unblocked by a session with looser settings:")
-        print("  `harness grant <node> <path>` from rank 0 or a shell, then recycle it.")
+        live = [e for e in blocked if not e["stale"]]
+        print(f"\n  {len(blocked)} blocked" + (f", {len(blocked) - len(live)} of them stale"
+                                              if len(live) < len(blocked) else "") + ":")
+        for e in sorted(blocked, key=lambda e: bool(e["stale"])):
+            age = wait_age(e["since"]) if e.get("since") else ""
+            print(f"    {e['frm'] or '?':<12} on {e['on']:<8} {age:>6}  {clip(e['what'], 80)}"
+                  + (f"\n    {'':<12} STALE: {e['stale']} — the ringer ends it" if e["stale"]
+                     and not e.get("answered") else
+                     f"\n    {'':<12} STALE: {e['stale']} — answered, so rank 0 closes it"
+                     if e["stale"] else ""))
+        if any(len(e["what"]) and ("/" in e["what"] or "permission" in e["what"].lower())
+               for e in live):
+            print("  A path or permission: `harness grant <node> <path>` from rank 0 or a "
+                  "shell, then recycle it.")
+        print("  Every wait, and what its other side runs: harness waits")
 
     stale_m, unattr_m = orphan_marks(ctx)
     if stale_m or unattr_m:
@@ -3665,6 +3677,21 @@ def open_marks(ctx):
         out[p.stem] = rec
     if READ_MEMO is not None:
         READ_MEMO["marks"] = out
+    return out
+
+
+def all_marks(ctx):
+    """Every task record in marks/, open or signed off: {stem: record}."""
+    if READ_MEMO is not None and "all_marks" in READ_MEMO:
+        return READ_MEMO["all_marks"]
+    d = ctx.state / "marks"
+    out = {}
+    for p in (sorted(d.glob("*.json")) if d.is_dir() else []):
+        rec = _read_json(p)
+        if rec:
+            out[p.stem] = rec
+    if READ_MEMO is not None:
+        READ_MEMO["all_marks"] = out
     return out
 
 
@@ -14324,6 +14351,7 @@ def wait_age(since):
 # Derived from the records that already exist; nothing here writes.
 
 INFER_CACHE_MAX = 180     # seconds the ringer's inferred-waits cache serves a hook
+SETTLE_EVERY = 300        # seconds between the ringer's passes ending stale waits
 
 
 def _edge(kind, via, frm, on, **kw):
@@ -14385,6 +14413,50 @@ def write_inferred_waits(ctx, rows):
     _save(f, {"at": time.time(), "waits": inferred_waits(ctx, rows)})
 
 
+DONE_STATES = ("closed", "superseded", "abandoned")
+
+
+def wait_stale(ctx, r, marks):
+    """Why a recorded wait no longer stands, or None: answered, its task done,
+    or the waiter has presented since it asked (it moved on)."""
+    if r.get("answered"):
+        return f"answered: {clip(r['answered'], 60)}"
+    if r.get("on_task") and task_state(ctx, r["on_task"]) in DONE_STATES:
+        return f"{r['on_task']} is {task_state(ctx, r['on_task'])}"
+    since = _epoch(r.get("since"))
+    if since and any(m.get("_node") == r.get("node") and (_epoch(m.get("_presented_at")) or 0) > since
+                     for m in marks.values()):
+        return f"{r.get('node')} has presented since"
+    return None
+
+
+def block_stale(ctx, r, marks):
+    """Why an open block no longer stands, or None (owner, 2026-10-16: 12 of 13
+    open blocks waited on work signed off half a day to five days before). The
+    task it is for, else the task its node had open when it was raised, is
+    signed off; or, failing both, its node has signed off work since."""
+    t = r.get("for")
+    if t:
+        st = task_state(ctx, t)
+        return f"{t}, which it blocked, is {st}" if st in DONE_STATES else None
+    raised = _epoch(r.get("raised_at")) or 0
+    mine = [m for m in marks.values() if m.get("_node") == r.get("node")]
+    during = [m for m in mine if (_epoch(m.get("_at")) or 0) <= raised
+              and (not m.get("_closed_at") or (_epoch(m.get("_closed_at")) or 0) >= raised)]
+    if during:
+        m = max(during, key=lambda m: _epoch(m.get("_at")) or 0)
+        return (f"{m.get('_task')}, open when it was raised, is signed off"
+                if m.get("_closed_at") else None)
+    later = [m for m in mine if (_epoch(m.get("_closed_at")) or 0) > raised]
+    return f"{r.get('node')} has signed off {len(later)} task(s) since" if later else None
+
+
+def block_answered(r):
+    """Did anyone but the raiser answer it? An answered block goes to rank 0's
+    --decided queue, never closed by the harness."""
+    return any(c.get("by") not in (r.get("node"), None) for c in r.get("comments") or [])
+
+
 def waits(ctx, rows=None, infer="cache", stops=None, about=None):
     """Every wait in the tree as edges (see above). `infer`: "live" reads the
     roster and transcripts (status, `harness waits`, the viewer), "cache" the
@@ -14400,9 +14472,11 @@ def waits(ctx, rows=None, infer="cache", stops=None, about=None):
         out.append(_edge(*a, **k))
 
     # answer: a recorded wait, a finished turn, a question rung up, a block, an ask
+    every = all_marks(ctx)
     for _, r in open_waits_all(ctx):
         n, on = r["node"], r["on"] or "owner"
         add("answer", "waiting", n, on, on_task=r.get("on_task"), what=r.get("asked") or "",
+            stale=wait_stale(ctx, r, every),
             since=r.get("since"), still=r.get("still_moving") or "", answered=r.get("answered"),
             act=f"answer it; {n} then runs harness waiting --clear --on {on}",
             id=f"asked:{n}" + (f":{on}" if on != (nodes.get(n) or {}).get("parent") else ""))
@@ -14430,6 +14504,7 @@ def waits(ctx, rows=None, infer="cache", stops=None, about=None):
                     act=f"harness ring {k} \"<answer>\"")
     for stem, r in open_blocks(ctx).items():
         add("answer", "block", r.get("node"), r.get("on") or "owner", on_task=r.get("for"),
+            stale=block_stale(ctx, r, every), answered=block_answered(r),
             what=r.get("need") or stem, since=r.get("raised_at"), still=r.get("still_moving"),
             act=f"answer it, then rank 0: harness blocked {shlex.quote(r.get('need') or stem)} "
                 f"--resolve", id=f"block:{stem}")
@@ -14528,8 +14603,12 @@ def waits(ctx, rows=None, infer="cache", stops=None, about=None):
     for n in nodes:
         h = catchup_hold(ctx, n)
         if h:
+            # A freeze is for work in hand: with nothing open on the node, it
+            # only stops the node being caught up.
             add("lock", "freeze", n, str(h.get("by") or "?").split()[0], stops="merge",
-                since=h.get("at"), what=h.get("why") or "")
+                since=h.get("at"), what=h.get("why") or "",
+                stale=None if any(m.get("_node") == n for m in marks.values())
+                else f"nothing is open on {n}")
 
     # pause: on purpose, with nobody to answer
     h = halted(ctx)
@@ -14540,6 +14619,64 @@ def waits(ctx, rows=None, infer="cache", stops=None, about=None):
         if s:
             add("pause", "stop", n, None, by=s.get("by"), since=s.get("at"), what=s.get("why") or "")
     return out
+
+
+def waits_ledger_path(ctx):
+    return ctx.state / "waits" / "ledger.jsonl"
+
+
+def settle_waits(ctx, by="harness", dry=False):
+    """End every wait whose cause has gone, on the record (owner, 2026-10-16:
+    nothing cleared a wait when what it waited on happened). A stale recorded
+    wait is removed; a stale block nobody answered is resolved, with the
+    reason; an answered one is left for rank 0's --decided queue; a deferral
+    whose event came, or whose time ran out, returns to the pool. One ledger
+    line and one inbox event each. -> [(edge id, what was done, why)]."""
+    done = []
+    for e in waits(ctx, infer="off"):
+        if not e["stale"]:
+            continue
+        if e["via"] == "waiting":
+            if not dry:
+                clear_wait(ctx, e["frm"], e["on"])
+            done.append((e["id"], "cleared", e["stale"]))
+        elif e["via"] == "block" and not e.get("answered"):
+            stem = e["id"].split(":", 1)[1]
+            f = ctx.state / "blocks" / f"{stem}.json"
+            r = _read_json(f)
+            if r and not r.get("resolved_at"):
+                if not dry:
+                    r.update(resolved_at=_now(), resolved_by=by, stale_reason=e["stale"])
+                    f.write_text(json.dumps(r, indent=2) + "\n")
+                done.append((e["id"], "resolved", e["stale"]))
+        elif e["via"] == "freeze":
+            if not dry:
+                hold_release(ctx, e["frm"])
+            done.append((e["id"], "unfrozen", e["stale"]))
+    if dry:
+        for key in ("defer", "wait"):
+            for b in all_briefs(ctx).values():
+                w = b.get(key)
+                why = w and (deferral_lifted(ctx, w) or (
+                    "its time ran out" if time.time() >= (w.get("until") or 0) else None))
+                if why:
+                    done.append((f"defer:{b.get('task')}", "lifted", why))
+    else:
+        for b in expire_waits(ctx):
+            h = (b.get("wait_history") or [{}])[-1]
+            done.append((f"defer:{b.get('task')}", "lifted",
+                         h.get("lifted") or "its time ran out"))
+    if done and not dry:
+        f = waits_ledger_path(ctx)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        with open(f, "a") as fh:
+            for i, what, why in done:
+                fh.write(json.dumps({"at": _now(), "id": i, "did": what, "why": why,
+                                     "by": by}) + "\n")
+        for i, what, why in done:
+            append_inbox({"event": "wait-lifted", "id": i, "did": what, "why": why,
+                          "repo": str(ctx.repo), "at": _now()})
+    return done
 
 
 def owes(ctx, node, edges):
@@ -14602,6 +14739,19 @@ def cmd_waits(a):
     """`harness waits [--node N] [--stale] [--owes] [--json]`: every wait in the
     tree, one line each, then the chains and any cycle."""
     ctx = Ctx(); ctx.require_enrolled()
+    if a.__dict__.get("settle"):
+        # The ringer does this every few minutes; this is the same pass, now.
+        me = ctx.node()[0] if os.environ.get("CLAUDE_CODE_SESSION_ID") else None
+        if me and ctx.rank(me) != 0 and not a.dry_run:
+            die(REFUSED, "settling ends other nodes' waits: rank 0's, or the owner's from a "
+                         "shell. See what it would do: harness waits --settle --dry-run")
+        done = settle_waits(ctx, by=f"{me or 'operator'} (harness waits --settle)",
+                            dry=a.dry_run)
+        for i, what, why in done:
+            print(f"  {'would be ' if a.dry_run else ''}{what:<9} {i}  — {why}")
+        print(f"{len(done)} wait(s) {'would be ' if a.dry_run else ''}settled"
+              if done else "nothing stale to settle")
+        return
     edges = waits(ctx, infer="live")
     if a.owes:
         who = a.node or ctx.node()[0]
@@ -20719,6 +20869,15 @@ def cmd_ringer(a):
                     sweep_counts(ctx, fresh=True)
                 except Exception as e:
                     print(f"{_now()} sweep count failed: {type(e).__name__}: {e}")
+            # Waits whose cause has gone end here, on the record (owner,
+            # 2026-10-16: nothing cleared them, and 12 of 13 blocks were stale).
+            if time.time() - S.get("_settle_at", 0) >= SETTLE_EVERY:
+                S["_settle_at"] = time.time()
+                try:
+                    for i, what, why in settle_waits(ctx, by="harness (ringer)"):
+                        print(f"{_now()} {what} {i}: {why}")
+                except Exception as e:
+                    print(f"{_now()} waits not settled: {type(e).__name__}: {e}")
             # Finished turns that wait on someone, read once here for every
             # hook (owner, 2026-10-16: one wait relation, `waits`).
             if time.time() - S.get("_infer_at", 0) >= NUDGE_EVERY:
@@ -20939,7 +21098,7 @@ DESIGN_READ = {
     "ask": {"target", "show", "list", "all", "json", "project"},
     "fact": {"name", "list"}, "finding": {"name", "list", "all"},
     "idle": {"all", "roster"},
-    "waits": {"node", "owes", "stale", "json"},
+    "waits": {"node", "owes", "stale", "json", "dry_run"},
 }
 DESIGN_REFUSAL = ("a design session reads the tree and writes design documents; briefs, "
                   "marks, rings and the charter are rank 0's")
@@ -21520,6 +21679,11 @@ def main():
     ws.add_argument("--stale", action="store_true",
                     help="only waits whose cause has gone")
     ws.add_argument("--json", action="store_true", help="the edges as JSON")
+    ws.add_argument("--settle", action="store_true",
+                    help="end the stale ones now, on the record (the ringer does it every "
+                         "5 minutes); rank 0 or the owner")
+    ws.add_argument("--dry-run", dest="dry_run", action="store_true",
+                    help="with --settle: say what it would end, and end nothing")
     bk = add("blocked", cmd_blocked)
     bk.add_argument("need", nargs="?", help="what you need — a path, a command, a permission")
     bk.add_argument("--why", help="what it is for, in one line")

@@ -7288,7 +7288,8 @@ class Reviewer(unittest.TestCase):
     its own branch; the lead reads the review and signs off."""
 
     # CatchUp's real repositories and helpers, without re-running its tests.
-    git, commit, has, run_as = CatchUp.git, CatchUp.commit, CatchUp.has, CatchUp.run_as
+    git, commit, has, run_as, up = (CatchUp.git, CatchUp.commit, CatchUp.has, CatchUp.run_as,
+                                    CatchUp.up)
 
     def setUp(self):
         CatchUp.setUp(self)
@@ -7460,6 +7461,91 @@ class Reviewer(unittest.TestCase):
         code, out = self.run_as("dev", "integrate", "dev_1", read_roster=lambda p: None)
         self.assertEqual(code, 0, out)
         self.assertTrue(self.has("dev", sha))
+
+    def test_a_catch_up_of_the_presented_worker_does_not_latch_the_review(self):
+        # 2026-10-15, four times on dev_dag: the ringer caught a presented
+        # worker up, the presentation followed the merge, and the review brief
+        # refused to open because it named the commit before it.
+        sha, _ = self.present_t()
+        lead = self.commit("dev", "lead.py")
+        self.assertEqual(self.up("dev_1")[0], "caught")
+        self.assertNotEqual(hz.open_marks(self.ctx)["t"]["_presented_sha"], sha)
+        code, out = self.mark("dev_r", "t.review")
+        self.assertEqual(code, 0, out)
+        self.assertIn("took dev_1's 't' at " + sha[:8], out)
+        self.assertTrue(self.has("dev_r", sha) and self.has("dev_r", lead))
+        # A worker commit after the presentation is still a new presentation.
+        self.git("dev_r", "reset", "-q", "--hard", "dev")
+        f =self.ctx.dir / "marks" / "t.json"
+        rec = hz._read_json(f)
+        rec["_presented_sha"] = self.commit("dev_1", "more.py")
+        f.write_text(json.dumps(rec))
+        (self.ctx.dir / "marks" / "t.review.json").unlink()
+        code, out = self.mark("dev_r", "t.review")
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("presented 't' again", out)
+
+    def test_a_rewritten_review_brief_keeps_the_revision_before(self):
+        hz.write_review_brief(self.ctx, "t", "dev_1", "a" * 40, "dev", "dev_r", {})
+        hz.write_review_brief(self.ctx, "t", "dev_1", "b" * 40, "dev", "dev_r", {})
+        b = hz.load_brief(self.ctx, "t.review")[1]
+        self.assertEqual(b["revision"], 2)
+        self.assertEqual([h["revision"] for h in b["history"]], [1])
+        self.assertIn("a" * 12, b["history"][0]["text"])
+
+    def test_integrate_takes_the_presentation_at_the_tip_past_a_parked_one(self):
+        # 2026-10-15, dev and dev_migrate: the oldest presented record was the
+        # one compared with the tip, so a parked one refused every newer one.
+        self.ctx.tree["nodes"]["dev_r"].pop("role")
+        old, _ = self.present_t()
+        (self.ctx.dir / "briefs" / "u.json").write_text(json.dumps({"task": "u", "node": "dev_1"}))
+        self.assertEqual(self.mark("dev_1", "u")[0], 0)
+        new = self.commit("dev_1", "u.py")
+        code, out = self.mark("dev_1", "u", "--done", "--note", "u")
+        self.assertEqual(code, 0, out)
+        hz.write_review(self.ctx, "dev_1", "dev_1", new, "dev")
+        code, out = self.run_as("dev", "integrate", "dev_1", read_roster=lambda p: None)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("has committed since it presented", out)
+        self.assertTrue(self.has("dev", new) and self.has("dev", old))
+
+    def test_a_carrier_closes_without_its_lane_being_merged(self):
+        # 2026-10-15, dev: the carrier's ring said never merge dev_tests for it,
+        # and its --close refused until it was merged.
+        self.ctx.tree["nodes"]["dev_r"].pop("role")
+        (self.ctx.dir / "briefs" / "t.up-dev_1.json").write_text(json.dumps(
+            {"task": "t.up-dev_1", "node": "dev_1", "carries": "t"}))
+        self.assertEqual(self.mark("dev_1", "t.up-dev_1")[0], 0)
+        sha = self.commit("dev_1", "c.py")
+        self.assertEqual(self.mark("dev_1", "t.up-dev_1", "--done", "--note", "c")[0], 0)
+        code, out = self.mark("dev", "t.up-dev_1", "--close", "--no-recycle")
+        self.assertEqual(code, 0, out)
+        self.assertFalse(self.has("dev", sha))
+        self.assertIsNone(hz.closed_unmerged(self.ctx, "dev_1", "dev_1"))
+
+    def test_an_fyi_alone_is_no_reason_to_start_a_gone_node(self):
+        # 2026-10-15, dev_dag: an --fyi to a node with nothing queued made every
+        # Stop hook demand a spawn of it.
+        with mock.patch.object(hz, "node_running", lambda ctx, k: (None, None)):
+            hz.ring_inbox(self.ctx.dir, "dev_r", "dev", "moot now", "fyi")
+            self.assertEqual(hz.released_gone(self.ctx, "dev_r")[1], 0)
+            hz.ring_inbox(self.ctx.dir, "dev_r", "dev", "a question?", "high")
+            self.assertEqual(hz.released_gone(self.ctx, "dev_r")[1], 1)
+
+    def test_close_after_adds_and_none_replaces(self):
+        # Log 175: a sixth condition dropped the five before it.
+        (self.ctx.dir / "briefs" / "u.json").write_text(json.dumps({"task": "u", "node": "dev_1"}))
+        (self.ctx.dir / "briefs" / "v.json").write_text(json.dumps({"task": "v", "node": "dev_1"}))
+        (self.ctx.dir / "briefs" / "seg.json").write_text(json.dumps({"task": "seg", "node": "dev"}))
+        self.run_as("main", "brief", "seg", "--close-after", "t", "--close-after", "u")
+        code, out = self.run_as("main", "brief", "seg", "--close-after", "v")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(hz.load_brief(self.ctx, "seg")[1]["close_after"], ["t", "u", "v"])
+        self.assertIn("closes only after t, u, v", out)
+        code, out = self.run_as("main", "brief", "seg", "--close-after", "none",
+                                "--close-after", "v")
+        self.assertEqual(hz.load_brief(self.ctx, "seg")[1]["close_after"], ["v"])
+        self.assertIn("replaced: t, u, v", out)
 
     def test_a_brief_s_uses_are_named_with_the_write(self):
         code, out = self.run_as("dev", "brief", "t", "--uses", "ponytail-review")

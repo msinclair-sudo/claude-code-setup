@@ -3737,9 +3737,15 @@ def released_gone(ctx, k):
         return None
     unread, ages = 0, []
     try:
-        unread = MAIL().pending(ctx.state, k)
+        MAIL().pending(ctx.state, k)
         for f in (Path(ctx.state) / "doorbell" / k / "inbox").glob("*.json"):
-            at = _epoch((_read_json(f) or {}).get("at"))
+            m = _read_json(f) or {}
+            # An FYI asks nothing of its receiver, so it is no reason to start
+            # one: it waits for the node's next session.
+            if m.get("priority") == "fyi":
+                continue
+            unread += 1
+            at = _epoch(m.get("at"))
             if at:
                 ages.append(time.time() - at)
     except Exception:
@@ -5545,8 +5551,12 @@ def cmd_mark(a):
         # hundreds of dev's commits behind dev), so only a code lead is held to it.
         _code = all((ctx.tree["nodes"].get(x) or {}).get("kind", "code") != "doc"
                     for x in (node, owner))
+        # A carrier carries a sign-off up, not code: its ring says never merge
+        # the lane for it (log 124), so its close does not ask for that merge.
+        _carrier = bool((load_brief(ctx, a.task)[1] or {}).get("carries"))
         _ahead = (unintegrated(ctx, rec["_presented_sha"])
-                  if rec.get("_presented_sha") and owner != node and _code else 0)
+                  if rec.get("_presented_sha") and owner != node and _code
+                  and not _carrier else 0)
         if _ahead and not a.force:
             die(REFUSED, f"'{a.task}' presented {rec['_presented_sha'][:8]}, and "
                          f"{_ahead} commit(s) of it are not in {ctx.branch} yet.\n"
@@ -5718,7 +5728,12 @@ def cmd_mark(a):
                          f"{_ro.get('lead')} alone, so '{a.task}' opens once that is in. "
                          f"Tell {_ro.get('lead')}:\n           harness integrate {node}")
         _wr = _read_json(ctx.state_file("marks", _ro.get("task", ""), ".json")) or {}
-        if _wr.get("_presented_sha") and _wr["_presented_sha"] != _ro.get("sha"):
+        # A catch-up of the presented worker carries its presentation to the
+        # merge (carry_presented) and is no new presentation: what the worker
+        # committed is still the brief's commit, which is what is merged here.
+        _kept = _wr.get("_presented_sha") and _ro.get("sha") in catchup_chain(
+            ctx.repo, _wr["_presented_sha"], _lb, limit=60)
+        if _wr.get("_presented_sha") and _wr["_presented_sha"] != _ro.get("sha") and not _kept:
             die(REFUSED, f"{_ro.get('node')} presented '{_ro.get('task')}' again, at "
                          f"{_wr['_presented_sha'][:8]}, after this brief was written for "
                          f"{str(_ro.get('sha'))[:8]}.\n           Its next presentation "
@@ -9518,8 +9533,17 @@ def cmd_integrate(a):
         # Log 171: every refusal that needs nobody stopped comes first. Ending
         # the lane's session below and THEN refusing for want of a record
         # cancelled its queued check and took nothing.
-        stem = next((k for k, r in marks.items()
-                     if r.get("_node") == n and r.get("_presented_at")), None)
+        # The record that presents what is there now: the one at the tip, then
+        # one only catch-up merges stand after, then the newest. The oldest
+        # was taken, so a parked presentation refused every newer one.
+        tip = git("rev-parse", cb, cwd=ctx.repo)[1].strip()
+        _pres = sorted(((k, r) for k, r in marks.items()
+                        if r.get("_node") == n and r.get("_presented_at")),
+                       key=lambda kr: str(kr[1].get("_presented_at")), reverse=True)
+        _chain = catchup_chain(ctx.repo, tip, ctx.branch) if _pres else []
+        stem = next((k for k, r in _pres if r.get("_presented_sha") == tip),
+                    next((k for k, r in _pres if r.get("_presented_sha") in _chain),
+                         _pres[0][0] if _pres else None))
         if stem is None:
             early = closed_unmerged(ctx, n, cb)
             if early:
@@ -9543,8 +9567,6 @@ def cmd_integrate(a):
                   f"'{mrec['_review_task']}'. Once that is presented: harness integrate {_rv}")
             failed += 1; continue
 
-        rc, tip, _ = git("rev-parse", cb, cwd=ctx.repo)
-        tip = tip.strip()
         if mrec.get("_presented_sha") and mrec["_presented_sha"] != tip \
                 and mrec["_presented_sha"] in catchup_chain(ctx.repo, tip, ctx.branch):
             # Only catch-up merges stand between what it presented and its tip,
@@ -9753,6 +9775,8 @@ def closed_unmerged(ctx, n, cb):
         sha = rec.get("_presented_sha")
         if rec.get("_node") != n or not rec.get("_closed_at") or not sha \
                 or rec.get("_abandoned_at"):
+            continue
+        if (load_brief(ctx, rec.get("_task") or f.stem)[1] or {}).get("carries"):
             continue
         if unintegrated(ctx, sha):
             return rec
@@ -12498,7 +12522,9 @@ def write_review_brief(ctx, task, worker, sha, lead, reviewer, b):
            "written_by": f"harness (review of {task})", "written_at": now,
            "suggestions": (have or {}).get("suggestions", []),
            "comments": (have or {}).get("comments", []),
-           "history": ((have or {}).get("history") or [])[-4:],
+           "history": (((have or {}).get("history") or []) + (
+               [{k: have.get(k) for k in ("revision", "node", "text", "written_by", "written_at")}]
+               if have else []))[-5:],
            "uses": uses,
            "review_of": {"task": task, "node": worker, "sha": sha, "lead": lead}}
     if (b or {}).get("feature"):
@@ -13224,8 +13250,18 @@ def cmd_brief(a):
         parent = ctx.tree["nodes"].get(target, {}).get("parent")
         if sid and parent != me and ctx.rank(me) != 0:
             die(REFUSED, f"'{a.task}' is {target}'s; its close is set by '{parent}' or rank 0")
-        tasks = [] if [x.lower() for x in a.close_after] == ["none"] else list(a.close_after)
-        for y in tasks:
+        # Each call adds (log 175: a sixth condition dropped the five before it,
+        # silently). 'none' in the call clears first, so 'none' then the new
+        # set replaces the list.
+        _clear = any(x.lower() == "none" for x in a.close_after)
+        _new = [x for x in a.close_after if x.lower() != "none"]
+        _was = list(b.get("close_after") or []) if _clear else []
+        _old = [] if _clear else list(b.get("close_after") or [])
+        tasks = list(_old)
+        for y in _new:
+            if tkey(y) not in {tkey(t) for t in tasks}:
+                tasks.append(y)
+        for y in _new:
             if tkey(y) == tkey(a.task):
                 die(REFUSED, f"'{a.task}' cannot close after itself")
             if load_brief(ctx, y)[1] is None and not ctx.state_file("marks", y, ".json").exists():
@@ -13237,6 +13273,8 @@ def cmd_brief(a):
         f.write_text(json.dumps(b, indent=2) + "\n")
         print(f"'{a.task}' closes only after {', '.join(tasks)} — `mark --close` refuses "
               f"until then" if tasks else f"'{a.task}' has no close condition")
+        if _was and _was != tasks:
+            print(f"  replaced: {', '.join(_was)}")
         return
 
     if a.supersede is not None:
@@ -20834,7 +20872,8 @@ def main():
                          "'none' clears")
     br.add_argument("--close-after", action="append", metavar="TASK",
                     help="this segment may be closed only once TASK is signed off "
-                         "(obs 67); repeatable; '--close-after none' clears")
+                         "(obs 67); repeatable, and each call adds to the list; "
+                         "'none' clears it first, so 'none' then TASKs replaces it")
     br.add_argument("--supersede", metavar="WHY",
                     help="withdraw a brief you wrote — nothing will start it again")
     br.add_argument("--by", dest="superseded_for", metavar="TASK",

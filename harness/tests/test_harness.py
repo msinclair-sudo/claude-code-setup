@@ -2036,7 +2036,7 @@ class Log161(unittest.TestCase):
         line = hz.owed_line("orphan", "dev_1", "t", 600)
         self.assertIn("harness recycle dev_1", line)
         self.assertIn("add --force", line)
-        self.assertIn('harness brief t --wait "<condition>"', line)
+        self.assertIn('harness brief t --defer "<condition>"', line)
         self.assertIn("the ringer restarts it then", hz.owed_line("limit", "dev_1", "16:50", 0))
 
     def test_status_says_asleep_or_dead_and_shows_a_session_beside_a_stale_lock(self):
@@ -6180,8 +6180,9 @@ class LogEntries88to91(unittest.TestCase):
             hz.hold_tell(self.ctx, "dev", "t", "/data/subset.db")
         rung = list((self.ctx.dir / "doorbell" / "dev_1" / "inbox").glob("*.json"))
         self.assertIn("/data/subset.db", json.loads(rung[0].read_text())["text"])
-        w = json.loads(hz.waiting_path(self.ctx, "dev_1").read_text())
-        self.assertIn("placed a hold", w["answered"])
+        # The hold answers the wait, so the wait ends (2026-10-16), not just marked.
+        self.assertFalse(hz.waiting_path(self.ctx, "dev_1").exists())
+        self.assertEqual(hz.open_waits(self.ctx), {})
         with mock.patch.object(hz, "open_marks", return_value={"u": {"_node": "dev"}}), \
              redirect_stdout(io.StringIO()):
             hz.hold_tell(self.ctx, "dev", "u", "/x")              # its own task: nobody to ring
@@ -7186,19 +7187,23 @@ class CatchUp(unittest.TestCase):
             {"_node": "dev_1", "_task": "t", "_presented_at": OLD, "_presented_sha": tip}))
         (self.ctx.dir / "briefs" / "t.json").write_text(json.dumps(
             {"task": "t", "node": "dev_1", "text": "x", "written_by": "dev (session s)"}))
-        code, out = self.run_as("dev", "brief", "t", "--wait-for", "3h")
+        code, out = self.run_as("dev", "brief", "t", "--defer-for", "3h")
         self.assertEqual(code, hz.REFUSED)
-        self.assertIn("--wait-for goes with --wait", out)
-        code, out = self.run_as("dev", "brief", "t", "--wait", "x", "--wait-for", "9d")
+        self.assertIn("--defer-for goes with --defer", out)
+        code, out = self.run_as("dev", "brief", "t", "--defer", "x", "--defer-for", "9d")
         self.assertEqual(code, hz.REFUSED)
-        code, out = self.run_as("dev", "brief", "t", "--wait", "the owner runs the migration",
-                                "--wait-for", "3h")
+        # The old flag only points at the new one (renamed 2026-10-16, no alias).
+        code, out = self.run_as("dev", "brief", "t", "--wait", "x")
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("--wait is now --defer", out)
+        code, out = self.run_as("dev", "brief", "t", "--defer", "the owner runs the migration",
+                                "--defer-for", "3h")
         self.assertEqual(code, 0, out)
         self.assertIn("Nothing asks for its sign-off", out)
         self.assertIn("(3h", out)
         self.assertEqual([o for o in hz.lead_owes(self.ctx, "dev") if o[0] == "sign off"], [])
         code, out = self.run_as("dev", "whoami", "--no-check", read_roster=lambda p: None)
-        self.assertIn("parked   t's sign-off, until", out)
+        self.assertIn("deferred t's sign-off: the owner runs the migration, until", out)
         self.assertNotIn("sign off 1 presented", out)
 
     def test_a_hold_keeps_a_node_s_tree_still_until_it_presents(self):
@@ -7552,6 +7557,82 @@ class Reviewer(unittest.TestCase):
         code, out = self.run_as("dev", "integrate", "dev_1", read_roster=lambda p: None)
         self.assertEqual(code, 0, out)
         self.assertTrue(self.has("dev", sha))
+
+    # 2026-10-16: every wait names whom it is on (step 2 of the wait relation).
+    def test_a_node_waits_on_whom_it_names_and_on_more_than_one(self):
+        (self.ctx.dir / "waiting").mkdir(exist_ok=True)
+        hz.waiting_path(self.ctx, "dev_1").write_text(json.dumps(       # written before
+            {"node": "dev_1", "parent": "dev", "asked": "old", "since": "2026-10-01T00:00:00+1100"}))
+        self.assertEqual(hz.open_waits(self.ctx)["dev_1"]["on"], "dev")
+        code, out = self.run_as("dev_1", "waiting", "approve the download?", "--on", "owner",
+                                **self.op)
+        self.assertEqual(code, 0, out)
+        self.assertIn("dev_1 is waiting on owner", out)
+        self.assertIn("harness ask", out)
+        self.assertFalse(hz.waiting_path(self.ctx, "dev_1").exists())   # moved into its dir
+        self.assertEqual(sorted(r["on"] for _, r in hz.open_waits_all(self.ctx)), ["dev", "owner"])
+        self.assertEqual(sorted(e["on"] for e in hz.waits(self.ctx, infer="off")
+                                if e["via"] == "waiting"), ["dev", "owner"])
+        code, out = self.run_as("dev_1", "waiting", "--clear", "--on", "owner", **self.op)
+        self.assertEqual([r["on"] for _, r in hz.open_waits_all(self.ctx)], ["dev"])
+        code, out = self.run_as("main", "waiting", "the owner's ruling", "--on", "owner", **self.op)
+        self.assertEqual(code, 0, out)                                   # rank 0 may, on the owner
+        code, out = self.run_as("dev_1", "waiting", "x", "--on", "nobody", **self.op)
+        self.assertEqual(code, hz.REFUSED)
+
+    def test_presenting_ends_the_presenter_s_waits(self):
+        self.assertEqual(self.mark("dev_1", "t")[0], 0)
+        self.run_as("dev_1", "waiting", "which fixture?", **self.op)
+        self.assertIn("dev_1", hz.open_waits(self.ctx))
+        self.commit("dev_1", "work.py")
+        code, out = self.mark("dev_1", "t", "--done", "--note", "done")
+        self.assertEqual(code, 0, out)
+        self.assertIn("dev_1's recorded wait is cleared", out)
+        self.assertEqual(hz.open_waits(self.ctx), {})
+
+    def test_a_block_names_whom_and_what_for(self):
+        self.assertEqual(self.mark("dev_1", "t")[0], 0)
+        code, out = self.run_as("dev_1", "blocked", "write access to the data dir", "--why", "x",
+                                **self.op)
+        self.assertEqual(code, 0, out)
+        r = next(iter(hz.open_blocks(self.ctx).values()))
+        self.assertEqual((r["on"], r["for"]), ("owner", "t"))
+        code, out = self.run_as("dev_1", "blocked", "a ruling", "--on", "dev", **self.op)
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("a question for your lead is a wait", out)
+
+    def test_a_deferral_lifts_when_its_task_is_signed_off(self):
+        (self.ctx.dir / "briefs" / "u.json").write_text(json.dumps({"task": "u", "node": "dev_1"}))
+        code, out = self.run_as("dev", "brief", "t", "--defer", "after u",
+                                "--defer-until-task", "u", **self.op)
+        self.assertEqual(code, 0, out)
+        self.assertIn("until u is signed off (at most", out)
+        b = hz.load_brief(self.ctx, "t")[1]
+        self.assertEqual((b["defer"]["lift"], "wait" in b), ({"task": "u"}, False))
+        self.assertTrue(hz.parked(b))
+        self.assertEqual(hz.expire_waits(self.ctx), [])                 # u still open
+        e = next(e for e in hz.waits(self.ctx, infer="off") if e["via"] == "defer")
+        self.assertEqual((e["on"], e["on_task"]), ("dev_1", "u"))
+        (self.ctx.dir / "marks" / "u.json").write_text(json.dumps(
+            {"_node": "dev_1", "_task": "u", "_closed_at": hz._now()}))
+        back = hz.expire_waits(self.ctx)
+        self.assertEqual([b["task"] for b in back], ["t"])
+        b = hz.load_brief(self.ctx, "t")[1]
+        self.assertFalse(hz.parked(b))
+        self.assertEqual(b["returned"]["lifted"], "u is closed")
+        self.assertEqual(b["wait_history"][-1]["lifted"], "u is closed")
+
+    def test_a_held_path_is_not_taken_over_silently(self):
+        code, out = self.run_as("dev", "hold", "/data/db", "--why", "rebuild", **self.op)
+        self.assertEqual(code, 0, out)
+        code, out = self.run_as("dev", "hold", "/data/db", "--why", "another", **self.op)
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("already held by dev: rebuild", out)
+        code, out = self.run_as("dev", "hold", "/data/db", "--why", "another", "--replace",
+                                **self.op)
+        self.assertEqual(code, 0, out)
+        h = hz.live_holds(self.ctx)[0]
+        self.assertEqual((h["why"], h["replaced"]["why"]), ("another", "rebuild"))
 
     def test_reds_the_lead_fails_the_same_are_inherited_not_the_review_s(self):
         # dev_dag, 2026-10-15 19:1x: two reds from the owner's fixture step

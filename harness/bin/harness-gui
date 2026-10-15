@@ -543,7 +543,8 @@ def read_state():
                      "gone": r.get("superseded_why") or None,
                      "gone_for": r.get("superseded_for") or None,
                      # In the wait pool (log 109): its condition and when it returns.
-                     "wait": ({"why": r["wait"].get("why"), "until": r["wait"].get("until")}
+                     "wait": ({"why": CLI.deferral(r).get("why"),
+                               "until": CLI.deferral(r).get("until")}
                               if CLI.parked(r) else None),
                      "open_suggestions": sum(1 for x in (r.get("suggestions") or [])
                                              if not x.get("resolved_at"))})
@@ -597,15 +598,11 @@ def read_state():
             s["total"] = len(s["children"])
             s["ready"] = s["done"] == s["total"]
 
-        waits = {}
-        wd = pdir / "waiting"
-        for wf in (sorted(wd.glob("*.json")) if wd.is_dir() else []):
-            try:
-                r = json.loads(wf.read_text())
-            except Exception:
-                continue
-            if r.get("node") in tree:
-                waits[r["node"]] = r
+        # Each node's oldest recorded wait, both layouts (2026-10-16).
+        try:
+            waits = CLI.open_waits(cli_ctx(pdir, repo, tree))
+        except Exception:
+            waits = {}
         # The owner's channel. An ask is read whole, because the Owner page shows
         # its briefing, and only while open: an accepted ask lives on as a ruling
         # on its brief, and a rejected or returned one is nobody's move.

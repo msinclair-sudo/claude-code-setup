@@ -1099,7 +1099,7 @@ def reset_quiet(ctx, node):
     """No sign-off owed, no child waiting on an answer, nothing of its own unpresented."""
     if any(o[0] == "sign off" for o in lead_owes(ctx, node)):
         return False
-    if any(r.get("parent") == node for r in open_waits(ctx).values()):
+    if any(r["on"] == node for _, r in open_waits_all(ctx)):
         return False
     return not any(r.get("_node") == node and not r.get("_presented_at")
                    for r in open_marks(ctx).values())
@@ -1503,10 +1503,10 @@ def _whoami(a):
         # Parked by its lead (owner, 2026-10-15): one line, so it is not lost.
         for t, r in _pres:
             if parked_task(ctx, r, t):
-                _w = (load_brief(ctx, r.get("_task") or t)[1] or {}).get("wait") or {}
-                print(f"parked   {mark_label(r, t)}'s sign-off, until "
-                      f"{time.strftime('%m-%d %H:%M', time.localtime(_w.get('until') or 0))}: "
-                      f"{_w.get('why')}  (harness brief {mark_label(r, t)} --wait none ends it)")
+                _w = deferral(load_brief(ctx, r.get("_task") or t)[1]) or {}
+                print(f"deferred {mark_label(r, t)}'s sign-off: {_w.get('why')}, until "
+                      f"{time.strftime('%m-%d %H:%M', time.localtime(_w.get('until') or 0))}"
+                      f"  (harness brief {mark_label(r, t)} --defer none ends it)")
         if waiting:
             print(f"sign off {len(waiting)} presented task(s) waiting on you: "
                   f"{', '.join(waiting)}")
@@ -4012,10 +4012,10 @@ def owed_line(kind, child, task, age):
         "orphan": f"{child}'s session died {human_age(age)} ago holding '{task}' open"
                   f"  — harness recycle {child} (it resumes the task; if that refuses for "
                   f"commits its parent has not taken, they are committed and safe: add "
-                  f"--force). Not wanted yet? harness brief {task} --wait \"<condition>\"",
+                  f"--force). Not wanted yet? harness brief {task} --defer \"<condition>\"",
         "asleep": f"{child} has slept {human_age(age)} holding '{task}' open, and nothing is "
                   f"waking it  — if it should carry on: harness ring {child} -   "
-                  f"(waiting on purpose? harness brief {task} --wait \"<condition>\")",
+                  f"(stopped on purpose? harness brief {task} --defer \"<condition>\")",
         "stale": f"{child} has been {task} for {human_age(age)}"
                  + ("  — a conflict is yours to mediate: T7 if you issued both tasks, T8 if "
                     "they were authored below you" if "conflicts with" in str(task) else
@@ -4839,13 +4839,16 @@ def cmd_hook_stop(a):
             for f, b in back:
                 b.pop("returned", None)
                 f.write_text(json.dumps(b, indent=2) + nl)
+            def _why(b):
+                h = (b.get("wait_history") or [{}])[-1]
+                return f"{h.get('why')} — " + (f"lifted: {h['lifted']}" if h.get("lifted")
+                                               else f"its {human_age(WAIT_FOR)} ran out")
             stop_block(
-                f"Back from the wait pool after {human_age(WAIT_FOR)}, and in the normal "
-                f"pool again:{nl}"
-                + nl.join(f"  '{b.get('task')}' was waiting: {(b.get('wait_history') or [{}])[-1].get('why')}"
-                          for f, b in back[:6])
-                + f"{nl}Still waiting? Park it again: harness brief <task> --wait \"<condition>\". "
-                  f"Otherwise act on it as you would any task (approve, brief, start, or supersede).")
+                f"Back from deferral, in the normal pool again:{nl}"
+                + nl.join(f"  '{b.get('task')}' was deferred: {_why(b)}" for f, b in back[:6])
+                + f"{nl}Still waiting? Defer it again: harness brief <task> --defer \"<condition>\" "
+                  f"[--defer-until-task T]. Otherwise act on it as you would any task (approve, "
+                  f"brief, start, or supersede).")
             return
         # Downward first: what this node owes the rank below. It applies to rank
         # 0 as much as anyone — main is dev's lead — which is why every row is
@@ -5331,6 +5334,10 @@ def cmd_mark(a):
                 lock.unlink(); released = True
         except Exception:
             pass
+        # Presented is not waiting: whatever it asked was answered or is moot
+        # now (owner, 2026-10-16: a presented node read "waiting" for hours).
+        if not rec.get("_delegated") and clear_wait(ctx, node):
+            print(f"  {node}'s recorded wait is cleared: it has presented")
         parent = ctx.tree["nodes"].get(node, {}).get("parent")
         _ro = _db.get("review_of") or {}
         if _ro and parent:
@@ -11886,17 +11893,42 @@ def parked_task(ctx, r, t):
     return parked(load_brief(ctx, (r or {}).get("_task") or t)[1])
 
 
+def deferral(b):
+    """A brief's deferral (log 109's wait pool; "defer" since 2026-10-16, when
+    "wait" meant five things): the `defer` record, or `wait` as written before."""
+    return (b or {}).get("defer") or (b or {}).get("wait")
+
+
 def parked(b):
-    """In the wait pool (log 109): parked on a condition, for WAIT_FOR at most.
-    A parked task starts nowhere and nags nobody until it comes back."""
-    w = (b or {}).get("wait")
+    """Deferred (log 109): parked on a condition, for WAIT_FOR at most. A
+    deferred task starts nowhere and nags nobody until it comes back."""
+    w = deferral(b)
     return bool(w) and time.time() < (w.get("until") or 0)
 
 
+def deferral_lifted(ctx, w):
+    """Why a deferral's own condition has come true, or None: the task it
+    waits on signed off, the ask ruled, the time come (owner, 2026-10-16: 18
+    of 42 deferrals ran out on their timer, their conditions only in prose)."""
+    lift = (w or {}).get("lift") or {}
+    if lift.get("task"):
+        st = task_state(ctx, lift["task"])
+        if st in ("closed", "superseded", "abandoned"):
+            return f"{lift['task']} is {st}"
+    if lift.get("ask"):
+        r = _read_json(ctx.state / "asks" / f"{lift['ask']}.json")
+        if r is None or r.get("state") not in ASK_OPEN:
+            return f"{lift['ask']} was " + ((r or {}).get("state") or "settled")
+    if lift.get("at") and time.time() >= lift["at"]:
+        return f"its time came ({utc_label(lift['at'])})"
+    return None
+
+
 def expire_waits(ctx):
-    """Move every wait that has run out back to the normal pool (owner,
-    2026-10-08): it is not renewed by itself, so a wait can't fade into a
-    footnote. The brief keeps `returned` until the node that parked it is told."""
+    """Move every deferral that has run out, or whose condition has come true,
+    back to the normal pool (owner, 2026-10-08): it is not renewed by itself, so
+    it can't fade into a footnote. The brief keeps `returned` until the node
+    that deferred it is told."""
     out = []
     bd = ctx.state / "briefs"
     for f in (sorted(bd.glob("*.json")) if bd.is_dir() else []):
@@ -11904,12 +11936,18 @@ def expire_waits(ctx):
             b = json.loads(f.read_text())
         except Exception:
             continue
-        w = b.get("wait")
-        if not w or time.time() < (w.get("until") or 0):
+        key = "defer" if b.get("defer") else "wait"
+        w = b.get(key)
+        if not w:
             continue
-        b.setdefault("wait_history", []).append(dict(w, expired_at=_now()))
-        b["returned"] = {"why": w.get("why"), "by_node": w.get("by_node"), "at": _now()}
-        del b["wait"]
+        lifted = deferral_lifted(ctx, w)
+        if not lifted and time.time() < (w.get("until") or 0):
+            continue
+        b.setdefault("wait_history", []).append(
+            dict(w, **({"lifted_at": _now(), "lifted": lifted} if lifted else {"expired_at": _now()})))
+        b["returned"] = dict({"why": w.get("why"), "by_node": w.get("by_node"), "at": _now()},
+                             **({"lifted": lifted} if lifted else {}))
+        del b[key]
         f.write_text(json.dumps(b, indent=2) + "\n")
         out.append(b)
     return out
@@ -12848,9 +12886,16 @@ def cmd_brief(a):
             "--band goes in with --write. It is an estimate of the plan, so it moves "
             "when\n           the plan does and the revision counter has to see it. "
             f"Rewrite it:\n           harness brief {a.task} --write - --band {a.band.upper()}")
-    if a.__dict__.get("wait_for") and a.wait is None:
-        die(REFUSED, f"--wait-for goes with --wait, which says what it waits on:\n"
-                     f"           harness brief {a.task} --wait \"<condition>\" --wait-for {a.wait_for}")
+    # Renamed 2026-10-16 ("wait" meant five things); the old flags only point.
+    if a.__dict__.get("old_wait") is not None or a.__dict__.get("old_wait_for"):
+        die(REFUSED, f"--wait is now --defer (and --wait-for is --defer-for):\n"
+                     f"           harness brief {a.task} --defer \"<condition>\"")
+    _FLAG = {"defer_task": "--defer-until-task", "defer_ask": "--defer-until-ask",
+             "defer_until": "--defer-until", "defer_for": "--defer-for"}
+    _lifts = [f for x, f in _FLAG.items() if a.__dict__.get(x)]
+    if _lifts and a.__dict__.get("defer") is None:
+        die(REFUSED, f"{_lifts[0]} goes with --defer, which says what it waits on:\n"
+                     f"           harness brief {a.task} --defer \"<condition>\" {_lifts[0]} ...")
     if a.__dict__.get("uses") and not a.write:
         die(REFUSED, f"--uses goes in with --write, so the revision sees it:\n"
                      f"           harness brief {a.task} --write - --uses {','.join(a.uses)}")
@@ -13341,43 +13386,68 @@ def cmd_brief(a):
                 print(f"      {line}")
         return
 
-    if a.wait is not None and a.write is None:
+    if a.__dict__.get("defer") is not None and a.write is None:
         if b is None:
             die(REFUSED, f"no brief for '{a.task}'")
         target = b.get("node")
         parent = ctx.tree["nodes"].get(target, {}).get("parent")
         if sid and parent != me and ctx.rank(me) != 0:
-            die(REFUSED, f"'{a.task}' is {target}'s; it is parked by '{parent}' or rank 0")
-        if a.wait.strip().lower() == "none":
-            w = b.pop("wait", None)
+            die(REFUSED, f"'{a.task}' is {target}'s; it is deferred by '{parent}' or rank 0")
+        if a.defer.strip().lower() == "none":
+            w = b.pop("defer", None) or b.pop("wait", None)
             if w:
                 b.setdefault("wait_history", []).append(dict(w, released_at=_now(), released_by=who))
             f.write_text(json.dumps(b, indent=2) + "\n")
-            print(f"'{a.task}' is out of the wait pool" if w else f"'{a.task}' was not waiting")
+            print(f"'{a.task}' is no longer deferred" if w else f"'{a.task}' was not deferred")
             return
-        if not a.wait.strip():
-            die(REFUSED, 'say what it waits on: harness brief <task> --wait "until ..."')
-        span = WAIT_FOR
-        if a.__dict__.get("wait_for"):
-            span = parse_span(a.wait_for)
+        if not a.defer.strip():
+            die(REFUSED, 'say what it waits on: harness brief <task> --defer "until ..."')
+        # What lifts it, as an event rather than prose (owner, 2026-10-16).
+        lift = {}
+        if a.__dict__.get("defer_task"):
+            t = a.defer_task
+            if load_brief(ctx, t)[1] is None and not ctx.state_file("marks", t, ".json").exists():
+                die(REFUSED, f"--defer-until-task {t}: no brief or task by that name")
+            lift["task"] = t
+        if a.__dict__.get("defer_ask"):
+            if not (ctx.state / "asks" / f"{a.defer_ask}.json").exists():
+                die(REFUSED, f"--defer-until-ask {a.defer_ask}: no open ask by that id")
+            lift["ask"] = a.defer_ask
+        if a.__dict__.get("defer_until"):
+            at = parse_utc(a.defer_until)
+            if not at:
+                die(REFUSED, f"--defer-until {a.defer_until}: give a UTC time, as 00:05Z or "
+                             f"2026-10-17T09:00Z")
+            lift["at"] = at
+        # A condition that lifts it by itself may wait as long as WAIT_MAX; one in
+        # prose comes back after WAIT_FOR so it can't fade into a footnote.
+        span = WAIT_MAX if lift else WAIT_FOR
+        if a.__dict__.get("defer_for"):
+            span = parse_span(a.defer_for)
             if not span:
-                die(REFUSED, f"--wait-for {a.wait_for}: say how long, as 45m, 3h, 2d or 1h30m")
+                die(REFUSED, f"--defer-for {a.defer_for}: say how long, as 45m, 3h, 2d or 1h30m")
             if span > WAIT_MAX:
-                die(REFUSED, f"--wait-for {a.wait_for} is longer than {human_age(WAIT_MAX)}. A wait "
-                             f"that long is a decision about the task: supersede it, or park "
-                             f"it again when this one ends")
+                die(REFUSED, f"--defer-for {a.defer_for} is longer than {human_age(WAIT_MAX)}. A "
+                             f"deferral that long is a decision about the task: supersede it, "
+                             f"or defer it again when this one ends")
         until = time.time() + span
-        b["wait"] = {"why": a.wait.strip(), "by": who, "by_node": me, "at": _now(), "until": until}
+        b.pop("wait", None)
+        b["defer"] = dict({"why": a.defer.strip(), "by": who, "by_node": me, "at": _now(),
+                           "until": until}, **({"lift": lift} if lift else {}))
         b.pop("returned", None)
         f.write_text(json.dumps(b, indent=2) + "\n")
-        print(f"parked '{a.task}' in the wait pool: {a.wait.strip()}")
+        print(f"deferred '{a.task}': {a.defer.strip()}")
         _m = _read_json(ctx.state_file("marks", a.task, ".json")) or {}
         _owed = _m.get("_presented_at") and not _m.get("_closed_at")
+        _when = " or ".join(x for x in (
+            f"{lift['task']} is signed off" if lift.get("task") else "",
+            f"{lift['ask']} is ruled" if lift.get("ask") else "",
+            utc_label(lift["at"]) if lift.get("at") else "") if x)
         print(f"  Nothing {'asks for its sign-off' if _owed else 'starts it'} and nothing nags "
-              f"about it until {time.strftime('%Y-%m-%d %H:%M', time.localtime(until))} "
-              f"({human_age(span)}).")
-        print(f"  Then it returns to the normal pool and your stop hook says so; to keep it "
-              f"waiting, park it again.")
+              f"about it until " + (f"{_when} (at most " if _when else "")
+              + f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(until))}"
+              + (")" if _when else f" ({human_age(span)})") + ".")
+        print(f"  Then it returns to the normal pool and your stop hook says so.")
         return
 
     if a.write is None and (a.not_before or a.requires):
@@ -14111,26 +14181,43 @@ def unread_block_comments(ctx, who):
 # node that asked a question and stopped looked exactly like a node that was
 # working. The operator saw a busy tree; the lead saw nothing at all until it
 # happened to orient.
-def waiting_path(ctx, node):
-    return ctx.state_file("waiting", node, ".json")
+def waiting_path(ctx, node, on=None):
+    """A node's wait on `on`: waiting/<node>/<on>.json (owner, 2026-10-16: a
+    node may wait on more than one, each named). With no `on`, the single file
+    written before that, still read."""
+    if on is None:
+        return ctx.state_file("waiting", node, ".json")
+    return ctx.state / "waiting" / node / f"{slug(on)}.json"
+
+
+def wait_on(r):
+    """Who a recorded wait is on: `on`, or `parent` as written before."""
+    return (r or {}).get("on") or (r or {}).get("parent")
+
+
+def open_waits_all(ctx):
+    """Every recorded wait in this tree, as (file, record), oldest first. Its
+    own record, not a field on the claim: a claim says who is here, this says
+    what they are doing, and a wait outlives a compact and ends with the
+    answer, not with the session."""
+    d = ctx.state / "waiting"
+    files = (sorted(d.glob("*.json")) + sorted(d.glob("*/*.json"))) if d.is_dir() else []
+    out = []
+    for f in files:
+        r = _read_json(f)
+        if r and r.get("node") in ctx.tree["nodes"]:
+            r["on"] = wait_on(r)
+            out.append((f, r))
+    out.sort(key=lambda fr: fr[1].get("since") or "")
+    return out
 
 
 def open_waits(ctx):
-    """Every node in this tree that has asked upward and stopped.
-
-    Its own record, not a field on the claim: a claim says who is here, this
-    says what they are doing, and the two have different lifetimes — a wait
-    outlives a compact and ends with the answer, not with the session.
-    """
-    d = ctx.state / "waiting"
+    """Each waiting node's oldest wait: {node: record}, `on` filled (and
+    `parent`, which readers written before 2026-10-16 use)."""
     out = {}
-    for f in (sorted(d.glob("*.json")) if d.is_dir() else []):
-        try:
-            r = json.loads(f.read_text())
-        except Exception:
-            continue
-        if r.get("node") in ctx.tree["nodes"]:
-            out[r["node"]] = r
+    for _, r in open_waits_all(ctx):
+        out.setdefault(r["node"], dict(r, parent=r["on"]))
     return out
 
 
@@ -14191,7 +14278,7 @@ def node_activity(ctx, node, waits=None):
     return check_activity(ctx, node)
 
 
-def clear_wait(ctx, node):
+def clear_wait(ctx, node, on=None):
     """Silently does nothing when nothing is waiting.
 
     Every caller is a moment where the node has plainly stopped waiting —
@@ -14200,12 +14287,14 @@ def clear_wait(ctx, node):
     the inbox, where the rest of the history already lives, and a directory of
     cleared waits nobody reads is a directory that hides the live ones.
     """
-    f = waiting_path(ctx, node)
-    if not f.exists():
+    gone = [f for f, r in open_waits_all(ctx)
+            if r.get("node") == node and (on is None or r["on"] == on)]
+    for f in gone:
+        f.unlink(missing_ok=True)
+    if not gone:
         return False
-    f.unlink()
-    append_inbox({"event": "wait-cleared", "node": node, "repo": str(ctx.repo),
-                  "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")})
+    append_inbox(dict({"event": "wait-cleared", "node": node, "repo": str(ctx.repo),
+                       "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}, **({"on": on} if on else {})))
     return True
 
 
@@ -14311,11 +14400,12 @@ def waits(ctx, rows=None, infer="cache", stops=None, about=None):
         out.append(_edge(*a, **k))
 
     # answer: a recorded wait, a finished turn, a question rung up, a block, an ask
-    for n, r in open_waits(ctx).items():
-        on = r.get("on") or r.get("parent") or "owner"
-        add("answer", "waiting", n, on, what=r.get("asked") or "", since=r.get("since"),
-            still=r.get("still_moving") or "", answered=r.get("answered"),
-            act=f"answer it; {n} then runs harness waiting --clear", id=f"asked:{n}")
+    for _, r in open_waits_all(ctx):
+        n, on = r["node"], r["on"] or "owner"
+        add("answer", "waiting", n, on, on_task=r.get("on_task"), what=r.get("asked") or "",
+            since=r.get("since"), still=r.get("still_moving") or "", answered=r.get("answered"),
+            act=f"answer it; {n} then runs harness waiting --clear --on {on}",
+            id=f"asked:{n}" + (f":{on}" if on != (nodes.get(n) or {}).get("parent") else ""))
     inf = []
     if infer == "live":
         try:
@@ -14405,9 +14495,14 @@ def waits(ctx, rows=None, infer="cache", stops=None, about=None):
                 ref = r.get("ref") if isinstance(r, dict) else r
                 add("gate", "requires", x, f"commit:{ref}", frm_task=task, stops="present",
                     what=f"presents once its HEAD holds {ref}")
-        w = b.get("defer") or b.get("wait")
+        w = deferral(b)
         if parked(b):
-            add("pause", "defer", x, None, frm_task=task, by=w.get("by_node"),
+            # Deferred on an event names what it waits on; on prose, nobody.
+            lift = w.get("lift") or {}
+            on, on_task = ((task_node(ctx, lift["task"]), lift["task"]) if lift.get("task")
+                           else ("owner", lift["ask"]) if lift.get("ask")
+                           else ("clock", None) if lift.get("at") else (None, None))
+            add("pause", "defer", x, on, frm_task=task, on_task=on_task, by=w.get("by_node"),
                 until=w.get("until"), what=w.get("why") or "", since=w.get("at"))
     for stem, r in marks.items():
         if not r.get("_presented_at") or r.get("_closed_at"):
@@ -14496,8 +14591,9 @@ def wait_line(e, width=14):
     a = e["frm"] + (f" ({e['frm_task']})" if e.get("frm_task") else "")
     b = (e["on"] or "") + (f" ({e['on_task']})" if e.get("on_task") else "")
     age = wait_age(e["since"]) if isinstance(e.get("since"), str) else ""
-    head = f"{a:<{width}} {WAIT_VERB[e['kind']]:<9} {b}" if e["on"] else \
-        f"{a:<{width}} paused by {e.get('by') or '?'}"
+    verb = "deferred on" if e["via"] == "defer" else WAIT_VERB[e["kind"]]
+    head = f"{a:<{width}} {verb:<9} {b}" if e["on"] else \
+        f"{a:<{width}} {'deferred' if e['via'] == 'defer' else 'paused'} by {e.get('by') or '?'}"
     return head + (f"  {age}" if age else "") + (f"  — {clip(e['what'], 90)}" if e["what"] else "") \
         + (f"   [{e['via']}]") + (f"   STALE: {e['stale']}" if e.get("stale") else "")
 
@@ -14559,15 +14655,15 @@ def cmd_waiting(a):
     node, spec = ctx.node()
     parent = spec.get("parent")
 
+    every = open_waits_all(ctx)
     if a.list:
-        rows = open_waits(ctx)
-        if not rows:
+        if not every:
             print("nobody in this tree is waiting on an answer")
             return
-        for n in sorted(rows):
-            r = rows[n]
-            print(f"{n:<12} → {(r.get('parent') or 'rank 0'):<12} "
-                  f"{wait_age(r.get('since')):>6}  {r.get('asked') or '—'}")
+        for _, r in every:
+            print(f"{r['node']:<12} waits on {(r['on'] or '?'):<12} "
+                  f"{wait_age(r.get('since')):>6}  {r.get('asked') or '—'}"
+                  + (f"  (for {r['on_task']})" if r.get("on_task") else ""))
             if r.get("still_moving"):
                 print(f"{'':<12}   still moving: {r['still_moving']}")
             if r.get("answered"):
@@ -14575,59 +14671,79 @@ def cmd_waiting(a):
         return
 
     if a.clear:
-        if clear_wait(ctx, node):
-            print(f"{node} is no longer marked as waiting")
+        if clear_wait(ctx, node, a.on):
+            print(f"{node} is no longer waiting" + (f" on {a.on}" if a.on else ""))
         else:
-            print(f"{node} was not marked as waiting")
+            print(f"{node} was not waiting" + (f" on {a.on}" if a.on else ""))
         return
 
     if not a.asked:
         # Reading the state is the commonest use, so it is what the bare verb
         # does. Both directions, because a lead wants the other one.
-        waits = open_waits(ctx)
-        mine = waits.get(node)
+        mine = [r for _, r in every if r["node"] == node]
+        for r in mine:
+            print(f"waiting  on {r['on']} for {wait_age(r.get('since'))} — {r.get('asked')}")
+            if r.get("still_moving"):
+                print(f"         still moving: {r['still_moving']}")
         if mine:
-            print(f"waiting  on {mine.get('parent') or 'your lead'} for "
-                  f"{wait_age(mine.get('since'))} — {mine.get('asked')}")
-            if mine.get("still_moving"):
-                print(f"         still moving: {mine['still_moving']}")
-            print(f"         harness waiting --clear, the moment you have the answer")
+            print(f"         harness waiting --clear [--on X], the moment you have the answer")
         else:
             print(f"{node} is not waiting on anything")
-        for r in sorted((r for r in waits.values() if r.get("parent") == node),
-                        key=lambda r: r.get("since") or ""):
+        for r in (r for _, r in every if r["on"] == node):
             print(f"asked    {r['node']} has been stopped on you for "
                   f"{wait_age(r.get('since'))} — {r.get('asked')}")
         return
 
-    if parent is None:
-        die(REFUSED,
-            "rank 0 has no lead to wait on. What rank 0 waits for is the "
-            "operator,\n           and that is a block:\n\n"
-            "           harness blocked <need> --why \"...\" --still-moving \"...\"")
-    rec = {"node": node, "parent": parent, "asked": a.asked,
-           "still_moving": a.still_moving or "",
-           "repo": str(ctx.repo),
-           "since": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-           "session": os.environ.get("CLAUDE_CODE_SESSION_ID", "")}
-    f = waiting_path(ctx, node)
+    # Who it is on, named (owner, 2026-10-16; obs 90: a lane waited 2h22 "on
+    # dev" when it was waiting on the owner's approval). Its lead by default.
+    on, on_task = a.on or parent, None
+    if a.on and a.on != "owner" and a.on not in ctx.tree["nodes"]:
+        if load_brief(ctx, a.on)[1] is None and not ctx.state_file("marks", a.on, ".json").exists():
+            die(REFUSED, f"--on {a.on}: not a node, a task or 'owner'")
+        on, on_task = task_node(ctx, a.on), a.on
+    if on is None:
+        die(REFUSED, "rank 0 has no lead to wait on. Say whom: harness waiting \"...\" --on owner")
+    if on == node:
+        die(REFUSED, f"'{node}' cannot wait on itself")
+    # The single file written before 2026-10-16 moves into the node's directory.
+    old = waiting_path(ctx, node)
+    if old.exists():
+        r = _read_json(old) or {}
+        if r:
+            r["on"] = wait_on(r)
+            r.pop("parent", None)
+            p = waiting_path(ctx, node, r["on"])
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(r, indent=2) + "\n")
+        old.unlink(missing_ok=True)
+    rec = dict({"node": node, "on": on, "asked": a.asked,
+                "still_moving": a.still_moving or "",
+                "repo": str(ctx.repo),
+                "since": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                "session": os.environ.get("CLAUDE_CODE_SESSION_ID", "")},
+               **({"on_task": on_task} if on_task else {}))
+    f = waiting_path(ctx, node, on)
     f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text(json.dumps(rec, indent=2) + "\n")
     append_inbox(dict(rec, event="waiting"))
-    print(f"{node} is marked as waiting on {parent}")
+    print(f"{node} is waiting on {on}" + (f" for {on_task}" if on_task else ""))
+    if on == "owner":
+        print(f"  The owner reads asks in the viewer, not this record. If they must act:\n"
+              f"    harness ask <task> --kind intent|judgement|risk --question \"...\"")
+        return
     # The record is read at the lead's next harness command, and a lead parked on
     # a long job runs none, so the wait sat unseen behind a 29-minute check (obs 68).
     # Same remedy as presenting: say it, now, to the running session.
-    _lead, _ = lead_address(ctx, parent)
-    _doing = check_activity(ctx, parent)
+    _lead, _ = lead_address(ctx, on)
+    _doing = check_activity(ctx, on)
     if _doing:
-        print(f"  {parent} is running {_doing} and runs no harness command until it ends.")
+        print(f"  {on} is running {_doing} and runs no harness command until it ends.")
     if _lead:
         print(f"  The record does not reach it. Send this before you stop, in this turn:")
         print(f"    SendMessage(to: \"{_lead}\", message: \"{node} is waiting on you: "
               f"{a.asked}\")")
     else:
-        print(f"  {parent} is not running, so nobody is told; its parent sees the wait "
+        print(f"  {on} is not running, so nobody is told; its parent sees the wait "
               f"after {WAIT_STALL // 60}m.")
     if not a.still_moving:
         print(f"  Nothing was recorded as still moving, so this reads as a full stop.")
@@ -14825,15 +14941,33 @@ def cmd_blocked(a):
         return
     if f.exists() and not json.loads(f.read_text()).get("resolved_at"):
         print(f"already raised: {a.need} on {node}"); return
-    rec = {"node": node, "need": a.need, "why": a.why or "",
-           "still_moving": a.still_moving or "",
-           "repo": str(ctx.repo),
-           "raised_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-           "session": os.environ.get("CLAUDE_CODE_SESSION_ID", "")}
+    # Whom it waits on and for which task, named (owner, 2026-10-16: 12 of 13
+    # open blocks were stale, and none said who or what would end them).
+    on = a.__dict__.get("on") or "owner"
+    if on != "owner" and on not in ctx.tree["nodes"]:
+        die(REFUSED, f"--on {on}: not a node or 'owner'")
+    if on != "owner" and on == ctx.tree["nodes"].get(node, {}).get("parent"):
+        die(REFUSED, f"{on} is your lead: a question for your lead is a wait, not a block:\n"
+                     f"           harness waiting \"{a.need}\" --still-moving \"...\"")
+    for_task = a.__dict__.get("for_task")
+    if for_task and load_brief(ctx, for_task)[1] is None \
+            and not ctx.state_file("marks", for_task, ".json").exists():
+        die(REFUSED, f"--for {for_task}: no brief or task by that name")
+    if not for_task:
+        for_task = next((r.get("_task") or t for t, r in open_marks(ctx).items()
+                         if r.get("_node") == node and not r.get("_presented_at")), None)
+    rec = dict({"node": node, "need": a.need, "why": a.why or "", "on": on,
+                "still_moving": a.still_moving or "",
+                "repo": str(ctx.repo),
+                "raised_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                "session": os.environ.get("CLAUDE_CODE_SESSION_ID", "")},
+               **({"for": for_task} if for_task else {}))
     f.write_text(json.dumps(rec, indent=2) + "\n")
     append_inbox(dict(rec, event="raised"))
-    print(f"raised on {node}: {a.need}")
-    print(f"  rank 0 sees it in `harness blocked --list`")
+    print(f"raised on {node}, waiting on {on}" + (f" for {for_task}" if for_task else "")
+          + f": {a.need}")
+    print(f"  rank 0 sees it in `harness blocked --list`; it ends when answered, or by "
+          f"itself once {for_task or 'the work it is for'} is signed off")
     print("  Do not route around it, do not ask a session with looser settings to do")
     print("  it for you, and do not stop: carry on with everything this does not")
     print("  block, and say in your report what it does.")
@@ -16032,10 +16166,10 @@ def hold_tell(ctx, me, task, path):
         return
     line = f"{me} placed a hold on {path} for {task} — harness hold --list"
     ring_inbox(ctx.state, lane, me, line)
-    w = open_waits(ctx).get(lane)
-    if w and w.get("parent") == me:
-        w.update(answered=line, answered_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
-        waiting_path(ctx, lane).write_text(json.dumps(w, indent=2) + "\n")
+    # The hold answers a wait the lane recorded on the placer: it ends here,
+    # rather than standing "answered" until the lane clears it (2026-10-16).
+    if clear_wait(ctx, lane, me):
+        print(f"  {lane}'s wait on {me} is answered by this hold, and cleared")
     print(f"  told {lane}: {ring_report(ctx, lane)}")
 
 
@@ -16067,19 +16201,30 @@ def cmd_hold(a):
         return
     if not (a.why or "").strip():
         die(REFUSED, 'say why: harness hold <path> --why "..."')
-    if a.until and load_brief(ctx, a.until)[1] is None and \
-            not ctx.state_file("marks", a.until, ".json").exists():
-        die(REFUSED, f"--until {a.until}: no brief or task by that name")
+    for flag, t in (("--until", a.until), ("--for", a.__dict__.get("for_task"))):
+        if t and load_brief(ctx, t)[1] is None and not ctx.state_file("marks", t, ".json").exists():
+            die(REFUSED, f"{flag} {t}: no brief or task by that name")
+    # One hold per path, and a second one says so (obs 163: it replaced the
+    # first silently, so a hold could not refuse a second holder).
+    old = _read_json(f) if f.exists() else None
+    if old and not a.__dict__.get("replace"):
+        die(REFUSED, f"{a.path} is already held by {old.get('by')}: {old.get('why')}"
+                     + (f" (until {old['until']})" if old.get("until") else "")
+                     + f".\n           Ask {old.get('by')}, or take it over on the record: "
+                       f"harness hold {a.path} --why \"...\" --replace")
     f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text(json.dumps({"path": a.path, "why": a.why, "by": me, "until": a.until or "",
-                             "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}, indent=2) + "\n")
+    f.write_text(json.dumps(dict({"path": a.path, "why": a.why, "by": me, "until": a.until or "",
+                                  "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")},
+                                 **({"for": a.for_task} if a.__dict__.get("for_task") else {}),
+                                 **({"replaced": old} if old else {})), indent=2) + "\n")
     caught = [c["name"] for c in (json.loads((ctx.repo / ".harness" / "manifest.json")
                                              .read_text()).get("checks") or [])
               if hold_catching(c, [{"path": a.path}])] \
         if (ctx.repo / ".harness" / "manifest.json").exists() else []
-    if a.until:
-        hold_tell(ctx, me, a.until, a.path)
-    print(f"held {a.path}" + (f" until {a.until} closes" if a.until else "")
+    if a.__dict__.get("for_task") or a.until:
+        hold_tell(ctx, me, a.__dict__.get("for_task") or a.until, a.path)
+    print(f"held {a.path}" + (f" for {a.for_task}" if a.__dict__.get("for_task") else "")
+          + (f" until {a.until} closes" if a.until else "")
           + f". `check` skips {len(caught)} arm(s)"
           + (f": {', '.join(caught)}" if caught else
              " — none names it; declare \"reads\" in the manifest"))
@@ -21361,6 +21506,9 @@ def main():
     wt.add_argument("--still-moving", dest="still_moving",
                     help="what carries on while you wait — without it this reads "
                          "as a full stop, and gets answered as one")
+    wt.add_argument("--on", metavar="NODE|owner|TASK",
+                    help="who you are waiting on: a node, the owner, or a task (its node); "
+                         "default your lead. With --clear: only that wait")
     wt.add_argument("--clear", action="store_true",
                     help="the answer arrived; you are working again")
     wt.add_argument("--list", action="store_true",
@@ -21377,6 +21525,12 @@ def main():
     bk.add_argument("--why", help="what it is for, in one line")
     bk.add_argument("--still-moving", dest="still_moving",
                     help="what continues without it — this is how urgent gets judged")
+    bk.add_argument("--on", metavar="NODE|owner",
+                    help="who must answer it (default the owner; your lead is a wait, "
+                         "not a block)")
+    bk.add_argument("--for", dest="for_task", metavar="TASK",
+                    help="the task it blocks (default your open task); the block ends "
+                         "by itself once that is signed off")
     bk.add_argument("--resolve", action="store_true",
                     help="close it; rank 0 may close any block in the tree")
     bk.add_argument("--task", metavar="TASK", action="append",
@@ -21416,14 +21570,23 @@ def main():
     br.add_argument("--decline", metavar="WHY",
                     help="the operator, or rank 0 on their behalf: refuse a gated task, "
                          "on the record")
-    br.add_argument("--wait", metavar="CONDITION",
-                    help="park the task in the wait pool on a condition (log 109): it starts "
-                         "nowhere and nags nobody for 12h, then returns to the normal pool "
-                         "and the stop hook says so; 'none' takes it out now")
-    br.add_argument("--wait-for", dest="wait_for", metavar="45m|3h|2d",
-                    help="with --wait: how long it waits before it returns (default 12h, at "
-                         "most 7d). A presented task parked this way asks nobody for its "
-                         "sign-off until then")
+    br.add_argument("--defer", metavar="CONDITION",
+                    help="defer the task on a condition (log 109): it starts nowhere and "
+                         "nags nobody until the condition lifts it, or 12h, then returns "
+                         "to the normal pool and the stop hook says so; 'none' ends it now")
+    br.add_argument("--defer-until-task", dest="defer_task", metavar="TASK",
+                    help="with --defer: lifts when TASK is signed off")
+    br.add_argument("--defer-until-ask", dest="defer_ask", metavar="ASK",
+                    help="with --defer: lifts when the owner rules on ASK")
+    br.add_argument("--defer-until", dest="defer_until", metavar="UTC",
+                    help="with --defer: lifts at this UTC time (00:05Z or an ISO time)")
+    br.add_argument("--defer-for", dest="defer_for", metavar="45m|3h|2d",
+                    help="with --defer: the longest it stays deferred (default 12h, or 7d "
+                         "when a --defer-until-* lifts it). A presented task deferred this "
+                         "way asks nobody for its sign-off until then")
+    # Renamed 2026-10-16; kept only to say so.
+    br.add_argument("--wait", dest="old_wait", help=argparse.SUPPRESS)
+    br.add_argument("--wait-for", dest="old_wait_for", help=argparse.SUPPRESS)
     br.add_argument("--not-before", metavar="UTC",
                     help="the task starts no earlier than this UTC time: 00:05Z (the next "
                          "one) or 2026-10-05T00:05Z; 'none' clears (obs 70)")
@@ -21584,6 +21747,11 @@ def main():
     hd.add_argument("path", nargs="?", help="a shared resource (file or directory)")
     hd.add_argument("--why", help="one line: what holds it")
     hd.add_argument("--until", metavar="TASK", help="lifts when TASK is signed off")
+    hd.add_argument("--for", dest="for_task", metavar="TASK",
+                    help="the task the hold is for: its node is told, and a wait it recorded "
+                         "on you ends")
+    hd.add_argument("--replace", action="store_true",
+                    help="take over a path someone else holds, on the record")
     hd.add_argument("--release", action="store_true")
     hd.add_argument("--list", action="store_true")
     ct = add("cited", cmd_cited)

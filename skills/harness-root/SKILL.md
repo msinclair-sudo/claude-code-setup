@@ -55,13 +55,13 @@ A brief is rewritten in place; `harness note` is the append-only half. Write a s
 
 ## Approving briefs
 
-`harness brief <task> --approve`, or `--decline "why"` (the why is required). Orientation lists pending approvals; they are yours. One that must wait on something neither of those fits (an owner's ruling that it waits for a design, say) goes in the wait pool: `harness brief <task> --wait "until ..."`. It is quiet for 12 hours, then comes back and your stop hook says so; park it again if it still waits. Decide sparingly; declining costs one line. Approving a brief you asked for records `self_approved`. When one matters, put it to the owner instead.
+`harness brief <task> --approve`, or `--decline "why"` (the why is required). Orientation lists pending approvals; they are yours. One that must wait on something neither of those fits (an owner's ruling that it waits for a design, say) is deferred: `harness brief <task> --defer "until ..." [--defer-until-ask ID | --defer-until-task T]`. It is quiet until that lifts it (or 12 hours, for a condition only in prose), then comes back and your stop hook says so; defer it again if it still waits. Decide sparingly; declining costs one line. Approving a brief you asked for records `self_approved`. When one matters, put it to the owner instead.
 
 ## Priority
 
 `harness queue dev_1 --order doi-index,ingest-2024 --why "…"`. You may order any node's queue. Every reorder needs `--why`. A lead may override you with a reason; read the queue after reordering.
 
-Make a condition structural, not a note: a note does not stop a close or a check. `harness brief <segment> --close-after <task>` refuses `mark --close` until that task is signed off; `--not-before <UTC>` holds a start on a clock and starts the lane when it passes; no session cron is needed. `harness hold <path> --why "..." [--until <task>]` makes every `check` arm that reads a shared resource print `NOT RUN (held: …)` while a job holds it.
+Make a condition structural, not a note: a note does not stop a close or a check. `harness brief <segment> --close-after <task>` refuses `mark --close` until that task is signed off; `--not-before <UTC>` holds a start on a clock and starts the lane when it passes; no session cron is needed. `harness hold <path> --why "..." [--until <task>] [--for <task>]` makes every `check` arm that reads a shared resource print `NOT RUN (held: …)` while a job holds it; `--for` tells the node doing that task and ends a wait it recorded on you. A path already held is refused, naming the holder, unless `--replace` takes it over on the record.
 
 ## Asking the owner
 

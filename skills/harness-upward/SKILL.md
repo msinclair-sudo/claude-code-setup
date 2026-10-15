@@ -65,7 +65,7 @@ harness waiting "which pH bound applies to a derived reading" \
 harness waiting --clear          # the moment the answer lands
 ```
 
-The record reaches your lead only at its next harness command, so send the `SendMessage` it prints, in the same turn. `--still-moving` lets your lead tell a stopped step from a stopped lane. Clearing is yours (`harness release` also clears it). `harness waiting` with no argument shows what you wait on and who waits on you. A question for your lead is never a `harness blocked`. If `harness doorbell --read` says "nothing new" but you never saw the message, `harness doorbell --again 5` shows the last five delivered (log 120). If you're stopped until it's answered, record it with `harness waiting` as well as ringing: a question sent only by mail leaves nothing for your lead's hooks to remind it with, beyond a 20-minute "unanswered" line (log 129).
+The record reaches your lead only at its next harness command, so send the `SendMessage` it prints, in the same turn. `--still-moving` lets your lead tell a stopped step from a stopped lane. A wait is on your lead unless you name someone else: `--on owner`, `--on <node>`, or `--on <task>` (whoever does it); you may wait on more than one, and `--clear --on X` ends one. Clearing is yours; presenting and `harness release` clear them too. `harness waiting` with no argument shows what you wait on and who waits on you; `harness waits` shows every wait in the tree, who it is on and what that side runs. A question for your lead is never a `harness blocked`. If `harness doorbell --read` says "nothing new" but you never saw the message, `harness doorbell --again 5` shows the last five delivered (log 120). If you're stopped until it's answered, record it with `harness waiting` as well as ringing: a question sent only by mail leaves nothing for your lead's hooks to remind it with, beyond a 20-minute "unanswered" line (log 129).
 
 ## You write inside your worktree, and nowhere else
 
@@ -77,7 +77,7 @@ harness blocked ~/data/subset.db \
   --still-moving "everything but the render; the contract work is unaffected"
 ```
 
-Then carry on with everything the block does not stop. The answer comes back as an outcome — a grant at your next spawn or recycle, a ruling, or a revised brief — not as a conversation; comments on your block go to rank 0. Do not ask a looser session to write for you (`harness grant` refuses by rank), do not retry with another tool, and do not stop.
+A block is on the owner unless `--on <node>` names another (never your lead: that is a wait), and it records the task it blocks (`--for`, default your open one); it ends by itself once that task is signed off. Then carry on with everything the block does not stop. The answer comes back as an outcome — a grant at your next spawn or recycle, a ruling, or a revised brief — not as a conversation; comments on your block go to rank 0. Do not ask a looser session to write for you (`harness grant` refuses by rank), do not retry with another tool, and do not stop.
 
 ## Your brief, and pushing back on it
 

@@ -6449,6 +6449,43 @@ def failed_codes(out):
     return out_
 
 
+# What a failing file's own output names as its faults, in the three shapes
+# seen: a project's "<section>: N fault(s)" lines, unittest's "FAIL: test",
+# pytest's "FAILED path::test".
+_FAULT_SECTION = re.compile(r"^\s*([A-Za-z][\w .:/-]{0,60}?):\s+(\d+) fault\(s\)", re.M)
+_FAULT_TEST = re.compile(r"^(?:(?:FAIL|ERROR): (\S+(?: \([^)\n]*\))?)|FAILED (\S+))", re.M)
+
+
+def fault_counts(text):
+    """{fault key: count} in one test file's output; zero counts left out."""
+    out = {}
+    for m in _FAULT_SECTION.finditer(text or ""):
+        if int(m.group(2)):
+            out[m.group(1).strip()] = out.get(m.group(1).strip(), 0) + int(m.group(2))
+    for m in _FAULT_TEST.finditer(text or ""):
+        k = m.group(1) or m.group(2)
+        out[k] = out.get(k, 0) + 1
+    return out
+
+
+def failed_faults(row, kept):
+    """{file: fault_counts} for each failing file whose kept log names any
+    (a known-red file hid every new fault inside it: dev_tests, 2026-10-15)."""
+    out = {}
+    for f in row.get("failedFiles") or []:
+        n = {}
+        for k in kept:
+            if Path(f).stem and Path(f).stem in Path(k).name:
+                try:
+                    for key, c in fault_counts(Path(k).read_text(errors="replace")).items():
+                        n[key] = n.get(key, 0) + c
+                except OSError:
+                    pass
+        if n:
+            out[f] = n
+    return out
+
+
 def code_words(c):
     return f"signal {-c}" if isinstance(c, int) and c < 0 else f"exit {c}"
 
@@ -6486,9 +6523,17 @@ def baseline_diff(rows, base):
             cn, cw = r.get("failedCodes") or {}, b.get("codes") or {}
             flipped = sorted((f, cw[f], cn[f]) for f in both
                              if f in cn and f in cw and cn[f] != cw[f])
-            same = len(both) - len(flipped)
+            # A known-red file whose faults grew holds a new one: the file
+            # alone read "same" while two new faults sat inside it.
+            fn, fw = r.get("failedFaults") or {}, b.get("faults") or {}
+            grew = [(f, [(k, fw[f].get(k, 0), c) for k, c in sorted(fn[f].items())
+                         if c > fw[f].get(k, 0)])
+                    for f in sorted(both) if f in fn and f in fw
+                    and f not in {x[0] for x in flipped}]
+            grew = [g for g in grew if g[1]]
+            same = len(both) - len(flipped) - len(grew)
             out[r["name"]] = {"new": new, "gone": gone, "same": same, "notrun": False,
-                              "flipped": flipped}
+                              "flipped": flipped, "grew": grew}
             continue
         out[r["name"]] = {"new": new, "gone": gone, "same": same, "notrun": False}
     return out
@@ -6518,15 +6563,24 @@ def baseline_line(d):
            ([f"same file, changed: " + ", ".join(f"{f} {code_words(w)} → {code_words(n)}"
                                                 for f, w, n in d["flipped"])]
             if d.get("flipped") else []) + \
+           ([f"same file, NEW fault(s): " + "; ".join(
+               f"{f} " + ", ".join(f"{k} {w} → {n}" for k, w, n in ks)
+               for f, ks in d["grew"])] if d.get("grew") else []) + \
            ([f"{d['same']} same"] if d["same"] else [])
     return "vs baseline: " + " · ".join(bits) if bits else ""
+
+
+def diff_new(d):
+    """New failures in one arm's diff: new files, a run that did not happen,
+    and known-red files with a new fault inside."""
+    return len(d["new"]) + d["notrun"] + len(d.get("grew") or [])
 
 
 def baseline_summary(rep, base):
     """The verdict line for a report compared with the baseline."""
     diff = baseline_diff(rep.get("checks") or [], base)
     known = sum(d["same"] for d in diff.values())
-    new = sum(len(d["new"]) + d["notrun"] for d in diff.values())
+    new = sum(diff_new(d) for d in diff.values())
     if new:
         return f"{new} NEW failure(s) against baseline {str(base.get('sha'))[:8]}"
     return (f"no new failures against baseline {str(base.get('sha'))[:8]}"
@@ -6576,7 +6630,8 @@ def set_baseline(ctx, node, why):
             "sha": sha, "why": why,
             "arms": {r["name"]: {"failed": r.get("exit") != 0,
                                  "files": r.get("failedFiles"),
-                                 "codes": r.get("failedCodes") or {}}
+                                 "codes": r.get("failedCodes") or {},
+                                 "faults": r.get("failedFaults") or {}}
                      for r in rep.get("checks") or []},
             "history": ((old or {}).pop("history", []) + [old]) if old else []}
     p = baseline_path(ctx)
@@ -6788,7 +6843,7 @@ def make_check_report(node, sha, rows, failed, base, **extra):
     diff = baseline_diff(rows, base) if base else None
     if diff is not None:
         rep["baseline"] = base.get("sha")
-        rep["new"] = sum(len(d["new"]) + d["notrun"] for d in diff.values())
+        rep["new"] = sum(diff_new(d) for d in diff.values())
     return rep
 
 
@@ -7854,6 +7909,9 @@ def testd_finish(ctx, S, key):
                 kept = []
             if kept:
                 row["kept"] = kept
+                _ff = failed_faults(row, kept)
+                if _ff:
+                    row["failedFaults"] = _ff
                 lines.append(f"        kept {len(kept)} log(s) from the copy: "
                              f"{Path(kept[0]).parent}")
         o["rows"][name] = row

@@ -1668,6 +1668,37 @@ class ExitFlips(unittest.TestCase):
         old = {"arms": {"surface": {"failed": True, "files": ["a.py", "b.py"]}}}   # no codes kept
         self.assertEqual(hz.baseline_diff([row], old)["surface"]["same"], 2)
 
+    def test_a_known_red_file_with_a_new_fault_inside_is_new(self):
+        # dev_tests, 2026-10-15: test_arm_paths.py was red in the baseline for
+        # one fault, held two new ones, and every check read it "same".
+        out = ("manifest: 3 fault(s), 5 warning(s); 9 arm(s) read\n"
+               "reads: 0 fault(s), 251 read(s) exempt\n"
+               "  audit outside control: removed, and faulted with 1 fault(s)\n"
+               "FAIL: test_x (t.T.test_x)\nFAILED tests/a.py::test_y - boom\n")
+        self.assertEqual(hz.fault_counts(out), {"manifest": 3, "test_x (t.T.test_x)": 1,
+                                                "tests/a.py::test_y": 1})
+        d = Path(tempfile.mkdtemp()); self.addCleanup(shutil.rmtree, d, True)
+        (d / "runs__x__documents__test_arm_paths.py.out").write_text(out)
+        row = {"name": "documents", "exit": 1, "failedFiles": ["test_arm_paths.py"],
+               "failedCodes": {"test_arm_paths.py": 1}}
+        row["failedFaults"] = hz.failed_faults(row, [str(p) for p in d.iterdir()])
+        self.assertEqual(row["failedFaults"]["test_arm_paths.py"]["manifest"], 3)
+        base = {"sha": "b" * 40, "arms": {"documents": {
+            "failed": True, "files": ["test_arm_paths.py"], "codes": {"test_arm_paths.py": 1},
+            "faults": {"test_arm_paths.py": {"manifest": 1}}}}}
+        diff = hz.baseline_diff([row], base)["documents"]
+        self.assertEqual(diff["same"], 0)
+        self.assertEqual(diff["grew"][0][0], "test_arm_paths.py")
+        self.assertIn("manifest 1 → 3", hz.baseline_line(diff))
+        self.assertIn("NEW failure", hz.baseline_summary({"checks": [row]}, base))
+        self.assertEqual(hz.make_check_report("dev_1", "s", [row], 1, base)["new"], 1)
+        # Fewer faults, or a baseline from before faults were kept: same.
+        base["arms"]["documents"]["faults"] = {"test_arm_paths.py": dict(
+            row["failedFaults"]["test_arm_paths.py"], manifest=4)}
+        self.assertEqual(hz.baseline_diff([row], base)["documents"]["same"], 1)
+        base["arms"]["documents"].pop("faults")
+        self.assertEqual(hz.baseline_diff([row], base)["documents"]["same"], 1)
+
     def test_a_review_reads_a_report_against_its_own_baseline(self):
         ctx = FakeCtx({"main": None})
         p = hz.baseline_path(ctx)

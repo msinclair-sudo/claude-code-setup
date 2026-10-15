@@ -7680,6 +7680,139 @@ class Reviewer(unittest.TestCase):
         self.assertIn("--uses goes in with --write", out)
 
 
+class WaitEdges(unittest.TestCase):
+    """Owner, 2026-10-16: "it's not clear who is blocking who, and who is waiting
+    on who." Every wait reads as one edge, A waits on B for C, with B named."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev", "dev_2": "dev",
+                            "dev_r": "dev"})
+        self.ctx.tree["nodes"]["dev_r"]["role"] = "reviewer"
+        self.addCleanup(shutil.rmtree, self.ctx.dir, True)
+        p = mock.patch.object(hz, "unanswered", return_value=None)
+        p.start(); self.addCleanup(p.stop)
+
+    def w(self, rel, obj):
+        f = self.ctx.dir / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(obj))
+
+    def edges(self, **kw):
+        return hz.waits(self.ctx, infer="off", **kw)
+
+    def one(self, via, **kw):
+        es = [e for e in self.edges(**kw) if e["via"] == via]
+        self.assertEqual(len(es), 1, es)
+        return es[0]
+
+    def test_answers_name_who_is_waited_on(self):
+        self.w("waiting/dev_1.json", {"node": "dev_1", "parent": "dev", "asked": "which fixture?",
+                                      "since": hz._now()})
+        self.w("blocks/dev_2-x.json", {"node": "dev_2", "need": "x", "raised_at": hz._now()})
+        self.w("asks/a-1.json", {"id": "a-1", "asker_node": "main", "state": "asked",
+                                 "question": "q?", "task": "t", "waiting_on": "dev"})
+        e = self.one("waiting")
+        self.assertEqual((e["kind"], e["frm"], e["on"], e["what"]),
+                         ("answer", "dev_1", "dev", "which fixture?"))
+        self.assertEqual((self.one("block")["frm"], self.one("block")["on"]), ("dev_2", "owner"))
+        self.assertEqual((self.one("ask")["frm"], self.one("ask")["on"]), ("main", "owner"))
+        self.assertEqual((self.one("item")["frm"], self.one("item")["on"]), ("intermediary", "dev"))
+
+    def test_gates_name_who_must_act(self):
+        self.w("briefs/t1.json", {"task": "t1", "node": "dev_1"})
+        self.w("briefs/t2.json", {"task": "t2", "node": "dev_2", "after": ["t1"]})
+        e = self.one("after")
+        self.assertEqual((e["frm"], e["frm_task"], e["on"], e["on_task"]), ("dev_2", "t2", "dev_1", "t1"))
+        # Presented: the lead that signs it off must act, and the chain ends there.
+        self.w("marks/t1.json", {"_node": "dev_1", "_task": "t1", "_presented_at": hz._now()})
+        e = self.one("after")
+        self.assertEqual((e["on"], e["on_task"]), ("dev", None))
+        s = self.one("signoff")
+        self.assertEqual((s["frm"], s["on"], s["stops"]), ("dev_1", "dev", "signoff"))
+        # Gated on its own sign-off: no edge to itself; the sign-off edge says it.
+        self.w("briefs/t3.json", {"task": "t3", "node": "dev", "after": ["t1"]})
+        self.assertFalse([e for e in self.edges() if e["frm"] == e["on"]])
+        # In review: the reviewer acts, on the review task.
+        self.w("marks/t1.json", {"_node": "dev_1", "_task": "t1", "_presented_at": hz._now(),
+                                 "_review_task": "t1.review"})
+        es = {e["frm"]: e for e in self.edges() if e["via"] == "after"}
+        self.assertEqual((es["dev_2"]["on"], es["dev_2"]["on_task"]), ("dev_r", "t1.review"))
+        self.assertEqual(es["dev"]["on"], "dev_r")      # now dev waits on the reviewer too
+        self.assertEqual(self.one("review")["on"], "dev_r")
+
+    def test_the_other_gates_locks_and_pauses(self):
+        later = time.time() + 3600
+        self.w("briefs/t1.json", {"task": "t1", "node": "dev_1"})
+        self.w("briefs/c.json", {"task": "c", "node": "dev_1", "not_before": later})
+        self.w("briefs/ap.json", {"task": "ap", "node": "dev_2",
+                                  "approval": {"state": "pending"}})
+        self.w("briefs/seg.json", {"task": "seg", "node": "dev", "close_after": ["t1"]})
+        self.w("briefs/park.json", {"task": "park", "node": "dev_2",
+                                    "wait": {"why": "until X", "by_node": "dev", "until": later}})
+        self.w("holds/h.json", {"path": "/data/db", "by": "dev", "why": "rebuild", "until": ""})
+        self.w("behind/dev_1.hold.json", {"by": "dev (session ab)", "why": "counting runs"})
+        self.w("stopped/dev_2.json", {"by": "shell", "why": "trimmed"})
+        self.assertEqual(self.one("clock")["on"], "clock")
+        self.assertEqual((self.one("approval")["frm"], self.one("approval")["on"]), ("dev_2", "main"))
+        e = self.one("close-after")
+        self.assertEqual((e["frm"], e["on"], e["on_task"], e["stops"]), ("dev", "dev_1", "t1", "close"))
+        e = self.one("defer")
+        self.assertEqual((e["kind"], e["on"], e["by"], e["what"]), ("pause", None, "dev", "until X"))
+        e = self.one("hold")
+        self.assertEqual((e["kind"], e["frm"], e["on"], e["stops"]), ("lock", "*", "dev", "check"))
+        e = self.one("freeze")
+        self.assertEqual((e["frm"], e["on"], e["stops"]), ("dev_1", "dev", "merge"))
+        self.assertEqual(self.one("stop")["frm"], "dev_2")
+
+    def test_owes_is_the_other_side(self):
+        self.w("marks/t1.json", {"_node": "dev_1", "_task": "t1", "_presented_at": hz._now()})
+        self.w("waiting/dev_2.json", {"node": "dev_2", "parent": "dev", "asked": "?"})
+        self.assertEqual(sorted(e["via"] for e in hz.owes(self.ctx, "dev", self.edges())),
+                         ["signoff", "waiting"])
+        self.assertEqual(hz.owes(self.ctx, "dev_1", self.edges()), [])
+
+    def test_chains_follow_one_piece_of_work_and_find_real_cycles(self):
+        E = lambda frm, ft, on, ot: hz._edge("gate", "after", frm, on, frm_task=ft, on_task=ot)
+        # dev waits on dev_1's a; dev_1's a waits on dev_2's b: a chain.
+        chains, cycles = hz.wait_chains([E("dev", "x", "dev_1", "a"), E("dev_1", "a", "dev_2", "b")])
+        self.assertIn(["dev (x)", "dev_1 (a)", "dev_2 (b)"], chains.values())
+        self.assertEqual(cycles, [])
+        # dev waits on dev_1's a, and dev_1 waits on dev for another task: no cycle.
+        _, cycles = hz.wait_chains([E("dev", "x", "dev_1", "a"), E("dev_1", "z", "dev", "y")])
+        self.assertEqual(cycles, [])
+        # a waits on b and b on a: a cycle.
+        _, cycles = hz.wait_chains([E("dev", "x", "dev_1", "a"), E("dev_1", "a", "dev", "x")])
+        self.assertEqual(len(cycles), 1)
+
+    def test_a_hook_reads_the_ringer_s_cache_and_never_the_roster(self):
+        f = hz.inferred_waits_cache_path(self.ctx)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps({"at": time.time(), "waits": [
+            {"frm": "dev_1", "on": "dev", "said": "which way?"}]}))
+        with mock.patch.object(hz, "agents_json", side_effect=AssertionError("roster read")), \
+             mock.patch.object(hz, "stop_detail", side_effect=AssertionError("transcript read")):
+            e = [e for e in hz.waits(self.ctx, infer="cache") if e["via"] == "turn"]
+            self.assertEqual([(x["frm"], x["on"], x["src"]) for x in e], [("dev_1", "dev", "inferred")])
+            f.write_text(json.dumps({"at": time.time() - 3600, "waits": [
+                {"frm": "dev_1", "on": "dev", "said": "?"}]}))
+            self.assertFalse([e for e in hz.waits(self.ctx, infer="cache") if e["via"] == "turn"])
+
+    def test_the_command_prints_each_wait_once(self):
+        self.w("briefs/t1.json", {"task": "t1", "node": "dev_1"})
+        self.w("briefs/t2.json", {"task": "t2", "node": "dev_2", "after": ["t1"]})
+        import argparse
+        out = io.StringIO()
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.object(hz, "waits", lambda ctx, **k: WAITS(ctx, infer="off")), \
+             redirect_stdout(out):
+            hz.cmd_waits(argparse.Namespace(node=None, owes=False, stale=False, json=False))
+        self.assertIn("dev_2 (t2)", out.getvalue())
+        self.assertIn("gated by  dev_1 (t1)", out.getvalue())
+
+
+WAITS = hz.waits
+
+
 class SessionPrune(unittest.TestCase):
     """Owner, 2026-10-15: finished sessions are deleted, and a node keeps its
     last 3 as history. The sweep had run once by hand and 475 had piled up."""

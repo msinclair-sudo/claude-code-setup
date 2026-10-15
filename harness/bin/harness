@@ -3131,7 +3131,7 @@ def second_line(node, held):
 
 # What a second session may still run: questions, and the claim that tells it
 # so. Everything else writes a record, takes mail or starts something.
-SECOND_READS = {"status", "whoami", "behind", "claim", "contract", "queue"}
+SECOND_READS = {"status", "whoami", "behind", "claim", "contract", "queue", "waits"}
 
 
 def second_gate(a):
@@ -12273,18 +12273,7 @@ def utc_label(t):
 def waits_on(ctx, b):
     """Why a brief cannot start yet, as reasons; [] when it can (obs 15, 59).
     One rule for every path that picks or opens a task."""
-    out = []
-    for y in b.get("after") or []:
-        seen = set()
-        while tkey(y) not in seen:
-            seen.add(tkey(y))
-            st = task_state(ctx, y)
-            nxt = (load_brief(ctx, y)[1] or {}).get("superseded_for") if st == "superseded" else None
-            if not nxt:
-                break
-            y = nxt
-        if st not in ("closed", "superseded"):
-            out.append(f"after {y} ({st} on {task_node(ctx, y) or '?'})")
+    out = [f"after {g['task']} ({g['state']} on {g['node'] or '?'})" for g in gates_of(ctx, b)]
     # A clock, not only a task (obs 70): the gate every start path already reads.
     nb = b.get("not_before")
     if nb and time.time() < nb:
@@ -14228,6 +14217,329 @@ def wait_age(since):
         return ""
     m = int(max(0, time.time() - t) // 60)
     return f"{m}m" if m < 60 else f"{m // 60}h{m % 60:02d}"
+
+
+# ── One wait relation: A waits on B for C, since T (owner, 2026-10-16) ────────
+#
+# "It's not clear who is blocking who, and who is waiting on who." Some twenty
+# mechanisms each recorded a stop in their own way, and only two of them named
+# the other side. Each now reads as the same edge, with B always named: a node,
+# "owner", "clock" or "commit:<ref>" — except a pause, which is deliberate and
+# names who paused it instead.
+#   answer  a node needs a reply: a recorded wait, a finished turn that messaged
+#           someone, a question rung up, a block, an owner's ask
+#   gate    a task cannot start, present, close or be signed off yet: --after,
+#           --not-before, --close-after, --requires, approval, sign-off, review
+#   lock    a resource is taken: a file hold, a merge freeze
+#   pause   stopped on purpose: the wait pool, a halt, a stop
+# Derived from the records that already exist; nothing here writes.
+
+INFER_CACHE_MAX = 180     # seconds the ringer's inferred-waits cache serves a hook
+
+
+def _edge(kind, via, frm, on, **kw):
+    e = dict({"kind": kind, "via": via, "frm": frm, "on": on, "frm_task": None,
+              "on_task": None, "what": "", "stops": None, "since": None, "until": None,
+              "by": None, "src": "recorded", "stale": None, "act": None}, **kw)
+    e.setdefault("id", f"{via}:{frm}:{e['frm_task'] or ''}>{on}:{e['on_task'] or ''}")
+    return e
+
+
+def gates_of(ctx, b, field="after"):
+    """The tasks a brief still waits on, structured: [{task, state, node}]. A
+    superseded task is followed to what replaced it. `waits_on` prints these."""
+    out = []
+    for y in (b or {}).get(field) or []:
+        seen = set()
+        while tkey(y) not in seen:
+            seen.add(tkey(y))
+            st = task_state(ctx, y)
+            nxt = (load_brief(ctx, y)[1] or {}).get("superseded_for") if st == "superseded" else None
+            if not nxt:
+                break
+            y = nxt
+        if st not in ("closed", "superseded"):
+            out.append({"task": y, "state": st, "node": task_node(ctx, y)})
+    return out
+
+
+def inferred_waits_cache_path(ctx):
+    return ctx.state / "doorbell" / "inferred_waits.json"
+
+
+def inferred_waits(ctx, rows=None, stops=None):
+    """Finished turns that messaged someone and want an answer, which nobody
+    recorded: [{frm, on, said, idle}]. Costs the roster and a transcript tail
+    per stopped session, so hooks read the ringer's cache instead."""
+    rows = live_rows(agents_json()) if rows is None else rows
+    bw = load_index(ctx).get("byWorktree") or {}
+    recorded = set(open_waits(ctx))
+    out = []
+    for r in stopped_rows(rows):
+        child = bw.get(r.get("cwd", ""))
+        if not child or child in recorded:
+            continue
+        st = (stops or {}).get(r.get("sessionId")) if stops is not None else stop_detail(r, rows)
+        w = stop_wait_on(st)
+        if not w:
+            continue
+        on = next((bw.get(x.get("cwd", "")) for x in rows if x.get("name") == w), None)
+        out.append({"frm": child, "on": on or ("owner" if w in ("", "you") else w),
+                    "said": (st or {}).get("said") or "", "idle": r.get("idle")})
+    return out
+
+
+def write_inferred_waits(ctx, rows):
+    """The ringer's cache of `inferred_waits`, so a hook never pays for it."""
+    f = inferred_waits_cache_path(ctx)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    _save(f, {"at": time.time(), "waits": inferred_waits(ctx, rows)})
+
+
+def waits(ctx, rows=None, infer="cache", stops=None, about=None):
+    """Every wait in the tree as edges (see above). `infer`: "live" reads the
+    roster and transcripts (status, `harness waits`, the viewer), "cache" the
+    ringer's copy no older than INFER_CACHE_MAX (hooks), "off" neither. `about`:
+    only that node's questions rung up are looked at, the one per-node cost."""
+    out, now = [], time.time()
+    nodes = ctx.tree.get("nodes", {})
+    up = lambda n: (nodes.get(n) or {}).get("parent")
+    roots = [n for n, s in nodes.items() if not s.get("parent")]
+    iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(t))
+
+    def add(*a, **k):
+        out.append(_edge(*a, **k))
+
+    # answer: a recorded wait, a finished turn, a question rung up, a block, an ask
+    for n, r in open_waits(ctx).items():
+        on = r.get("on") or r.get("parent") or "owner"
+        add("answer", "waiting", n, on, what=r.get("asked") or "", since=r.get("since"),
+            still=r.get("still_moving") or "", answered=r.get("answered"),
+            act=f"answer it; {n} then runs harness waiting --clear", id=f"asked:{n}")
+    inf = []
+    if infer == "live":
+        try:
+            inf = inferred_waits(ctx, rows, stops)
+        except Exception:
+            inf = []
+    elif infer == "cache":
+        c = _read_json(inferred_waits_cache_path(ctx)) or {}
+        if now - (c.get("at") or 0) < INFER_CACHE_MAX:
+            inf = c.get("waits") or []
+    for w in inf:
+        add("answer", "turn", w["frm"], w["on"], what=w.get("said") or "finished its turn",
+            src="inferred", act=f"reply to {w['frm']}")
+    for lead in ([about] if about else list(nodes)):
+        for k in ctx.children(lead) if lead in nodes else []:
+            try:
+                u = unanswered(ctx, lead, k)
+            except Exception:
+                u = None
+            if u:
+                add("answer", "ring", k, lead, what=u[1], since=iso(now - u[0]),
+                    act=f"harness ring {k} \"<answer>\"")
+    for stem, r in open_blocks(ctx).items():
+        add("answer", "block", r.get("node"), r.get("on") or "owner", on_task=r.get("for"),
+            what=r.get("need") or stem, since=r.get("raised_at"), still=r.get("still_moving"),
+            act=f"answer it, then rank 0: harness blocked {shlex.quote(r.get('need') or stem)} "
+                f"--resolve", id=f"block:{stem}")
+    for stem, r in decided_blocks(ctx).items():
+        for root in roots:
+            add("answer", "decided", r.get("node"), root, what=r.get("need") or stem,
+                since=r.get("resolved_at"), act="harness blocked --decided", id=f"decided:{stem}")
+    d = ctx.state / "asks"
+    for f in (sorted(d.glob("*.json")) if d.is_dir() else []):
+        r = _read_json(f) or {}
+        if r.get("state") not in ASK_OPEN:
+            continue
+        add("answer", "ask", r.get("asker_node"), "owner", frm_task=r.get("task"),
+            what=r.get("question") or "", since=r.get("asked_at"),
+            act=f"the owner rules on {r.get('id')} in the viewer", id=f"ask:{r.get('id')}")
+        if r.get("waiting_on"):
+            add("answer", "item", "intermediary", r["waiting_on"],
+                frm_task=r.get("id"), what=r.get("question") or "",
+                act=f"answer the intermediary's message on {r.get('id')}",
+                id=f"item:{r.get('id')}")
+
+    # gate: what a brief waits on before it starts, or a segment before it closes
+    marks = open_marks(ctx)
+    for key, b in all_briefs(ctx).items():
+        task, x = b.get("task") or key, b.get("node")
+        if not x or superseded(b):
+            continue
+        st = task_state(ctx, task)
+        if st in ("briefed", "gated"):
+            for g in gates_of(ctx, b, "after"):
+                if g["node"] == x:
+                    continue                    # its own earlier task: an order, not a wait
+                on, on_task = g["node"] or "?", g["task"]
+                what = f"starts after {g['task']} ({g['state']})"
+                if g["state"] == "presented":
+                    # Whoever must act next on presented work: its reviewer while
+                    # it is in review (on the review task), then the lead that
+                    # signs it off (an act, so the chain ends there).
+                    rv = (marks.get(g["task"]) or marks.get(tkey(g["task"])) or {}).get("_review_task")
+                    on = (reviewer_of(ctx, up(g["node"])) if rv else None) or up(g["node"]) or on
+                    on_task = rv or None
+                    if on == x:
+                        continue                # x's own sign-off: the sign-off edge says so
+                    what = f"starts after {g['task']}, presented by {g['node']}, " + \
+                           (f"in review by {on}" if rv else f"once {on} signs it off")
+                add("gate", "carrier" if b.get("carries") else "after", x, on, frm_task=task,
+                    on_task=on_task, stops="start", what=what, carrier=bool(b.get("carries")))
+            nb = b.get("not_before")
+            if nb and now < nb:
+                add("gate", "clock", x, "clock", frm_task=task, stops="start",
+                    until=nb, what=f"starts at {utc_label(nb)}")
+            if (b.get("approval") or {}).get("state") == "pending":
+                for root in roots:
+                    add("gate", "approval", x, root, frm_task=task, stops="start",
+                        what="needs the operator's approval",
+                        act=f"harness brief {task} --approve")
+        if st not in ("closed", "superseded", "abandoned"):
+            for g in gates_of(ctx, b, "close_after"):
+                add("gate", "close-after", x, g["node"] or "?", frm_task=task, on_task=g["task"],
+                    stops="close", what=f"closes after {g['task']} ({g['state']})")
+        if st == "open":
+            for r in b.get("requires") or []:
+                ref = r.get("ref") if isinstance(r, dict) else r
+                add("gate", "requires", x, f"commit:{ref}", frm_task=task, stops="present",
+                    what=f"presents once its HEAD holds {ref}")
+        w = b.get("defer") or b.get("wait")
+        if parked(b):
+            add("pause", "defer", x, None, frm_task=task, by=w.get("by_node"),
+                until=w.get("until"), what=w.get("why") or "", since=w.get("at"))
+    for stem, r in marks.items():
+        if not r.get("_presented_at") or r.get("_closed_at"):
+            continue
+        w = r.get("_node")
+        lead = up(w)
+        if r.get("_review_task"):
+            add("gate", "review", w, reviewer_of(ctx, lead) or lead, frm_task=r.get("_task") or stem,
+                on_task=r["_review_task"], stops="signoff", since=r.get("_presented_at"),
+                what=f"in review as {r['_review_task']}")
+        elif lead:
+            add("gate", "signoff", w, lead, frm_task=r.get("_task") or stem, stops="signoff",
+                since=r.get("_presented_at"), what="presented, awaiting sign-off",
+                act=f"harness mark {r.get('_task') or stem} --close",
+                id=f"sign off:{w}:{r.get('_task') or stem}:{r.get('_presented_sha')}")
+
+    # lock: a file held from the checks that read it, a merge frozen
+    for h in live_holds(ctx):
+        add("lock", "hold", h.get("for") or "*", str(h.get("by") or "?").split()[0],
+            on_task=h.get("until") or None, stops="check", since=h.get("at"),
+            what=f"{h.get('path')}: {h.get('why') or ''}",
+            act=f"harness hold {h.get('path')} --release")
+    for n in nodes:
+        h = catchup_hold(ctx, n)
+        if h:
+            add("lock", "freeze", n, str(h.get("by") or "?").split()[0], stops="merge",
+                since=h.get("at"), what=h.get("why") or "")
+
+    # pause: on purpose, with nobody to answer
+    h = halted(ctx)
+    if h:
+        add("pause", "halt", "*", None, by=h.get("by"), since=h.get("at"), what=h.get("why") or "")
+    for n in nodes:
+        s = stopped(ctx, n)
+        if s:
+            add("pause", "stop", n, None, by=s.get("by"), since=s.get("at"), what=s.get("why") or "")
+    return out
+
+
+def owes(ctx, node, edges):
+    """What `node` must act on: edges waiting on it, not stale, not paused."""
+    return [e for e in edges if e["on"] == node and not e["stale"] and e["kind"] != "pause"]
+
+
+def wait_chains(edges):
+    """Who is ultimately waiting on whom, link by link: {edge id: [step, ...]},
+    and the cycles found on the way. A link continues only through the same
+    piece of work: dev gated by dev_dag's task X goes on to what X waits on, not
+    to whatever else dev_dag is waiting for (a node waiting on its child for one
+    task and the child waiting on it for another is not a cycle)."""
+    live = [e for e in edges if e["kind"] in ("answer", "gate") and e["on"]
+            and not e["stale"] and e["frm"] != e["on"]]
+    step = lambda n, t: f"{n} ({t})" if t else n
+
+    def onward(e):
+        # Only a wait on a named piece of work goes on, through that work. A
+        # reply, a sign-off or an approval is the other side's act: it ends there.
+        if not e["on_task"]:
+            return None
+        return next((f for f in live if f["frm"] == e["on"] and f["frm_task"] == e["on_task"]),
+                    None)
+
+    chains, cycles = {}, []
+    for e in live:
+        keys = [(e["frm"], e["frm_task"])]
+        path, cur = [step(*keys[0])], e
+        while cur:
+            k = (cur["on"], cur["on_task"])
+            if k in keys:
+                cyc = path[keys.index(k):] + [step(*k)]
+                if not any(set(cyc) == set(c) for c in cycles):
+                    cycles.append(cyc)
+                break
+            path.append(step(*k))
+            keys.append(k)
+            cur = onward(cur)
+        chains[e["id"]] = path
+    return chains, cycles
+
+
+WAIT_VERB = {"answer": "waits on", "gate": "gated by", "lock": "held by", "pause": "paused"}
+
+
+def wait_line(e, width=14):
+    """One edge, said once, the same way on every surface."""
+    a = e["frm"] + (f" ({e['frm_task']})" if e.get("frm_task") else "")
+    b = (e["on"] or "") + (f" ({e['on_task']})" if e.get("on_task") else "")
+    age = wait_age(e["since"]) if isinstance(e.get("since"), str) else ""
+    head = f"{a:<{width}} {WAIT_VERB[e['kind']]:<9} {b}" if e["on"] else \
+        f"{a:<{width}} paused by {e.get('by') or '?'}"
+    return head + (f"  {age}" if age else "") + (f"  — {clip(e['what'], 90)}" if e["what"] else "") \
+        + (f"   [{e['via']}]") + (f"   STALE: {e['stale']}" if e.get("stale") else "")
+
+
+def cmd_waits(a):
+    """`harness waits [--node N] [--stale] [--owes] [--json]`: every wait in the
+    tree, one line each, then the chains and any cycle."""
+    ctx = Ctx(); ctx.require_enrolled()
+    edges = waits(ctx, infer="live")
+    if a.owes:
+        who = a.node or ctx.node()[0]
+        edges = owes(ctx, who, edges)
+    elif a.node:
+        edges = [e for e in edges if a.node in (e["frm"], e["on"])]
+    if a.stale:
+        edges = [e for e in edges if e["stale"]]
+    if a.json:
+        print(json.dumps(edges, indent=2, default=str))
+        return
+    if not edges:
+        print("nothing is waiting" + (" on that" if a.node or a.owes or a.stale else ""))
+        return
+    for kind in ("answer", "gate", "lock", "pause"):
+        rows = [e for e in edges if e["kind"] == kind]
+        if not rows:
+            continue
+        print(f"{kind} ({len(rows)})")
+        for e in sorted(rows, key=lambda e: (str(e["frm"]), str(e["on"]))):
+            print("  " + wait_line(e))
+            if e.get("act"):
+                print(f"  {'':<14} → {e['act']}")
+    chains, cycles = wait_chains(edges)
+    # Longest first, and a chain that is the tail of a longer one said once.
+    long = sorted({tuple(v) for v in chains.values() if len(v) > 2}, key=len, reverse=True)
+    long = [v for i, v in enumerate(long)
+            if not any(len(w) > len(v) and w[-len(v):] == v for w in long[:i])]
+    if long:
+        print("chains")
+        for v in long:
+            print("  " + " → ".join(v))
+    for c in cycles:
+        print("CYCLE  " + " → ".join(c))
 
 
 def cmd_waiting(a):
@@ -20262,6 +20574,14 @@ def cmd_ringer(a):
                     sweep_counts(ctx, fresh=True)
                 except Exception as e:
                     print(f"{_now()} sweep count failed: {type(e).__name__}: {e}")
+            # Finished turns that wait on someone, read once here for every
+            # hook (owner, 2026-10-16: one wait relation, `waits`).
+            if time.time() - S.get("_infer_at", 0) >= NUDGE_EVERY:
+                S["_infer_at"] = time.time()
+                try:
+                    write_inferred_waits(ctx, cached_roster(ctx))
+                except Exception as e:
+                    print(f"{_now()} inferred waits not read: {type(e).__name__}: {e}")
             # Finished sessions off Claude Code's list, each node keeping its
             # last SESSIONS_KEEP (owner, 2026-10-15). Detached: a first pass
             # over hundreds takes minutes.
@@ -20474,6 +20794,7 @@ DESIGN_READ = {
     "ask": {"target", "show", "list", "all", "json", "project"},
     "fact": {"name", "list"}, "finding": {"name", "list", "all"},
     "idle": {"all", "roster"},
+    "waits": {"node", "owes", "stale", "json"},
 }
 DESIGN_REFUSAL = ("a design session reads the tree and writes design documents; briefs, "
                   "marks, rings and the charter are rank 0's")
@@ -21044,6 +21365,13 @@ def main():
                     help="the answer arrived; you are working again")
     wt.add_argument("--list", action="store_true",
                     help="every node in this tree that is waiting, and on whom")
+    ws = add("waits", cmd_waits)
+    ws.add_argument("--node", metavar="NODE", help="only edges into or out of NODE")
+    ws.add_argument("--owes", action="store_true",
+                    help="what NODE (default: yours) must act on")
+    ws.add_argument("--stale", action="store_true",
+                    help="only waits whose cause has gone")
+    ws.add_argument("--json", action="store_true", help="the edges as JSON")
     bk = add("blocked", cmd_blocked)
     bk.add_argument("need", nargs="?", help="what you need — a path, a command, a permission")
     bk.add_argument("--why", help="what it is for, in one line")

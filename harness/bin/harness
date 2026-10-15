@@ -4976,6 +4976,19 @@ _HANDOFF = re.compile(
 # Below rank 0 a session's closing words to the owner say "you": rank 0 talks to
 # the owner in every turn, so this form is for the others only.
 _HANDOFF_YOU = re.compile(r"\b(?:leave|leaving)\b.{0,40}\bto you\b|\bover to you\b", re.I | re.S)
+# "Nothing waits on the owner." says no hand-off, and blocking on it teaches a
+# node not to write the true negative (log 177).
+_NEGATED = re.compile(r"\b(?:nothing|no|not|none|never|nobody|neither)\b|n't\b", re.I)
+
+
+def _handoff_said(text, rx):
+    """A sentence of `text` that hands off by `rx`, with no negation before the
+    match or inside it."""
+    for s in re.split(r"(?<=[.!?;])\s+", text):
+        for m in rx.finditer(s):
+            if not _NEGATED.search(s[:m.end()]):
+                return True
+    return False
 
 
 def handoff_unasked(ctx, node, texts):
@@ -4991,7 +5004,7 @@ def handoff_unasked(ctx, node, texts):
     # whom; a status summary mentions the owner in passing all through its body.
     ends = [[p for p in re.split(r"\n\s*\n", t.strip()) if p.strip()][-1][-500:]
             for t in texts if t.strip()]
-    if not any(_HANDOFF.search(e) or (ctx.rank(node) > 0 and _HANDOFF_YOU.search(e))
+    if not any(_handoff_said(e, _HANDOFF) or (ctx.rank(node) > 0 and _handoff_said(e, _HANDOFF_YOU))
                for e in ends):
         return False
     said = "\n".join(texts)
@@ -9805,9 +9818,63 @@ def review_refused(ctx, n, tip, here):
     return True
 
 
+def new_failures(rep, base):
+    """[(arm, kind, file, detail)] for each failure a report has that its
+    baseline does not: a new file (or a whole arm), a run that did not happen,
+    a known-red file with more faults."""
+    out = []
+    for arm, d in baseline_diff(rep.get("checks") or [], base).items():
+        out += [(arm, "new", f, None) for f in d["new"]]
+        out += [(arm, "notrun", None, None)] if d["notrun"] else []
+        out += [(arm, "grew", f, ks) for f, ks in d.get("grew") or []]
+    return out
+
+
+def inherited_reds(ctx, here, rep, tip):
+    """Of a report's new failures, those the lead's own tree has too (dev_dag,
+    2026-10-15: two reds from the owner's fixture step failed identically at
+    the lead, and integrate had no way past them). The lead's report at the
+    commit of its own that `tip` holds, else at its HEAD. -> (lead sha or None,
+    inherited, own), each a list of "arm: file" words. A run that did not
+    happen is never inherited."""
+    base = baseline_at(ctx, rep.get("baseline"))
+    if not base:
+        return None, [], []
+    news = new_failures(rep, base)
+    lb = ctx.tree["nodes"].get(here, {}).get("branch") or here
+    mb = git("merge-base", tip, lb, cwd=ctx.worktree)[1].strip()
+    head = git("rev-parse", lb, cwd=ctx.worktree)[1].strip()
+    lrep, lsha = None, None
+    for s in dict.fromkeys(x for x in (mb, head) if x):
+        lrep = read_check_report(ctx, here, s) or _read_json(shared_report_path(ctx, s))
+        if lrep is not None:
+            lsha = s
+            break
+    words = lambda a, k, f: f"{a}: {f}" if f and f != "(arm)" else f"{a}" + \
+        (" (not run)" if k == "notrun" else "")
+    if lrep is None:
+        return None, [], [words(a, k, f) for a, k, f, _ in news]
+    rows = {r["name"]: r for r in lrep.get("checks") or []}
+    inh, own = [], []
+    for a, k, f, ks in news:
+        r = rows.get(a)
+        red = r is not None and r.get("exit") not in (0, None, 125) and not r.get("held") \
+            and not r.get("timedOut")
+        if k == "new":
+            ok = red and (f == "(arm)" or f in (r.get("failedFiles") or []))
+        elif k == "grew":
+            have = ((r or {}).get("failedFaults") or {}).get(f) or {}
+            ok = red and all(have.get(key, 0) >= c for key, _, c in ks)
+        else:
+            ok = False
+        (inh if ok else own).append(words(a, k, f))
+    return lsha, inh, own
+
+
 def reviewer_check_refused(ctx, n, tip):
     """A reviewer's cuts are code no one else read, so its branch integrates on
-    a passing check at its tip (log 172). Prints the refusal; -> bool."""
+    a passing check at its tip (log 172), or on one whose new failures the lead
+    fails the same way (inherited, not the review's). Prints; -> bool."""
     rep, sha, _ = check_through_catchup(ctx, n, tip)
     if rep is None:
         rep = _read_json(shared_report_path(ctx, sha))
@@ -9815,12 +9882,34 @@ def reviewer_check_refused(ctx, n, tip):
         and not partial_line(rep)
     if ok:
         return False
+    here = ctx.tree["nodes"].get(n, {}).get("parent")
+    lsha, inh, own = (inherited_reds(ctx, here, rep, tip)
+                      if rep is not None and rep.get("baseline") and not partial_line(rep)
+                      else (None, [], []))
+    if lsha and inh and not own:
+        # Recorded on the report, so the gate reads the same answer.
+        rec = dict(rep, inherited={"from": here, "at": lsha, "failures": inh, "own": 0,
+                                   "by": here, "when": _now()})
+        f = check_report_path(ctx, n, sha)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(rec, indent=2) + "\n")
+        print(f"     {n:<12} its {len(inh)} new failure(s) fail the same in {here}'s own check "
+              f"at {lsha[:8]}: inherited, not the review's:\n     {'':<12} "
+              + "; ".join(inh))
+        return False
     why = ("nothing has checked it" if rep is None else partial_line(rep) if partial_line(rep)
            else f"{rep.get('new')} new failure(s)" if rep.get("baseline")
            else f"{rep.get('failed')} check(s) failed")
     print(f"skip {n:<12} is your reviewer, and its cuts at {sha[:8]} are code nobody else "
           f"read: it integrates\n     {'':<12} on a passing check, and {why}. It runs "
           f"harness check and presents again.")
+    if lsha and inh:
+        print(f"     {'':<12} {len(inh)} of them fail the same at {here}'s {lsha[:8]} "
+              f"(inherited); still new: {'; '.join(own)}")
+    elif rep is not None and rep.get("baseline") and not partial_line(rep) and lsha is None:
+        print(f"     {'':<12} If they are {here}'s own reds, check {here} itself (harness check, "
+              f"here): failures\n     {'':<12} it shares at the commit {n} holds are "
+              f"inherited, and integrate takes them.")
     return True
 
 

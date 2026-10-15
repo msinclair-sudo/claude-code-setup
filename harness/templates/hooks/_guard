@@ -272,7 +272,11 @@ if "--gate" in sys.argv:
         for _ in range(7):
             rep = _rec("checks", node, sha)
             if rep is not None:
-                return bool(rep.get("passed") or (rep.get("baseline") and not rep.get("new")))
+                # New failures the lead's own check shares, measured by
+                # integrate and recorded on the report, are not the review's.
+                inh = rep.get("inherited") or {}
+                return bool(rep.get("passed") or (rep.get("baseline") and not rep.get("new"))
+                            or (inh.get("own") == 0 and inh.get("from") == gnode))
             rc, line, _e = git("rev-list", "--parents", "-n", "1", sha)
             parts = line.split()
             if rc or len(parts) != 3 or git("merge-base", "--is-ancestor", parts[2], pb)[0]:

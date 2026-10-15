@@ -6012,6 +6012,13 @@ class LogEntries92to102(unittest.TestCase):
         self.assertFalse(hz.handoff_unasked(self.ctx, "dev_1", said))          # a lane
         self.assertFalse(hz.handoff_unasked(self.ctx, "main", said))           # "you": rank 0
         self.assertFalse(hz.handoff_unasked(self.ctx, "dev", ["Signed off and integrated."]))
+        # Log 177: the true negative is not a hand-off; a negation after it does not cancel one.
+        for s in ("Nothing waits on the owner.", "Done. No owner action is needed.",
+                  "The owner doesn't need to approve anything here.",
+                  "Integrated dev_1; nobody needs the owner for it."):
+            self.assertFalse(hz.handoff_unasked(self.ctx, "dev", [s]), s)
+        self.assertTrue(hz.handoff_unasked(self.ctx, "dev", [
+            "Nothing else is open. This waits on the owner, not on dev_1."]))
         # buried in a summary's body, not its closing words
         self.assertFalse(hz.handoff_unasked(self.ctx, "dev", [
             "The owner is waiting on nothing here.\n\nNext: tfm-store. The doorbell is armed."]))
@@ -7523,6 +7530,12 @@ class Reviewer(unittest.TestCase):
         code, err = gate(cut)                              # recorded, unchecked
         self.assertEqual(code, 1)
         self.assertIn("nothing has passed a check", err)
+        put("checks", "dev_r", cut, {"passed": False, "baseline": "b", "new": 2,
+                                     "inherited": {"from": "dev_1", "own": 0}})
+        self.assertEqual(gate(cut)[0], 1)                  # inherited from the wrong node
+        put("checks", "dev_r", cut, {"passed": False, "baseline": "b", "new": 2,
+                                     "inherited": {"from": "dev", "own": 0}})
+        self.assertEqual(gate(cut)[0], 0, gate(cut)[1])    # the lead's own reds
         put("checks", "dev_r", cut, {"passed": True})
         code, err = gate(cut)                              # and dev_1 arrives inside it
         self.assertEqual(code, 0, err)
@@ -7539,6 +7552,42 @@ class Reviewer(unittest.TestCase):
         code, out = self.run_as("dev", "integrate", "dev_1", read_roster=lambda p: None)
         self.assertEqual(code, 0, out)
         self.assertTrue(self.has("dev", sha))
+
+    def test_reds_the_lead_fails_the_same_are_inherited_not_the_review_s(self):
+        # dev_dag, 2026-10-15 19:1x: two reds from the owner's fixture step
+        # failed identically at the lead, and integrate had no way past them.
+        sha, _ = self.present_t()
+        cut, _ = self.review_t()
+        self.assertEqual(self.present_review()[0], 0)
+        bp = hz.baseline_path(self.ctx)
+        bp.parent.mkdir(parents=True, exist_ok=True)
+        bp.write_text(json.dumps({"sha": "b" * 40, "arms": {"docs": {
+            "failed": False, "files": [], "codes": {}}}}))
+        row = lambda *fs: {"name": "docs", "exit": 1, "failedFiles": list(fs)}
+        def report(node, at, *fs):
+            f = hz.check_report_path(self.ctx, node, at)
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(json.dumps({"sha": at, "passed": False, "baseline": "b" * 40,
+                                     "new": len(fs), "checks": [row(*fs)]}))
+        integrate = lambda: self.run_as("dev", "integrate", "dev_r", read_roster=lambda p: None)
+        report("dev_r", cut, "test_keep.py", "test_route.py")
+        code, out = integrate()
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("check dev itself", out)
+        lead = self.git("dev", "rev-parse", "HEAD")
+        report("dev", lead, "test_keep.py")                     # one of the two is dev's
+        code, out = integrate()
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("1 of them fail the same at dev's", out)
+        self.assertIn("still new: docs: test_route.py", out)
+        report("dev", lead, "test_keep.py", "test_route.py")    # both are
+        code, out = integrate()
+        self.assertEqual(code, 0, out)
+        self.assertIn("inherited, not the review's", out)
+        self.assertTrue(self.has("dev", cut))
+        inh = hz.read_check_report(self.ctx, "dev_r", cut)["inherited"]
+        self.assertEqual((inh["from"], inh["at"], inh["own"]), ("dev", lead, 0))
+        self.assertEqual(inh["failures"], ["docs: test_keep.py", "docs: test_route.py"])
 
     def test_a_catch_up_of_the_presented_worker_does_not_latch_the_review(self):
         # 2026-10-15, four times on dev_dag: the ringer caught a presented

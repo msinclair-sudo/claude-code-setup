@@ -146,7 +146,7 @@ Still worth a read-only subagent per child, in parallel: is it caught up (`git m
 A child with `"role": "reviewer"` in `tree.json` reads every change your workers present before you see it, with ponytail on, and makes the cuts on its own branch (owner, 2026-10-15). Then:
 
 - A worker's presentation goes to the reviewer as `<task>.review`; your doorbell gets an FYI, and nothing is owed by you yet. `integrate <worker>` is refused for it: the work reaches you through the review.
-- When the reviewer presents, read its note (`harness note <task>.review`). It replaces your read of the diff; no `harness review --record` is asked of you. Then `harness integrate <reviewer>`, which needs a passing check at its tip (its cuts are code nobody else read), and `harness mark <task>.review --close`, which signs off the worker's task with it.
+- When the reviewer presents, read its note (`harness note <task>.review`). It replaces your read of the diff; no `harness review --record` is asked of you. Then `harness integrate <reviewer>`, which needs a passing check at its tip (its cuts are code nobody else read). New failures that your own check fails the same way, at the commit of yours the reviewer holds or at your HEAD, are inherited and do not block it; if integrate says so, run `harness check` here first. Then `harness mark <task>.review --close`, which signs off the worker's task with it.
 - Questions from workers still come to you, and so does everything about scope.
 - Start the reviewer like any lane when its queue holds a review and it has no session.
 

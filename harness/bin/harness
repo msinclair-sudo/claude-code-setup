@@ -11143,6 +11143,9 @@ def cmd_fact(a):
                     else "OTHER WORKTREE")
             if o.get("behind"):
                 flag += f"   measured {o['behind']} behind {o.get('behind_of')}"
+            if r.get("retired"):
+                flag = "RETIRED" + (f" → {r['retired']['for']}" if r["retired"].get("for")
+                                    else "")
             print(f"  {r.get('name', k):<24} {str(o.get('value'))[:34]:<36} {flag}")
             print(f"  {'':<24} {_ago(o.get('at'))} by {o.get('by')}"
                   + (f"   ({len(r['observations'])} observations)"
@@ -11152,6 +11155,28 @@ def cmd_fact(a):
         return
 
     f, r = load_fact(ctx, a.name)
+
+    if a.retire is not None:
+        # Log 176: a fact measured on something since deleted is history, not
+        # stale. It keeps its figures; it stops being a citation, and a recheck
+        # says so rather than failing.
+        if r is None:
+            die(REFUSED, f"no fact '{a.name}'")
+        if not a.retire.strip():
+            die(REFUSED, f'say why it is history: harness fact {a.name} --retire "..."')
+        if a.retired_by and load_fact(ctx, a.retired_by)[1] is None:
+            die(REFUSED, f"--by {a.retired_by}: no fact by that name")
+        r["retired"] = dict({"why": a.retire.strip(), "by": who,
+                             "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")},
+                            **({"for": a.retired_by} if a.retired_by else {}))
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(r, indent=2) + "\n")
+        print(f"fact '{a.name}' retired: {a.retire.strip()}"
+              + (f"; its successor is {a.retired_by}" if a.retired_by else ""))
+        print(f"  Its {len(r.get('observations') or [])} observation(s) stay readable; "
+              f"it no longer cites anything, so\n  `harness cited` and the sweeps pass "
+              f"over what it names. A new observation brings it back.")
+        return
 
     if a.is_ is not None or a.from_ is not None:
         if a.is_ is None or not str(a.is_).strip():
@@ -11175,6 +11200,7 @@ def cmd_fact(a):
         r = r or {"name": a.name, "observations": []}
         if a.what:
             r["what"] = a.what
+        _back = r.pop("retired", None)
         # A measurement on a tree behind its parent says so (log 139: a lane
         # measured memory and run time on a tree 42 commits behind).
         try:
@@ -11192,6 +11218,8 @@ def cmd_fact(a):
         print(f"fact '{a.name}' = {a.is_}   (observation {n}, by {who})")
         print(f"  from: {a.from_}")
         print(f"  at {head[:8]} in {ctx.worktree}")
+        if _back:
+            print(f"  it was retired ({_back.get('why')}); this observation brings it back")
         if _b.get("n"):
             print(f"  STALE TREE: measured {behind_words(_b)}. Catch up (harness catchup) "
                   f"and measure again before anyone relies on it.")
@@ -11211,6 +11239,12 @@ def cmd_fact(a):
     if o is None:
         die(REFUSED, f"'{a.name}' has no observations")
 
+    _ret = r.get("retired")
+    if a.recheck and _ret:
+        print(f"{r.get('name')} is retired, so nothing is re-run: {_ret.get('why')} "
+              f"({_ago(_ret.get('at'))}, by {_ret.get('by')})"
+              + (f"\n  its successor: harness fact {_ret['for']}" if _ret.get("for") else ""))
+        return
     if a.recheck:
         cwd = ctx.worktree
         _, same_wt, head, _ = fact_state(ctx, o)
@@ -11265,6 +11299,10 @@ def cmd_fact(a):
     print(f"{r.get('name')} = {o.get('value')}")
     if r.get("what"):
         print(f"  {r['what']}")
+    if _ret:
+        print(f"  RETIRED  {_ago(_ret.get('at'))} by {_ret.get('by')}: {_ret.get('why')}"
+              + (f"\n           its successor: harness fact {_ret['for']}"
+                 if _ret.get("for") else ""))
     print(f"  from     {o.get('command')}")
     print(f"  measured {_ago(o.get('at'))} by {o.get('by')}  at {str(o.get('sha'))[:8]}")
     if o.get("behind"):
@@ -15190,6 +15228,8 @@ def record_texts(ctx, live_only=False):
             r = json.loads(f.read_text())
         except Exception:
             continue
+        if r.get("retired"):
+            continue                   # history: it needs nothing it names (log 176)
         for o in r.get("observations") or []:
             add(f"facts/{f.stem}", o)
     if baseline_path(ctx).exists():
@@ -15376,6 +15416,9 @@ def stale_records(ctx, days=14):
         name = r.get("name") or k
         last = _epoch(((r.get("observations") or [{}])[-1]).get("at"))
         if k in declined or tkey(name) in cited or name in text:
+            continue
+        if r.get("retired"):
+            facts[k] = f"retired: {r['retired'].get('why')}"
             continue
         if last and now - last > days * 86400:
             facts[k] = f"uncited, last observed {human_age(now - last)} ago"
@@ -15889,7 +15932,8 @@ def open_record_texts(ctx):
     for k, r in open_findings(ctx).items():
         out.append((f"finding {k}", json.dumps(r)))
     for k, r in all_facts(ctx).items():
-        out.append((f"fact {k}", json.dumps(r)))
+        if not r.get("retired"):
+            out.append((f"fact {k}", json.dumps(r)))
     for h in live_holds(ctx):
         out.append((f"hold by {h.get('by')}", json.dumps(h)))
     return out
@@ -17184,10 +17228,11 @@ def owner_done(pdir):
     return out
 
 
-def ask_withdraw(pdir, path, rec, why, sid):
+def ask_withdraw(pdir, path, rec, why, sid, by=None):
     """The asker takes an ask back (log 101b: main could neither change an ask's
     commands nor withdraw one, so the owner saw four items for two writes). From
-    a session: the asking node, or rank 0. From a shell: the owner."""
+    a session: the asking node, or rank 0. From a shell: the owner. `by`: the
+    harness itself, withdrawing an ask it opened."""
     why = (why or "").strip()
     if not why:
         die(REFUSED, 'say why: harness ask <id> --withdraw "replaced by ..."')
@@ -17195,7 +17240,7 @@ def ask_withdraw(pdir, path, rec, why, sid):
         die(REFUSED, "an intermediary returns an ask (--return), it doesn't withdraw it")
     if rec.get("state") not in ASK_OPEN:
         die(REFUSED, f"{rec['id']} is {rec.get('state')}; only an open ask can be withdrawn")
-    by = "owner"
+    by = by or "owner"
     if sid:
         try:
             c = Ctx(); c.require_enrolled()
@@ -19902,14 +19947,16 @@ def resume_block(ctx, node, sid):
 
 
 def ringer_double(ctx, S, node, sid, there):
-    """Two live sessions in one worktree: tell the node's lead and rank 0, once
-    per pair (log 161: nothing said so, and a lead's own `claude stop` of the
-    surplus one was refused by the permission checker)."""
+    """Two live sessions in one worktree: an action ask for the owner, once per
+    pair, with the stop to run (log 161: nothing said so; log 174: rank 0 was
+    told, and stopping a session is the owner's call, not rank 0's). A lead
+    below rank 0 hears of it as news: its child's writes are refused."""
     seen = S.setdefault("_double", {})
     key = sorted(str(r.get("sessionId")) for r in there)
     f = ctx.state_file("starts", f"{node}-double", ".json")
     if len(there) < 2:
-        if seen.pop(node, None) is not None:
+        if seen.pop(node, None) is not None or f.exists():
+            double_settled(ctx, f, node)
             f.unlink(missing_ok=True)
         return None
     if seen.get(node) == key or (_read_json(f) or {}).get("sids") == key:
@@ -19917,6 +19964,7 @@ def ringer_double(ctx, S, node, sid, there):
         return None
     seen[node] = key
     f.parent.mkdir(parents=True, exist_ok=True)
+    double_settled(ctx, f, node)                   # a new pair replaces the old ask
     _save(f, {"sids": key, "at": _now()})
 
     def who(r):
@@ -19927,19 +19975,57 @@ def ringer_double(ctx, S, node, sid, there):
         text = (f"TWO live sessions are in {node}'s worktree (log 161). {who(holder)} holds "
                 f"the node; {', '.join(who(r) for r in rest)} does not, and its writes are "
                 f"refused. Stop the surplus: harness stop {node} --surplus")
+        q = (f"{len(there)} sessions are in {node}'s worktree; "
+             f"[{str(holder.get('sessionId'))[:8]}] holds it. Stop the other?")
+        runs = [f"harness stop {node} --surplus"]
     else:
         text = (f"TWO live sessions are in {node}'s worktree (log 161) and neither holds "
                 f"the node, so neither can claim it: {', '.join(who(r) for r in there)}. "
                 f"Keep one: harness stop {node} --surplus --keep <id>")
-    told = {n for n, sp in ctx.tree["nodes"].items() if not sp.get("parent")}
+        q = (f"{len(there)} sessions are in {node}'s worktree and none holds it. "
+             f"Which one stays? Run the line for it.")
+        runs = [f"harness stop {node} --surplus --keep {str(r.get('sessionId'))[:8]}"
+                for r in there][:ASK_RUNS_MAX]
+    # Run from the owner's terminal, wherever it stands: into the repo first.
+    _in = f"cd {shlex.quote(str(ctx.repo))} && ~/.claude/harness/bin/"
+    runs = [_in + r for r in runs]
+    told = []
+    try:
+        root = next(n for n, sp in ctx.tree["nodes"].items() if not sp.get("parent"))
+        rec = ask_open(ctx, OWNER_TASK, "action", q, root, "", runs=runs)
+        rec.update(asked_by="harness (ringer)", detail=text,
+                   chain=[{"node": "harness", "from": "the ringer", "received": text,
+                           "at": _now()}])
+        _save(Path(ctx.state) / "asks" / f"{rec['id']}.json", rec)
+        _save(f, {"sids": key, "at": _now(), "ask": rec["id"]})
+        told.append(f"the owner ({rec['id']})")
+    except (SystemExit, Exception) as e:
+        print(f"{_now()} {node}: could not open the owner's ask: {e}")
     parent = ctx.tree["nodes"].get(node, {}).get("parent")
-    if parent:
-        told.add(parent)
-    told.discard(node)
-    for n in sorted(told):
-        ring_inbox(ctx.state, n, "harness", text)
-    print(f"{_now()} two sessions in {node}'s worktree; told {', '.join(sorted(told)) or 'nobody'}")
+    if parent and ctx.tree["nodes"].get(parent, {}).get("parent"):
+        ring_inbox(ctx.state, parent, "harness",
+                   text.replace("Stop the surplus: ", "The owner is asked to run: ")
+                   .replace("Keep one: ", "The owner is asked to keep one: "), "fyi")
+        told.append(parent)
+    print(f"{_now()} two sessions in {node}'s worktree; told {', '.join(told) or 'nobody'}")
     return text
+
+
+def double_settled(ctx, f, node):
+    """The pair a double ask was opened for is gone: withdraw the ask, so the
+    owner is not left a stop to run against sessions that no longer exist."""
+    aid = (_read_json(f) or {}).get("ask")
+    if not aid:
+        return
+    p = Path(ctx.state) / "asks" / f"{aid}.json"
+    rec = _read_json(p) if p.exists() else None
+    if rec and rec.get("state") in ASK_OPEN:
+        try:
+            ask_withdraw(ctx.state, p, rec, f"one session is left in {node}'s worktree",
+                         "", by="harness (ringer)")
+            print(f"{_now()} {node}: one session left; withdrew {aid}")
+        except (SystemExit, Exception):
+            pass
 
 
 LIMIT_EVERY = 60          # seconds between the ringer's looks for usage limits
@@ -21001,6 +21087,11 @@ def main():
     ft.add_argument("--what", metavar="TEXT", help="what it measures, in one line")
     ft.add_argument("--recheck", action="store_true",
                     help="re-run the recorded command here and append what it says")
+    ft.add_argument("--retire", metavar="WHY",
+                    help="mark it history (its source is gone): its figures stay, it stops "
+                         "citing what it names, and --recheck says retired (log 176)")
+    ft.add_argument("--by", dest="retired_by", metavar="FACT",
+                    help="with --retire: the fact that replaces it")
     ft.add_argument("--timeout", type=int, default=120, metavar="SECONDS")
     ft.add_argument("--list", action="store_true", help="every fact, with its age")
     il = add("idle", cmd_idle)

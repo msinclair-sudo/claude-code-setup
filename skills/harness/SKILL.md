@@ -80,7 +80,7 @@ No exit code at all, with the tool call *blocked by the auto-mode classifier*, m
 
 ## Before you derive a number, look it up
 
-`harness fact --list`, `harness fact <name>`, `harness fact <name> --recheck`. Record with `harness fact <name> --is "..." --from "<command>" --what "..."`: `--from` is required, and the value goes in the command's own words. *Tree has moved since* means re-run; *measured in another worktree* is a different measurement, not a disagreement. A fact is not a brief.
+`harness fact --list`, `harness fact <name>`, `harness fact <name> --recheck`. Record with `harness fact <name> --is "..." --from "<command>" --what "..."`: `--from` is required, and the value goes in the command's own words. *Tree has moved since* means re-run; *measured in another worktree* is a different measurement, not a disagreement. A fact whose source is gone is history, not stale: `harness fact <name> --retire "why" [--by <new-fact>]` keeps its figures, stops it citing what it names, and makes `--recheck` say *retired*. A fact is not a brief.
 
 ## If you need to ask why
 

@@ -3942,29 +3942,47 @@ class Ringer(unittest.TestCase):
         self.tick({}, 1000, ok=False, resumed=[])
         self.assertIsNone(hz.start_standing(self.ctx, "dev_1"))
 
-    def test_two_sessions_in_one_worktree_ring_the_lead_and_rank_0_once(self):
+    def owner_asks(self):
+        d = Path(self.ctx.state) / "asks"
+        return [hz._read_json(f) for f in sorted(d.glob("*.json"))] if d.is_dir() else []
+
+    def test_two_sessions_in_one_worktree_are_the_owner_s_to_stop(self):
+        # Log 174: rank 0 was told to stop one, and stopping a session is the
+        # owner's call. The owner gets an action ask with the stop to run.
         self.own("dev_1", "s-a")
         self.rows = [{"sessionId": sid, "status": "busy", "cwd": "/w/dev_1", "name": "p-dev_1",
                       "pid": pid} for sid, pid in (("s-a", 11), ("s-b", 12))]
         S = {}
         self.tick(S, 1000)
         self.tick(S, 1001)
-        for n in ("dev", "main"):
-            (m,) = hz.MAIL().unread(self.ctx.state, n)
-            self.assertIn("TWO live sessions are in dev_1's worktree", m["text"])
-            self.assertIn("p-dev_1 [s-a] pid 11 holds the node", m["text"])
-            self.assertIn("harness stop dev_1 --surplus", m["text"])
-            self.assertNotIn("--keep", m["text"])
+        (a,) = self.owner_asks()
+        self.assertEqual((a["task"], a["kind"], a["asked_by"]), ("owner", "action", "harness (ringer)"))
+        self.assertIn("[s-a] holds it", a["question"])
+        (run,) = a["runs"]
+        self.assertTrue(run.endswith("~/.claude/harness/bin/harness stop dev_1 --surplus"), run)
+        self.assertTrue(run.startswith("cd "))
+        self.assertFalse(hz.run_is_cd(run))
+        self.assertIn("p-dev_1 [s-a] pid 11 holds the node", a["detail"])
+        self.assertEqual(hz.MAIL().unread(self.ctx.state, "main"), [])     # not rank 0's
+        (m,) = hz.MAIL().unread(self.ctx.state, "dev")                       # the lead: news
+        self.assertEqual(m["priority"], "fyi")
+        self.assertIn("The owner is asked to run: harness stop dev_1 --surplus", m["text"])
         self.assertEqual(hz.MAIL().unread(self.ctx.state, "dev_1"), [])
-        # A new ringer does not say it again, and neither holding it reads differently.
+        # A new ringer does not ask again; a new pair replaces the ask.
         self.tick({}, 1002)
-        self.assertEqual(len(hz.MAIL().unread(self.ctx.state, "dev")), 1)
+        self.assertEqual(len(self.owner_asks()), 1)
         self.own("dev_1", "s-gone")
         self.rows[1]["sessionId"] = "s-c"
         self.tick(S, 1003)
-        (m,) = [m for m in hz.MAIL().unread(self.ctx.state, "dev") if "neither" in m["text"]]
-        self.assertIn("neither holds the node", m["text"])
-        self.assertIn("--surplus --keep <id>", m["text"])
+        (a2,) = self.owner_asks()
+        self.assertIn("none holds it", a2["question"])
+        self.assertEqual([r.split("--keep ")[1] for r in a2["runs"]], ["s-a", "s-c"])
+        # One left: the ask is withdrawn, not left for the owner to run.
+        self.rows = self.rows[:1]
+        self.tick(S, 1004)
+        self.assertEqual(self.owner_asks(), [])
+        w = (Path(self.ctx.state) / "owner" / "withdrawn.jsonl").read_text().splitlines()
+        self.assertEqual(json.loads(w[-1])["by"], "harness (ringer)")
 
     def limits(self, S, now, cause, start=None, recycled=None):
         with mock.patch.object(hz, "stop_cause", side_effect=lambda sid: cause if sid == "s-1" else None), \
@@ -6126,7 +6144,7 @@ class LogEntries92to102(unittest.TestCase):
     def test_from_must_parse(self):
         self.ctx.worktree = self.ctx.dir
         a = mock.Mock(list=False, name="n", is_="41", from_="echo 'unclosed", what=None,
-                      recheck=False)
+                      recheck=False, retire=None)
         with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
              mock.patch.object(hz, "load_fact", return_value=(self.ctx.dir / "f.json", None)), \
              self.assertRaises(SystemExit):
@@ -7250,6 +7268,35 @@ class CatchUp(unittest.TestCase):
         self.assertEqual((obs["behind"], obs["behind_of"]), (1, "main"))
         self.assertIn("STALE    measured on a tree 1 commit(s) behind main",
                       self.run_as("dev", "fact", "peak")[1])
+
+    def test_a_retired_fact_keeps_its_figures_and_cites_nothing(self):
+        # Log 176: two facts measured on build 9, which the owner deleted.
+        gone = str(self.root / "build9.db")
+        self.assertEqual(self.run_as("dev", "fact", "cells", "--is", "12",
+                                     "--from", f"sqlite3 {gone} 'select 12'")[0], 0)
+        self.run_as("dev", "fact", "cells-b10", "--is", "14", "--from", "echo 14")
+        self.assertTrue(hz.cited(self.ctx, [gone])[gone])
+        code, out = self.run_as("dev", "fact", "cells", "--retire", "")
+        self.assertEqual(code, hz.REFUSED)
+        code, out = self.run_as("dev", "fact", "cells", "--retire", "build 9 deleted",
+                                "--by", "nope")
+        self.assertEqual(code, hz.REFUSED)
+        code, out = self.run_as("dev", "fact", "cells", "--retire", "build 9 deleted",
+                                "--by", "cells-b10")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(hz.cited(self.ctx, [gone])[gone], [])
+        self.assertFalse(any(gone in t for _, t, _ in hz.record_texts(self.ctx, live_only=True)))
+        code, out = self.run_as("dev", "fact", "cells", "--recheck")
+        self.assertEqual(code, 0, out)
+        self.assertIn("is retired, so nothing is re-run: build 9 deleted", out)
+        out = self.run_as("dev", "fact", "cells")[1]
+        self.assertIn("cells = 12", out)
+        self.assertIn("RETIRED", out)
+        self.assertIn("harness fact cells-b10", out)
+        self.assertIn("retired: build 9 deleted", hz.stale_records(self.ctx)[0]["cells"])
+        code, out = self.run_as("dev", "fact", "cells", "--is", "13", "--from", "echo 13")
+        self.assertIn("this observation brings it back", out)
+        self.assertNotIn("retired", hz.load_fact(self.ctx, "cells")[1])
 
 
 SKILLS = Path(__file__).resolve().parents[1] / "skills"

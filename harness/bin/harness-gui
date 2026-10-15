@@ -945,7 +945,9 @@ border-bottom:1px dotted var(--none)}
 .tree{position:relative}
 .tree.hang{display:flex;gap:46px;align-items:flex-start;padding-bottom:48px}
 .hb{display:flex;flex-direction:column;align-items:flex-start}
-.hk{display:flex;gap:46px;align-items:flex-start;margin-top:30px}
+/* 42px: the bus sits 15px above the children, and the five lanes that cross
+   above it need the rest (drawWaits: LANE, P). */
+.hk{display:flex;gap:46px;align-items:flex-start;margin-top:42px}
 .hs{display:flex;flex-direction:column;align-items:flex-start;gap:14px;padding-left:26px}
 /* A reviewer heads its lead's column, set apart from the workers it reads. */
 .hs>.card.r-reviewer{outline:1px dashed var(--s-held);outline-offset:3px;margin-bottom:8px}
@@ -953,12 +955,12 @@ border-bottom:1px dotted var(--none)}
 /* Every line is drawn on one overlay: the tree's own connectors, waits riding
    over them, and the roads from the tests and the intermediary. */
 .waits{position:absolute;left:0;top:0;pointer-events:none;overflow:visible}
-.waits path{fill:none;stroke:var(--wait);stroke-width:2}
-.waits path.conn{stroke:color-mix(in srgb,var(--line2) 65%,var(--dim));stroke-width:1}
-.waits circle{stroke:none}
-.waits circle.test{fill:var(--busy)}.waits circle.msg{fill:var(--wait)}
+/* One width for every line, the tree's branches included; drawWaits spaces the
+   lanes one width apart (W, P). */
+.waits path{fill:none;stroke:var(--wait);stroke-width:2;stroke-linejoin:miter}
+.waits path.conn{stroke:color-mix(in srgb,var(--line2) 65%,var(--dim))}
 .waits path.held{stroke:var(--held)}
-.waits path.msg{stroke:var(--wait);stroke-width:1.6;stroke-dasharray:2 4;stroke-linecap:round}
+.waits path.msg{stroke:var(--wait);stroke-dasharray:2 4;stroke-linecap:round}
 .oos{color:var(--warn);font-weight:700;letter-spacing:.06em;margin:4px 0}
 .achain{margin:4px 0 8px;font-size:11px}.achain summary{cursor:pointer;color:var(--dim)}
 .ahop{border-left:2px solid var(--line);padding:3px 0 3px 8px;margin:4px 0}
@@ -967,9 +969,8 @@ border-bottom:1px dotted var(--none)}
 .halt{border:1px solid var(--warn);background:var(--warnbg);color:var(--warn);border-radius:8px;
 padding:8px 12px;margin:6px 0 10px;font-weight:600}
 /* A running job's line is solid; a queued job's is the same colour, faded. */
-.waits path.test{stroke:var(--busy);stroke-width:2}
-.waits path.testq{stroke:var(--busy);stroke-width:1.5;opacity:.32}
-.waits circle.testq{fill:var(--busy);opacity:.32}
+.waits path.test,.waits path.testq{stroke:var(--busy)}
+.waits g.testq{opacity:.32}
 /* The tests card: how many run and wait, then each running test. */
 .tstat{display:flex;gap:18px;margin:5px 0 4px}
 .tn{display:flex;align-items:baseline;gap:5px;color:var(--dim);font-size:11px}
@@ -3020,20 +3021,21 @@ window.addEventListener('hashchange', () => {
 // is visible. The exclude list it replaces failed the other way -- forgetting to
 // exempt something ate your work silently.
 // Every line on the tree, from where the cards landed (concept F, owner
-// 2026-10-14). The cards keep their size, so nothing here assumes a grid:
-//   connectors  a spine down a lead's left for its stacked workers, a bus to
-//               the top of each child that has children of its own;
-//   waits       over those connectors, from the waiting card to its lead;
-//   roads       one line leaves the tests card and one the intermediary's, runs
-//               under the tree, and climbs the gap right of each column it
-//               serves, with a tap into each card. A gap between two columns
-//               has no card in it from there to the bottom, so no road crosses
-//               a card, however many jobs run.
-// Where a road meets a card (TAP, down from its top), how far left of the
-// card's block its riser runs (TRACK), and how far out of its source card it
-// turns down (OUT).
-const SPINE = 12, TAP = {test: 14, testq: 22, msg: 30},
-      TRACK = {test: 8, testq: 14, msg: 20}, OUT = {test: 12, testq: 5, msg: 8};
+// 2026-10-14). The cards keep their size, so nothing here assumes a grid.
+// Lines run as lanes beside the tree's own branches (owner, 2026-10-16): every
+// line is one width, W, with one width of space between neighbours, so lane k
+// runs k pitches (P = 2W) off the branch. Closest first: waiting on (1), holds
+// (2), tests running (3), tests queued (4), the intermediary's messages (5).
+// Every line meets a card where its branch does, on the same side:
+//   a stacked worker  the branch comes off its lead's spine into the card's
+//                     left, 18px down; lane k meets the card k pitches below
+//                     it, and climbs k pitches left of the spine;
+//   a block's head    the branch drops from the bus onto the card's top; lane k
+//                     drops k pitches right of it, crosses k pitches above the
+//                     bus, and climbs k pitches right of the spine.
+// Lanes beside one branch never cross each other or their branch.
+const SPINE = 12, W = 2, P = 2 * W;
+const LANE = {wait: 1, held: 2, test: 3, testq: 4, msg: 5};
 const headOf = hb => hb && hb.firstElementChild;
 function treeParent(c) {
   // -> {p: the lead's card, hb: its block, stacked} or null at a root.
@@ -3052,12 +3054,13 @@ function treeParent(c) {
 function drawWaits() {
   document.querySelectorAll('.tspace').forEach(t => {
     t.querySelectorAll('svg.waits').forEach(x => x.remove());
-    const box = t.getBoundingClientRect(), ds = [], dots = [];
+    const box = t.getBoundingClientRect(), ds = [];
     const R = el => { const r = el.getBoundingClientRect();
       return {l: r.left - box.left, r: r.right - box.left, t: r.top - box.top,
               b: r.bottom - box.top}; };
     const tr = t.querySelector('.tree.hang');
     if (tr) observeTree(t);
+    const line = pts => 'M' + pts.map(q => Math.round(q[0]) + ' ' + Math.round(q[1])).join('L');
     // The tree's own connectors.
     t.querySelectorAll('.tree.hang .hb').forEach(hb => {
       const hk = hb.querySelector(':scope > .hk');
@@ -3072,24 +3075,63 @@ function drawWaits() {
       inner.forEach(c => { d += 'M' + sx + ' ' + bus + 'H' + (c.l + 20) + 'V' + c.t; });
       ds.push(['conn', d]);
     });
-    // A wait or hold, drawn over the branch between the two cards (owner,
-    // 2026-10-14: on the branch, solid, not beside it): -> points,
-    // or null when the two are not a lead and its child, or two siblings.
-    const climb = c => {
+    // Lane k of the branch from a card up to its lead: points from the card
+    // to the lead's bottom, or null at a root.
+    const climb = (c, k) => {
       const up = treeParent(c);
       if (!up) return null;
-      const a = R(c), p = R(up.p), x = p.l + SPINE;
-      if (up.stacked) return {p: up.p, pts: [[a.l, a.t + 18], [x, a.t + 18], [x, p.b]]};
-      const bus = R(up.hb.querySelector(':scope > .hk')).t - 15;
-      return {p: up.p, pts: [[a.l + 20, a.t], [a.l + 20, bus], [x, bus], [x, p.b]]};
+      const a = R(c), p = R(up.p), s = p.l + SPINE, o = k * P;
+      if (up.stacked) {
+        const y = a.t + 18 + o;
+        return {p: up.p, pts: [[a.l, y], [s - o, y], [s - o, p.b]]};
+      }
+      const bus = R(up.hb.querySelector(':scope > .hk')).t - 15, x = a.l + 20 + o;
+      return {p: up.p, pts: [[x, a.t], [x, bus - o], [s + o, bus - o], [s + o, p.b]]};
     };
-    const line = pts => 'M' + pts.map(q => q[0] + ' ' + q[1]).join('L');
-    const rides = (c, lead) => {
-      const a = climb(c), b = climb(lead);
-      if (a && a.p === lead) return line(a.pts);
-      if (b && b.p === c) return line(b.pts.slice().reverse());
-      if (a && b && a.p === b.p) return line(a.pts.slice(0, -1).concat(b.pts.slice(0, -1).reverse()));
+    // Two point lists joined square: a corner where they would meet slantwise.
+    const join = (a, b) => {
+      const u = a[a.length - 1], v = b[0];
+      return a.concat(u[0] !== v[0] && u[1] !== v[1] ? [[u[0], v[1]]] : [], b);
+    };
+    // A wait or hold, in its lane beside the branch between the two cards:
+    // a lead and its child, or two siblings. -> points or null.
+    const rides = (c, lead, k) => {
+      const a = climb(c, k), b = climb(lead, k);
+      if (a && a.p === lead) return a.pts;
+      if (b && b.p === c) return b.pts.slice().reverse();
+      if (a && b && a.p === b.p) return join(a.pts.slice(0, -1), b.pts.slice(0, -1).reverse());
       return null;
+    };
+    // Where a lane meets a card, and the free end it leaves from, going down:
+    // up its lead's spine (a stacked worker), across the bus and down the gutter
+    // left of the lead's block (a block's head), or the gutter left of a root.
+    const enter = (c, k) => {
+      const o = k * P, up = treeParent(c), a = R(c);
+      if (up && up.stacked) {
+        const s = R(up.p).l + SPINE, y = a.t + 18 + o;
+        return [[a.l, y], [s - o, y]];
+      }
+      if (up) {
+        const bus = R(up.hb.querySelector(':scope > .hk')).t - 15, x = a.l + 20 + o;
+        return [[x, a.t], [x, bus - o], [gutter(c, k), bus - o]];
+      }
+      const y = a.t + 18 + o;
+      return [[a.l, y], [gutter(c, k), y]];
+    };
+    // The gutter left of the block a card's branch hangs in, lane k.
+    const gutter = (c, k) => { const up = treeParent(c);
+      return Math.round((up ? R(up.hb).l : R(c).l) - P - k * P); };
+    const cards = tr ? [...t.querySelectorAll('.card')] : [];
+    // Does a square path run through any card but the ones it joins?
+    const clear = (pts, skip) => {
+      const rs = cards.filter(c => !skip.includes(c)).map(R);
+      for (let i = 1; i < pts.length; i++) {
+        const [x1, y1] = pts[i - 1], [x2, y2] = pts[i];
+        const lo = [Math.min(x1, x2), Math.min(y1, y2)], hi = [Math.max(x1, x2), Math.max(y1, y2)];
+        if (rs.some(r => hi[0] > r.l + 1 && lo[0] < r.r - 1 && hi[1] > r.t + 1 && lo[1] < r.b - 1))
+          return false;
+      }
+      return true;
     };
     t.querySelectorAll('.wto, .hto').forEach(m => {
       const c = m.closest('.card');
@@ -3098,63 +3140,55 @@ function drawWaits() {
       const lead = m.dataset.on &&
         t.querySelector('[data-live="card:' + slug + ':' + m.dataset.on + '"]');
       if (!lead) return;
-      const cls = m.classList.contains('hto') ? 'held' : '';
-      const ride = rides(c, lead);
-      if (ride) { ds.push([cls, ride]); return; }
-      const a = c.getBoundingClientRect(), b = lead.getBoundingClientRect();
+      const cls = m.classList.contains('hto') ? 'held' : 'wait';
+      const k = LANE[cls];
+      const ride = rides(c, lead, k);
+      if (ride) { ds.push([cls, line(ride)]); return; }
       // Anything further apart than a lead and its child, or two siblings:
-      // out of the waiting card's left, up its block's left gutter to a bar
-      // in the gap above the lower of the two rows, across, and down the
-      // other block's gutter into the waited-on card's left (owner,
-      // 2026-10-16: every line enters a card on its left).
-      const y1 = a.top - box.top, y2 = b.top - box.top;
-      const ym = b.bottom <= a.top + 4 ? y1 - 22 : b.top >= a.bottom - 4 ? y2 - 22
-        : Math.min(y1, y2) - 22;
-      const ga = Math.round(R(c.closest('.hb') || c).l - 8),
-            gb = Math.round(R(lead.closest('.hb') || lead).l - 8);
-      const ax = a.left - box.left, bx = b.left - box.left;
-      ds.push([cls, 'M' + ax + ' ' + (y1 + 18) + 'H' + ga + 'V' + ym + 'H' + gb +
-                    'V' + (y2 + 18) + 'H' + bx]);
+      // out of the waiting card where its branch meets it, down its lane to a
+      // bar in the gap above the lower of the two, and into the other card
+      // where its branch meets it.
+      // Out to the gutter left of the block its branch is in, so the climb
+      // passes beside the lead's card and never through it.
+      const side = x => { const e = enter(x, k), [gx, gy] = e[e.length - 1], g = gutter(x, k);
+                          return gx === g ? e : e.concat([[g, gy]]); };
+      const a = side(c), b = side(lead), A = R(c), B = R(lead);
+      const ym = Math.min(A.t, B.t) - 6 - k * P;
+      ds.push([cls, line(a.concat([[a[a.length - 1][0], ym], [b[b.length - 1][0], ym]],
+                                  b.slice().reverse()))]);
     });
-    // The roads. The test queue runs a node's job (.tto) or holds one queued
-    // (.tqo, faded), or the intermediary messaged a node and waits on its
-    // reply (.ito): one line out of each source card, from its first marked row.
-    const bottom = tr ? Math.max(...[...tr.querySelectorAll('.card')].map(c => R(c).b)) : 0;
+    // Tests and the intermediary's messages: out of the source card's marked
+    // row, then straight across into the lane if nothing stands in the way,
+    // else down to a road under the tree and along it; then up the lane into
+    // each card it serves.
+    const bottom = tr ? Math.max(...cards.filter(c => tr.contains(c)).map(c => R(c).b)) : 0;
     const MARK = {test: '.tto', testq: '.tqo', msg: '.ito'};
-    ['test', 'testq', 'msg'].forEach((kind, i) => {
+    ['test', 'testq', 'msg'].forEach(kind => {
       const marks = [...t.querySelectorAll(MARK[kind])];
       if (!marks.length || !tr) return;
-      const src = marks[0].closest('.card');
-      const slug = (src.dataset.live || '').split(':')[1];
-      const s = R(src), mr = R(marks[0]);
-      // The queued road leaves the card nearest it: its rows sit below the
-      // running ones, so it never crosses the running road's drop.
-      const road = bottom + 18 + i * 12, out = s.r + OUT[kind];
-      const risers = {};
+      const k = LANE[kind], o = k * P;
+      const src = marks[0].closest('.card'), slug = (src.dataset.live || '').split(':')[1];
+      const s = R(src), mr = R(marks[0]), y0 = Math.round((mr.t + mr.b) / 2);
+      const out = s.r + 6 + (5 - k) * P, road = bottom + 10 + o;
       new Set(marks.map(m => m.dataset.on)).forEach(on => {
         const n = t.querySelector('.tree [data-live="card:' + slug + ':' + on + '"]');
         if (!n) return;
-        // Every line enters a card on its left (owner, 2026-10-16): up the
-        // gutter left of the block the card stands in, then across.
-        const gx = Math.round(R(n.closest('.hb')).l - TRACK[kind]);
-        const b = R(n), y = b.t + TAP[kind];
-        (risers[gx] = risers[gx] || []).push(y);
-        ds.push([kind, 'M' + gx + ' ' + y + 'H' + b.l]);
-        dots.push([kind, b.l, y]);
+        const e = enter(n, k), [xe, ye] = e[e.length - 1];
+        const direct = [[s.r, y0], [xe, y0], [xe, ye]];
+        const pts = clear(direct, [n, src]) ? direct
+          : [[s.r, y0], [out, y0], [out, road], [xe, road], [xe, ye]];
+        ds.push([kind, line(pts.concat(e.slice().reverse()))]);
       });
-      const xs = Object.keys(risers).map(Number);
-      if (!xs.length) return;
-      let d = 'M' + s.r + ' ' + (mr.t + mr.b) / 2 + 'H' + out + 'V' + road + 'H' + Math.max(...xs);
-      xs.forEach(x => { d += 'M' + x + ' ' + road + 'V' + Math.min(...risers[x]);
-                        dots.push([kind, x, road]); });
-      ds.push([kind, d]);
     });
     if (!ds.length) return;
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('class', 'waits');
     svg.setAttribute('width', t.scrollWidth); svg.setAttribute('height', t.scrollHeight);
-    svg.innerHTML = ds.map(([c, d]) => '<path class="' + c + '" d="' + d + '"/>').join('') +
-      dots.map(([c, x, y]) => '<circle class="' + c + '" cx="' + x + '" cy="' + y + '" r="3"/>').join('');
+    // A queued job's lines fade as one, so two over each other read as one.
+    const draw = c => ds.filter(x => x[0] === c).map(([, d]) =>
+      '<path class="' + c + '" d="' + d + '"/>').join('');
+    svg.innerHTML = draw('conn') + draw('msg') + '<g class="testq">' + draw('testq') + '</g>' +
+      draw('test') + draw('held') + draw('wait');
     t.appendChild(svg);
   });
 }

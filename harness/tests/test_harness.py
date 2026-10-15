@@ -3770,7 +3770,6 @@ class Ringer(unittest.TestCase):
              mock.patch.object(hz, "pid_alive", return_value=True), \
              mock.patch.object(hz, "load_index", return_value={"nodes": {
                  n: {"worktree": f"/w/{n}"} for n in self.ctx.tree["nodes"]}}), \
-             mock.patch.object(hz, "bell_nudge", return_value=None), \
              mock.patch.object(hz, "turn_end_at", return_value=ended), \
              mock.patch.object(hz, "turn_ended", return_value=True), \
              mock.patch.object(hz, "wake_session", side_effect=wake), \
@@ -4403,28 +4402,31 @@ class Doorbell(unittest.TestCase):
     def test_the_waiter_leaves_the_mail_for_whoever_reads_it(self):
         # It only wakes the session; a hook may have shown the mail first.
         hz.ring_inbox(self.ctx.state, "main", "dev", "hello")
-        with mock.patch.object(hz, "bell_nudge", return_value=None):
-            self.out(hz.cmd_doorbell, mock.Mock(read=False, status=False))
+        self.out(hz.cmd_doorbell, mock.Mock(read=False, status=False))
         self.assertEqual(hz.MAIL().pending(self.ctx.state, "main"), 1)
         self.assertEqual([m["text"] for m in hz.MAIL().take(self.ctx.state, "main", "t")], ["hello"])
         self.assertIn("nothing new", self.out(hz.cmd_doorbell, mock.Mock(read=True, status=False)))
 
-    def test_nudge_once_per_wait_and_only_when_idle(self):
-        rows = [{"sessionId": "sess-main", "status": "idle", "cwd": "/m"}]
-        w = [("dev", 900, "carry rebuilt", "inf:dev:1")]
-        with mock.patch.object(hz, "cached_roster", return_value=rows), \
-             mock.patch.object(hz, "waiters_on", return_value=w), \
-             mock.patch.object(hz, "load_index", return_value={"byWorktree": {}}):
+    def test_a_wait_on_a_node_is_owed_by_it_once_it_is_quiet_and_rung_once(self):
+        # 2026-10-16: the wait nudge (bell_nudge) and the owed ring (log 173)
+        # were two paths with two thresholds; a wait on a node is owed by it.
+        then = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() - 900))
+        f = hz.waiting_path(self.ctx, "dev", "main")
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps({"node": "dev", "on": "main", "asked": "carry rebuilt?",
+                                 "since": then}))
+        c = hz.inferred_waits_cache_path(self.ctx)
+        c.parent.mkdir(parents=True, exist_ok=True)
+        c.write_text(json.dumps({"at": time.time(), "waits": [
+            {"frm": "dev_2", "on": "main", "said": "which way?"}]}))
+        with mock.patch.object(hz, "unanswered", return_value=None):
             with mock.patch.object(hz, "turn_end_at", return_value=time.time() - 60):
-                self.assertIsNone(hz.bell_nudge(self.ctx, "main", "sess-main"))   # just spoke
+                self.assertIsNone(hz.owed_ring(self.ctx, "main", "sess-main"))      # just spoke
             with mock.patch.object(hz, "turn_end_at", return_value=time.time() - 900):
-                self.assertIn("dev has been waiting on you for 15m: carry rebuilt",
-                              hz.bell_nudge(self.ctx, "main", "sess-main"))
-                self.assertIsNone(hz.bell_nudge(self.ctx, "main", "sess-main"))   # told once
-            rows[0]["status"] = "busy"
-            with mock.patch.object(hz, "waiters_on", return_value=[("dev", 900, "", "inf:dev:2")]), \
-                 mock.patch.object(hz, "turn_end_at", return_value=time.time() - 900):
-                self.assertIsNone(hz.bell_nudge(self.ctx, "main", "sess-main"))   # working
+                text = hz.owed_ring(self.ctx, "main", "sess-main")
+                self.assertIn("dev has been waiting on you 15m: \"carry rebuilt?\"", text)
+                self.assertIn("dev_2 has been waiting on you: \"which way?\"", text)
+                self.assertIsNone(hz.owed_ring(self.ctx, "main", "sess-main"))      # told once
 
     def test_idle_is_counted_from_the_turn_end_not_a_later_note(self):
         # Claude Code's away_summary lands in an idle transcript; it restarted
@@ -7211,6 +7213,9 @@ class CatchUp(unittest.TestCase):
         code, out = self.run_as("dev", "whoami", "--no-check", read_roster=lambda p: None)
         self.assertIn("deferred t's sign-off: the owner runs the migration, until", out)
         self.assertNotIn("sign off 1 presented", out)
+        # The presenter is told who deferred it and on what (2026-10-16).
+        code, out = self.run_as("dev_1", "whoami", "--no-check", read_roster=lambda p: None)
+        self.assertIn("dev deferred the sign-off: the owner runs the migration", out)
 
     def test_a_hold_keeps_a_node_s_tree_still_until_it_presents(self):
         # Log 154 (owner, 2026-10-12): merging between turns stays the rule, and

@@ -1289,26 +1289,23 @@ def _whoami(a):
     # party is reachable. A child that asked and stopped is the state the
     # R-table could not tell apart from working, and a lead that never learns
     # of it is how a stopped lane stays stopped across a whole session.
+    # Each names the other side (2026-10-16: one wait relation).
     try:
-        waits = open_waits(ctx)
-        me = waits.get(node)
-        if me:
-            print(f"waiting  you are marked as waiting on "
-                  f"{me.get('parent') or 'your lead'} "
-                  f"({wait_age(me.get('since'))}) — {me.get('asked')}")
-            print(f"         If it has been answered, say so: harness waiting --clear")
-        stopped = sorted((r for r in waits.values() if r.get("parent") == node),
-                         key=lambda r: r.get("since") or "")
+        _rw = [e for e in waits(ctx, infer="off", rings=False) if e["via"] == "waiting"]
+        for e in (e for e in _rw if e["frm"] == node):
+            print(f"waiting  you wait on {e['on']}"
+                  + (f" for {e['on_task']}" if e.get("on_task") else "")
+                  + f" ({wait_age(e['since'])}) — {e['what']}"
+                  + (f"   [stale: {e['stale']}; the ringer ends it]" if e["stale"] else ""))
+        if any(e["frm"] == node for e in _rw):
+            print(f"         If it has been answered, say so: harness waiting --clear [--on X]")
+        stopped = [e for e in _rw if e["on"] == node and not e["stale"]]
         if stopped:
-            print(f"answer   {len(stopped)} child(ren) stopped waiting on YOU — "
-                  f"harness waiting --list")
-            for r in stopped:
-                print(f"         {r['node']} ({wait_age(r.get('since'))}): "
-                      f"{r.get('asked')}")
-                if r.get("still_moving"):
-                    print(f"           still moving: {r['still_moving']}")
-                if r.get("answered"):
-                    print(f"           answered: {r['answered']}")
+            print(f"answer   {len(stopped)} node(s) stopped waiting on YOU — harness waits --owes")
+            for e in stopped:
+                print(f"         {e['frm']} ({wait_age(e['since'])}): {e['what']}")
+                if e.get("still"):
+                    print(f"           still moving: {e['still']}")
     except Exception:
         pass
     # A child halted at a prompt. NOT in `lead_owes` and not a Stop-hook block,
@@ -1465,8 +1462,15 @@ def _whoami(a):
                 print(f"open     {lbl} — presented, in review by {reviewer_of(ctx, up) or '?'} "
                       f"('{r['_review_task']}'); {up} signs it off with the review")
             elif r.get("_presented_at"):
+                # Deferred by the lead: the presenter is told who deferred it,
+                # on what, and until when (2026-10-16: it saw only "waiting").
+                _d = deferral(load_brief(ctx, r.get("_task") or t)[1]) if parked_task(ctx, r, t) \
+                    else None
                 print(f"open     {lbl} — presented, waiting on {up or 'rank 0'} to "
-                      f"sign it off")
+                      f"sign it off"
+                      + (f"; {_d.get('by_node') or up} deferred the sign-off: {_d.get('why')} "
+                         f"(until {time.strftime('%m-%d %H:%M', time.localtime(_d.get('until') or 0))}"
+                         f" at the latest)" if _d else ""))
                 # A session spawned onto a node whose mark is already presented
                 # has nothing to do at orientation, and if the lead has since
                 # integrated a sibling this node is now BEHIND — which is the
@@ -3665,16 +3669,8 @@ def open_marks(ctx):
     """
     if READ_MEMO is not None and "marks" in READ_MEMO:
         return READ_MEMO["marks"]
-    d = ctx.state / "marks"
-    out = {}
-    for p in (sorted(d.glob("*.json")) if d.is_dir() else []):
-        try:
-            rec = json.loads(p.read_text())
-        except Exception:
-            continue
-        if rec.get("_closed_at"):
-            continue
-        out[p.stem] = rec
+    # Every file is read to find the open ones, so they are read once, for both.
+    out = {k: r for k, r in all_marks(ctx).items() if not r.get("_closed_at")}
     if READ_MEMO is not None:
         READ_MEMO["marks"] = out
     return out
@@ -4032,6 +4028,8 @@ def owed_line(kind, child, task, age):
                    f"  — harness status, then harness recycle {child}",
         "unanswered": f"{child} asked you {human_age(age)} ago and has had no reply; it is "
                       f"idle: \"{task}\"  — answer it: harness ring {child} -",
+        "waiting": f"{child} has been waiting on you" + (f" {human_age(age)}" if age else "")
+                   + f": \"{clip(task, 160)}\"  — answer it: harness ring {child} -",
         "lingering": f"{child} finished and released, but its session is still in its worktree, "
                      f"{task}  — harness integrate {child} ends it and merges (log 105)",
         "heavy": f"{child} at {task} context"
@@ -4175,6 +4173,19 @@ def owed_now(ctx, node):
             u = None
         if u:
             out[f"unanswered:{k}:{u[1][:40]}"] = owed_line("unanswered", k, u[1], u[0])
+    # Waits on this node, recorded or read off a finished turn: the nudge that
+    # was its own path (bell_nudge, NUDGE_AFTER) is this one now (2026-10-16).
+    try:
+        for e in waits(ctx, infer="cache", rings=False):
+            if e["on"] != node or e["stale"] or e["via"] not in ("waiting", "turn"):
+                continue
+            then = _epoch(e["since"]) if e.get("since") else None
+            if then and time.time() - then < OWED_IDLE:
+                continue
+            out[f"waiting:{e['frm']}:{e.get('since') or 'turn'}"] = owed_line(
+                "waiting", e["frm"], e["what"], time.time() - then if then else 0)
+    except Exception:
+        pass
     try:
         for kind, ident, label, age in rank0_owes(ctx, node):
             if kind in ("review", "approve", "task"):
@@ -4432,14 +4443,14 @@ def queue_items(ctx, node):
     except Exception:
         pass
     try:
-        _w = open_waits(ctx)
-        for n, r in _w.items():
-            if r.get("parent") == node:
-                out[f"asked:{n}"] = (f"{n} is stopped waiting on you "
-                                     f"({wait_age(r.get('since'))}): {r.get('asked')}")
-        # A wait on the lead in between is that lead's: the ringer nudges it
-        # (bell_nudge, owed_ring). The rank above sees it with whoami --tree
-        # (log 173), not at every prompt.
+        _m = all_marks(ctx)
+        for _, r in open_waits_all(ctx):
+            if r["on"] == node and not wait_stale(ctx, r, _m):
+                out[f"asked:{r['node']}"] = (f"{r['node']} is stopped waiting on you "
+                                             f"({wait_age(r.get('since'))}): {r.get('asked')}")
+        # A wait on the lead in between is that lead's: the ringer rings it
+        # (owed_ring). The rank above sees it with whoami --tree (log 173), not
+        # at every prompt.
     except Exception:
         pass
     try:
@@ -4952,9 +4963,10 @@ def cmd_hook_stop(a):
             f"presented.{nl}{nl}{step}{nl}{nl}"
             f"Presenting is what ends the task and frees the node; {lead} signs it "
             f"off and starts the next one. If you cannot finish it, say so on the "
-            f"record: harness blocked for something you need, or harness brief "
-            f"{task} --suggest if the plan is wrong. Do not stop silently, because "
-            f"nothing else in the tree can see that you are done.")
+            f"record: harness waiting \"<what you need>\" for an answer from {lead} "
+            f"(or --on owner), harness blocked for a path or permission outside your "
+            f"worktree, or harness brief {task} --suggest if the plan is wrong. Do not "
+            f"stop silently, because nothing else in the tree can see that you are done.")
         stop_block(reason)
     except (Exception, SystemExit):
         return
@@ -14457,7 +14469,7 @@ def block_answered(r):
     return any(c.get("by") not in (r.get("node"), None) for c in r.get("comments") or [])
 
 
-def waits(ctx, rows=None, infer="cache", stops=None, about=None):
+def waits(ctx, rows=None, infer="cache", stops=None, about=None, rings=True):
     """Every wait in the tree as edges (see above). `infer`: "live" reads the
     roster and transcripts (status, `harness waits`, the viewer), "cache" the
     ringer's copy no older than INFER_CACHE_MAX (hooks), "off" neither. `about`:
@@ -14493,7 +14505,7 @@ def waits(ctx, rows=None, infer="cache", stops=None, about=None):
     for w in inf:
         add("answer", "turn", w["frm"], w["on"], what=w.get("said") or "finished its turn",
             src="inferred", act=f"reply to {w['frm']}")
-    for lead in ([about] if about else list(nodes)):
+    for lead in ([] if not rings else [about] if about else list(nodes)):
         for k in ctx.children(lead) if lead in nodes else []:
             try:
                 u = unanswered(ctx, lead, k)
@@ -20263,7 +20275,6 @@ def cmd_documenter(a):
 
 DOORBELL_TICK = 10              # seconds between inbox checks
 RANG_FRESH = 120                # a waiter that rang this recently has a wake on its way
-NUDGE_AFTER = 300               # a wait, and the waited-on node's quiet, before a nudge
 
 
 def bell_dir(ctx, node):
@@ -20306,62 +20317,6 @@ def cached_roster(ctx, max_age=30):
     except OSError:
         pass
     return rows
-
-
-def waiters_on(ctx, node, rows):
-    """Nodes waiting on `node`, recorded or read off their transcripts:
-    [(waiter, seconds waited, what it said, key)]."""
-    idx = load_index(ctx)
-    bw = idx.get("byWorktree") or {}
-    out = []
-    for w, r in open_waits(ctx).items():
-        if r.get("parent") == node:
-            since = _epoch(r.get("since"))
-            out.append((w, time.time() - since if since else 0, r.get("asked") or "",
-                        f"rec:{w}:{r.get('since')}"))
-    for r in stopped_rows(rows):
-        w = bw.get(r.get("cwd", ""))
-        if not w or w in open_waits(ctx):
-            continue
-        st = stop_detail(r, rows)
-        if not st or st["kind"] != "reply":
-            continue
-        to = stop_wait_on(st)
-        on = to and next((bw.get(x.get("cwd", "")) for x in rows if x.get("name") == to), None)
-        if on != node:
-            continue
-        age, _ = last_turn(r.get("sessionId") or "")
-        out.append((w, age or 0, st.get("said") or "", f"inf:{w}:{int(time.time() - (age or 0)) // 60}"))
-    return out
-
-
-def bell_nudge(ctx, node, sid):
-    """A message when this node's own session is idle and someone has waited on
-    it past NUDGE_AFTER, once per wait. None otherwise."""
-    rows = cached_roster(ctx)
-    me = next((r for r in rows if r.get("sessionId") == sid), None)
-    if not me or me.get("status") == "busy":
-        return None
-    ended = turn_end_at(sid)
-    quiet = time.time() - ended if ended else 0
-    if quiet < NUDGE_AFTER:
-        return None
-    tf = bell_dir(ctx, node) / "told.json"
-    try:
-        told = set(json.loads(tf.read_text()))
-    except Exception:
-        told = set()
-    due = [w for w in waiters_on(ctx, node, rows) if w[1] >= NUDGE_AFTER and w[3] not in told]
-    if not due:
-        return None
-    tf.write_text(json.dumps(sorted(told | {w[3] for w in due})))
-    names = {bw: r.get("name") for r in rows
-             for bw in [(load_index(ctx).get("byWorktree") or {}).get(r.get("cwd", ""))] if bw}
-    return "\n".join(
-        f"{w} has been waiting on you for {int(age // 60)}m"
-        + (f": {said[:160]}" if said else "")
-        + f". Answer it (SendMessage to '{names.get(w, w)}'), or record why it waits."
-        for w, age, said, _ in due)
 
 
 # ── the ringer: one watcher per project wakes whoever has mail (log 134) ─────
@@ -20558,15 +20513,6 @@ def ringer_tick(ctx, S, now=None):
         elif sid and not is_halted and not stopped(ctx, node) and turn_ended(sid):
             state = "stopped"
         d = bell_dir(ctx, node)
-        if state == "idle" and now - S.setdefault("_nudged", {}).get(node, 0) >= NUDGE_EVERY:
-            # Someone has waited on this idle node too long: that is mail too.
-            S["_nudged"][node] = now
-            try:
-                text = bell_nudge(ctx, node, row.get("sessionId"))
-            except Exception:
-                text = None
-            if text:
-                ring_inbox(ctx.state, node, "harness", text)
         if state in ("idle", "stopped") and \
                 now - S.setdefault("_owed", {}).get(node, 0) >= NUDGE_EVERY:
             # What only this node can do, asleep or not (log 173).

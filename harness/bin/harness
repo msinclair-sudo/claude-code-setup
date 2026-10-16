@@ -43,6 +43,13 @@ LAUNCH_PROMPT = ("Use the harness skill: establish your position from git, verif
 
 def die(code, msg):
     if not QUIET:
+        # Whatever was printed before the refusal goes out before it (log 179:
+        # piped, stdout waited for exit, so a refusal read first and the ok
+        # lines after it read as success).
+        try:
+            sys.stdout.flush()
+        except Exception:
+            pass
         print(f"harness: {msg}", file=sys.stderr)
     sys.exit(code)
 
@@ -2356,10 +2363,23 @@ def cmd_halt(a):
                 testq_ensure_runner(ctx)
         except Exception:
             pass
+        told = 0
         for n in nodes:
+            # A node that never read the halt has nothing to resume from: the
+            # halt ring is withdrawn, on the delivered log, and no resume is
+            # sent (log 178: the pair sat unread at a sessionless dev_2 and
+            # its lead was told every turn to spawn it to read them).
+            if withdraw_rings(ctx.state, n, lambda m: tree_ring(m) and
+                              (m.get("kind") == "halt" or "HALTED" in (m.get("text") or "")),
+                              "withdrawn: the owner resumed before it was read"):
+                continue
             ring_inbox(ctx.state, n, "owner", f"the owner resumed the tree (halted at "
-                       f"{h.get('at', '')[11:16]}: {h.get('why')}). Carry on with your queue.")
-        print(f"resumed; {len(nodes)} node(s) told")
+                       f"{h.get('at', '')[11:16]}: {h.get('why')}). Carry on with your queue.",
+                       kind="resume")
+            told += 1
+        print(f"resumed; {told} node(s) told"
+              + (f", {len(nodes) - told} had not read the halt (withdrawn)"
+                 if told < len(nodes) else ""))
         # A tree that stood still for a day starts again current (log 139).
         try:
             for n, st, info, _ in catchup_pass(ctx, idx=load_index(ctx, refresh=True), by="owner"):
@@ -2377,7 +2397,8 @@ def cmd_halt(a):
     for n in nodes:
         ring_inbox(ctx.state, n, "owner", f"the owner HALTED the tree: {why}. Finish the command "
                    f"you are in, write what you hold into the records (harness note, brief "
-                   f"comments), then end your turn and wait. Nothing new starts until they resume.")
+                   f"comments), then end your turn and wait. Nothing new starts until they resume.",
+                   kind="halt")
     print(f"halted: {why}\n  {len(nodes)} node(s) told. Nothing new starts; the running test "
           f"finishes. harness resume ends it.")
 
@@ -2451,8 +2472,6 @@ def cmd_spawn(a):
         sp = idx["nodes"].get(n)
         if sp is None:
             print(f"  skip {n:<12} not a node"); skipped += 1; continue
-        if not sp["worktree"]:
-            print(f"  skip {n:<12} no worktree — create one first"); skipped += 1; continue
         if n == here:
             print(f"  skip {n:<12} this session — it cannot spawn into its own worktree")
             skipped += 1; continue
@@ -2472,6 +2491,22 @@ def cmd_spawn(a):
                          f"first: harness queue {n} --order {_behind[0]} --why \"...\""
                          if _behind else ""))
                 skipped += 1; continue
+        if not sp["worktree"]:
+            # Who may start a node is settled first (log 181): "create one
+            # first" sent rank 0 to `git worktree add` a node its lead was
+            # already making, and the two collided on the branch lock.
+            _br = (ctx.tree["nodes"].get(n) or {}).get("branch") or n
+            _p = (ctx.tree["nodes"].get(n) or {}).get("parent")
+            if _direct and _p:
+                print(f"  skip {n:<12} no worktree yet. {_p} makes it (branch {_br}) and may "
+                      f"be doing so now:\n  {'':<17} a second `git worktree add` races it. "
+                      f"Run this spawn again once it exists, or leave the start to {_p}.")
+            else:
+                _has = not git("rev-parse", "--verify", "--quiet", f"refs/heads/{_br}",
+                               cwd=ctx.repo)[0]
+                print(f"  skip {n:<12} no worktree. The harness does not make one: "
+                      f"`git worktree add <path> {'' if _has else '-b '}{_br}`, then spawn it.")
+            skipped += 1; continue
         there = sessions_in(ctx, idx, n, rows)
         if there:
             who = there[0].get("name") or "?"
@@ -3764,8 +3799,9 @@ def released_gone(ctx, k):
         for f in (Path(ctx.state) / "doorbell" / k / "inbox").glob("*.json"):
             m = _read_json(f) or {}
             # An FYI asks nothing of its receiver, so it is no reason to start
-            # one: it waits for the node's next session.
-            if m.get("priority") == "fyi":
+            # one: it waits for the node's next session. Nor does a halt or
+            # resume, which only a running session has to obey (log 178).
+            if m.get("priority") == "fyi" or tree_ring(m):
                 continue
             unread += 1
             at = _epoch(m.get("at"))
@@ -13275,10 +13311,17 @@ def cmd_brief(a):
         if rec.get("direct_by") and root:
             made = direct_carriers(ctx, a.task, rec, me)
             if made:
+                try:
+                    _wt = (load_index(ctx)["nodes"].get(target) or {}).get("worktree")
+                except Exception:
+                    _wt = True
                 print(f"  '{target}' answers to '{parent}', which did not write this. Told "
                       f"{', '.join(n for _, n in made)}; {parent} reviews its work and signs "
-                      f"it off.\n  Start it yourself (harness spawn {target}), or leave that "
-                      f"to {parent}.")
+                      f"it off.\n  "
+                      + (f"Start it yourself (harness spawn {target}), or leave that "
+                         f"to {parent}." if _wt else
+                         # log 181: rank 0 made it by hand and raced the lead
+                         f"It has no worktree yet: {parent} makes it and starts {target}."))
                 for ct, n in made:
                     print(f"  carrier {ct} for {n}: it presents this work one rank up")
         elif rec.get("direct_by") and b is not None and rec["direct_by"] in ctx.tree["nodes"]:
@@ -15438,17 +15481,90 @@ def budget_verdict(ctx, read, texts):
     return None
 
 
-def pair_guard(ctx):
+def _sentences(t):
+    """A document's sentences and paragraphs, whitespace folded."""
+    norm = lambda s: re.sub(r"\s+", " ", s or "").strip()
+    return [x for x in (norm(y).strip("#*- ")
+                        for y in re.split(r"(?<=[.!?])\s+|\n{2,}", t or "")) if x]
+
+
+def removed_sentences(x):
+    """The sentences a pair takes out of its file: in `old` and not in what
+    replaces it (the new text, or a move's pointer). A move counts: its text
+    leaves the file a reader of that file looks in (log 180)."""
+    keep = re.sub(r"\s+", " ", x.get("pointer" if x.get("op") == "move" else "new") or "")
+    return [s for s in _sentences(x.get("old")) if len(s) >= 25 and s not in keep]
+
+
+def code_holds(ctx, sentences):
+    """Sentences that a code file on any node's branch holds by their exact text:
+    [(sentence, "path (branch)")]. A test that keys on a document's wording
+    (biblion2's prose-figure exemptions, log 180) faults when the documenter moves
+    it, and a docs-only batch cannot carry the code's half of the change."""
+    if not sentences:
+        return []
+    rc, out, _ = git("for-each-ref", "--format=%(objectname) %(refname:short)", "refs/heads/",
+                     cwd=ctx.repo)
+    heads = dict(l.split(" ", 1) for l in out.splitlines() if " " in l) if not rc else {}
+    names = {sp.get("branch") or n for n, sp in ctx.tree["nodes"].items()}
+    refs = {}
+    for sha, name in heads.items():
+        if name in names:
+            refs.setdefault(sha, name)       # one grep per distinct commit
+    if not refs:
+        return []
+    args = ["grep", "-F", "-I", "-o"]
+    for s in sentences:
+        args += ["-e", s]
+    rc, out, _ = git(*args, *refs.values(), cwd=ctx.repo)
+    found = []
+    for line in out.splitlines() if rc == 0 else []:
+        ref, _, rest = line.partition(":")
+        path, _, s = rest.partition(":")
+        found.append((ref, path, s))
+    kind = guard_classify(ctx, sorted({p for _, p, _ in found}))
+    hits, seen = [], set()
+    for ref, path, s in found:
+        if s in seen or kind.get(path) != "code":
+            continue                         # a document quoting a document is not code
+        seen.add(s)
+        hits.append((s, f"{path} ({ref})"))
+    return hits
+
+
+def pair_guard(ctx, pairs=()):
     """A delete may not take away a path an open record names (obs 74). A move
     keeps its file, so it strands nothing. A file a batch creates, or a move's
     destination, must be one the manifest classes as a document (obs 76: the
-    documenter's provenance/ files were code until rank 0 added a glob)."""
+    documenter's provenance/ files were code until rank 0 added a glob). Given
+    the batch's `pairs`, code is searched once for all of them (a search reads
+    every branch: 2.6s on biblion2)."""
+    _all = [s for x in pairs if x.get("op", "replace") in ("replace", "move")
+            for s in removed_sentences(x)]
+    _held = {}
+    for s, where in code_holds(ctx, _all) if _all else []:
+        _held.setdefault(s, where)
+
+    def holds(x):
+        gone = removed_sentences(x)
+        if not pairs:
+            return code_holds(ctx, gone)
+        return [(s, _held[s]) for s in gone if s in _held]
+
     def check(x):
         new = x["file"] if x.get("op") == "create" else x.get("to") if x.get("op") == "move" else None
         if new and guard_classify(ctx, [new]).get(new) == "code":
             top = new.split("/")[0]
             return (f"the manifest classes {new} as code; add a docs glob that covers it "
                     f"(e.g. {top}/**/*.md) or pick a document path")
+        if x.get("op", "replace") in ("replace", "move"):
+            held = holds(x)
+            if held:
+                s, where = held[0]
+                return (f"code holds a sentence this takes out of {x['file']}, by its exact "
+                        f"text: \"{s[:90]}{'…' if len(s) > 90 else ''}\" in {where}"
+                        + (f" (+{len(held) - 1} more)" if len(held) > 1 else "")
+                        + ". Leave it where it is, or the change goes with the code's")
         if x.get("op") != "delete":
             return None
         hits = [w for ws in cited(ctx, [str(ctx.repo / x["file"])]).values() for w, _ in ws]
@@ -15493,7 +15609,7 @@ def cmd_pairs(a):
                              f"(the manifest's documenter_skip; plans by default).\n"
                              f"           Drop those pairs and submit the rest. If one is "
                              f"wrong enough to matter, say so with harness ask.")
-        rows, texts = pair_report(pairs, on_branch, pair_guard(ctx))
+        rows, texts = pair_report(pairs, on_branch, pair_guard(ctx, pairs))
         ok = print_pair_report(rows)
         if not ok:
             die(REFUSED, f"every old must occur exactly once in {branch}'s copy. Fix the "
@@ -15620,7 +15736,7 @@ def pairs_apply(ctx, node, spec, task, rec, f, auto=False):
     def read(path):
         p = ctx.worktree / path
         return p.read_text() if p.is_file() else None
-    rows, texts = pair_report(rec["pairs"], read, pair_guard(ctx))
+    rows, texts = pair_report(rec["pairs"], read, pair_guard(ctx, rec["pairs"]))
     files = sorted(texts)
     rc, dirt, _ = git("status", "--porcelain", "--", *files, cwd=ctx.worktree)
     if dirt.strip():
@@ -15648,10 +15764,19 @@ def pairs_apply(ctx, node, spec, task, rec, f, auto=False):
             p.write_text(t)
     # A move is safe because it is verbatim; check it on disk, not by construction
     # (obs 77: rank 0 verified line identity by hand on every batch).
-    for _, x, _, _, _ in rows:
+    # A later pair may edit what a move left (log 179: a move, then a note at
+    # the head of its destination, then the emptied source deleted). That pair
+    # is its own reviewed change, so the file it touches is held to the text
+    # the review showed, byte for byte, rather than to the move's alone.
+    later = lambda i, path: any(j > i and path in (y["file"], y.get("to"))
+                                for j, y, _, _, _ in rows)
+    for i, x, _, _, _ in rows:
         if x.get("op") == "move":
             dest, src = read(x["to"]) or "", read(x["file"]) or ""
-            if x["old"] not in dest or x["pointer"] not in src:
+            moved = x["old"] in dest or (later(i, x["to"]) and dest == (texts[x["to"]] or ""))
+            left = x["pointer"] in src or (later(i, x["file"]) and
+                                           src == (texts[x["file"]] or ""))
+            if not (moved and left):
                 restore()
                 refuse(f"the move to {x['to']} did not land verbatim; files restored, "
                        f"nothing applied")
@@ -15764,6 +15889,15 @@ def pairs_review(ctx, rec, read, full=False):
         if not full and len(nw) > 40:
             print(f"    … {len(nw) - 40} more — --full")
     rows, texts = pair_report(rec["pairs"], read)
+    ps = rec.get("pairs") or []
+    for i, x in enumerate(ps, 1):
+        if x.get("op") != "move":
+            continue
+        for j, y in enumerate(ps[i:], i + 1):
+            if y["file"] == x["to"] and y.get("op", "replace") != "create":
+                print(f"\nPair {j} {'deletes' if y.get('op') == 'delete' else 'edits'} "
+                      f"{x['to']}, where pair {i} moves text: the move is checked verbatim "
+                      f"at its own step, and pair {j} is a change of its own to read.")
     cap = None if full else 200
     for path in sorted(texts):
         old, new = read(path) or "", texts[path] or ""
@@ -20944,17 +21078,52 @@ def cmd_doorbell(a):
           "  harness doorbell --status    the ringer, and what is unread")
 
 
-def ring_inbox(state, node, frm, text, priority="high"):
+def ring_inbox(state, node, frm, text, priority="high", kind=None):
     """Leave a message at a node's doorbell; the project's ringer wakes its
     session as the priority says (high now, low once idle a minute, an FYI
-    once idle five)."""
+    once idle five). `kind` names a harness broadcast (halt, resume)."""
     d = Path(state) / "doorbell" / node / "inbox"
     d.mkdir(parents=True, exist_ok=True)
+    m = {"from": frm, "text": text, "at": _now(), "priority": priority,
+         # who sent it, so an ask's chain can follow it upstream
+         "session": os.environ.get("CLAUDE_CODE_SESSION_ID", "")}
+    if kind:
+        m["kind"] = kind
     (d / f"{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}-{time.time_ns() % 10**6}.json"
-     ).write_text(json.dumps({"from": frm, "text": text, "at": _now(), "priority": priority,
-                              # who sent it, so an ask's chain can follow it upstream
-                              "session": os.environ.get("CLAUDE_CODE_SESSION_ID", "")}))
+     ).write_text(json.dumps(m))
     ensure_ringer(state)
+
+
+def tree_ring(m):
+    """A halt or resume broadcast. It tells a running session to stop or carry
+    on; the halt itself is read live (`halted`), so for a node with no session
+    it asks nothing (log 178). Rings from before `kind` are known by their text."""
+    if (m or {}).get("kind") in ("halt", "resume"):
+        return True
+    t = (m or {}).get("text") or ""
+    return (m or {}).get("from") == "owner" and (
+        t.startswith("the owner HALTED the tree") or t.startswith("the owner resumed the tree"))
+
+
+def withdraw_rings(state, node, pick, how):
+    """Take the unread rings `pick(m)` chooses out of a node's inbox, logged as
+    delivered `how` so the record keeps them. -> how many."""
+    d = Path(state) / "doorbell" / node / "inbox"
+    if not d.is_dir():
+        return 0
+    taken = []
+    for f in sorted(d.glob("*.json")):
+        m = _read_json(f)
+        if not m or not pick(m):
+            continue
+        c = f.with_name(f"{f.stem}.taken-{os.getpid()}")
+        try:
+            os.rename(f, c)                 # a reader that got there first keeps it
+        except OSError:
+            continue
+        taken.append((c, m))
+    MAIL().commit(state, node, taken, how)
+    return len(taken)
 
 
 def cmd_ring(a):

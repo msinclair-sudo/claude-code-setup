@@ -2466,6 +2466,19 @@ class Halt(unittest.TestCase):
         self.assertIsNone(hz.halted(self.ctx))
         hz.refuse_if_halted(self.ctx, "spawning")                     # no longer refused
 
+    def test_a_resume_withdraws_a_halt_nobody_read(self):
+        # Log 178: a halt and its resume cancel out for a node that read neither.
+        self.halt()
+        hz.MAIL().take(self.ctx.state, "dev", "t")                   # dev read its halt
+        with mock.patch.object(hz, "testq_jobs", return_value=[]):
+            self.halt(resume=True)
+        inbox = lambda n: [json.loads(f.read_text())
+                           for f in (self.ctx.dir / "doorbell" / n / "inbox").glob("*.json")]
+        self.assertEqual(inbox("dev_1"), [])
+        self.assertEqual([m.get("kind") for m in inbox("dev")], ["resume"])
+        self.assertIn("withdrawn: the owner resumed before it was read",
+                      (self.ctx.dir / "doorbell" / "dev_1" / "delivered.jsonl").read_text())
+
     def test_the_runner_starts_nothing_while_halted(self):
         self.halt()
         c = hz.ProjCtx(self.ctx.dir, self.ctx.dir)
@@ -3241,6 +3254,66 @@ class DocPairs(unittest.TestCase):
         self.assertEqual(g("status", "--porcelain").stdout, "")
         self.assertEqual(json.loads(f.read_text())["claude_md"], [4, 3])
         self.assertEqual(chain.call_args[0][0], ctx)               # the run ends at review
+
+    def test_a_move_then_an_edit_of_where_it_went_applies(self):
+        # Log 179: move a file whole, note its new opening, delete the emptied
+        # source. The move was checked against the batch's end and refused.
+        import subprocess
+        repo = Path(tempfile.mkdtemp())
+        g = lambda *a: subprocess.run(["git", "-C", str(repo), *a], capture_output=True, text=True)
+        g("init", "-q"); g("config", "user.email", "t@t"); g("config", "user.name", "t")
+        (repo / "design").mkdir()
+        (repo / "design" / "NET.md").write_text("# Net\nold viewer\n")
+        g("add", "-A"); g("commit", "-qm", "init")
+        ctx = FakeCtx({"main": None})
+        ctx.repo = ctx.worktree = repo
+        rec = {"task": "docs-2", "by": "documenter", "auto": True, "reviewed_at": "t",
+               "pairs": [{"op": "move", "file": "design/NET.md", "old": "# Net\nold viewer\n",
+                          "to": "provenance/net.md", "pointer": ""},
+                         {"file": "provenance/net.md", "old": "# Net\n",
+                          "new": "# Net\n\nHistory: the legacy viewer.\n"},
+                         {"op": "delete", "file": "design/NET.md"}]}
+        f = ctx.dir / "docs-2.json"
+        read = lambda p: (repo / p).read_text() if (repo / p).is_file() else None
+        with mock.patch.object(hz, "cited", return_value={}), \
+             mock.patch.object(hz, "guard_classify", return_value={}), \
+             mock.patch.object(hz, "docs_decided"), redirect_stdout(io.StringIO()) as o:
+            hz.pairs_review(ctx, rec, read)
+            hz.pairs_apply(ctx, "main", {"kind": "doc"}, "docs-2", rec, f)
+        self.assertIn("Pair 2 edits provenance/net.md, where pair 1 moves text", o.getvalue())
+        self.assertEqual((repo / "provenance/net.md").read_text(),
+                         "# Net\n\nHistory: the legacy viewer.\nold viewer\n")
+        self.assertFalse((repo / "design/NET.md").exists())
+
+    def test_a_sentence_code_holds_by_its_text_is_not_taken_out(self):
+        # Log 180: a test keyed an exemption on a sentence the documenter moved.
+        import subprocess
+        repo = Path(tempfile.mkdtemp())
+        g = lambda *a: subprocess.run(["git", "-C", str(repo), *a], capture_output=True, text=True)
+        g("init", "-q", "-b", "main"); g("config", "user.email", "t@t"); g("config", "user.name", "t")
+        (repo / "API.md").write_text("x\n")
+        g("add", "-A"); g("commit", "-qm", "init"); g("checkout", "-qb", "dev")
+        (repo / "tests").mkdir()
+        held = "The rule is what stops that; the twelve rows were the symptom."
+        (repo / "tests" / "test_blocks.py").write_text(f'EXEMPT = {{"{held}": 1}}\n')
+        g("add", "-A"); g("commit", "-qm", "test"); g("checkout", "-q", "main")
+        ctx = FakeCtx({"main": None, "dev": "main"})
+        ctx.repo = repo
+        kinds = lambda c, ps: {p: "code" if p.endswith(".py") else "doc" for p in ps}
+        para = f"Rows came twelve at a time. {held}\n"
+        with mock.patch.object(hz, "guard_classify", kinds):
+            check = hz.pair_guard(ctx)
+            mv = {"op": "move", "file": "API.md", "old": para, "to": "p/a.md",
+                  "pointer": "See p/a.md.\n"}
+            why = check(mv)
+            self.assertIn("tests/test_blocks.py (dev)", why)
+            self.assertIn("the twelve rows were the symptom", why)
+            self.assertEqual(hz.pair_guard(ctx, [mv])(mv), why)        # one search per batch
+            # Kept where it was: nothing taken out, nothing to refuse.
+            self.assertIsNone(check({"file": "API.md", "old": para,
+                                     "new": f"Rows came in twelves. {held}\n"}))
+            self.assertIsNone(check({"file": "API.md", "old": "Rows came twelve at a time.\n",
+                                     "new": "Rows came in twelves.\n"}))
 
     def test_the_documenter_cannot_apply(self):
         with mock.patch.dict(os.environ, {"HARNESS_DOCUMENTER": "1"}), \
@@ -6366,11 +6439,11 @@ class Log152(unittest.TestCase):
         self.assertEqual(self.brief("dev_dag", "own", "--for", "dev_dag", "--write", "x")[0],
                          hz.REFUSED)
 
-    def spawn(self, me, node):
+    def spawn(self, me, node, bare=()):
         self.ctx.me = self.ctx.branch = me
         nodes = self.ctx.tree["nodes"]
         idx = {"project": "p", "byBranch": {n: n for n in nodes}, "byWorktree": {},
-               "nodes": {n: {"worktree": f"/w/{n}", "branch": n, "parent": s.get("parent"),
+               "nodes": {n: {"worktree": None if n in bare else f"/w/{n}", "branch": n, "parent": s.get("parent"),
                              "rank": self.ctx.rank(n)} for n, s in nodes.items()}}
         started, out = [], io.StringIO()
         with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
@@ -6415,6 +6488,21 @@ class Log152(unittest.TestCase):
         started, out = self.spawn("dev", "dev_dag_1")
         self.assertEqual(started, [])
         self.assertIn("not your child — dev_dag starts it", out)
+
+    def test_a_node_with_no_worktree_is_said_to_be_its_lead_s_to_make(self):
+        # Log 181: rank 0 was told "create one first" for a node its lead was
+        # already making, and the two `git worktree add`s collided.
+        self.brief("main", "environment-dag", "--for", "dev_dag", "--write", "build it")
+        started, out = self.spawn("main", "dev_dag", bare={"dev_dag"})
+        self.assertEqual(started, [])
+        self.assertIn("no worktree yet. dev makes it (branch dev_dag)", out)
+        self.assertNotIn("create one first", out)
+        # Whose node it is comes first, whatever the worktree.
+        started, out = self.spawn("main", "dev_dag_1", bare={"dev_dag_1"})
+        self.assertIn("not your child — dev_dag starts it", out)
+        # A lead's own child: how to make one.
+        started, out = self.spawn("dev", "dev_dag", bare={"dev_dag"})
+        self.assertIn("The harness does not make one: `git worktree add <path>", out)
 
     def test_a_suggestion_against_it_reaches_rank_0_which_may_resolve_it(self):
         self.brief("main", "environment-dag", "--for", "dev_dag", "--write", "build it")
@@ -7737,6 +7825,14 @@ class Reviewer(unittest.TestCase):
             self.assertEqual(hz.released_gone(self.ctx, "dev_r")[1], 0)
             hz.ring_inbox(self.ctx.dir, "dev_r", "dev", "a question?", "high")
             self.assertEqual(hz.released_gone(self.ctx, "dev_r")[1], 1)
+
+    def test_a_halt_or_resume_is_no_reason_to_start_a_gone_node(self):
+        # Log 178: the owner's halt and resume, unread at a sessionless dev_2,
+        # had its lead told every turn to spawn it.
+        with mock.patch.object(hz, "node_running", lambda ctx, k: (None, None)):
+            hz.ring_inbox(self.ctx.dir, "dev_r", "owner", "the owner HALTED the tree: x.")
+            hz.ring_inbox(self.ctx.dir, "dev_r", "owner", "carry on", kind="resume")
+            self.assertEqual(hz.released_gone(self.ctx, "dev_r")[1], 0)
 
     def test_close_after_adds_and_none_replaces(self):
         # Log 175: a sixth condition dropped the five before it.

@@ -27,7 +27,7 @@ claimed ──► current ──T11──► working ──► checked ──►
   - A conflict: see below.
 - **End a turn with your work committed** whenever you can. An uncommitted tree is the one thing that keeps you stale.
 - `harness behind` shows the count, since when, and why. `harness catchup` merges now.
-- **If your task needs one tree from start to finish** (a count over repeated runs, a profile, a build you must not invalidate), say so before you start measuring: `harness catchup --hold "<why>"`. Nothing merges into your worktree until you present, or until `harness catchup --release`. Checks you submit meanwhile say `STALE TREE`; that is expected, and you say so when you present. Don't hold a tree just to avoid re-reading files.
+- **If your task needs one tree from start to finish** (a count over repeated runs, a profile, a build you must not invalidate), say so before you start measuring: `harness catchup --freeze "<why>"`. Nothing merges into your worktree until you present, or until `harness catchup --release`. Checks you submit meanwhile say `STALE TREE`; that is expected, and you say so when you present. Don't freeze a tree just to avoid re-reading files.
 - A "caught up" line that names folders you build from (`surface/client/`, say) means rebuild before you trust the next run.
 
 If your lead integrates a sibling after you present, the harness or `harness integrate` catches you up; do not come back to do it.

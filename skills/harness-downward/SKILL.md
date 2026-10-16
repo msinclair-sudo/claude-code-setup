@@ -190,7 +190,7 @@ The harness merges your branch into each child whenever no turn is running there
 - A child that is mid-turn or has uncommitted work of its own is not yours to fix: it merges when its turn ends with the work committed.
 - A check report or a fact that says `STALE TREE` was measured on a commit behind you. Read its failures as possibly the difference, and have it measured again once the child is current.
 - `harness catchup <child>`, `--children` or `--all` runs the same merge now, with the same tests.
-- **A hold** keeps a node's tree still for a task that needs one tree throughout: `harness catchup --hold "<why>" <child>` places one for a child (it gets an FYI), `harness catchup --release <child>` ends it, and it ends by itself when the child presents. A child may place its own. `status` shows "held by <who>: <why>" as the reason. When you brief a diagnosis or a measurement, say in the brief whether it needs one.
+- **A freeze** keeps a node's tree still for a task that needs one tree throughout: `harness catchup --freeze "<why>" <child>` places one for a child (it gets an FYI), `harness catchup --release <child>` ends it, and it ends by itself when the child presents. A child may place its own. `status` shows "frozen by <who>: <why>" as the reason. When you brief a diagnosis or a measurement, say in the brief whether it needs one.
 
 ## `T7` / `T8` — mediating a conflict
 

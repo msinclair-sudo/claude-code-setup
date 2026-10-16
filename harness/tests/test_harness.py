@@ -4141,80 +4141,64 @@ class Ringer(unittest.TestCase):
         self.assertFalse((hz.ringer_dir(self.ctx.state) / "ringer.json").exists())
 
 
-class Held(unittest.TestCase):
-    """A node whose next task is gated on another's task or a clock is held."""
+class Gated(unittest.TestCase):
+    """A node whose next task waits on another's task, or a clock, is gated by
+    whoever must act first (owner, 2026-10-06; derived by the CLI's waits(),
+    not by the viewer reading the CLI's English, since 2026-10-16)."""
 
-    def test_mark_held(self):
-        gp = Path(__file__).resolve().parents[1] / "bin" / "harness-gui"
-        ld = importlib.machinery.SourceFileLoader("harness_gui", str(gp))
-        gui = importlib.util.module_from_spec(importlib.util.spec_from_loader("harness_gui", ld))
-        ld.exec_module(gui)
-        nodes = [{"name": "a", "tasks": []}, {"name": "b", "tasks": [{"presented": False}]},
-                 {"name": "c", "tasks": []}, {"name": "d", "tasks": []}]
-        q = {"a": [{"task": "ta"}], "b": [{"task": "tb"}], "c": [{"task": "tc"}], "d": []}
-        why = {"ta": ["after x (open on b)"], "tc": ["until 00:05Z (in 3h)"]}
-        with mock.patch.object(gui.CLI, "queue", lambda c, n: q[n]), \
-             mock.patch.object(gui.CLI, "startable", lambda c, n: []), \
-             mock.patch.object(gui.CLI, "waits_on", lambda c, b: why.get(b["task"], [])):
-            gui.mark_held(None, nodes)
-        a, b, c, d = nodes
-        self.assertEqual(a["held"], [{"task": "ta", "after": "x", "state": "open", "by": "b"}])
-        self.assertEqual(b["holding"], [{"node": "a", "after": "x"}])
-        self.assertEqual(b["held"], [])                   # mid-task: working, not held
-        self.assertEqual(c["held"], [{"task": "tc", "until": "00:05Z (in 3h)"}])
-        self.assertEqual(d["held"], [])                   # nothing queued
+    def setUp(self):
+        self.ctx = FakeCtx({"lead": None, "a": "lead", "w": "lead", "dev": None, "dev_dag": "dev"})
+        self.addCleanup(shutil.rmtree, self.ctx.dir, True)
+        p = mock.patch.object(hz, "unanswered", return_value=None)
+        p.start(); self.addCleanup(p.stop)
 
-    def test_held_by_is_always_another_node_that_must_act(self):
-        # Owner, 2026-10-06: held by means another node must do something first.
-        gp = Path(__file__).resolve().parents[1] / "bin" / "harness-gui"
-        ld = importlib.machinery.SourceFileLoader("harness_gui", str(gp))
-        gui = importlib.util.module_from_spec(importlib.util.spec_from_loader("harness_gui", ld))
-        ld.exec_module(gui)
-        cctx = mock.Mock(tree={"nodes": {"lead": {}, "a": {"parent": "lead"},
-                                         "w": {"parent": "lead"}}})
-        nodes = [{"name": "a", "tasks": []}, {"name": "lead", "tasks": []},
-                 {"name": "w", "tasks": []}]
-        why = {"ta": ["after own (briefed on a)"], "own": ["after x (open on w)"],
-               "tb": ["after p (presented on w)"], "tc": ["after solo (briefed on a)"]}
-        briefs = {"own": {"task": "own"}, "solo": {"task": "solo"}}
-        q = {"a": [{"task": "ta"}], "lead": [], "w": []}
-        with mock.patch.object(gui.CLI, "queue", lambda c, n: q[n]), \
-             mock.patch.object(gui.CLI, "startable", lambda c, n: []), \
-             mock.patch.object(gui.CLI, "load_brief", lambda c, t: (None, briefs.get(t))), \
-             mock.patch.object(gui.CLI, "waits_on", lambda c, b: why.get((b or {}).get("task"), [])):
-            gui.mark_held(cctx, nodes)
-            self.assertEqual(nodes[0]["held"],                # its own task, followed
-                             [{"task": "ta", "after": "x", "state": "open", "by": "w"}])
-            q["a"] = [{"task": "tb"}]
-            gui.mark_held(cctx, nodes)
-            self.assertEqual(nodes[0]["held"], [{"task": "tb", "after": "p", "state": "presented",
-                                                 "by": "lead", "worker": "w"}])
-            self.assertEqual(nodes[1]["holding"], [{"node": "a", "after": "p", "signoff": "w"}])
-            q["a"] = [{"task": "tc"}]
-            gui.mark_held(cctx, nodes)
-            self.assertEqual(nodes[0]["held"], [])        # only its own ordering: not held
+    def w(self, rel, obj):
+        f = self.ctx.dir / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(obj))
 
-    def test_a_lead_waiting_on_its_own_sign_off_is_not_held_by_the_child(self):
+    def gates(self, node):
+        return [(e["frm_task"], e["on"], e["on_task"]) for e in hz.waits(self.ctx, infer="off")
+                if e["kind"] == "gate" and e["frm"] == node and e["stops"] == "start"]
+
+    def test_gated_by_is_always_another_node_that_must_act(self):
+        self.w("briefs/x.json", {"task": "x", "node": "w"})
+        self.w("marks/x.json", {"_node": "w", "_task": "x"})                  # open on w
+        self.w("briefs/ta.json", {"task": "ta", "node": "a", "after": ["x"]})
+        self.assertEqual(self.gates("a"), [("ta", "w", "x")])
+        # Presented: the lead that signs it off must act.
+        self.w("marks/x.json", {"_node": "w", "_task": "x", "_presented_at": hz._now()})
+        self.assertEqual(self.gates("a"), [("ta", "lead", None)])
+        # Only its own ordering: not gated.
+        self.w("briefs/solo.json", {"task": "solo", "node": "a"})
+        self.w("briefs/ta.json", {"task": "ta", "node": "a", "after": ["solo"]})
+        self.assertEqual(self.gates("a"), [])
+
+    def test_a_clock_gates_with_the_clock_named(self):
+        self.w("briefs/tc.json", {"task": "tc", "node": "a", "not_before": time.time() + 3600})
+        self.assertEqual(self.gates("a"), [("tc", "clock", None)])
+
+    def test_a_lead_waiting_on_its_own_sign_off_is_not_gated_by_the_child(self):
         # Owner, 2026-10-15: dev read as held by dev_dag, because dev's next task
         # waited on environment-dag, which dev_dag had presented and dev had not
-        # signed off. The sign-off is dev's own: owed, not held.
+        # signed off. The sign-off is dev's own: dev_dag waits on dev, not the
+        # other way round.
+        self.w("briefs/environment-dag.json", {"task": "environment-dag", "node": "dev_dag"})
+        self.w("marks/environment-dag.json", {"_node": "dev_dag", "_task": "environment-dag",
+                                              "_presented_at": hz._now()})
+        self.w("briefs/environment-dag.up-dev.json", {"task": "environment-dag.up-dev",
+                                                      "node": "dev", "after": ["environment-dag"]})
+        self.assertEqual(self.gates("dev"), [])
+        s = [e for e in hz.waits(self.ctx, infer="off") if e["via"] == "signoff"]
+        self.assertEqual([(e["frm"], e["on"], e["frm_task"]) for e in s],
+                         [("dev_dag", "dev", "environment-dag")])
+
+    def test_the_viewer_reads_the_edges_and_has_no_rules_of_its_own(self):
         gp = Path(__file__).resolve().parents[1] / "bin" / "harness-gui"
-        ld = importlib.machinery.SourceFileLoader("harness_gui", str(gp))
-        gui = importlib.util.module_from_spec(importlib.util.spec_from_loader("harness_gui", ld))
-        ld.exec_module(gui)
-        cctx = mock.Mock(tree={"nodes": {"dev": {}, "dev_dag": {"parent": "dev"}}})
-        nodes = [{"name": "dev", "tasks": []}, {"name": "dev_dag", "tasks": []}]
-        q = {"dev": [{"task": "environment-dag.up-dev"}], "dev_dag": []}
-        why = {"environment-dag.up-dev": ["after environment-dag (presented on dev_dag)"]}
-        with mock.patch.object(gui.CLI, "queue", lambda c, n: q[n]), \
-             mock.patch.object(gui.CLI, "startable", lambda c, n: []), \
-             mock.patch.object(gui.CLI, "waits_on", lambda c, b: why.get(b["task"], [])):
-            gui.mark_held(cctx, nodes)
-        dev, dag = nodes
-        self.assertEqual(dev["held"], [])
-        self.assertEqual(dev["signoff"], [{"after": "environment-dag", "worker": "dev_dag",
-                                           "task": "environment-dag.up-dev"}])
-        self.assertEqual(dag["holding"], [])
+        src = gp.read_text()
+        self.assertNotIn("def mark_held", src)
+        self.assertNotIn("def held_by", src)
+        self.assertIn("CLI.waits(", src)
 
 
 class SessionModel(unittest.TestCase):
@@ -4600,7 +4584,7 @@ class DoorbellHooks(unittest.TestCase):
         with mock.patch.object(hz, "cached_roster",
                                return_value=[{"sessionId": "sess-main", "status": "busy"}]):
             self.assertIn("next tool call", rr())
-            self.assertIn("held until its turn ends", rr("low"))
+            self.assertIn("kept until its turn ends", rr("low"))
         with mock.patch.object(hz, "cached_roster",
                                return_value=[{"sessionId": "sess-main", "status": "idle"}]):
             self.assertIn("the ringer wakes it now", rr())
@@ -7221,19 +7205,19 @@ class CatchUp(unittest.TestCase):
         # Log 154 (owner, 2026-10-12): merging between turns stays the rule, and
         # a lane that needs one tree for a whole diagnosis says so.
         sha = self.commit("dev", "d1")
-        code, out = self.run_as("dev_1", "catchup", "--hold", "one tree for the whole diagnosis")
+        code, out = self.run_as("dev_1", "catchup", "--freeze", "one tree for the whole diagnosis")
         self.assertEqual(code, 0, out)
-        self.assertIn("held: nothing merges into dev_1 until it presents", out)
+        self.assertIn("frozen: nothing merges into dev_1 until it presents", out)
         st, info = self.up("dev_1")                                  # the ringer
-        self.assertEqual((st, info["kind"]), ("blocked", "held"))
-        self.assertEqual(info["why"], "held by dev_1: one tree for the whole diagnosis")
+        self.assertEqual((st, info["kind"]), ("blocked", "frozen"))
+        self.assertEqual(info["why"], "frozen by dev_1: one tree for the whole diagnosis")
         with redirect_stdout(io.StringIO()) as o:                    # its own check or task start
             self.assertEqual(hz.own_catchup(self.ctx, "dev_1")[0], "blocked")
-        self.assertIn("held by dev_1", o.getvalue())
+        self.assertIn("frozen by dev_1", o.getvalue())
         code, out = self.run_as("dev_1", "catchup")
         self.assertEqual(code, hz.REFUSED)
         self.assertIn("harness catchup --release, then harness catchup", out)
-        self.assertIn("held by dev_1: one tree", self.run_as("dev_1", "behind")[1])
+        self.assertIn("frozen by dev_1: one tree", self.run_as("dev_1", "behind")[1])
         self.assertFalse(self.has("dev_1", sha))
         # Its lead's integrate, after it has presented, is not held back.
         self.assertEqual(self.up("dev_1", own=True, ignore_hold=True, dry=True)[0], "would")
@@ -7241,29 +7225,32 @@ class CatchUp(unittest.TestCase):
         code, out = self.run_as("dev", "catchup", "--release", "dev_1")
         self.assertIn("released: dev_1 is merged with its parent again", out)
         self.assertEqual(self.up("dev_1")[0], "caught")
-        code, out = self.run_as("dev_1", "catchup", "--hold", "x", "dev")
+        code, out = self.run_as("dev_1", "catchup", "--freeze", "x", "dev")
         self.assertEqual(code, hz.REFUSED)
         self.assertIn("'dev' is not below dev_1", out)
-        self.assertEqual(self.run_as("dev", "catchup", "--hold", " ", "dev_1")[0], hz.REFUSED)
-        code, out = self.run_as("dev", "catchup", "--hold", "bundle is being profiled", "dev_1")
+        self.assertEqual(self.run_as("dev", "catchup", "--freeze", " ", "dev_1")[0], hz.REFUSED)
+        code, out = self.run_as("dev", "catchup", "--freeze", "bundle is being profiled", "dev_1")
         self.assertEqual(code, 0, out)
         (m,) = [json.loads(p.read_text())
                 for p in (self.ctx.dir / "doorbell" / "dev_1" / "inbox").glob("*.json")]
         self.assertEqual((m["from"], m["priority"]), ("dev", "fyi"))
         self.assertEqual(hz.catchup_hold(self.ctx, "dev_1")["by"], "dev")
+        code, out = self.run_as("dev", "catchup", "--hold", "x", "dev_1")   # renamed
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("--hold is now --freeze", out)
 
     def test_a_hold_ends_when_the_node_presents(self):
         (self.ctx.dir / "briefs").mkdir()
         (self.ctx.dir / "marks").mkdir()
         (self.ctx.dir / "briefs" / "t.json").write_text(json.dumps({"task": "t", "node": "dev_1"}))
         (self.ctx.dir / "marks" / "t.json").write_text(json.dumps({"_node": "dev_1"}))
-        self.run_as("dev_1", "catchup", "--hold", "one tree")
+        self.run_as("dev_1", "catchup", "--freeze", "one tree")
         code, out = self.run_as("dev_1", "mark", "t", "--done",
                                 read_spend_or_none=lambda sid: (None, "no transcript"),
                                 lead_address=lambda ctx, p: (None, None),
                                 next_after=lambda *a: (None, False))
         self.assertIn("presented t", out)
-        self.assertIn("the hold on merging into dev_1 has ended (dev_1: one tree)", out)
+        self.assertIn("the freeze on merging into dev_1 has ended (dev_1: one tree)", out)
         self.assertIsNone(hz.catchup_hold(self.ctx, "dev_1"))
 
     def test_many_files_are_told_by_the_folders_they_fall_under(self):
@@ -7280,7 +7267,7 @@ class CatchUp(unittest.TestCase):
         line = next(v for k, v in self.items("dev").items() if k.startswith("caught:"))
         self.assertIn("(8 file(s) under surface/client/, tests/)", line)
         self.assertIn("rebuild anything built from them", line)
-        self.assertIn('harness catchup --hold "<why>"', line)
+        self.assertIn('harness catchup --freeze "<why>"', line)
 
     def test_a_fact_measured_on_a_behind_tree_says_so(self):
         self.commit("main", "m1")

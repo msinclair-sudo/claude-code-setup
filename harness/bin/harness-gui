@@ -223,66 +223,6 @@ def tests_queue(pdir, repo):
     return {"jobs": out, "last": lj, "slots": slots, "ledger": ledger, "caps": caps}
 
 
-def mark_held(cctx, nodes):
-    """Held: nothing in hand, and the next queued task can't start yet — it is
-    gated --after another node's task, or --not-before a clock. Not a wait
-    (nobody owes it an answer) and not a fault; its lead set it so. Sets each
-    node's `held`, and the holder's `holding`."""
-    by_name = {n["name"]: n for n in nodes}
-    for n in nodes:
-        n["held"], n["holding"], n["signoff"] = [], [], []
-    for n in nodes:
-        if any(not t.get("presented") for t in n["tasks"]):
-            continue                        # mid-task: it is working
-        q = [b for b in CLI.queue(cctx, n["name"]) if not b.get("coupled_to")]
-        if not q or CLI.startable(cctx, n["name"]):
-            continue
-        for r in CLI.waits_on(cctx, q[0]):
-            if r.startswith("until "):
-                n["held"].append({"task": q[0]["task"], "until": r[6:]})
-                continue
-            for h in held_by(cctx, n["name"], r, set()):
-                if h.get("own"):
-                    # Its own sign-off stands in the way, not another node:
-                    # owed, not held (owner, 2026-10-15: dev read as held by
-                    # dev_dag, whose work was waiting on dev).
-                    n["signoff"].append({"after": h["after"], "worker": h["worker"],
-                                         "task": q[0]["task"]})
-                    continue
-                n["held"].append(dict(h, task=q[0]["task"]))
-                if h["by"] in by_name:
-                    by_name[h["by"]]["holding"].append(dict(
-                        {"node": n["name"], "after": h["after"]},
-                        **({"signoff": h["worker"]} if h.get("worker") else {})))
-
-
-def held_by(cctx, me, reason, seen):
-    """Who must act before `me` can start, from one `waits_on` reason: always
-    another node (owner, 2026-10-06: held by means another node has to do
-    something first). A gate on `me`'s own task is followed to whatever holds
-    that task, and dropped if nothing outside `me` does. A gate on presented
-    work names the worker's lead, who has to sign it off; when that lead is
-    `me`, nobody else holds it, and it comes back as `own`: a sign-off `me` owes."""
-    m = re.match(r"after (\S+) \(([\w ]+) on ([^)]+)\)", reason)
-    if not m or m.group(1) in seen:
-        return []
-    after, state, worker = m.groups()
-    seen.add(after)
-    if worker == me:
-        b = CLI.load_brief(cctx, after)[1] or {}
-        return [h for r in CLI.waits_on(cctx, b) if not r.startswith("until ")
-                for h in held_by(cctx, me, r, seen)]
-    if state == "presented":
-        lead = (cctx.tree["nodes"].get(worker) or {}).get("parent")
-        if lead == me:
-            # The worker has done its part; the sign-off is `me`'s own. Falling
-            # through named the worker as the holder, backwards.
-            return [{"after": after, "state": state, "own": True, "worker": worker}]
-        if lead:
-            return [{"after": after, "state": state, "by": lead, "worker": worker}]
-    return [{"after": after, "state": state, "by": worker}]
-
-
 def cli_ctx(pdir, repo, tree):
     """Enough of the CLI's Ctx to ask it about a project's queue and gates,
     without the git calls (and the chdir) its constructor needs."""
@@ -598,11 +538,6 @@ def read_state():
             s["total"] = len(s["children"])
             s["ready"] = s["done"] == s["total"]
 
-        # Each node's oldest recorded wait, both layouts (2026-10-16).
-        try:
-            waits = CLI.open_waits(cli_ctx(pdir, repo, tree))
-        except Exception:
-            waits = {}
         # The owner's channel. An ask is read whole, because the Owner page shows
         # its briefing, and only while open: an accepted ask lives on as a ruling
         # on its brief, and a rejected or returned one is nobody's move.
@@ -651,6 +586,14 @@ def read_state():
             _sig(r.get("node"), kind="approval", frm=frm,
                  text=(first[0][:90] if first else task),
                  task=task, do=f"harness brief {task} --approve")
+        # Each session's stop, read once: the cards show it, and the edges read
+        # a finished turn that messaged someone off it.
+        stops = {}
+        for r in rows or []:
+            try:
+                stops[r.get("sessionId")] = CLI.stop_detail(r, rows)
+            except Exception:
+                stops[r.get("sessionId")] = None
         nodes = []
         for name, spec in tree.items():
             wt = wt_of.get(name)
@@ -678,7 +621,7 @@ def read_state():
                                     "stopped": CLI.is_stopped(r),
                                     # Which stop: a permission prompt, or a
                                     # finished turn waiting on someone.
-                                    "stop": CLI.stop_detail(r, rows),
+                                    "stop": stops.get(r.get("sessionId")),
                                     "id": (r.get("sessionId") or "")[:8],
                                     "model": CLI.session_model(r.get("sessionId") or ""),
                                     # Uptime: the roster's startedAt is epoch ms.
@@ -716,62 +659,30 @@ def read_state():
                                    b.get("written_at") or "", b["task"])),
                 "split": [dict(s, task=t) for t, s in sorted(split_of.items())
                           if s["node"] == name and t not in ever_marked],
-                # Both ends of it on the same card: what this node is stopped
-                # on, and who is stopped on this node. A lead looking at its
-                # own card should not have to read its children's to find out
-                # that two of them are waiting on it.
-                "waiting": (dict(waits[name],
-                                 age=CLI.wait_age(waits[name].get("since")))
-                            if name in waits else None),
-                "awaited_by": sorted(n for n, r in waits.items()
-                                     if r.get("parent") == name),
             })
-        # A session that finished its turn and is waiting on someone is a wait
-        # the harness never recorded. Draw it as one, on the node it is waiting
-        # on, so it reads like a recorded wait and not like a fault. A recorded
-        # wait wins: it says what was asked.
-        node_of = {r.get("name"): n for n, wt in wt_of.items() for r in by_cwd.get(wt, [])}
-        by_name = {n["name"]: n for n in nodes}
+        # Every wait as one edge, named on both sides (owner, 2026-10-16: "it's
+        # not clear who is blocking who"). The CLI derives them; the viewer only
+        # words and draws them. Both ends on the same card: what a node waits
+        # on (`out`), and who waits on it (`in`).
+        try:
+            edges = CLI.waits(cli_ctx(pdir, repo, tree), rows=rows or [],
+                              infer="live" if rows is not None else "off", stops=stops)
+        except Exception:
+            edges = []
+        live = [e for e in edges if not e["stale"]]
+        chains, _ = CLI.wait_chains(live)
+
+        def _e(e):
+            d = {k: e.get(k) for k in ("id", "kind", "via", "frm", "on", "frm_task", "on_task",
+                                       "what", "stops", "until", "by", "src", "act")}
+            d["age"] = CLI.wait_age(e["since"]) if isinstance(e.get("since"), str) else ""
+            d["chain"] = chains.get(e["id"]) or []
+            return d
         for n in nodes:
-            st = next((s["stop"] for s in n["sessions"] or [] if s.get("stop")), None)
-            # Waiting means it messaged someone and wants an answer; a turn
-            # that just ended is at rest (CLI.stop_wait_on).
-            to = CLI.stop_wait_on(st)
-            if n["waiting"] or not to:
-                continue
-            on = node_of.get(to, to)
-            idle = next((s.get("idle") for s in n["sessions"] if s.get("stop")), None)
-            n["waiting"] = {"parent": on or "you", "asked": st.get("said") or "",
-                            "inferred": True,
-                            "age": ("" if idle is None else
-                                    f"{int(idle // 60)}m" if idle < 3600 else
-                                    f"{int(idle // 3600)}h{int(idle % 3600 // 60):02d}")}
-            if on in by_name and n["name"] not in by_name[on]["awaited_by"]:
-                by_name[on]["awaited_by"] = sorted(by_name[on]["awaited_by"] + [n["name"]])
-        # The wait queue, traced: who each waiting node is ultimately held by,
-        # and, at the head, every node whose wait runs through it. One link per
-        # card left a chain (lane on lead on rank 0) to be pieced together.
-        def chain_of(n):
-            out, cur, seen = [], n, {n["name"]}
-            while cur and cur["waiting"]:
-                on = cur["waiting"].get("parent")
-                out.append(on)
-                cur = by_name.get(on)
-                if not cur or cur["name"] in seen:
-                    break
-                seen.add(cur["name"])
-            return out
-        for n in nodes:
-            if n["waiting"]:
-                n["waiting"]["chain"] = chain_of(n)
-        for n in nodes:
-            # Paths ending here: c ← … ← a, for every a whose chain passes through n.
-            n["chains"] = [[m["name"]] + m["waiting"]["chain"][:m["waiting"]["chain"].index(n["name"])]
-                         for m in nodes if m["waiting"] and n["name"] in m["waiting"]["chain"]
-                         and m["waiting"]["chain"].index(n["name"]) >= 1]   # direct: awaited_by
+            n["out"] = [_e(e) for e in live if e["frm"] == n["name"]]
+            n["in"] = [_e(e) for e in live if e["on"] == n["name"] and e["kind"] != "pause"]
         try:
             cctx = cli_ctx(pdir, repo, tree)
-            mark_held(cctx, nodes)
             for n in nodes:
                 n["assigned"] = list(CLI.assignment_for(cctx, n["name"]))
                 n["skills_on"] = CLI.on_words(cctx, n["name"])     # log 172
@@ -820,11 +731,11 @@ def read_state():
         # answer it. Occupancy has to be KNOWN for that; when the roster could
         # not be read, nothing is claimed either way.
         live_of = {n["name"]: n["sessions"] for n in nodes}
-        for wn, wr in sorted(waits.items()):
-            par = wr.get("parent")
+        for e in (e for e in live if e["via"] == "waiting"):
+            wn, par = e["frm"], e["on"]
             if rows is None or live_of.get(par) is None or live_of.get(par):
                 continue
-            if _wait_mins(wr.get("since")) < 20:
+            if _wait_mins(e.get("since")) < 20:
                 continue
             _sig(wn, kind="unanswered", frm=par or "its lead",
                  text=f"asked {par} and stopped — {par} is not running",
@@ -957,7 +868,19 @@ border-bottom:1px dotted var(--none)}
 .waits path{fill:none;stroke:var(--wait);stroke-width:2;stroke-linejoin:miter}
 .waits path.conn{stroke:color-mix(in srgb,var(--line2) 65%,var(--dim))}
 .waits path.held{stroke:var(--held)}
-.waits path.msg{stroke:var(--wait);stroke-dasharray:2 4;stroke-linecap:round}
+.waits path.sign{stroke:var(--s-need)}
+/* The intermediary's messages are not a wait between nodes: not teal. */
+.waits path.msg{stroke:var(--dim);stroke-dasharray:2 4;stroke-linecap:round}
+/* A wait line can be pointed at: it and its two cards light, the rest dims. */
+.waits path.wait,.waits path.held,.waits path.sign{pointer-events:stroke;cursor:help}
+.tspace.pairing .card{opacity:.35;transition:opacity .12s}
+.tspace.pairing .card.pair{opacity:1}
+.tspace.pairing svg.waits path{opacity:.18}
+.tspace.pairing svg.waits path.pair{opacity:1;stroke-width:3}
+.sti.gt{color:var(--s-held)}
+.legend{color:var(--dim);font-size:10.5px;margin:2px 0 10px;display:flex;gap:16px;flex-wrap:wrap}
+.legend i{font-style:normal}.legend .lw{color:var(--s-wait)}.legend .lh{color:var(--s-held)}
+.legend .ls{color:var(--s-need)}
 .oos{color:var(--warn);font-weight:700;letter-spacing:.06em;margin:4px 0}
 .achain{margin:4px 0 8px;font-size:11px}.achain summary{cursor:pointer;color:var(--dim)}
 .ahop{border-left:2px solid var(--line);padding:3px 0 3px 8px;margin:4px 0}
@@ -1647,7 +1570,9 @@ const STICON = {
   busy: '<span class="sti spin" data-p="3000">&#9881;&#65039;</span>',
   idle: '<span class="sti zz" data-p="2700"><i>z</i><i>z</i><i>Z</i></span>',
   wait: '<span class="sti flip" data-p="2400">&#8987;</span>',
-  held: '<span class="sti">&#9208;&#65039;</span>',
+  // Gated: the text pause (VS15), so it takes the violet and is not the
+  // orange emoji that reads as "needs you" (2026-10-16).
+  held: '<span class="sti gt">&#9208;&#65038;</span>',
   need: '<span class="sti pulse" data-p="1400">&#10071;</span>',
   none: '<span class="sti off">&#11096;</span>',
   unk:  '<span class="sti">&#10067;</span>',
@@ -1679,18 +1604,26 @@ function card(n) {
   const ss = n.sessions || [];
   const s = ss[0];
   const key = n._slug + ':' + n.name;
-  const halted = ss.some(x => x.stopped && !(x.stop && x.stop.kind === 'reply'));
+  const atPrompt = ss.some(x => x.stopped && !(x.stop && x.stop.kind === 'reply'));
   const busy = ss.some(x => x.status === 'busy');
-  const w = n.waiting, held = n.held || [];
+  // What it waits on and who waits on it, from the CLI's edges (owner,
+  // 2026-10-16): every chip below names the other side, and the same node its
+  // line goes to.
+  const out = n.out || [], inn = n.in || [];
+  const answers = out.filter(e => e.kind === 'answer');
+  const inHand = (n.tasks || []).some(t => !t.presented);
+  const nextB = (n.briefed || []).filter(b => !b.coupled_to && !b.wait)[0];
+  const gates = inHand || !nextB ? [] :
+    out.filter(e => e.stops === 'start' && e.frm_task === nextB.task);
   const idleT = s && s.idle && !busy ? hm(s.idle) : '';
   let st, word, age = '';
   if (unknown)                    { st = 'unk';  word = 'unknown'; }
   else if (ss.length > 1)         { st = 'need'; word = ss.length + ' sessions'; }
-  else if (halted)                { st = 'need'; word = 'needs you'; }
+  else if (atPrompt)              { st = 'need'; word = 'needs you'; }
   else if (!ss.length)            { st = 'none'; word = n.claimed ? 'no session' : 'free'; }
-  else if (w)                     { st = 'wait'; word = 'waiting'; age = esc(w.age || ''); }
+  else if (answers.length)        { st = 'wait'; word = 'waiting'; age = esc(answers[0].age || ''); }
   else if (busy)                  { st = 'busy'; word = 'busy'; }
-  else if (held.length)           { st = 'held'; word = 'held'; }
+  else if (gates.length)          { st = 'held'; word = 'gated'; }
   else                            { st = 'idle'; word = 'idle'; age = idleT; }
 
   // Under the name: the model, and the one sentence a stopped card needs.
@@ -1701,7 +1634,7 @@ function card(n) {
   let why = '';
   if (unknown) why = '<div class="why">occupancy unknown</div>';
   else if (ss.length > 1) why = '<div class="why">' + ss.length + ' sessions in one worktree</div>';
-  else if (halted) why = '<div class="why">' + (s.stop ? 'permission prompt &middot; ' +
+  else if (atPrompt) why = '<div class="why">' + (s.stop ? 'permission prompt &middot; ' +
       esc(s.stop.tool) : 'stopped &mdash; a prompt or a reply') + '</div>' +
       (s.stop && s.stop.what ? '<div class="why q">' + esc(s.stop.what) + '</div>' : '') +
       '<div class="why q">claude attach ' + esc(s.id) + '</div>';
@@ -1723,31 +1656,55 @@ function card(n) {
        : n.bell ? 'the ringer is waking it' : 'the ringer is not running') + '">&#9993; ' +
       n.calls + (ss.length && idle && !n.bell ? ' !' : '') + '</span>');
   }
-  if (w) {
-    const chain = (w.chain && w.chain.length ? w.chain : [w.parent || 'its lead']);
-    sym.push('<span class="wto" hidden data-on="' + esc(w.parent || '') + '"></span>' +
-      '<span class="g wt2" data-tog="w:' + esc(key) + '" title="waiting on ' +
-      esc(chain.join(' → ')) + ' · ' + esc(w.age || '') + '\n' +
-      esc(w.asked || (w.inferred ? 'finished its turn' : 'nothing recorded')) + '">&#8987; ' +
-      esc(chain[chain.length - 1]) + '</span>');
-  }
-  held.forEach(h => sym.push((h.by ? '<span class="hto" hidden data-on="' + esc(h.by) +
-      '"></span>' : '') + '<span class="g hd2" data-tog="h:' + esc(key) + '" title="' + esc(h.by
-      ? 'held by ' + h.by + ' · ' + h.task + ' starts after ' + (h.worker ? h.worker + '’s ' : 'its ') +
-        h.after : 'held until ' + h.until + ' · ' + h.task) + '">&#9939; ' +
-      esc(h.by || h.until) + '</span>'));
-  // A sign-off this node owes stands between it and its next task: its own
-  // act, so a mark of its own, not a hold by the child that presented.
-  (n.signoff || []).forEach(o => sym.push('<span class="g mail" data-tog="o:' + esc(key) +
-      '" title="sign off ' + esc(o.worker) + '’s ' + esc(o.after) + ' · then ' + esc(o.task) +
-      ' starts">&#9998; sign off ' + esc(o.after) + '</span>'));
-  const owed = (n.awaited_by || []).concat((n.chains || []).map(p => p[0]));
-  if (owed.length) sym.push('<span class="g wt2" title="' + esc(owed.join(', ')) +
-      ' waiting on ' + esc(n.name) + '">&#8672; ' + owed.length + '</span>');
-  if ((n.holding || []).length) sym.push('<span class="g hd2" title="' +
-      esc(n.holding.map(h => h.node + ' held on ' + n.name).join('\n')) + '">&#9939;&#8672; ' +
-      n.holding.length + '</span>');
-  if (n.behind) sym.push('<span class="g ' + (n.behind.blocked ? 'mail' : 'wt2') + '" title="' +
+  // Each chip says the relation in words and names the other side; the mark
+  // beside it (hidden) is what drawWaits runs the line from, to the same node.
+  // One glyph and one colour per meaning: waiting ⌛ teal, gated ⏸ violet, a
+  // clock 🕒 violet, a sign-off ✎ orange, frozen ❄.
+  const pair = (a, b) => ' data-pair="' + esc(a) + '>' + esc(b) + '"';
+  const tip = e => esc((e.frm_task ? e.frm_task + ': ' : '') + (e.what || '') +
+    (e.age ? ' · ' + e.age : '') + (e.act ? '\n' + e.on + ' runs: ' + e.act : '') +
+    (e.chain && e.chain.length > 2 ? '\n' + e.chain.join(' → ') : ''));
+  const seen = new Set();
+  answers.forEach(e => {
+    if (seen.has('w' + e.on)) return; seen.add('w' + e.on);
+    sym.push('<span class="wto" hidden data-on="' + esc(e.on) + '"></span>' +
+      '<span class="g wt2" data-tog="w:' + esc(key) + '"' + pair(n.name, e.on) + ' title="' +
+      tip(e) + '">&#8987; waiting on ' + esc(e.on) + '</span>');
+  });
+  gates.forEach(e => {
+    if (seen.has('g' + e.on)) return; seen.add('g' + e.on);
+    const what = e.on === 'clock' ? '&#128338; until ' + esc((e.what || '').replace('starts at ', ''))
+      : '&#9208;&#65038; ' + (busy ? 'next task ' : '') + 'gated by ' + esc(e.on);
+    sym.push((e.on !== 'clock' ? '<span class="hto" hidden data-on="' + esc(e.on) + '"></span>' : '') +
+      '<span class="g hd2" data-tog="w:' + esc(key) + '"' + pair(n.name, e.on) + ' title="' +
+      tip(e) + '">' + what + '</span>');
+  });
+  out.filter(e => e.via === 'signoff' || e.via === 'review').forEach(e => sym.push(
+    '<span class="sto" hidden data-on="' + esc(e.on) + '" data-kind="' + esc(e.via) + '"></span>' +
+    '<span class="g ' + (e.via === 'review' ? 'hd2' : 'mail') + '"' + pair(n.name, e.on) +
+    ' title="' + tip(e) + '">' + (e.via === 'review' ? '&#9208;&#65038; in review by '
+      : '&#9998; awaiting ') + esc(e.on) + (e.via === 'review' ? '' : '&rsquo;s sign-off') + '</span>'));
+  out.filter(e => e.via === 'freeze').forEach(e => sym.push('<span class="g"' + pair(n.name, e.on) +
+    ' title="' + tip(e) + '">&#10052;&#65038; frozen by ' + esc(e.on) + '</span>'));
+  // The other side: what this node must act on, named.
+  const owe = (via, kind) => inn.filter(e => (via ? e.via === via : true) && (!kind || e.kind === kind));
+  const names = es => [...new Set(es.map(e => e.frm))];
+  const waitIn = names(owe(null, 'answer'));
+  if (waitIn.length) sym.push('<span class="g wt2" data-tog="o:' + esc(key) + '"' +
+    (waitIn.length === 1 ? pair(waitIn[0], n.name) : '') + ' title="' +
+    esc(owe(null, 'answer').map(e => e.frm + ': ' + (e.what || '')).join('\n')) + '">&#9654;&#65038; ' +
+    (waitIn.length === 1 ? esc(waitIn[0]) + ' waits on you' : waitIn.length + ' wait on you') + '</span>');
+  const gateIn = names(inn.filter(e => e.kind === 'gate' && e.stops === 'start'));
+  if (gateIn.length) sym.push('<span class="g hd2" data-tog="o:' + esc(key) + '"' +
+    (gateIn.length === 1 ? pair(gateIn[0], n.name) : '') + ' title="' +
+    esc(inn.filter(e => e.stops === 'start').map(e => e.frm + ' (' + e.frm_task + ') ' +
+      (e.what || '')).join('\n')) + '">&#9654;&#65038; gating ' +
+    (gateIn.length === 1 ? esc(gateIn[0]) : gateIn.length) + '</span>');
+  owe('signoff').concat(owe('review')).forEach(e => sym.push('<span class="g mail" data-tog="o:' +
+    esc(key) + '"' + pair(e.frm, n.name) + ' title="' + tip(e) + '">&#9998; ' +
+    (e.via === 'review' ? 'review ' : 'sign off ') + esc(e.via === 'review' ? e.on_task || e.frm_task
+      : e.frm_task) + '</span>'));
+  if (n.behind) sym.push('<span class="g ' + (n.behind.blocked ? 'mail' : '') + '" title="' +
       n.behind.n + ' commit(s) behind ' + esc(n.behind.parent || 'its parent') +
       (n.behind.age != null ? ' for ' + hm(n.behind.age) : '') + ' &middot; ' +
       esc(n.behind.why || 'the harness merges it once its turn has ended') + '">&#8681;' +
@@ -1760,22 +1717,18 @@ function card(n) {
   if (s && s.up != null) sym.push('<span class="g" title="session uptime">up <span class="num">' +
       hm(s.up) + '</span></span>');
 
+  // A click opens the full sentence of each: who, on whom, for what, since
+  // when, the chain it is part of, and what the other side runs.
+  const VERBW = {answer: 'waiting on', gate: 'gated by', lock: 'held by', pause: 'deferred on'};
+  const detLine = e => '<div class="det">' + (e.frm === n.name ? '' : '<b>' + esc(e.frm) + '</b> ') +
+    (e.frm_task ? esc(e.frm_task) + ' ' : '') + VERBW[e.kind] + ' <b>' + esc(e.on || '') + '</b>' +
+    (e.on_task ? ' (' + esc(e.on_task) + ')' : '') + (e.age ? ' &middot; ' + esc(e.age) : '') +
+    (e.what ? '<br>' + esc(e.what) : '') +
+    (e.chain && e.chain.length > 2 ? '<br>' + e.chain.map(esc).join(' &rarr; ') : '') +
+    (e.act ? '<br><code>' + esc(e.act) + '</code>' : '') + '</div>';
   let det = '';
-  if (w && OPENV.has('w:' + key)) det += '<div class="det">waiting on ' +
-      (w.chain && w.chain.length ? w.chain : [w.parent || 'its lead']).map(x => '<b>' + esc(x) +
-      '</b>').join(' &rarr; ') + ' &middot; ' + esc(w.age || '') + '<br>' +
-      esc(w.asked || (w.inferred ? 'finished its turn' : 'nothing recorded')) +
-      (w.still_moving ? '<br>still moving: ' + esc(w.still_moving) : '') + '</div>';
-  if (held.length && OPENV.has('h:' + key)) det += held.map(h => '<div class="det">' + (h.by
-      ? 'held by <b>' + esc(h.by) + '</b> &middot; ' + esc(h.task) + (h.worker
-        ? ' starts after ' + esc(h.worker) + '&rsquo;s <b>' + esc(h.after) +
-          '</b>, presented and waiting on ' + esc(h.by) + '&rsquo;s sign-off'
-        : ' starts after its <b>' + esc(h.after) + '</b> (' + esc(h.state) + ')')
-      : 'held until <b>' + esc(h.until) + '</b> &middot; ' + esc(h.task)) + '</div>').join('');
-  if ((n.signoff || []).length && OPENV.has('o:' + key)) det += n.signoff.map(o =>
-      '<div class="det">' + esc(o.worker) + ' presented <b>' + esc(o.after) + '</b>; it waits on ' +
-      'your sign-off, and then <b>' + esc(o.task) + '</b> starts &middot; harness mark ' +
-      esc(o.after) + ' --close</div>').join('');
+  if (OPENV.has('w:' + key)) det += out.filter(e => e.kind !== 'pause').map(detLine).join('');
+  if (OPENV.has('o:' + key)) det += inn.map(detLine).join('');
 
   // Signals keep their row: each carries an action.
   const VERB = {approval: 'approve', unanswered: 'spawn'};
@@ -1794,11 +1747,11 @@ function card(n) {
       ' <span class="k">' + x.done + '/' + x.total + '</span>', 'pending',
       x.children.map(c => c.task + ' (' + c.node + ') ' + c.state).join('\n'))));
   const head = (n.briefed || []).filter(b => !b.coupled_to && !b.wait);
-  // The wait pool (log 109): parked on a condition, back in the normal pool
-  // when its 12 hours run out.
+  // Deferred (log 109): on a condition, back in the normal pool when it lifts
+  // or its time runs out. Its own glyph, not the gated pause (2026-10-16).
   const waits = (n.briefed || []).filter(b => b.wait).map(b => chip(b.task,
-      '&#9208;&#65039; ' + esc(b.label || b.task), 'pending wtg',
-      'waiting: ' + (b.wait.why || '') + '\nback in the normal pool at ' +
+      '&#8631; ' + esc(b.label || b.task), 'pending wtg',
+      'deferred: ' + (b.wait.why || '') + '\nback in the normal pool by ' +
       new Date((b.wait.until || 0) * 1000).toLocaleString()));
   const next = head.map(b =>
       chip(b.task, esc(b.label || b.task) + (b.open_suggestions ? ' <b class="dup">!' +
@@ -2105,7 +2058,14 @@ function tree(nodes, side) {
   };
   // The side cards share the tree's scrolling space, on its left, so a line
   // from one to a node is drawn in the same coordinates as the tree's own.
-  return '<div class="treerow"><div class="scroll"><div class="tspace">' +
+  // How to read the lines: the dot is the one waiting, the arrow the one who
+  // must act (owner, 2026-10-16).
+  const legend = '<div class="legend"><span><i class="lw">&#8987; &#9679;&#9472;&#9472;&#9654;</i> ' +
+    'waiting on</span><span><i class="lh">&#9208;&#65038; &#9679;&#9472;&#9472;&#9654;</i> gated by' +
+    '</span><span><i class="ls">&#9998; &#9679;&#9472;&#9472;&#9654;</i> awaiting sign-off</span>' +
+    '<span>the dot is the one waiting; the arrow, the one who must act. Point at a line to see ' +
+    'its pair.</span></div>';
+  return '<div class="treerow">' + legend + '<div class="scroll"><div class="tspace">' +
          (side ? '<div class="sidecol">' + side + '</div>' : '') +
          '<div class="tree hang">' + roots.map(block).join('') + '</div></div></div></div>';
 }
@@ -3032,7 +2992,7 @@ window.addEventListener('hashchange', () => {
 //                     bus, and climbs k pitches right of the spine.
 // Lanes beside one branch never cross each other or their branch.
 const SPINE = 12, W = 2, P = 2 * W;
-const LANE = {wait: 1, held: 2, test: 3, testq: 4, msg: 5};
+const LANE = {wait: 1, held: 2, sign: 2, test: 3, testq: 4, msg: 5};
 const headOf = hb => hb && hb.firstElementChild;
 function treeParent(c) {
   // -> {p: the lead's card, hb: its block, stacked} or null at a root.
@@ -3130,17 +3090,25 @@ function drawWaits() {
       }
       return true;
     };
-    t.querySelectorAll('.wto, .hto').forEach(m => {
+    // Every wait line runs from the one waiting (a dot) to the one who must
+    // act (an arrow): the direction is drawn, not inferred (owner, 2026-10-16).
+    // A sign-off rides the gated lane, in orange.
+    t.querySelectorAll('.wto, .hto, .sto').forEach(m => {
       const c = m.closest('.card');
       const key = c && c.dataset.live || '';
       const slug = key.split(':')[1];
       const lead = m.dataset.on &&
         t.querySelector('[data-live="card:' + slug + ':' + m.dataset.on + '"]');
       if (!lead) return;
-      const cls = m.classList.contains('hto') ? 'held' : 'wait';
+      const cls = m.classList.contains('hto') ? 'held' : m.classList.contains('sto')
+        ? (m.dataset.kind === 'review' ? 'held' : 'sign') : 'wait';
       const k = LANE[cls];
+      const me = key.split(':').slice(2).join(':'), them = m.dataset.on;
+      const say = m.dataset.kind === 'review' ? ' is in review by '
+        : {wait: ' waits on ', held: ' is gated by ', sign: ' awaits the sign-off of '}[cls];
+      const push = d => ds.push([cls, d, me, them, me + say + them]);
       const ride = rides(c, lead, k);
-      if (ride) { ds.push([cls, line(ride)]); return; }
+      if (ride) { push(line(ride)); return; }
       // Anything further apart than a lead and its child, or two siblings:
       // out of the waiting card where its branch meets it, down its lane to a
       // bar in the gap above the lower of the two, and into the other card
@@ -3151,8 +3119,8 @@ function drawWaits() {
                           return gx === g ? e : e.concat([[g, gy]]); };
       const a = side(c), b = side(lead), A = R(c), B = R(lead);
       const ym = Math.min(A.t, B.t) - 6 - k * P;
-      ds.push([cls, line(a.concat([[a[a.length - 1][0], ym], [b[b.length - 1][0], ym]],
-                                  b.slice().reverse()))]);
+      push(line(a.concat([[a[a.length - 1][0], ym], [b[b.length - 1][0], ym]],
+                         b.slice().reverse())));
     });
     // Tests and the intermediary's messages: out of the source card's marked
     // row, then straight across into the lane if nothing stands in the way,
@@ -3182,14 +3150,59 @@ function drawWaits() {
     svg.setAttribute('class', 'waits');
     svg.setAttribute('width', t.scrollWidth); svg.setAttribute('height', t.scrollHeight);
     // A queued job's lines fade as one, so two over each other read as one.
-    const draw = c => ds.filter(x => x[0] === c).map(([, d]) =>
-      '<path class="' + c + '" d="' + d + '"/>').join('');
-    svg.innerHTML = draw('conn') + draw('msg') + '<g class="testq">' + draw('testq') + '</g>' +
-      draw('test') + draw('held') + draw('wait');
+    // A wait line carries its pair, for the hover that lights both cards, and
+    // its sentence as a tooltip; a dot at the waiter, an arrow at the blocker.
+    const X = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+    const draw = c => ds.filter(x => x[0] === c).map(([, d, a, b, say]) =>
+      '<path class="' + c + '" d="' + d + '"' + (a ? ' data-a="' + X(a) + '" data-b="' + X(b) +
+        '" marker-start="url(#wd-' + c + ')" marker-end="url(#wa-' + c + ')"' : '') + '>' +
+        (say ? '<title>' + X(say) + '</title>' : '') + '</path>').join('');
+    const mk = (c, col) => '<marker id="wa-' + c + '" viewBox="0 0 8 8" refX="7" refY="4" ' +
+      'markerWidth="5" markerHeight="5" orient="auto-start-reverse" markerUnits="strokeWidth">' +
+      // A polygon, not a path: `.waits path` would stroke it in the wait colour.
+      '<polygon points="0,0 8,4 0,8" style="fill:' + col + '"/></marker>' +
+      '<marker id="wd-' + c + '" viewBox="0 0 8 8" refX="4" refY="4" markerWidth="3.5" ' +
+      'markerHeight="3.5" markerUnits="strokeWidth"><circle cx="4" cy="4" r="4" style="fill:' +
+      col + '"/></marker>';
+    // Resolved here: a custom property does not reach a marker's contents.
+    const cs = getComputedStyle(document.documentElement);
+    const col = v => (cs.getPropertyValue(v) || '').trim() || '#888';
+    svg.innerHTML = '<defs>' + mk('wait', col('--s-wait')) + mk('held', col('--s-held')) +
+      mk('sign', col('--s-need')) + '</defs>' +
+      draw('conn') + draw('msg') + '<g class="testq">' + draw('testq') + '</g>' +
+      draw('test') + draw('sign') + draw('held') + draw('wait');
     t.appendChild(svg);
   });
 }
 window.addEventListener('resize', drawWaits);
+// Pointing at a wait line, or at a chip that names the other side, lights the
+// two cards and their line and dims the rest (owner, 2026-10-16: "it's not
+// clear who is blocking who").
+function pairOf(el) {
+  const p = el.closest && (el.closest('svg.waits path[data-a]') || el.closest('[data-pair]'));
+  if (!p) return null;
+  if (p.dataset.a) return [p.dataset.a, p.dataset.b, p.closest('.tspace')];
+  const [a, b] = (p.dataset.pair || '').split('>');
+  return [a, b, p.closest('.tspace')];
+}
+document.addEventListener('mouseover', e => {
+  const pr = pairOf(e.target);
+  if (!pr || !pr[2]) return;
+  const [a, b, t] = pr;
+  t.classList.add('pairing');
+  t.querySelectorAll('.card[data-live]').forEach(c => {
+    const nm = c.dataset.live.split(':').slice(2).join(':');
+    c.classList.toggle('pair', nm === a || nm === b);
+  });
+  t.querySelectorAll('svg.waits path[data-a]').forEach(p => p.classList.toggle('pair',
+    (p.dataset.a === a && p.dataset.b === b) || (p.dataset.a === b && p.dataset.b === a)));
+});
+document.addEventListener('mouseout', e => {
+  const pr = pairOf(e.target);
+  if (!pr || !pr[2]) return;
+  pr[2].classList.remove('pairing');
+  pr[2].querySelectorAll('.pair').forEach(x => x.classList.remove('pair'));
+});
 // A card that grows (a fold opened, a line added by a poll) moves everything
 // below and beside it, so the lines follow any change of size, once a frame.
 let REDRAW = 0;

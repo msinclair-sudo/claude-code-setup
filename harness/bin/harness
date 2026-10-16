@@ -2018,7 +2018,7 @@ def cmd_status(a):
             unassigned.append(h["node"])
         print(f"  {h['node']:<12} {h['name']:<22} [{h['ref']}]  {live:<8}{work}")
         if live == "WAITING":
-            print(f"  {'':<12} WAITING ON YOU — not idle. The runtime reports one state "
+            print(f"  {'':<12} AT PROMPT — not idle. The runtime reports one state "
                   f"for two\n  {'':<12} things and they have different remedies: send it "
                   f"a prompt if it is\n  {'':<12} waiting on a reply, or attach and answer "
                   f"if it is on a permission\n  {'':<12} prompt.  claude attach {h['ref'][:8]}")
@@ -3502,11 +3502,11 @@ def cmd_idle(a):
               + ("   COLD" if is_cold and not x["stopped"] else "")
               + (f"   carrying {tok(x['carry'])}" if x["carry"] else ""))
         if x["stopped"] and x["stop"]:
-            print(f"  {'':<12} WAITING ON YOU at a permission prompt "
+            print(f"  {'':<12} AT PROMPT: a permission prompt "
                   f"({x['stop']['tool']}: {x['stop']['what']}): claude attach {x['sid']}")
             continue
         if x["stopped"]:
-            print(f"  {'':<12} WAITING ON YOU, not resting. Send it a prompt, or attach "
+            print(f"  {'':<12} AT PROMPT, not resting. Send it a prompt, or attach "
                   f"and answer\n  {'':<12} if it is on a permission prompt: claude attach "
                   f"{x['sid']}")
             continue
@@ -4412,7 +4412,7 @@ def queue_items(ctx, node):
                 f"your worktree at {time.strftime('%H:%M', time.localtime(c.get('at') or 0))} "
                 f"({c.get('nfiles')} file(s)" + (where if fl else "")
                 + ") — re-read any you had open, and rebuild anything built from them. To keep "
-                  "your tree still until you present: harness catchup --hold \"<why>\"")
+                  "your tree still until you present: harness catchup --freeze \"<why>\"")
         if bh.get("n") and bh.get("kind") in ("dirty", "conflict", "git", "refused"):
             out[f"behind:{str(bh.get('parent_tip'))[:12]}:{bh['kind']}"] = (
                 f"{behind_words(bh)}. {behind_remedy(bh)}")
@@ -5471,7 +5471,7 @@ def cmd_mark(a):
         # A hold on merging into this node ran until it presented (log 154).
         _h = hold_release(ctx, node)
         if _h:
-            print(f"  the hold on merging into {node} has ended ({_h.get('by')}: "
+            print(f"  the freeze on merging into {node} has ended ({_h.get('by')}: "
                   f"{_h.get('why')})")
         print(f"presented {a.task}  {cost}"
               + ("   node released" if released else ""))
@@ -9094,7 +9094,7 @@ def catchup_block(ctx, idx, node, rows=None, own=False, tip=None, ignore_hold=Fa
         return "nowt", "it has no worktree on this machine"
     h = None if ignore_hold else catchup_hold(ctx, node)
     if h:
-        return "held", f"held by {h.get('by')}: {h.get('why')}"
+        return "frozen", f"frozen by {h.get('by')}: {h.get('why')}"
     if not own:
         if halted(ctx):
             return "halt", "the tree is halted"
@@ -9301,7 +9301,7 @@ def behind_remedy(b):
         "conflict": "That is T7: harness catchup leaves the conflict in place for you to "
                     "collect. Tell your lead; do not resolve it",
         "refused": "harness catchup shows git's refusal in full",
-        "held": "It merges once you present, or after harness catchup --release",
+        "frozen": "It merges once you present, or after harness catchup --release",
         "git": "Put the worktree back on its node's branch, then: harness catchup",
     }.get((b or {}).get("kind"),
           "The harness merges it at your next turn end, or now: harness catchup")
@@ -9499,34 +9499,37 @@ def cmd_catchup(a):
     ctx = Ctx(); ctx.require_enrolled()
     idx = load_index(ctx, refresh=True)
     here = idx["byBranch"].get(ctx.branch)
-    if a.hold is not None or a.release:
-        # A hold on merging into a node: its own, or a node above it (log 154).
+    # Renamed 2026-10-16 ("hold" meant seven things); the old flag only points.
+    if a.__dict__.get("old_hold") is not None:
+        die(REFUSED, '--hold is now --freeze: harness catchup --freeze "<why>"')
+    if a.freeze is not None or a.release:
+        # A freeze on merging into a node: its own, or a node above it (log 154).
         if len(a.node) > 1 or a.children or a.all:
-            die(REFUSED, "a hold is placed on one node at a time, with its own reason")
+            die(REFUSED, "a freeze is placed on one node at a time, with its own reason")
         target = a.node[0] if a.node else here
         if target is None:
             die(NOT_ENROLLED, f"branch '{ctx.branch}' is not a node")
         if target not in idx["nodes"]:
             die(REFUSED, f"'{target}' is not a node")
         if here and target != here and target not in subtree(ctx, here):
-            die(REFUSED, f"'{target}' is not below {here}. A hold is the node's own, or a "
+            die(REFUSED, f"'{target}' is not below {here}. A freeze is the node's own, or a "
                          f"node above it places it.")
         if a.release:
             h = hold_release(ctx, target)
             print(f"released: {target} is merged with its parent again whenever its tree allows"
-                  if h else f"{target} had no hold")
+                  if h else f"{target} was not frozen")
             return
-        if not a.hold.strip():
-            die(REFUSED, 'say why: harness catchup --hold "one tree for the whole diagnosis"')
+        if not a.freeze.strip():
+            die(REFUSED, 'say why: harness catchup --freeze "one tree for the whole diagnosis"')
         who = here or "operator"
-        _save(hold_path(ctx, target), {"by": who, "why": a.hold.strip(), "at": _now()})
-        print(f"held: nothing merges into {target} until it presents, or until\n"
+        _save(hold_path(ctx, target), {"by": who, "why": a.freeze.strip(), "at": _now()})
+        print(f"frozen: nothing merges into {target} until it presents, or until\n"
               f"  harness catchup --release" + (f" {target}" if target != here else "")
-              + f"\n  Why: {a.hold.strip()}\n  It shows in harness status, and a check from "
+              + f"\n  Why: {a.freeze.strip()}\n  It shows in harness status, and a check from "
                 f"there says how far behind its commit is.")
         if target != here:
             ring_inbox(ctx.state, target, who,
-                       f"{who} placed a hold on merging into your worktree: {a.hold.strip()}. "
+                       f"{who} froze merging into your worktree: {a.freeze.strip()}. "
                        f"It ends when you present.", "fyi")
         return
     if not (a.node or a.children or a.all):
@@ -9546,7 +9549,7 @@ def cmd_catchup(a):
             sys.exit(REFUSED)
         print(catchup_line(here, st, info))
         if st == "blocked":
-            if info.get("kind") == "held":
+            if info.get("kind") == "frozen":
                 print("  To merge all the same: harness catchup --release, then harness catchup")
             sys.exit(REFUSED)
         return
@@ -21010,7 +21013,7 @@ def ring_report(ctx, node, priority="high"):
                 "the ringer wakes it once it has been idle five minutes")
     if row.get("status") == "busy":
         return ("it is mid-turn and gets this after its next tool call" if priority == "high"
-                else "it is mid-turn; this is held until its turn ends")
+                else "it is mid-turn; this is kept until its turn ends")
     # A ring gives a node with a reset pending another turn before it is quiet.
     pend = " (a reset of it is pending; this gives it another turn first)" \
         if reset_path(ctx, node).exists() else ""
@@ -21434,9 +21437,10 @@ def main():
     cu.add_argument("--children", action="store_true", help="each of your children")
     cu.add_argument("--all", action="store_true", help="every node below you, top down")
     cu.add_argument("--dry-run", action="store_true")
-    cu.add_argument("--hold", metavar="WHY",
+    cu.add_argument("--freeze", metavar="WHY",
                     help="nothing merges into this node (or the one named) until it presents")
-    cu.add_argument("--release", action="store_true", help="end a hold")
+    cu.add_argument("--release", action="store_true", help="end a freeze")
+    cu.add_argument("--hold", dest="old_hold", help=argparse.SUPPRESS)   # renamed: points only
     cl = add("claim", cmd_claim, roster=True, force=True)
     cl.add_argument("--strict-name", action="store_true",
                     help="refuse when the session name does not match <project>-<node>")
@@ -21532,7 +21536,7 @@ def main():
     rg.add_argument("text", nargs="+")
     rgp = rg.add_mutually_exclusive_group()
     rgp.add_argument("--low", action="store_true",
-                     help="not urgent: held until the receiver is idle, then it is woken")
+                     help="not urgent: kept until the receiver is idle, then it is woken")
     rgp.add_argument("--fyi", action="store_true",
                      help="information only: asks for nothing, never interrupts, read once idle 5 min")
     add("ringer", cmd_ringer)        # internal: started by ensure_ringer

@@ -14,8 +14,10 @@ harness charter                                  # read it
 harness charter --write "..."                    # what this project is for
 harness charter --feature "<name>" --write "..." # one feature, in scope
 harness charter --feature "<name>" --move up     # order is yours; new ones go last
-harness charter --feature "<name>" --demote      # file under the one above; --promote lifts it out
-harness charter --feature "<name>" --delete      # gone, with any sub-features
+harness charter --feature "<name>" --demote      # file under the one above; --promote lifts it a level
+harness charter --feature "<name>" --under "<feature>"  # file it under that one ("" = top level)
+harness charter --feature "<name>" --delete      # gone, with everything under it
+# Up to four levels; a feature moves with everything under it.
 ```
 
 Prose: what the project is for, who its output is for, what each feature is. It says what and why; a brief says how and done. Check there is a charter before you write briefs. Every brief must trace to a feature; work that doesn't is either a missing feature (take it to the operator) or not this project's (don't brief it).

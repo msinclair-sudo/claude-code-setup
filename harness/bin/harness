@@ -11029,8 +11029,42 @@ def charter_features(c, include_retired=False):
     return {k: v for k, v, _ in charter_order(c)}
 
 
+# How deep the charter's outline nests: a feature and three levels under it
+# (owner, 2026-10-16, after two: "add the ability for further nesting, up to
+# four levels deep").
+CHARTER_LEVELS = 4
+
+
+def charter_depth(feats, k):
+    """0 for a top-level feature; a loop or a missing parent ends the walk."""
+    d, seen = 0, {k}
+    p = (feats.get(k) or {}).get("parent")
+    while p and p in feats and p not in seen:
+        seen.add(p); d += 1
+        p = feats[p].get("parent")
+    return d
+
+
+def charter_below(feats, k):
+    """Every feature under `k`, at any depth."""
+    out, todo = [], [k]
+    while todo:
+        x = todo.pop()
+        for y, v in feats.items():
+            if v.get("parent") == x and y not in out and y != k:
+                out.append(y); todo.append(y)
+    return out
+
+
+def charter_height(feats, k):
+    """How many levels sit under `k` (0 for none)."""
+    d = charter_depth(feats, k)
+    return max([charter_depth(feats, y) - d for y in charter_below(feats, k)] or [0])
+
+
 def charter_normalise(c):
-    """Give every feature a position, and keep the nesting exactly two deep.
+    """Give every feature a position, and keep the nesting at most
+    CHARTER_LEVELS deep.
 
     `seq` and `parent` did not exist in the first charters and a dict has no
     order of its own, so the panel drew them alphabetically — an order nobody
@@ -11045,12 +11079,24 @@ def charter_normalise(c):
     for k in sorted(feats):
         if not isinstance(feats[k].get("seq"), int):
             feats[k]["seq"] = nxt; nxt += 1; changed = True
-    for v in feats.values():
+    for k, v in feats.items():
         p = v.get("parent")
-        # A parent that was deleted, or one that is itself nested. Either way
-        # this is a top-level feature now, rather than an orphan nothing draws.
-        if p is not None and (p not in feats or feats[p].get("parent")):
+        # A parent that was deleted, or a loop back to itself: a top-level
+        # feature now, rather than an orphan nothing draws.
+        if p is not None and p not in feats:
             v["parent"] = None; changed = True
+            continue
+        seen, q = {k}, p
+        while q and q in feats:
+            if q in seen:
+                v["parent"] = None; changed = True
+                break
+            seen.add(q); q = feats[q].get("parent")
+    # Deeper than the outline goes: filed under its ancestor at the last level
+    # but one, so it shows at the last level, in its branch, never dropped.
+    for k, v in feats.items():
+        while v.get("parent") and charter_depth(feats, k) > CHARTER_LEVELS - 1:
+            v["parent"] = feats[v["parent"]].get("parent"); changed = True
     return changed
 
 
@@ -11075,14 +11121,15 @@ def scope_block(ctx, docs=True):
     order = charter_order(ch)
     if order:
         out += ["", "## Features, in the owner's order"]
-        n = [0, 0]
+        # Outline numbers, one part per level: 1., 1.1, 1.1.1, 1.1.1.1.
+        n = [0] * CHARTER_LEVELS
         for key, f, depth in order:
-            if depth == 0:
-                n[0] += 1; n[1] = 0; num = f"{n[0]}."
-            else:
-                n[1] += 1; num = f"{n[0]}.{n[1]}"
+            depth = min(depth, CHARTER_LEVELS - 1)
+            n[depth] += 1
+            n[depth + 1:] = [0] * (CHARTER_LEVELS - depth - 1)
+            num = f"{n[0]}." if depth == 0 else ".".join(str(x) for x in n[:depth + 1])
             text = " ".join((f.get("text") or "").split())
-            out.append(("   " if depth else "") + f"{num} **{f.get('name') or key}** — {text}")
+            out.append("   " * depth + f"{num} **{f.get('name') or key}** — {text}")
     if docs:
         try:
             files = [d for d in doc_files(ctx) if not is_provenance(d)]
@@ -11116,11 +11163,17 @@ def charter_order(c):
         p = v.get("parent")
         kids.setdefault(p, []).append(k) if p else tops.append(k)
     rank = lambda k: (feats[k].get("seq", 0), k)
-    out = []
-    for k in sorted(tops, key=rank):
-        out.append((k, feats[k], 0))
+    out, seen = [], set()
+
+    def walk(k, depth):
+        if k in seen:                       # a loop: drawn once
+            return
+        seen.add(k)
+        out.append((k, feats[k], depth))
         for ck in sorted(kids.get(k, []), key=rank):
-            out.append((ck, feats[ck], 1))
+            walk(ck, depth + 1)
+    for k in sorted(tops, key=rank):
+        walk(k, 0)
     return out
 
 
@@ -11161,7 +11214,7 @@ def cmd_charter(a):
     now = time.strftime("%Y-%m-%dT%H:%M:%S%z")
 
     writing = (a.write is not None or a.delete or a.move
-               or a.promote or a.demote)
+               or a.promote or a.demote or a.under is not None)
     if writing and sid and ctx.rank(node) != 0:
         die(REFUSED,
             f"'{node}' is rank {ctx.rank(node)}. The charter is rank 0's, or the "
@@ -11174,10 +11227,48 @@ def cmd_charter(a):
 
     # ── shaping the charter ────────────────────────────────────────────────
     # The charter is an outline now, not a flat list: features have an order the
-    # operator set and may sit under one another. Two levels, deliberately — a
-    # charter that can nest four deep stops being prose you read top to bottom
-    # and becomes a document with a table of contents, which is the thing this
-    # was written not to be.
+    # operator set and may sit under one another. It was two levels, held so it
+    # would read as prose; the owner asked for four (2026-10-16), and four is
+    # the cap (CHARTER_LEVELS). A feature moves with everything under it.
+    def file_under(k, name):
+        """Set feature `k`'s parent from --under ("" for the top level), last
+        among its new siblings; refuses a loop or a level past the outline's."""
+        feats = c["features"]
+        old = feats[k].get("parent") or None
+        if not a.under.strip():
+            tgt = None
+        else:
+            tgt = tkey(a.under)
+            if tgt not in feats:
+                die(REFUSED, f"no feature '{a.under}' to file it under")
+            if tgt == k or tgt in charter_below(feats, k):
+                die(REFUSED, f"'{name}' cannot sit under itself or under what is under it")
+            if charter_depth(feats, tgt) + 1 + charter_height(feats, k) > CHARTER_LEVELS - 1:
+                die(REFUSED, f"under '{feats[tgt].get('name', tgt)}', '{name}'"
+                             + (" or what is under it" if charter_height(feats, k) else "")
+                             + f" would sit deeper than the charter's {CHARTER_LEVELS} levels")
+        feats[k]["parent"] = tgt
+        feats[k]["seq"] = max([v.get("seq", 0) for x, v in feats.items()
+                               if (v.get("parent") or None) == tgt and x != k] or [-1]) + 1
+        charter_reseq(c, tgt)
+        charter_reseq(c, old)
+
+    if a.under is not None and a.write is None:
+        if not a.feature:
+            die(REFUSED, "which one? --feature <name> --under <feature>")
+        k = tkey(a.feature)
+        if k not in (c.get("features") or {}):
+            die(REFUSED, f"no feature '{a.feature}' in the charter")
+        charter_normalise(c)
+        name = c["features"][k].get("name", k)
+        file_under(k, name)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(c, indent=2) + "\n")
+        par = c["features"][k].get("parent")
+        print(f"filed: '{name}' — " + (f"now under '{c['features'][par].get('name', par)}'"
+                                        if par else "now a feature in its own right"))
+        return
+
     if a.delete or a.move or a.promote or a.demote:
         if not a.feature:
             die(REFUSED, "which one? --feature <name>")
@@ -11196,14 +11287,14 @@ def cmd_charter(a):
             # removes something without leaving a row behind, because the
             # operator asked for a list they own rather than a ledger: a charter
             # that remembers everything ever proposed is one nobody rereads.
-            kids = [x for x, v in feats.items() if v.get("parent") == k]
+            kids = charter_below(feats, k)
             for x in [k] + kids:
                 feats.pop(x, None)
             charter_reseq(c, parent)
             f.parent.mkdir(parents=True, exist_ok=True)
             f.write_text(json.dumps(c, indent=2) + "\n")
             print(f"deleted '{name}'"
-                  + (f" and {len(kids)} sub-feature(s) under it" if kids else ""))
+                  + (f" and {len(kids)} feature(s) under it" if kids else ""))
             print("  Nothing was kept. If it left scope for a reason worth having,")
             print("  that reason belongs in the description, written by you.")
             return
@@ -11223,37 +11314,38 @@ def cmd_charter(a):
         elif a.promote:
             if parent is None:
                 die(REFUSED, f"'{name}' is already a feature in its own right")
-            # Lands immediately after what it used to sit under, which is where
-            # a reader was already looking for it.
-            me["parent"] = None
+            # Up one level, landing immediately after what it used to sit under,
+            # which is where a reader was already looking for it. What is under
+            # it comes too.
+            up = feats[parent].get("parent") or None
+            me["parent"] = up
             me["seq"] = feats[parent].get("seq", 0) + 0.5
-            charter_reseq(c, None)
+            charter_reseq(c, up)
             charter_reseq(c, parent)
 
         elif a.demote:
-            if parent is not None:
-                die(REFUSED, f"'{name}' is already a sub-feature, and the charter "
-                             f"nests two deep.\n           Two levels is enough to "
-                             f"group with and few enough to still read as prose.")
-            tops = charter_reseq(c, None)
-            i = tops.index(k)
+            sibs = charter_reseq(c, parent)
+            i = sibs.index(k)
             if i == 0:
-                die(REFUSED, f"'{name}' is the first feature — there is nothing "
-                             f"above it to sit under")
-            tgt = tops[i - 1]
-            kids = [x for x, v in feats.items() if v.get("parent") == k]
-            end = max([v.get("seq", 0) for x, v in feats.items()
-                       if v.get("parent") == tgt] or [-1]) + 1
+                die(REFUSED, f"'{name}' is first "
+                             + ("in the charter" if parent is None
+                                else f"under '{feats[parent].get('name', parent)}'")
+                             + " — there is nothing above it to sit under")
+            # It goes down with everything under it, so the deepest of those
+            # must still fit the outline.
+            if charter_depth(feats, k) + 1 + charter_height(feats, k) > CHARTER_LEVELS - 1:
+                die(REFUSED, f"'{name}' cannot go a level down: "
+                             + ("it" if not charter_height(feats, k) else
+                                "what is under it")
+                             + f" would sit deeper than the charter's {CHARTER_LEVELS} "
+                               f"levels.\n           Promote something under it first, "
+                               f"or file it elsewhere.")
+            tgt = sibs[i - 1]
             me["parent"] = tgt
-            me["seq"] = end
-            # Its own follow it rather than going down with it. A feature that
-            # swallowed its sub-features on the way down would take them out of
-            # the charter with no way to see that it had.
-            for n, x in enumerate(sorted(kids, key=lambda x: feats[x].get("seq", 0))):
-                feats[x]["parent"] = tgt
-                feats[x]["seq"] = end + 1 + n
+            me["seq"] = max([v.get("seq", 0) for x, v in feats.items()
+                             if v.get("parent") == tgt and x != k] or [-1]) + 1
             charter_reseq(c, tgt)
-            charter_reseq(c, None)
+            charter_reseq(c, parent)
 
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(json.dumps(c, indent=2) + "\n")
@@ -11282,6 +11374,8 @@ def cmd_charter(a):
                                     revision=prev.get("revision", 0) + 1,
                                     written_by=who, written_at=now,
                                     seq=seq, parent=prev.get("parent") or None)
+            if a.under is not None:
+                file_under(k, a.feature)
             rev = c["features"][k]["revision"]
         else:
             prev = c.get("description") or {}
@@ -22082,9 +22176,13 @@ def main():
     ch.add_argument("--move", choices=["up", "down"],
                     help="reorder a feature among its siblings")
     ch.add_argument("--promote", action="store_true",
-                    help="lift a sub-feature to a feature of its own")
+                    help="lift a feature one level up, with what is under it")
     ch.add_argument("--demote", action="store_true",
-                    help="file a feature under the one above it")
+                    help="file a feature under the one above it, with what is under it "
+                         "(4 levels at most)")
+    ch.add_argument("--under", metavar="FEATURE",
+                    help="with --feature: file it under FEATURE (\"\" for the top level), "
+                         "with --write or alone")
     ch.add_argument("--delete", action="store_true",
                     help="remove it outright — no record is kept, and a feature "
                          "with sub-features takes them with it")

@@ -2889,6 +2889,80 @@ class Intermediary(unittest.TestCase):
                                ("dev_dag", [])])                     # no carrier, no sign-off
 
 
+class CharterOutline(unittest.TestCase):
+    """Owner, 2026-10-16: the charter nests up to four levels, not two."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None})
+        self.ctx.require_enrolled = lambda: None
+        self.ctx.me = self.ctx.branch = "main"
+
+    def ch(self, *argv):
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.dict(os.environ, {}), \
+             mock.patch("sys.argv", ["harness", "charter", *argv]), \
+             redirect_stdout(io.StringIO()) as o, mock.patch("sys.stderr", o):
+            os.environ.pop("CLAUDE_CODE_SESSION_ID", None)             # the owner's shell
+            try:
+                hz.main(); return 0, o.getvalue()
+            except SystemExit as e:
+                return e.code, o.getvalue()
+
+    def outline(self):
+        return [(f["name"], d) for _, f, d in hz.charter_order(hz.load_charter(self.ctx)[1])]
+
+    def test_four_levels_and_a_feature_moves_with_what_is_under_it(self):
+        self.assertEqual(self.ch("--write", "what it is for")[0], 0)
+        for n in "abcde":
+            self.assertEqual(self.ch("--feature", n, "--write", n + " text")[0], 0)
+        for n, up in (("b", "a"), ("c", "b"), ("d", "c")):
+            code, out = self.ch("--feature", n, "--under", up)
+            self.assertEqual(code, 0, out)
+        self.assertEqual(self.outline(), [("a", 0), ("b", 1), ("c", 2), ("d", 3), ("e", 0)])
+        code, out = self.ch("--feature", "e", "--under", "d")
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("deeper than the charter's 4 levels", out)
+        # Promote: one level up, after its old parent, d with it.
+        self.assertEqual(self.ch("--feature", "c", "--promote")[0], 0)
+        self.assertEqual(self.outline(), [("a", 0), ("b", 1), ("c", 1), ("d", 2), ("e", 0)])
+        self.assertEqual(self.ch("--feature", "c", "--demote")[0], 0)        # back under b
+        self.assertEqual(self.outline(), [("a", 0), ("b", 1), ("c", 2), ("d", 3), ("e", 0)])
+        code, out = self.ch("--feature", "b", "--demote")
+        self.assertIn("nothing above it", out)
+        self.assertEqual(self.ch("--feature", "e", "--demote")[0], 0)        # under a, last
+        self.assertEqual(self.ch("--feature", "e", "--demote")[0], 0)        # under b
+        self.assertEqual(self.outline(), [("a", 0), ("b", 1), ("c", 2), ("d", 3), ("e", 2)])
+        code, out = self.ch("--feature", "c", "--under", "e")              # d would be 5th
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("or what is under it", out)
+        code, out = self.ch("--feature", "c", "--under", "d")
+        self.assertIn("under itself or under what is under it", out)
+        with mock.patch.object(hz, "doc_files", return_value=[]):
+            b = hz.scope_block(self.ctx, docs=False)
+        for line in ("1. **a**", "   1.1 **b**", "      1.1.1 **c**",
+                     "         1.1.1.1 **d**", "      1.1.2 **e**"):
+            self.assertIn("\n" + line + " — ", b)
+        # A new feature filed in one step, and the top level by "".
+        self.assertEqual(self.ch("--feature", "f", "--write", "f text", "--under", "b")[0], 0)
+        self.assertIn(("f", 2), self.outline())
+        self.assertEqual(self.ch("--feature", "f", "--under", "")[0], 0)
+        self.assertEqual(self.outline()[-1], ("f", 0))
+        code, out = self.ch("--feature", "b", "--delete")
+        self.assertIn("and 3 feature(s) under it", out)
+        self.assertEqual(self.outline(), [("a", 0), ("f", 0)])
+
+    def test_a_stored_outline_deeper_than_four_is_filed_at_the_fourth(self):
+        c = {"features": {f"p{i}": {"name": f"p{i}", "seq": 0,
+                                    "parent": f"p{i - 1}" if i else None} for i in range(6)}}
+        c["features"].update({"x": {"name": "x", "seq": 1, "parent": "y"},
+                              "y": {"name": "y", "seq": 2, "parent": "x"}})      # a loop
+        self.assertTrue(hz.charter_normalise(c))
+        got = {f["name"]: d for _, f, d in hz.charter_order(c)}
+        self.assertEqual(set(got), {"p0", "p1", "p2", "p3", "p4", "p5", "x", "y"})
+        self.assertEqual(max(got.values()), 3)
+        self.assertEqual((got["p4"], got["p5"]), (3, 3))
+
+
 class AskEvidence(unittest.TestCase):
     """T17: evidence attached to an ask is copied in, served whitelisted, and
     goes when the ask does."""

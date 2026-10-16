@@ -788,6 +788,7 @@ def read_state():
         if cf.exists():
             try:
                 raw = json.loads(cf.read_text())
+                CLI.charter_normalise(raw)        # in memory: an orphan is drawn, not lost
                 d = raw.get("description") or {}
                 ch = {"description": d.get("text") or "",
                       "revision": d.get("revision") or 0,
@@ -2260,10 +2261,18 @@ async function tick() {
 // A control that does not apply here: shown, so the pair reads as a pair, but inert.
 const coff = (glyph, title) => '<span class="cact off" title="' + esc(title) + '">' +
   glyph + '</span>';
-function feat(p, f, firstTop) {
+// The outline nests four levels (owner, 2026-10-16): CHARTER_LEVELS in the CLI.
+const CH_LEVELS = 4;
+function feat(p, f, above, height) {
   const key = p.slug + '::' + f.key;
   const open = OPENF.has(key);
-  return '<div class="feat' + (f.depth ? ' sub' : '') + '">' +
+  // Demote files it under the sibling above, with everything under it.
+  const down = !above ? 'nothing above it to sit under'
+    : f.depth + 1 + height > CH_LEVELS - 1
+      ? 'the outline is ' + CH_LEVELS + ' levels deep' + (height ? ', counting what is under it' : '')
+      : '';
+  return '<div class="feat' + (f.depth ? ' sub' : '') + '"' +
+    (f.depth > 1 ? ' style="margin-left:' + (11 + 20 * (f.depth - 1)) + 'px"' : '') + '>' +
     '<div class="chead fname" data-ftog="' + esc(key) + '">' +
       '<span class="tri">' + (open ? '&#9660;' : '&#9654;') + '</span>' +
       '<b>' + esc(f.name) + '</b>' +
@@ -2271,14 +2280,13 @@ function feat(p, f, firstTop) {
         cact(p.slug, f.name, 'up', '&#9650;', 'move up') +
         cact(p.slug, f.name, 'down', '&#9660;', 'move down') +
         // Both always shown: promote up a heading level, demote under the one
-        // above. The outline is two levels deep, so each applies on one side.
+        // above; each greyed, with why, where it does not apply.
         (f.depth ? cact(p.slug, f.name, 'promote', '&#9664;',
-                        'promote — up a heading level')
+                        'promote — up a heading level, with what is under it')
                  : coff('&#9664;', 'already at the top level')) +
-        (!f.depth && !firstTop ? cact(p.slug, f.name, 'demote', '&#9654;',
-                                      'demote — file it under the section above')
-                 : coff('&#9654;', f.depth ? 'the outline is two levels deep'
-                                           : 'nothing above it to sit under')) +
+        (!down ? cact(p.slug, f.name, 'demote', '&#9654;',
+                      'demote — file it under the one above, with what is under it')
+               : coff('&#9654;', down)) +
         cact(p.slug, f.name, 'delete', '&#10005;',
              'delete — nothing is kept', 'del') +
       '</span></div>' +
@@ -2310,7 +2318,15 @@ function charter(p) {
         'whatever happens to be broken — and a backlog is not a plan.</div>';
   const fs = (c.features || []);
   const list = fs.length
-    ? fs.map((f, i) => feat(p, f, !f.depth && !fs.slice(0, i).some(g => !g.depth))).join('')
+    ? fs.map((f, i) => {
+        // In outline order, an earlier feature with the same parent is a
+        // sibling above; the run after it that sits deeper is what is under it.
+        const above = fs.slice(0, i).some(g => (g.parent || null) === (f.parent || null));
+        let height = 0;
+        for (let j = i + 1; j < fs.length && fs[j].depth > f.depth; j++)
+          height = Math.max(height, fs[j].depth - f.depth);
+        return feat(p, f, above, height);
+      }).join('')
     : '<div class="ln q">no docs listed</div>';
   return '<div class="charter" data-live="charter:' + esc(p.slug) + '">' + head + body +
     (CHMSG ? '<div class="cmsg2">' + esc(CHMSG) + '</div>' : '') +

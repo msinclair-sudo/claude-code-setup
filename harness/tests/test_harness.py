@@ -2866,6 +2866,28 @@ class Intermediary(unittest.TestCase):
                           asks[1]["session"]["state"]), ("idle", 120, "queued"))
         self.assertEqual(gui.intermediary(rows, "/x/beta", [])["running"], 0)
 
+    def test_what_waits_on_the_owner_starts_at_the_node_it_holds_up(self):
+        # Owner, 2026-10-16: lines from what waits on the owner to the
+        # intermediary, "so I can visually see what lanes are holding up".
+        gp = Path(__file__).resolve().parents[1] / "bin" / "harness-gui"
+        ld = importlib.machinery.SourceFileLoader("harness_gui", str(gp))
+        gui = importlib.util.module_from_spec(importlib.util.spec_from_loader("harness_gui", ld))
+        ld.exec_module(gui)
+        tree = {n: {} for n in ("main", "dev", "dev_tax", "dev_tax_1", "dev_tax_2", "dev_dag")}
+        e = lambda via, frm, on, **k: dict({"via": via, "frm": frm, "on": on}, **k)
+        live = [e("ask", "main", "owner", frm_task="lineage"),       # open: at its node
+                e("ask", "main", "owner", frm_task="typing"),        # closed: at the asker
+                e("block", "dev_dag", "owner"),
+                e("waiting", "dev_tax_2", "dev_tax"), e("after", "dev_tax_1", "dev_tax_2"),
+                e("signoff", "dev_dag", "dev"), e("carrier", "dev", "dev_tax")]
+        briefs = {"lineage": {"node": "dev_tax"}, "typing": {"node": "dev_dag"}}
+        with mock.patch.object(gui.CLI, "load_brief", lambda c, t: (None, briefs.get(t))), \
+             mock.patch.object(gui.CLI, "task_state",
+                               lambda c, t: "closed" if t == "typing" else "briefed"):
+            got = [(w, b) for _, w, b in gui.owner_waits(live, tree, None)]
+        self.assertEqual(got, [("dev_tax", ["dev_tax_1", "dev_tax_2"]), ("main", []),
+                               ("dev_dag", [])])                     # no carrier, no sign-off
+
 
 class AskEvidence(unittest.TestCase):
     """T17: evidence attached to an ask is copied in, served whitelisted, and

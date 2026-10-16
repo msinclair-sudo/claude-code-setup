@@ -139,6 +139,45 @@ ASK_OPEN = ("asked", "ready", "drafted")
 ASK_OWNERS = ("ready", "drafted")
 
 
+def owner_waits(live, tree, cctx):
+    """What waits on the owner, drawn to the intermediary card (owner,
+    2026-10-16: "so I can visually see what lanes are holding up"):
+    [(edge, the node it holds up, the nodes behind that one)]. An ask is rank
+    0's, but the work it stops is its task's node, so the line starts there
+    while the task is open. Behind it: every node whose waits lead to it, by
+    what stops work only; a sign-off or carrier waits on a node's act, not on
+    the owner's answer, and would put half the tree behind one ask."""
+    waiters = {}
+    for e in live:
+        if e["via"] in ("after", "waiting", "turn", "ring", "block", "defer") \
+                and e["frm"] in tree and e["on"] in tree:
+            waiters.setdefault(e["on"], set()).add(e["frm"])
+
+    def behind(n):
+        seen, todo = set(), [n]
+        while todo:
+            for w in waiters.get(todo.pop(), ()):
+                if w not in seen and w != n:
+                    seen.add(w); todo.append(w)
+        return sorted(seen)
+    out = []
+    for e in live:
+        if e["on"] != "owner":
+            continue
+        who = e["frm"]
+        if e["via"] == "ask" and e.get("frm_task"):
+            try:
+                b = CLI.load_brief(cctx, e["frm_task"])[1] or {}
+                if b.get("node") in tree and CLI.task_state(cctx, e["frm_task"]) not in (
+                        "closed", "superseded", "abandoned", "no brief"):
+                    who = b["node"]
+            except Exception:
+                pass
+        if who in tree:
+            out.append((e, who, behind(who)))
+    return out
+
+
 def intermediary(rows, repo, asks=None, pdir=None):
     """A project's item sessions: one intermediary per open ask, found by name
     on the roster. Each open ask gets `session` (working, idle, queued or
@@ -682,6 +721,11 @@ def read_state():
             n["out"] = [_e(e) for e in live if e["frm"] == n["name"]]
             n["in"] = [_e(e) for e in live if e["on"] == n["name"] and e["kind"] != "pause"]
         try:
+            owed = [dict(_e(e), node=who, behind=behind)
+                    for e, who, behind in owner_waits(live, tree, cli_ctx(pdir, repo, tree))]
+        except Exception:
+            owed = []
+        try:
             cctx = cli_ctx(pdir, repo, tree)
             for n in nodes:
                 n["assigned"] = list(CLI.assignment_for(cctx, n["name"]))
@@ -767,6 +811,7 @@ def read_state():
                          "orphan_marks": sorted(orphans, key=lambda o: o["task"]),
                          "asks": asks, "rulings": rulings,
                          "intermediary": intermediary(rows, repo, asks, pdir),
+                         "owed": owed,
                          "tests": tests_queue(pdir, repo),
                          "halt": CLI._read_json(Path(pdir) / "halt.json"),
                          "documenter": documenter(rows, pdir, repo, asks,
@@ -873,6 +918,11 @@ border-bottom:1px dotted var(--none)}
 .waits path.msg{stroke:var(--dim);stroke-dasharray:2 4;stroke-linecap:round}
 /* A wait line can be pointed at: it and its two cards light, the rest dims. */
 .waits path.wait,.waits path.held,.waits path.sign{pointer-events:stroke;cursor:help}
+/* What waits on the owner: orange like every other "needs you", dashed so it
+   is not read as a sign-off. */
+.waits path.owe{stroke:var(--s-need);stroke-dasharray:7 3;pointer-events:stroke;cursor:help}
+.card.interm .ln.owe{cursor:help}
+.card.interm .ln.owe b{color:var(--s-need);font-weight:600}
 .tspace.pairing .card{opacity:.35;transition:opacity .12s}
 .tspace.pairing .card.pair{opacity:1}
 .tspace.pairing svg.waits path{opacity:.18}
@@ -1057,7 +1107,9 @@ background:var(--ink);margin:0 6px 1px 0;vertical-align:middle}
    it answers to the owner, not to a lead -- so it is drawn like a card and
    visibly not one: dashed, and off to the side. */
 .treerow>.scroll{min-width:0}
-.tspace{position:relative;display:flex;gap:26px;align-items:flex-start;width:max-content;
+/* 34px: a side card's lanes leave it on the same x as the tree's gutter lanes
+   (lane k at 30 - 4k px), so the outermost, lane 6, clears the side cards. */
+.tspace{position:relative;display:flex;gap:34px;align-items:flex-start;width:max-content;
   min-width:100%}
 .tspace>.tree{flex:1}
 .sidecol{width:240px;flex:none;align-self:stretch;display:flex;flex-direction:column}
@@ -2026,6 +2078,22 @@ function intermCard(p) {
       asleep.map(a => '<div class="ln q">' + esc(a.id) + ' &middot; asleep, asked ' +
         '<span class="ito" data-on="' + esc(a.waiting_on) + '"><b>' + esc(a.waiting_on) +
         '</b></span></div>').join('');
+  // What waits on the owner, one row per node: a line runs from the node to
+  // this row, the arrow here, and the count says how many wait behind it.
+  const by = {};
+  (p.owed || []).forEach(o => (by[o.node] = by[o.node] || []).push(o));
+  const owes = Object.keys(by).sort().map(nd => {
+    const os = by[nd], behind = [...new Set(os.flatMap(o => o.behind || []))].sort();
+    const what = os.map(o => o.via === 'ask' ? (o.id || '').replace(/^ask:/, '')
+      : o.via === 'block' ? 'blocked' : 'waiting');
+    return '<div class="ln owe" data-pair="' + esc(nd) + '>intermediary" data-behind="' +
+      esc(behind.join(',')) + '" title="' +
+      esc(os.map(o => (o.id || o.via) + ': ' + (o.what || '')).join('\n') +
+        (behind.length ? '\nbehind it: ' + behind.join(', ') : '')) + '">' +
+      '<span class="owo" data-on="' + esc(nd) + '"><b>' + esc(nd) + '</b></span> waits on you' +
+      ' &middot; ' + esc(what.join(', ')) + (behind.length ? ' <span class="q">&middot; ' +
+        behind.length + ' behind it</span>' : '') + '</div>';
+  }).join('');
   const n = asks.length;
   // The header is the way into the Issues page (owner, 2026-10-08, option E):
   // with items open it says how many where "intermediary" stood, and turns
@@ -2034,7 +2102,8 @@ function intermCard(p) {
   return '<div class="card interm ' + cls + (yours ? ' owed' : '') + '" data-live="interm:' +
     esc(p.slug) + '"><a class="hdr" href="#issues" title="open the Issues page">' +
     '<span class="nm" title="' + esc(p.project) + '">' + esc(title(p.project)) +
-    '</span><span class="kd' + (n ? ' items' : '') + '">' + kd + '</span></a>' + who + '</div>';
+    '</span><span class="kd' + (n ? ' items' : '') + '">' + kd + '</span></a>' + owes + who +
+    '</div>';
 }
 
 function tree(nodes, side) {
@@ -2065,6 +2134,7 @@ function tree(nodes, side) {
   const legend = '<div class="legend"><span><i class="lw">&#8987; &#9679;&#9472;&#9472;&#9654;</i> ' +
     'waiting on</span><span><i class="lh">&#9208;&#65038; &#9679;&#9472;&#9472;&#9654;</i> gated by' +
     '</span><span><i class="ls">&#9998; &#9679;&#9472;&#9472;&#9654;</i> awaiting sign-off</span>' +
+    '<span><i class="ls">&#9679;&#9472; &#9472;&#9654;</i> waiting on you (to the intermediary)</span>' +
     '<span>the dot is the one waiting; the arrow, the one who must act. Point at a line to see ' +
     'its pair.</span></div>';
   return '<div class="treerow">' + legend + '<div class="scroll"><div class="tspace">' +
@@ -2165,7 +2235,9 @@ async function tick() {
                    : ' <span class="q">names no node</span>') +
           (o.at ? ' <span class="q">&middot; ' + esc(o.at) + '</span>' : '') +
           '</li>').join('') + '</ul>' : '') +
-      tree(p.nodes, docCard(p) + '<div class="sidebot">' + testCard(p) + intermCard(p) +
+      // The intermediary on main's row, where what waits on the owner ends
+      // (owner, 2026-10-16); tests at the bottom, where their road starts.
+      tree(p.nodes, intermCard(p) + docCard(p) + '<div class="sidebot">' + testCard(p) +
            '</div>') + '</div></div></div>';
   }).join('');
   if (!d.projects.length) h += '<div class="empty">no enrolled projects on this machine</div>';
@@ -2994,7 +3066,8 @@ window.addEventListener('hashchange', () => {
 //                     bus, and climbs k pitches right of the spine.
 // Lanes beside one branch never cross each other or their branch.
 const SPINE = 12, W = 2, P = 2 * W;
-const LANE = {wait: 1, held: 2, sign: 2, test: 3, testq: 4, msg: 5};
+// What waits on the owner (6) runs from the node to the intermediary card.
+const LANE = {wait: 1, held: 2, sign: 2, test: 3, testq: 4, msg: 5, owe: 6};
 const headOf = hb => hb && hb.firstElementChild;
 function treeParent(c) {
   // -> {p: the lead's card, hb: its block, stacked} or null at a root.
@@ -3129,22 +3202,34 @@ function drawWaits() {
     // else down to a road under the tree and along it; then up the lane into
     // each card it serves.
     const bottom = tr ? Math.max(...cards.filter(c => tr.contains(c)).map(c => R(c).b)) : 0;
-    const MARK = {test: '.tto', testq: '.tqo', msg: '.ito'};
-    ['test', 'testq', 'msg'].forEach(kind => {
+    // The intermediary's lines (msg, owe) start at their own row of its card,
+    // and may cross the gap beside the tree at the node's height rather than
+    // take the road: the card sits on main's row, so the road is the long way.
+    const MARK = {test: '.tto', testq: '.tqo', msg: '.ito', owe: '.owo'};
+    ['test', 'testq', 'msg', 'owe'].forEach(kind => {
       const marks = [...t.querySelectorAll(MARK[kind])];
       if (!marks.length || !tr) return;
-      const k = LANE[kind], o = k * P;
+      const k = LANE[kind], o = k * P, own = kind === 'msg' || kind === 'owe';
       const src = marks[0].closest('.card'), slug = (src.dataset.live || '').split(':')[1];
-      const s = R(src), mr = R(marks[0]), y0 = Math.round((mr.t + mr.b) / 2);
-      const out = s.r + 6 + (5 - k) * P, road = bottom + 10 + o;
-      new Set(marks.map(m => m.dataset.on)).forEach(on => {
+      const s = R(src), road = bottom + 10 + o;
+      const out = s.r + 6 + (6 - k) * P;              // the root gutter's lane k
+      const first = {};
+      marks.forEach(m => { if (!(m.dataset.on in first)) first[m.dataset.on] = m; });
+      Object.keys(first).forEach(on => {
         const n = t.querySelector('.tree [data-live="card:' + slug + ':' + on + '"]');
         if (!n) return;
+        const mr = R(own ? first[on] : marks[0]), y0 = Math.round((mr.t + mr.b) / 2);
         const e = enter(n, k), [xe, ye] = e[e.length - 1];
         const direct = [[s.r, y0], [xe, y0], [xe, ye]];
+        const across = [[s.r, y0], [out, y0], [out, ye], [xe, ye]];
         const pts = clear(direct, [n, src]) ? direct
+          : own && clear(across, [n, src]) ? across
           : [[s.r, y0], [out, y0], [out, road], [xe, road], [xe, ye]];
-        ds.push([kind, line(pts.concat(e.slice().reverse()))]);
+        const all = pts.concat(e.slice().reverse());
+        // The node waits (a dot), the owner acts (the arrow, at the card).
+        if (kind === 'owe') ds.push([kind, line(all.slice().reverse()), on, 'intermediary',
+                                     on + ' waits on you']);
+        else ds.push([kind, line(all)]);
       });
     });
     if (!ds.length) return;
@@ -3170,10 +3255,12 @@ function drawWaits() {
     const cs = getComputedStyle(document.documentElement);
     const col = v => (cs.getPropertyValue(v) || '').trim() || '#888';
     svg.innerHTML = '<defs>' + mk('wait', col('--s-wait')) + mk('held', col('--s-held')) +
-      mk('sign', col('--s-need')) + '</defs>' +
-      draw('conn') + draw('msg') + '<g class="testq">' + draw('testq') + '</g>' +
+      mk('sign', col('--s-need')) + mk('owe', col('--s-need')) + '</defs>' +
+      draw('conn') + draw('msg') + draw('owe') + '<g class="testq">' + draw('testq') + '</g>' +
       draw('test') + draw('sign') + draw('held') + draw('wait');
     t.appendChild(svg);
+    if (PAIRED && PAIRED[2] === t && t.classList.contains('pairing'))
+      lightPaths(t, PAIRED[0], PAIRED[1]);
   });
 }
 window.addEventListener('resize', drawWaits);
@@ -3192,16 +3279,28 @@ document.addEventListener('mouseover', e => {
   if (!pr || !pr[2]) return;
   const [a, b, t] = pr;
   t.classList.add('pairing');
+  // A wait on the owner lights, too, every node held up behind it.
+  const row = b === 'intermediary' &&
+    t.querySelector('.ln.owe[data-pair="' + CSS.escape(a) + '>intermediary"]');
+  const behind = row ? (row.dataset.behind || '').split(',').filter(Boolean) : [];
   t.querySelectorAll('.card[data-live]').forEach(c => {
-    const nm = c.dataset.live.split(':').slice(2).join(':');
-    c.classList.toggle('pair', nm === a || nm === b);
+    const nm = c.dataset.live.startsWith('interm:') ? 'intermediary'
+      : c.dataset.live.split(':').slice(2).join(':');
+    c.classList.toggle('pair', nm === a || nm === b || behind.includes(nm));
   });
+  PAIRED = pr;
+  lightPaths(t, a, b);
+});
+// The lines are redrawn on every resize and repaint; the one pointed at stays lit.
+var PAIRED = null;      // var: drawWaits may run before this line is reached
+function lightPaths(t, a, b) {
   t.querySelectorAll('svg.waits path[data-a]').forEach(p => p.classList.toggle('pair',
     (p.dataset.a === a && p.dataset.b === b) || (p.dataset.a === b && p.dataset.b === a)));
-});
+}
 document.addEventListener('mouseout', e => {
   const pr = pairOf(e.target);
   if (!pr || !pr[2]) return;
+  PAIRED = null;
   pr[2].classList.remove('pairing');
   pr[2].querySelectorAll('.pair').forEach(x => x.classList.remove('pair'));
 });

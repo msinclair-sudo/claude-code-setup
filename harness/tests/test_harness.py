@@ -1997,13 +1997,25 @@ class Log161(unittest.TestCase):
         stopped, out = self.stop([mine, other, twin], node=["main"])
         self.assertEqual(stopped, ["s-twin"])
 
-    def claimcheck(self, running, ended=True):
+    def claimcheck(self, running, ended=True, work=True, marks=None):
         with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
              mock.patch.object(hz, "node_running", return_value=running), \
              mock.patch.object(hz, "turn_ended", return_value=ended), \
+             mock.patch.object(hz, "startable", lambda c, k: [{"task": "t"}] if work else []), \
+             mock.patch.object(hz, "all_marks", lambda c: marks or {}), \
              mock.patch.object(hz.time, "sleep"), redirect_stdout(io.StringIO()):
             hz.cmd_claimcheck(mock.Mock(node="dev_1", within=180))
         return [m["text"] for m in hz.MAIL().unread(self.ctx.state, "main")]
+
+    def test_a_lane_that_presented_and_released_is_idle_by_design(self):
+        # Log 185: three false alarms in a day, each for a lane that had claimed,
+        # worked, presented and released inside the window.
+        just = {"t": {"_node": "dev_1", "_presented_at": hz._now()}}
+        self.assertEqual(self.claimcheck(("unclaimed", {"sessionId": "s-1"}), marks=just), [])
+        self.assertEqual(self.claimcheck(("unclaimed", {"sessionId": "s-1"}), work=False), [])
+        mid = {"u": {"_node": "dev_1"}}                     # its own task open: work waiting
+        self.assertEqual(len(self.claimcheck(("unclaimed", {"sessionId": "s-1"}), work=False,
+                                             marks=mid)), 1)
 
     def test_the_unclaimed_ring_never_offers_a_spawn_beside_a_session(self):
         # 11:40 on 2026-10-14: rank 0 was told to spawn a lane that was working.
@@ -8015,6 +8027,113 @@ class Reviewer(unittest.TestCase):
         code, out = self.run_as("dev", "brief", "t", "--uses", "ponytail-review")
         self.assertEqual(code, hz.REFUSED)
         self.assertIn("--uses goes in with --write", out)
+
+
+class Log185to190(unittest.TestCase):
+    """Log entries 186-190 (2026-10-16), on CatchUp's real repositories."""
+
+    git, commit, has, run_as, up = (CatchUp.git, CatchUp.commit, CatchUp.has, CatchUp.run_as,
+                                    CatchUp.up)
+
+    def setUp(self):
+        CatchUp.setUp(self)
+        for d in ("briefs", "marks"):
+            (self.ctx.dir / d).mkdir(exist_ok=True)
+        (self.ctx.dir / "briefs" / "t.json").write_text(json.dumps(
+            {"task": "t", "node": "dev_1", "written_by": "dev (session s)",
+             "text": "Part 1.\n\n**DONE.** 1. it reads x.\n\n**PENDING.** Part 2, the run: "
+                     "its DONE clauses are written after the owner answers.\n"}))
+        for p in (mock.patch.object(hz, "skill_dirs", lambda worktree=None: [SKILLS]),
+                  mock.patch.object(hz, "ensure_ringer", lambda s: None)):
+            p.start(); self.addCleanup(p.stop)
+        self.op = dict(unreported=lambda *a: [], claim_conflict=lambda ctx, n: (None, "unclaimed"),
+                       read_spend_or_none=lambda sid: (None, "no transcript"),
+                       assignment_for=lambda ctx, n: ("m", "e"),
+                       lead_address=lambda ctx, p: (None, None))
+
+    def inbox(self, n):
+        return [hz._read_json(f) for f in
+                sorted((self.ctx.dir / "doorbell" / n / "inbox").glob("*.json"))]
+
+    def test_news_goes_as_an_fyi_and_is_owed_by_nobody(self):
+        # Log 186: a status note recorded as a wait was rung "owed by you".
+        code, out = self.run_as("dev_1", "waiting", "its commit is in dev_dag; I present at its "
+                                "next release", "--on", "dev", "--fyi", **self.op)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(hz.open_waits_all(self.ctx), [])
+        (m,) = self.inbox("dev")
+        self.assertEqual(m["priority"], "fyi")
+        code, out = self.run_as("dev_1", "waiting", "the loader is rebuilt", "--on", "dev",
+                                **self.op)
+        self.assertIn("It reads as news, not a question", out)
+        code, out = self.run_as("dev_1", "waiting", "which schema should the loader use?",
+                                "--on", "dev", "--clear", **self.op)
+        code, out = self.run_as("dev_1", "waiting", "which schema should the loader use?",
+                                "--on", "dev", **self.op)
+        self.assertNotIn("reads as news", out)
+
+    def test_a_presentation_can_wait_for_its_own_check(self):
+        # Log 187: the sign-off prompt came before the presenter's full check.
+        self.assertEqual(self.run_as("dev_1", "mark", "t", **self.op)[0], 0)
+        self.commit("dev_1", "w.py")
+        job = {"id": "j1", "state": "running", "kind": "check",
+               "requested_by": [{"node": "dev_1"}]}
+        (hz.testq_dir(self.ctx) / "j1.json").write_text(json.dumps(job))
+        code, out = self.run_as("dev_1", "mark", "t", "--done", "--note", "n", "--after-check",
+                                **self.op)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(hz._read_json(self.ctx.dir / "marks" / "t.json")["_after_check"], "j1")
+        self.assertIn("Its check j1 is still running", self.inbox("dev")[-1]["text"])
+        es = [e for e in hz.waits(self.ctx, infer="off") if e["frm"] == "dev_1"]
+        self.assertEqual([(e["via"], e["on"]) for e in es], [("check", "check:j1")])
+        code, out = self.run_as("dev", "mark", "t", "--close", **self.op)
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("signed off after its check j1, which is running", out)
+        (hz.testq_dir(self.ctx) / "j1.json").write_text(json.dumps(dict(job, state="done")))
+        self.assertEqual([(e["via"], e["on"]) for e in hz.waits(self.ctx, infer="off")
+                          if e["frm"] == "dev_1"], [("signoff", "dev")])
+        code, out = self.run_as("dev", "mark", "t", "--close", **self.op)
+        self.assertNotIn("after its check", out)
+
+    def test_a_pending_part_stays_open_after_the_close(self):
+        # Log 188: Part 2 had no open record once Part 1 was signed off.
+        self.assertEqual(self.run_as("dev_1", "mark", "t", **self.op)[0], 0)
+        self.commit("dev_1", "w.py")
+        self.assertEqual(self.run_as("dev_1", "mark", "t", "--done", "--note", "n",
+                                     **self.op)[0], 0)
+        code, out = self.run_as("dev", "mark", "t", "--close", "--force", **self.op)
+        self.assertEqual(code, 0, out)
+        self.assertIn("'t.pending' is open in dev_1's queue, and starts once dev writes", out)
+        p = hz.load_brief(self.ctx, "t.pending")[1]
+        self.assertEqual((p["node"], p["unwritten_by"], p["pending_of"]), ("dev_1", "dev", "t"))
+        self.assertIn("Part 2, the run", p["text"])
+        self.assertEqual(hz.waits_on(self.ctx, p), ["its brief is still to be written by dev"])
+        self.assertNotIn("t.pending", [b["task"] for b in hz.startable(self.ctx, "dev_1")])
+        e = next(e for e in hz.waits(self.ctx, infer="off") if e["frm_task"] == "t.pending")
+        self.assertEqual((e["via"], e["on"]), ("brief", "dev"))
+        code, out = self.run_as("dev", "brief", "t.pending", "--for", "dev_1", "--write",
+                                "Part 2: the run.\n\n**DONE.** 1. it ran.", **self.op)
+        self.assertEqual(code, 0, out)
+        p = hz.load_brief(self.ctx, "t.pending")[1]
+        self.assertEqual((p.get("unwritten_by"), p.get("pending_of")), (None, "t"))
+        self.assertEqual(hz.waits_on(self.ctx, p), [])
+
+    def test_ask_ids_are_never_handed_out_twice(self):
+        # Log 189: docs-1 named three rulings. Log 164: a withdrawn ask's id
+        # named a new item.
+        st = self.ctx.state
+        (Path(st) / "docs").mkdir(parents=True, exist_ok=True)
+        (Path(st) / "docs" / "rulings.json").write_text(json.dumps(
+            [{"id": "docs-1"}, {"id": "docs-2"}]))
+        self.assertEqual(hz.ask_next_id(st, "docs"), "docs-3")
+        self.assertEqual(hz.ask_next_id(st, "docs"), "docs-4")      # docs-3 left no record
+
+    def test_done_clauses_in_the_shapes_briefs_use(self):
+        # Log 190: three rewrites to find a shape the parser read.
+        self.assertEqual(hz.brief_clauses("**DONE (Part 1).** 1. a. 2. b. 3. c."), {1, 2, 3})
+        self.assertEqual(hz.brief_clauses("**DONE.** For Part 1: 1. a 2. b 3. c"), {1, 2, 3})
+        self.assertEqual(hz.brief_clauses("DONE. It ships in table 2. Then more."), set())
+        self.assertEqual(hz.brief_clauses("**DONE.**\n1. a\n2. b\n"), {1, 2})
 
 
 class WaitEdges(unittest.TestCase):

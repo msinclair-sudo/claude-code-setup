@@ -3820,6 +3820,10 @@ def released_gone(ctx, k):
 
 
 _QUESTION = re.compile(r"\?|\bblock(?:ed|er|ing)?\b|\bquestion\b", re.I)
+# A wait's text that asks the other side for something (log 186): only a hint.
+_ASKS = re.compile(r"\?|\b(?:ask(?:ed|ing)?|need|needs|please|confirm|decide|decision|rul(?:e|ing)|"
+                   r"approv\w*|answer|which|whether|should|can you|could you|"
+                   r"block(?:ed|er|ing)?|question|review|sign(?:-| )?off|merge)\b", re.I)
 
 
 def _rings(ctx, to, frm):
@@ -5394,6 +5398,24 @@ def cmd_mark(a):
                 and not rec.get("_delegated"):
             _review = write_review_brief(ctx, a.task, node, rec["_presented_sha"], _lead, _rv, _db)
             rec["_review_task"] = _review
+        # Log 187: the sign-off prompt reached the lead before the presenter's
+        # own full check, and the presenter's "hold the sign-off" after it.
+        _ac = getattr(a, "after_check", None)
+        if isinstance(_ac, str):
+            _job = None
+            if _ac:
+                _job = _read_json(testq_dir(ctx) / f"{_ac}.json")
+                if _job is None:
+                    die(REFUSED, f"--after-check {_ac}: no such job (harness test lists them)")
+            else:
+                mine = [j for j in testq_jobs(ctx, ("queued", "running"))
+                        if j.get("kind") == "check"
+                        and any((r or {}).get("node") == node for r in j.get("requested_by") or [])]
+                _job = mine[-1] if mine else None
+                if _job is None:
+                    die(REFUSED, "--after-check: no check of yours is queued or running. "
+                                 "harness check first, then present")
+            rec["_after_check"] = _job["id"]
         f.write_text(json.dumps(rec, indent=2) + "\n")
         # Presenting IS finishing with the node. The claim is on the worktree,
         # and a presented member has nothing left to write there, so holding it
@@ -5439,13 +5461,15 @@ def cmd_mark(a):
             # may fold away: a lane whose session ends after presenting tells
             # nobody (obs 91: 2h43m).
             carries = (load_brief(ctx, a.task)[1] or {}).get("carries")
+            _wait = (f" Its check {rec['_after_check']} is still running: sign off once it "
+                     f"reports (--close refuses until then)." if rec.get("_after_check") else "")
             ring_inbox(ctx.state, parent, node,
                        f"{node} presented '{a.task}' at {rec['_presented_sha'][:8]} — "
                        + (f"it carries finding-born '{carries}' up, already reviewed and "
                           f"integrated below: sign it off with harness mark {a.task} --close "
                           f"(harness review {node} --task {a.task} shows only its commits; "
                           f"never merge {node} for it, log 124)" if carries else
-                          f"harness review {node}, then harness mark {a.task} --close"))
+                          f"harness review {node}, then harness mark {a.task} --close") + _wait)
         if _no_account and parent:
             # The ring has gone and the lead reads the note with it (log 165).
             print(f"  no account went with this, and {parent} is rung now: it reads "
@@ -5617,6 +5641,12 @@ def cmd_mark(a):
         if rec.get("_closed_at") and not a.force:
             die(REFUSED, f"'{a.task}' was closed at {rec['_closed_at']} — "
                          f"--force to close it again")
+        _pend = check_pending(ctx, rec.get("_after_check"))
+        if _pend and not a.force:
+            die(REFUSED, f"'{a.task}' was presented to be signed off after its check "
+                         f"{_pend['id']}, which is {_pend.get('state')}.\n           It rings "
+                         f"you when it reports (harness test shows it). --force signs off "
+                         f"without it.")
         # Sign-off belongs to the lead, on the same rule as the brief: the node
         # above sets the task and the node above says it is finished. A member
         # closing its own is a member marking its own homework, and T4 already
@@ -5665,6 +5695,17 @@ def cmd_mark(a):
         cost = spend_line(d) if d else "not measured at presentation"
         f.write_text(json.dumps(rec, indent=2) + "\n")
         print(f"signed off {a.task} for {owner} at {rec['_closed_at']}  {cost}")
+        # What the brief marked PENDING is still owed (log 188: Part 2 of
+        # environment-typing had no open record after Part 1's sign-off).
+        _pp = pending_placeholder(ctx, a.task, load_brief(ctx, a.task)[1])
+        if _pp:
+            print(f"  its brief marked a part PENDING: '{_pp[0]}' is open in {_pp[2]}'s queue, "
+                  f"and starts once {_pp[1]} writes its brief")
+            if _pp[1] != node:
+                ring_inbox(ctx.state, _pp[1], "harness",
+                           f"'{a.task}' was signed off with a part still to brief: '{_pp[0]}' "
+                           f"waits in {_pp[2]}'s queue for your brief (harness brief {_pp[0]} "
+                           f"--for {_pp[2]} --write -).", "low")
         # Log 172: signing off a review signs off the work it reviewed, which
         # arrived in this branch with it.
         _ro = (load_brief(ctx, a.task)[1] or {}).get("review_of") or {}
@@ -7445,6 +7486,14 @@ def testq_dir(ctx):
     d = Path(ctx.state) / "testq"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def check_pending(ctx, job):
+    """The job when it is still queued or running, else None (log 187)."""
+    if not job:
+        return None
+    j = _read_json(testq_dir(ctx) / f"{job}.json")
+    return j if j and j.get("state") in ("queued", "running") else None
 
 
 def testq_jobs(ctx, states=None):
@@ -12090,8 +12139,13 @@ def stopped_without_asking(ctx, node, live, has_session):
 
 # A label may be bold or italic (log 116: main writes **DONE.**, which matched
 # nothing, so 46 of biblion2's briefs had no clause a split could cover).
-_CLAUSE_PARA = re.compile(r"^\s*[*_]{0,2}(CHECKS|DONE)\b[.:]?[*_]{0,2}[.:]?(.*?)"
+# A qualifier may follow the label (log 190: **DONE (Part 1).** matched nothing).
+_CLAUSE_PARA = re.compile(r"^\s*[*_]{0,2}(CHECKS|DONE)\b(?:\s*\([^)\n]{0,60}\))?[.:]?[*_]{0,2}"
+                          r"[.:]?(.*?)"
                           r"(?=^\s*[*_]{0,2}[A-Z][A-Z ]{2,}[.:]|\Z)", re.M | re.S)
+# Clauses on one line, `1. … 2. … 3. …`, count when they run 1, 2, 3 in order: a
+# lone "table 2. Then" mid-sentence is not a clause.
+_CLAUSE_INLINE = re.compile(r"(?:^|\s)(\d{1,2})[.)]\s")
 
 
 _CLAUSE_HEAD = re.compile(r"^(#{1,6})\s+(.*\b(?:checks?|done)\b.*)$", re.M | re.I)
@@ -12113,7 +12167,15 @@ def brief_clauses(text):
         lvl = len(m.group(1))
         nxt = re.compile(r"^#{1,%d}\s" % lvl, re.M).search(text, m.end())
         bodies.append(text[m.end():nxt.start() if nxt else len(text)])
-    return {int(a or b) for body in bodies for a, b in _CLAUSE_MARK.findall(body)}
+    out = {int(a or b) for body in bodies for a, b in _CLAUSE_MARK.findall(body)}
+    for body in bodies:
+        run = 0
+        for n in (int(x) for x in _CLAUSE_INLINE.findall(body)):
+            if n == run + 1:
+                run = n
+        if run >= 2:
+            out |= set(range(1, run + 1))
+    return out
 
 
 def brief_headings(text):
@@ -12532,6 +12594,17 @@ def cmd_claimcheck(a):
     how, det = node_running(ctx, a.node)
     if how == "claimed":
         print(f"{_now()} {a.node} claimed"); return
+    # Presenting releases the node, so a lane that claimed, worked and
+    # presented inside the window is unclaimed by design (log 185: three false
+    # alarms in a day). So is one with nothing of its own open and nothing it
+    # could start. Only work waiting with no claim is worth a ring.
+    since = time.time() - a.within - 5
+    mine = [r for r in all_marks(ctx).values() if r.get("_node") == a.node]
+    if any((_epoch(r.get("_presented_at")) or 0) >= since for r in mine):
+        print(f"{_now()} {a.node} presented since the recycle; idle by design"); return
+    if not any(not r.get("_closed_at") and not r.get("_presented_at") for r in mine) \
+            and not startable(ctx, a.node):
+        print(f"{_now()} {a.node}: nothing open and nothing startable; nothing said"); return
     if how == "unclaimed":
         # A session is there. Offering `spawn` put a second one beside it (log
         # 161, 11:40: rank 0 was told to spawn a lane that was busy working).
@@ -12652,6 +12725,9 @@ def waits_on(ctx, b):
     nb = b.get("not_before")
     if nb and time.time() < nb:
         out.append(f"until {utc_label(nb)} (in {human_age(nb - time.time())})")
+    # A placeholder for a part its writer has still to brief (log 188).
+    if b.get("unwritten_by"):
+        out.append(f"its brief is still to be written by {b['unwritten_by']}")
     return out
 
 
@@ -13014,8 +13090,10 @@ UNTRACED_HINT = ("every task traces to a charter feature (owner, 2026-10-06). No
 def brief_carry(rec, b):
     """What a rewrite keeps that the writer did not write: the owner's rulings
     (T17), and who has read it, which the ruling notices are timed against."""
+    # Not `unwritten_by`: the writer's rewrite is what lifts a placeholder's
+    # gate (log 188); where it came from stays.
     for k in ("rulings", "read", "close_after", "close_after_by", "not_before",
-              "requires", "feature"):
+              "requires", "feature", "pending_of"):
         if k not in rec and (b or {}).get(k):
             rec[k] = b[k]
     for k in ("not_before", "requires"):
@@ -13040,6 +13118,58 @@ def carrier_task(task, node):
 
 def review_task(task):
     return f"{task}.review"
+
+
+# A part a brief owes but cannot brief yet (log 188): `**PENDING.** Part 2, the
+# typing run: its DONE clauses are written after the owner answers X.` Closing
+# the task does not discharge it: the close leaves `<task>.pending` open in the
+# queue of whoever wrote the brief, to brief that part.
+_PENDING_PARA = re.compile(r"^\s*[*_]{0,2}PENDING\b(?:\s*\([^)\n]{0,60}\))?[.:]?[*_]{0,2}[.:]?"
+                           r"\s*(.*?)(?=\n\s*\n|^\s*[*_]{0,2}[A-Z][A-Z ]{2,}[.:]|\Z)",
+                           re.M | re.S)
+
+
+def brief_pending(text):
+    """The PENDING paragraphs of a brief, whitespace folded."""
+    return [" ".join(p.split()) for p in _PENDING_PARA.findall(text or "") if p.strip()]
+
+
+def pending_placeholder(ctx, task, b):
+    """On closing `task`, the part its brief marked PENDING, as an open brief
+    in the same node's queue that cannot start until its writer writes it: the
+    writer's next `brief <task>.pending --for <node> --write` is that part's
+    brief, and lifts the gate. -> (placeholder task, writer) or None."""
+    pend = brief_pending((b or {}).get("text"))
+    if not pend:
+        return None
+    pt = f"{task}.pending"
+    f, have = load_brief(ctx, pt)
+    if have is not None:
+        return None
+    nodes = ctx.tree["nodes"]
+    writer = str((b or {}).get("direct_by") or (b or {}).get("written_by") or "").split(" ")[0]
+    if writer not in nodes:
+        writer = next(n for n, sp in nodes.items() if not sp.get("parent"))
+    worker = (b or {}).get("node") if (b or {}).get("node") in nodes else writer
+    now = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    rec = {"task": pt, "node": worker, "revision": 1,
+           "text": (f"# {pt}: the part of '{task}' still to be briefed\n\n'{task}' was signed "
+                    f"off with this part owed. Its brief said:\n\n"
+                    + "\n\n".join(f"> {p}" for p in pend)
+                    + f"\n\n{writer} writes this part's brief here, with its DONE clauses, "
+                      f"once what it waits on is settled (harness brief {pt} --for {worker} "
+                      f"--write -). It cannot start until then. If the part is dropped, "
+                      f"supersede it with the reason."),
+           "written_by": f"harness (owed by {task})", "written_at": now,
+           "suggestions": [], "comments": [], "pending_of": task, "unwritten_by": writer}
+    if (b or {}).get("feature"):
+        rec["feature"] = b["feature"]
+    if (b or {}).get("direct_by"):
+        rec["direct_by"] = b["direct_by"]
+    rec.update(next_seq(ctx, worker))
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(rec, indent=2) + "\n")
+    return pt, writer, worker
 
 
 def write_review_brief(ctx, task, worker, sha, lead, reviewer, b):
@@ -13630,7 +13760,9 @@ def cmd_brief(a):
             print("  the previous text is gone — a brief is a plan, not a record")
         if _CLAUSE_LABEL.search(a.write) and not brief_clauses(a.write):
             print(f"  WARNING: its DONE has no clauses the harness can number ({CLAUSE_FORMS});"
-                  f"\n  a lead splitting it can't use --covers (log 116)")
+                  f"\n  a lead splitting it can't use --covers (log 116). A shape it reads:"
+                  f"\n    **DONE (Part 1).**\n    1. the loader reads X\n    2. the report says Y"
+                  f"\n  or on one line: **DONE.** 1. X. 2. Y. 3. Z.")
         open_s = [i for i, s in enumerate((b or {}).get("suggestions", []), 1)
                   if not s.get("resolved_at")]
         if open_s:
@@ -14878,6 +15010,12 @@ def waits(ctx, rows=None, infer="cache", stops=None, about=None, rings=True):
                     add("gate", "approval", x, root, frm_task=task, stops="start",
                         what="needs the operator's approval",
                         act=f"harness brief {task} --approve")
+            if b.get("unwritten_by") and b["unwritten_by"] != x:
+                add("gate", "brief", x, b["unwritten_by"], frm_task=task, stops="start",
+                    on_task=b.get("pending_of"),
+                    what=f"an owed part of {b.get('pending_of') or task}: its brief is still "
+                         f"to be written",
+                    act=f"harness brief {task} --for {x} --write -")
         if st not in ("closed", "superseded", "abandoned"):
             for g in gates_of(ctx, b, "close_after"):
                 add("gate", "close-after", x, g["node"] or "?", frm_task=task, on_task=g["task"],
@@ -14905,6 +15043,13 @@ def waits(ctx, rows=None, infer="cache", stops=None, about=None, rings=True):
             add("gate", "review", w, reviewer_of(ctx, lead) or lead, frm_task=r.get("_task") or stem,
                 on_task=r["_review_task"], stops="signoff", since=r.get("_presented_at"),
                 what=f"in review as {r['_review_task']}")
+        elif lead and check_pending(ctx, r.get("_after_check")):
+            # Presented to be signed off after its own check (log 187): the
+            # lead owes nothing until the check reports.
+            add("gate", "check", w, f"check:{r['_after_check']}", frm_task=r.get("_task") or stem,
+                stops="signoff", since=r.get("_presented_at"),
+                what="presented; signed off once its check reports",
+                act="harness test (it rings the lead when it reports)")
         elif lead:
             add("gate", "signoff", w, lead, frm_task=r.get("_task") or stem, stops="signoff",
                 since=r.get("_presented_at"), what="presented, awaiting sign-off",
@@ -15172,6 +15317,16 @@ def cmd_waiting(a):
         die(REFUSED, "rank 0 has no lead to wait on. Say whom: harness waiting \"...\" --on owner")
     if on == node:
         die(REFUSED, f"'{node}' cannot wait on itself")
+    if getattr(a, "fyi", False) is True:
+        # News about the other side asks it nothing, so nothing is owed (log
+        # 186: a status note to main was rung as "owed by you" and held its
+        # stop hook). It goes as an FYI ring, and no wait is recorded.
+        if on == "owner":
+            die(REFUSED, "the owner reads no FYI rings: put it on the task, "
+                         "harness note <task> --add \"...\"")
+        ring_inbox(ctx.state, on, node, a.asked, "fyi")
+        print(f"told {on} (FYI): nothing is recorded as waiting, and nothing is owed")
+        return
     # The single file written before 2026-10-16 moves into the node's directory.
     old = waiting_path(ctx, node)
     if old.exists():
@@ -15194,6 +15349,10 @@ def cmd_waiting(a):
     f.write_text(json.dumps(rec, indent=2) + "\n")
     append_inbox(dict(rec, event="waiting"))
     print(f"{node} is waiting on {on}" + (f" for {on_task}" if on_task else ""))
+    if not _ASKS.search(a.asked or ""):
+        print(f"  It reads as news, not a question. A wait is owed by {on}, rung and held "
+              f"against its stop.\n  If {on} need not act: harness waiting --clear --on {on}, "
+              f"then harness waiting \"...\" --on {on} --fyi")
     if on == "owner":
         print(f"  The owner reads asks in the viewer, not this record. If they must act:\n"
               f"    harness ask <task> --kind intent|judgement|risk --question \"...\"")
@@ -17354,9 +17513,25 @@ def ask_next_id(state, task):
     except Exception:
         pass
     ids += [d.get("id") or "" for d in owner_done(state)]
+    # The documenter's rulings have no brief (log 189: docs-1 named three).
+    try:
+        ids += [str(r.get("id") or "") for r in
+                json.loads((Path(state) / "docs" / "rulings.json").read_text()) or []]
+    except Exception:
+        pass
     ns = [int(i.rsplit("-", 1)[1]) for i in ids
           if "-" in i and i.rsplit("-", 1)[0] == k and i.rsplit("-", 1)[1].isdigit()]
-    return f"{k}-{max(ns, default=0) + 1}"
+    # And a high-water mark, so an id leaves no record behind it and is still
+    # never handed out again (log 164: a withdrawn ask's id named a new item).
+    seqf = Path(state) / "ask-seq.json"
+    seq = _read_json(seqf) or {}
+    n = max(ns + [int(seq.get(k) or 0)], default=0) + 1
+    try:
+        seq[k] = n
+        seqf.write_text(json.dumps(seq, indent=2) + "\n")
+    except Exception:
+        pass
+    return f"{k}-{n}"
 
 
 # ── the chain: how a request reached the owner (owner, 2026-10-06) ──────────
@@ -21893,6 +22068,9 @@ def main():
                     help="re-mark: a new session and spend baseline; the task's comments are kept")
     mk.add_argument("--done", action="store_true",
                     help="present it as finished and record what it cost; your lead closes it")
+    mk.add_argument("--after-check", nargs="?", const="", metavar="JOB", dest="after_check",
+                    help="with --done: your lead signs off only once this check of yours "
+                         "reports (default: your latest queued or running check)")
     mk.add_argument("--requeue-after", metavar="TASK",
                     help="with --abandon: put the task back in the queue after TASK")
     mk.add_argument("--abandon", metavar="WHY",
@@ -22040,6 +22218,9 @@ def main():
     gt.add_argument("--list", action="store_true", help="every grant, live and revoked")
     wt = add("waiting", cmd_waiting)
     wt.add_argument("asked", nargs="?", help="what you asked your lead, in one line")
+    wt.add_argument("--fyi", action="store_true",
+                    help="news for --on, not a question: sent as an FYI ring; no wait is "
+                         "recorded and nothing is owed")
     wt.add_argument("--still-moving", dest="still_moving",
                     help="what carries on while you wait — without it this reads "
                          "as a full stop, and gets answered as one")

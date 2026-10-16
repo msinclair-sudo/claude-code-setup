@@ -7778,6 +7778,72 @@ class Reviewer(unittest.TestCase):
         self.assertEqual((inh["from"], inh["at"], inh["own"]), ("dev", lead, 0))
         self.assertEqual(inh["failures"], ["docs: test_keep.py", "docs: test_route.py"])
 
+    def test_a_red_rank_0_rules_known_lets_the_reviewer_integrate(self):
+        # Log 184: tax-ddl's tables fail the fixture-schema test until the owner
+        # adds them; the lead without the DDL passes it, so it is not inherited.
+        self.present_t()
+        cut, _ = self.review_t()
+        self.assertEqual(self.present_review()[0], 0)
+        bp = hz.baseline_path(self.ctx)
+        bp.parent.mkdir(parents=True, exist_ok=True)
+        bp.write_text(json.dumps({"sha": "b" * 40, "arms": {"docs": {
+            "failed": False, "files": [], "codes": {}}}}))
+        row = lambda n: {"name": "docs", "exit": 1, "failedFiles": ["test_fixture.py"],
+                         "failedFaults": {"test_fixture.py": {"schema": n}}}
+        f = hz.check_report_path(self.ctx, "dev_r", cut)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps({"sha": cut, "passed": False, "baseline": "b" * 40, "new": 1,
+                                 "checks": [row(6)]}))
+        integrate = lambda: self.run_as("dev", "integrate", "dev_r", read_roster=lambda p: None)
+        self.assertEqual(integrate()[0], hz.REFUSED)
+        rule = ("check", "--known", "docs:test_fixture.py", "--report", cut, "--why",
+                "the owner adds the tables to the fixture", "--until-task", "u")
+        code, out = self.run_as("dev", *rule)
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("rank 0's ruling", out)
+        code, out = self.run_as("main", "check", "--known", "docs:other.py", "--report", cut,
+                                "--why", "x")
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("does not fail in docs", out)
+        code, out = self.run_as("main", *rule)
+        self.assertEqual(code, 0, out)
+        self.assertIn("up to 6 fault(s)", out)
+        code, out = integrate()
+        self.assertEqual(code, 0, out)
+        self.assertIn("known by rank 0's ruling (harness check --known): docs: test_fixture.py",
+                      out)
+        inh = hz.read_check_report(self.ctx, "dev_r", cut)["inherited"]
+        self.assertEqual((inh["from"], inh["own"], inh["known"]),
+                         ("dev", 0, ["docs: test_fixture.py"]))
+        # That file, and no more faults than it had; nothing else.
+        base = hz.load_baseline(self.ctx)
+        self.assertEqual(hz.baseline_diff([row(7)], base)["docs"]["new"], ["test_fixture.py"])
+        self.assertEqual(hz.baseline_diff([row(6)], base)["docs"]["known"], ["test_fixture.py"])
+        self.assertIn("no new failures", hz.baseline_summary({"checks": [row(6)]}, base))
+        # It clears when the named task closes.
+        (self.ctx.dir / "briefs" / "u.json").write_text(json.dumps({"task": "u", "node": "dev_1"}))
+        (self.ctx.dir / "marks" / "u.json").write_text(json.dumps(
+            {"_node": "dev_1", "_task": "u", "_closed_at": hz._now()}))
+        self.assertEqual(hz.known_reds(self.ctx), [])
+        code, out = self.run_as("main", "check", "--known")
+        self.assertIn("cleared  docs: test_fixture.py", out)
+        self.assertIn("u is closed", out)
+
+    def test_a_reviewer_s_check_is_an_integration_check(self):
+        # Log 183: it queued at normal, behind leads' checks sent after it.
+        self.assertEqual([hz.default_queue(self.ctx, n) for n in ("main", "dev", "dev_r", "dev_1")],
+                         ["priority", "priority", "priority", "normal"])
+
+    def test_wait_ages_read_the_offset(self):
+        # Log 182: a mark's `Z` time read as local made a 5-minute wait 11 hours old.
+        z = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() - 300))
+        self.assertEqual(hz.wait_age(z), "5m")
+        gp = Path(__file__).resolve().parents[1] / "bin" / "harness-gui"
+        ld = importlib.machinery.SourceFileLoader("harness_gui", str(gp))
+        gui = importlib.util.module_from_spec(importlib.util.spec_from_loader("harness_gui", ld))
+        ld.exec_module(gui)
+        self.assertEqual(gui._wait_mins(z), 5)
+
     def test_a_catch_up_of_the_presented_worker_does_not_latch_the_review(self):
         # 2026-10-15, four times on dev_dag: the ringer caught a presented
         # worker up, the presentation followed the merge, and the review brief

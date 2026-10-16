@@ -6591,9 +6591,142 @@ def baseline_path(ctx):
 
 def load_baseline(ctx):
     try:
-        return json.loads(baseline_path(ctx).read_text())
+        b = json.loads(baseline_path(ctx).read_text())
     except Exception:
         return None
+    if isinstance(b, dict):
+        b["known"] = known_map(known_reds(ctx))
+    return b
+
+
+# ── Known reds rank 0 names (log 184) ────────────────────────────────────────
+#
+# A lane's own change can turn a file red until something outside the code is
+# done (tax-ddl's four tables fail the fixture-schema test until the owner adds
+# them to the fixture). Nothing below could take it: the lead without the
+# change passes that file, so it is not inherited, and the baseline is set
+# only at a commit the code root holds. Rank 0 rules it known, by name: one arm,
+# one file, no more faults than the report it was read from, until a task
+# closes or an ask is ruled, or rank 0 drops it. Every comparison with the
+# baseline then reads it as known, and no other failure.
+
+def default_queue(ctx, node):
+    """Integration goes first. A reviewer's check is one: its lead integrates its
+    tip only on a passing check (log 183: it queued behind leads' checks sent
+    after it)."""
+    return "priority" if role_of(ctx, node) in ("root", "lead", "reviewer") else "normal"
+
+
+def known_path(ctx):
+    return ctx.state / "checks" / "known.json"
+
+
+def known_cleared(ctx, r):
+    """Why a known red no longer applies, or None."""
+    t = r.get("until_task")
+    if t:
+        try:
+            st = task_state(ctx, t)
+        except Exception:
+            st = None
+        if st in ("closed", "superseded", "abandoned"):
+            return f"{t} is {st}"
+    q = r.get("until_ask")
+    if q:
+        a = _read_json(ctx.state / "asks" / f"{q}.json")
+        if a is not None and a.get("state") not in ASK_OPEN:
+            return f"{q} is {a.get('state')}"
+    return None
+
+
+def known_reds(ctx, live=True):
+    """The recorded known reds: the live ones, or (live=False) all, each that no
+    longer applies carrying `cleared`."""
+    try:
+        recs = json.loads(known_path(ctx).read_text())
+    except Exception:
+        return []
+    out = []
+    for r in recs if isinstance(recs, list) else []:
+        why = known_cleared(ctx, r)
+        if why and live:
+            continue
+        out.append(dict(r, cleared=why) if why else r)
+    return out
+
+
+def known_map(recs):
+    """{arm: {file: the most faults it may hold}} for baseline_diff."""
+    out = {}
+    for r in recs:
+        out.setdefault(r["arm"], {})[r["file"]] = r.get("faults") or {}
+    return out
+
+
+def cmd_known(ctx, node, a):
+    """`harness check --known [ARM:FILE --report SHA --why W [--until-task T |
+    --until-ask ID] | ARM:FILE --drop]`: list, record or drop a known red."""
+    recs = known_reds(ctx, live=False)
+    if not a.known:
+        if not recs:
+            print("no known reds recorded (rank 0 records one: harness check --known "
+                  "ARM:FILE --report SHA --why \"...\" --until-task T)")
+        for r in recs:
+            until = (f"until {r['until_task']} closes" if r.get("until_task") else
+                     f"until {r['until_ask']} is ruled" if r.get("until_ask") else
+                     "until dropped")
+            print(f"{'cleared' if r.get('cleared') else 'known  '}  {r['arm']}: {r['file']}  "
+                  f"{sum((r.get('faults') or {}).values()) or ''} "
+                  f"{'fault(s) ' if r.get('faults') else ''}at {r['sha'][:8]}, by {r['by']}, "
+                  f"{until}" + (f" — {r['cleared']}" if r.get("cleared") else "")
+                  + f"\n         {r['why']}")
+        return
+    if node is not None and ctx.rank(node) != 0:
+        die(REFUSED, "a known red is rank 0's ruling (log 184); ask it, with the report's sha")
+    arm, _, file = a.known.partition(":")
+    if not arm or not file:
+        die(REFUSED, "name it as ARM:FILE, e.g. documents:tests/test_fixture_schema.py")
+    raw = [r for r in recs if (r["arm"], r["file"]) != (arm, file)]
+    if a.drop:
+        if len(raw) == len(recs):
+            die(REFUSED, f"no known red {arm}: {file}")
+        known_path(ctx).write_text(json.dumps(
+            [{k: v for k, v in r.items() if k != "cleared"} for r in raw], indent=2) + "\n")
+        print(f"dropped {arm}: {file}; it reads as new again where it fails")
+        return
+    if not (a.why or "").strip():
+        die(REFUSED, 'say why, and what clears it: --why "..." --until-task T')
+    if not a.report:
+        die(REFUSED, "--report SHA: the check report whose red this is; it fixes the faults "
+                     "allowed")
+    rc, sha, _ = git("rev-parse", "--verify", "--quiet", a.report + "^{commit}", cwd=ctx.repo)
+    sha = sha.strip()
+    rep = _read_json(shared_report_path(ctx, sha)) if not rc else None
+    if rep is None and not rc:
+        rep = next((r for r in (_read_json(f) for f in (ctx.state / "checks").glob("*.json"))
+                    if r and r.get("sha") == sha and r.get("checks")), None)
+    if rep is None:
+        die(REFUSED, f"no check report for {a.report}")
+    row = next((r for r in rep.get("checks") or [] if r.get("name") == arm), None)
+    if row is None or row.get("exit") in (0, None) or file not in (row.get("failedFiles") or []):
+        die(REFUSED, f"{file} does not fail in {arm} at {sha[:8]}; a known red is one the "
+                     f"report shows")
+    if a.until_ask and not (ctx.state / "asks" / f"{a.until_ask}.json").exists():
+        die(REFUSED, f"no ask {a.until_ask}")
+    rec = {"arm": arm, "file": file, "sha": sha,
+           "faults": (row.get("failedFaults") or {}).get(file) or {},
+           "why": a.why.strip(), "by": node or "owner", "at": _now(),
+           "until_task": a.until_task, "until_ask": a.until_ask}
+    known_path(ctx).parent.mkdir(parents=True, exist_ok=True)
+    known_path(ctx).write_text(json.dumps(
+        [{k: v for k, v in r.items() if k != "cleared"} for r in raw] + [rec], indent=2) + "\n")
+    n = sum(rec["faults"].values())
+    print(f"known: {arm}: {file}" + (f", up to {n} fault(s) as at {sha[:8]}" if n else "")
+          + ". Every comparison with the baseline reads it as known, and no other failure;\n"
+          + "  a reviewer whose only new failures are known integrates. "
+          + (f"Cleared when {a.until_task} closes." if a.until_task else
+             f"Cleared when {a.until_ask} is ruled." if a.until_ask else
+             "It stays until dropped: harness check --known " + a.known + " --drop"))
 
 
 def baseline_diff(rows, base):
@@ -6608,10 +6741,24 @@ def baseline_diff(rows, base):
             continue
         now, was = r.get("failedFiles"), b.get("files")
         failing = r.get("exit") != 0
+        # Rank 0's named known reds (log 184): the file, and no more faults
+        # than were recorded with it.
+        kn = (base.get("known") or {}).get(r["name"]) or {}
+        fnow = r.get("failedFaults") or {}
+
+        def ruled(f):
+            if f not in kn:
+                return False
+            cap = kn[f] or {}
+            return not cap or all(c <= cap.get(k, 0) for k, c in (fnow.get(f) or {}).items())
         if now is None or was is None:
             new = ["(arm)"] if failing and not b.get("failed") else []
             gone = ["(arm)"] if b.get("failed") and not failing else []
             same = int(failing and bool(b.get("failed")))
+            if new and ruled("(arm)"):
+                out[r["name"]] = {"new": [], "gone": gone, "same": same, "notrun": False,
+                                  "known": new}
+                continue
         else:
             new, gone = sorted(set(now) - set(was)), sorted(set(was) - set(now))
             both = set(now) & set(was)
@@ -6627,8 +6774,10 @@ def baseline_diff(rows, base):
                     and f not in {x[0] for x in flipped}]
             grew = [g for g in grew if g[1]]
             same = len(both) - len(flipped) - len(grew)
-            out[r["name"]] = {"new": new, "gone": gone, "same": same, "notrun": False,
-                              "flipped": flipped, "grew": grew}
+            known = [f for f in new if ruled(f)] + [f for f, _ in grew if ruled(f)]
+            out[r["name"]] = {"new": [f for f in new if f not in known], "gone": gone,
+                              "same": same, "notrun": False, "flipped": flipped,
+                              "grew": [g for g in grew if g[0] not in known], "known": known}
             continue
         out[r["name"]] = {"new": new, "gone": gone, "same": same, "notrun": False}
     return out
@@ -6645,7 +6794,7 @@ def baseline_at(ctx, sha):
         return cur
     for old in reversed(cur.get("history") or []):
         if old and old.get("sha") == sha:
-            return old
+            return dict(old, known=cur.get("known") or {})    # rank 0's rulings are today's
     return cur
 
 
@@ -6661,6 +6810,7 @@ def baseline_line(d):
            ([f"same file, NEW fault(s): " + "; ".join(
                f"{f} " + ", ".join(f"{k} {w} → {n}" for k, w, n in ks)
                for f, ks in d["grew"])] if d.get("grew") else []) + \
+           ([f"known by rank 0's ruling: {', '.join(d['known'])}"] if d.get("known") else []) + \
            ([f"{d['same']} same"] if d["same"] else [])
     return "vs baseline: " + " · ".join(bits) if bits else ""
 
@@ -6674,7 +6824,7 @@ def diff_new(d):
 def baseline_summary(rep, base):
     """The verdict line for a report compared with the baseline."""
     diff = baseline_diff(rep.get("checks") or [], base)
-    known = sum(d["same"] for d in diff.values())
+    known = sum(d["same"] + len(d.get("known") or []) for d in diff.values())
     new = sum(diff_new(d) for d in diff.values())
     if new:
         return f"{new} NEW failure(s) against baseline {str(base.get('sha'))[:8]}"
@@ -6721,6 +6871,8 @@ def set_baseline(ctx, node, why):
         die(REFUSED, f"{partial_line(rep)}.\n           A baseline needs every arm run: "
                      f"release the hold (harness hold --list) and check again.")
     old = load_baseline(ctx)
+    if old:
+        old.pop("known", None)             # read live from known.json, never stored here
     base = {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "by": node, "node": node,
             "sha": sha, "why": why,
             "arms": {r["name"]: {"failed": r.get("exit") != 0,
@@ -6966,6 +7118,10 @@ def cmd_check(a):
     tree. A job runs only when someone submits it.
     """
     ctx = Ctx(); ctx.require_enrolled()
+    if getattr(a, "known", None) is not None:
+        # The owner may rule one from a shell; inside a session, rank 0 only.
+        node = ctx.node()[0] if os.environ.get("CLAUDE_CODE_SESSION_ID") else None
+        return cmd_known(ctx, node, a)
     node, _ = ctx.node()
     if a.set_baseline:
         return set_baseline(ctx, node, a.why)
@@ -6990,8 +7146,7 @@ def cmd_check(a):
         bad = [x for x in arms if x not in names]
         if bad:
             die(REFUSED, f"no arm {', '.join(bad)} in the manifest (arms: {', '.join(names)})")
-    queue = ("priority" if a.priority else "normal" if a.normal else
-             "priority" if role_of(ctx, node) in ("root", "lead") else "normal")
+    queue = "priority" if a.priority else "normal" if a.normal else default_queue(ctx, node)
     rc, dirt, _ = git("status", "--porcelain", "--untracked-files=no", cwd=ctx.worktree)
     if dirt.strip():
         die(REFUSED, f"{len(dirt.splitlines())} uncommitted change(s). The queue runs a copy of "
@@ -9968,19 +10123,28 @@ def reviewer_check_refused(ctx, n, tip):
     if ok:
         return False
     here = ctx.tree["nodes"].get(n, {}).get("parent")
-    lsha, inh, own = (inherited_reds(ctx, here, rep, tip)
-                      if rep is not None and rep.get("baseline") and not partial_line(rep)
-                      else (None, [], []))
-    if lsha and inh and not own:
+    full = rep is not None and rep.get("baseline") and not partial_line(rep)
+    lsha, inh, own = inherited_reds(ctx, here, rep, tip) if full else (None, [], [])
+    # Rank 0's named known reds are out of `own` already (baseline_diff); they
+    # are named here so the record says why it passed (log 184).
+    kc = [f"{arm}: {f}" for arm, d in baseline_diff(rep.get("checks") or [],
+                                                   baseline_at(ctx, rep.get("baseline"))
+                                                   ).items()
+          for f in d.get("known") or []] if full else []
+    if ((lsha and inh) or kc) and not own:
         # Recorded on the report, so the gate reads the same answer.
-        rec = dict(rep, inherited={"from": here, "at": lsha, "failures": inh, "own": 0,
-                                   "by": here, "when": _now()})
+        rec = dict(rep, inherited={"from": here, "at": lsha or sha, "failures": inh,
+                                   "known": kc, "own": 0, "by": here, "when": _now()})
         f = check_report_path(ctx, n, sha)
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(json.dumps(rec, indent=2) + "\n")
-        print(f"     {n:<12} its {len(inh)} new failure(s) fail the same in {here}'s own check "
-              f"at {lsha[:8]}: inherited, not the review's:\n     {'':<12} "
-              + "; ".join(inh))
+        if inh:
+            print(f"     {n:<12} its {len(inh)} new failure(s) fail the same in {here}'s own "
+                  f"check at {lsha[:8]}: inherited, not the review's:\n     {'':<12} "
+                  + "; ".join(inh))
+        if kc:
+            print(f"     {n:<12} {len(kc)} known by rank 0's ruling (harness check --known): "
+                  + "; ".join(kc))
         return False
     why = ("nothing has checked it" if rep is None else partial_line(rep) if partial_line(rep)
            else f"{rep.get('new')} new failure(s)" if rep.get("baseline")
@@ -14384,10 +14548,11 @@ def clear_wait(ctx, node, on=None):
 
 
 def wait_age(since):
-    """How long it has been stopped, in the units a person answers in."""
-    try:
-        t = time.mktime(time.strptime((since or "")[:19], "%Y-%m-%dT%H:%M:%S"))
-    except Exception:
+    """How long it has been stopped, in the units a person answers in. Through
+    `_epoch`, which reads the offset: cutting it off read a mark's `Z` time as
+    local, and every age ran 11 hours long under AEDT (log 182)."""
+    t = _epoch(since)
+    if t is None:
         return ""
     m = int(max(0, time.time() - t) // 60)
     return f"{m}m" if m < 60 else f"{m // 60}h{m % 60:02d}"
@@ -21975,7 +22140,13 @@ def main():
                          "Debian/Ubuntu), so bashisms such as $SECONDS read empty")
     ck.add_argument("--set-baseline", action="store_true",
                     help="record the failures in the report at HEAD as the known set")
-    ck.add_argument("--why", help="with --set-baseline: one line")
+    ck.add_argument("--why", help="with --set-baseline or --known: one line")
+    ck.add_argument("--known", nargs="?", const="", metavar="ARM:FILE",
+                    help="rank 0: rule one file's red known (with --report SHA, --why and "
+                         "--until-task/--until-ask), or list them with no value")
+    ck.add_argument("--drop", action="store_true", help="with --known ARM:FILE: drop it")
+    ck.add_argument("--until-task", metavar="TASK", help="with --known: cleared when it closes")
+    ck.add_argument("--until-ask", metavar="ID", help="with --known: cleared when it is ruled")
     ck.add_argument("--wait", action="store_true",
                     help="block until the queued run finishes and print its report")
     ck.add_argument("--arms", metavar="A,B",

@@ -126,11 +126,10 @@ def install_drift():
 
 
 def _wait_mins(since):
-    try:
-        t = time.mktime(time.strptime((since or "")[:19], "%Y-%m-%dT%H:%M:%S"))
-    except Exception:
-        return 0
-    return int(max(0, time.time() - t) // 60)
+    # The CLI's parse, which reads the offset (log 182: a `Z` time read as
+    # local made every wait 11 hours old).
+    t = CLI._epoch(since) if isinstance(since, str) else None
+    return int(max(0, time.time() - t) // 60) if t is not None else 0
 
 
 # Open asks, and the subset that is the owner's move. `asked` is open but still

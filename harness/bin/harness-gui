@@ -1693,7 +1693,9 @@ function card(n) {
   if (waitIn.length) sym.push('<span class="g wt2" data-tog="o:' + esc(key) + '"' +
     (waitIn.length === 1 ? pair(waitIn[0], n.name) : '') + ' title="' +
     esc(owe(null, 'answer').map(e => e.frm + ': ' + (e.what || '')).join('\n')) + '">&#9654;&#65038; ' +
-    (waitIn.length === 1 ? esc(waitIn[0]) + ' waits on you' : waitIn.length + ' wait on you') + '</span>');
+    // Both sides named: the reader is the owner, and "you" read as them.
+    (waitIn.length === 1 ? esc(waitIn[0]) + ' waits on ' : waitIn.length + ' wait on ') +
+    esc(n.name) + '</span>');
   const gateIn = names(inn.filter(e => e.kind === 'gate' && e.stops === 'start'));
   if (gateIn.length) sym.push('<span class="g hd2" data-tog="o:' + esc(key) + '"' +
     (gateIn.length === 1 ? pair(gateIn[0], n.name) : '') + ' title="' +

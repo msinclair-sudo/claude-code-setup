@@ -8457,6 +8457,101 @@ class Reports(Log185to190):
         self.assertIn("Part 1.", out)                           # the brief
         self.assertIn("1. dev_1 (requester): asked", out)
 
+    def publish(self, rid="rep-1"):
+        sc = hz.report_scratch(self.ctx.state, rid)
+        sc.mkdir(parents=True, exist_ok=True)
+        (sc / "report.html").write_text("<h1>done</h1>")
+        code, out = self.as_reporter(rid, "--publish", str(sc / "report.html"))
+        self.assertEqual(code, 0, out)
+
+    def test_present_waits_for_the_report_and_its_first_try_starts_it(self):
+        self.run_as("dev", "report", "t", "--request", "what the loader reads", **self.op)
+        self.assertEqual(self.run_as("dev_1", "mark", "t", **self.op)[0], 0)
+        self.commit("dev_1", "w.py")
+        code, out = self.run_as("dev_1", "mark", "t", "--done", "--note", "n", **self.op)
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("'t' presents once report rep-1 (gathering) is published", out)
+        self.assertIn("rep-1 asks you for part 1: what the loader reads", out)
+        self.assertEqual(self.rep()["state"], "gathering")
+        self.assertEqual([w[0] for w in self.woken], ["rep-1"])
+        self.assertFalse(self.said("dev_1", "asks for your part"))     # told in the refusal
+        self.assertEqual(self.run_as("dev_1", "report", "rep-1", "--part", "it reads x",
+                                     **self.op)[0], 0)
+        self.assertIn("presents once report rep-1 (composing)",
+                      self.run_as("dev_1", "mark", "t", "--done", "--note", "n", **self.op)[1])
+        self.publish()
+        self.assertTrue(self.said("dev_1", "present it now"))
+        code, out = self.run_as("dev_1", "mark", "t", "--done", "--note", "n", **self.op)
+        self.assertEqual(code, 0, out)
+
+    def test_sign_off_waits_for_a_report_asked_after_the_present(self):
+        self.started()
+        code, out = self.run_as("dev", "mark", "t", "--close", **self.op)
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("'t' is signed off once report rep-1 (gathering) is published", out)
+        self.assertEqual(self.run_as("dev", "mark", "t", "--close", "--force", **self.op)[0], 0)
+
+    def test_withdrawing_lifts_the_hold(self):
+        self.run_as("dev", "report", "t", "--request", "x", **self.op)
+        self.assertEqual(self.run_as("dev_1", "mark", "t", **self.op)[0], 0)
+        self.commit("dev_1", "w.py")
+        self.assertEqual(self.run_as("dev_1", "mark", "t", "--done", "--note", "n",
+                                     **self.op)[0], hz.REFUSED)
+        self.run_as("dev", "report", "rep-1", "--withdraw", "not needed", **self.op)
+        self.assertEqual(self.run_as("dev_1", "mark", "t", "--done", "--note", "n",
+                                     **self.op)[0], 0)
+
+    def test_a_closed_task_holds_nothing(self):
+        (self.ctx.dir / "marks" / "t.json").write_text(json.dumps(
+            {"_task": "t", "_node": "dev_1", "_closed_at": hz._now()}))
+        self.run_as("dev", "report", "t", "--request", "x", **self.op)
+        r = self.rep()
+        self.assertEqual((r["gate"], r["state"]), (None, "gathering"))
+        self.assertEqual([e for e in hz.waits(self.ctx, infer="off") if e["via"] == "report"], [])
+
+    def test_the_waits_read_node_report_contributor(self):
+        self.run_as("dev", "report", "t", "--request", "x", "--from", "dev:the plan", **self.op)
+        self.assertEqual(self.run_as("dev_1", "mark", "t", **self.op)[0], 0)
+        es = [(e["via"], e["frm"], e["on"], e["stops"]) for e in hz.waits(self.ctx, infer="off")
+              if e["via"].startswith("report")]
+        self.assertEqual(es, [("report", "dev_1", "report:rep-1", "present")])  # nobody asked yet
+        self.commit("dev_1", "w.py")
+        self.run_as("dev_1", "mark", "t", "--done", "--note", "n", **self.op)
+        es = [(e["via"], e["frm"], e["on"]) for e in hz.waits(self.ctx, infer="off")
+              if e["via"].startswith("report")]
+        self.assertEqual(sorted(es), [("report", "dev_1", "report:rep-1"),
+                                      ("report-part", "report:rep-1", "dev")])
+
+    def test_a_held_sign_off_is_owed_by_nobody_and_a_part_is_owed(self):
+        self.started()
+        old = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() - 3 * 3600))
+        m = self.ctx.dir / "marks" / "t.json"
+        m.write_text(json.dumps(dict(hz._read_json(m), _presented_at=old)))
+        es = [(e["via"], e["frm"], e["on"], e["stops"]) for e in hz.waits(self.ctx, infer="off")
+              if e["frm"] == "dev_1"]
+        self.assertEqual(es, [("report", "dev_1", "report:rep-1", "signoff")])  # not "signoff"
+        self.assertFalse(any(k.startswith("sign off:") for k in hz.owed_now(self.ctx, "dev")))
+        self.assertFalse(any(r[0] == "sign off" for r in hz.lead_owes(self.ctx, "dev")))
+        r = self.rep()
+        r["contributors"][0]["asked_at"] = old
+        hz._save(hz.report_path(self.ctx.state, "rep-1"), r)
+        (k, line), = [(k, v) for k, v in hz.owed_now(self.ctx, "dev_1").items()
+                      if k.startswith("report-part:")]
+        self.assertEqual(k, "report-part:rep-1:1")
+        self.assertIn("harness report rep-1 --part -", line)
+        self.assertTrue(hz.is_debt(k))
+
+    def test_orientation_says_what_is_asked_held_and_out(self):
+        self.started()
+        n = hz.report_notices(self.ctx, "dev_1")
+        self.assertIn("report-part:rep-1:1", n)
+        self.assertIn("report-hold:rep-1", hz.report_notices(self.ctx, "dev"))     # its sign-off
+        self.run_as("dev_1", "report", "rep-1", "--part", "p", **self.op)
+        self.publish()
+        for node in ("dev_1", "dev"):
+            self.assertIn("report-pub:rep-1", hz.report_notices(self.ctx, node))
+        self.assertEqual(hz.report_notices(self.ctx, "main"), {})
+
 
 class ReportHtml(unittest.TestCase):
     """What a published report may hold: nothing that runs, loads or submits."""

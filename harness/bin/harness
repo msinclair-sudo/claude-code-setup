@@ -1739,6 +1739,11 @@ def _whoami(a):
             print(f"owner    {line}")
     except Exception:
         pass
+    try:
+        for line in report_notices(ctx, node).values():
+            print(f"report   {line}")
+    except Exception:
+        pass
     # Orientation has just said all of it, so record it as told. Without this
     # the very next harness command would repeat the lot as "new" — and a
     # notice that arrives twice in a row is one a reader learns to skip, which
@@ -2094,6 +2099,16 @@ def cmd_status(a):
             print("  A path or permission: `harness grant <node> <path>` from rank 0 or a "
                   "shell, then recycle it.")
         print("  Every wait, and what its other side runs: harness waits")
+
+    try:
+        _reps = [r for r in reports_all(ctx.state) if r.get("state") in REPORT_OPEN]
+    except Exception:
+        _reps = []
+    if _reps:
+        print(f"\n  {len(_reps)} report(s) open (T20):")
+        for r in _reps:
+            print(f"    {report_line(r)}")
+        print("  harness report <id> --show")
 
     stale_m, unattr_m = orphan_marks(ctx)
     if stale_m or unattr_m:
@@ -2995,7 +3010,8 @@ def aux_session(ctx, row):
     if not repo:
         return False
     return (name in (intermediary_name(repo), documenter_name(repo))
-            or name.startswith(f"{Path(repo).name}-design-"))
+            or name.startswith(f"{Path(repo).name}-design-")
+            or name.startswith(f"{REPORTER}-{Path(repo).name}-"))
 
 
 def sessions_in(ctx, idx, node, rows=None, files=None):
@@ -3154,7 +3170,8 @@ def second_session(ctx, node=None, sid=None):
     the node's own session name is refused."""
     sid = sid or os.environ.get("CLAUDE_CODE_SESSION_ID")
     if not sid or os.environ.get("HARNESS_INTERMEDIARY") == "1" \
-            or os.environ.get("HARNESS_DOCUMENTER") == "1" or design_env():
+            or os.environ.get("HARNESS_DOCUMENTER") == "1" \
+            or os.environ.get("HARNESS_REPORTER") == "1" or design_env():
         return None
     try:
         node = node or ctx.node()[0]
@@ -3884,11 +3901,13 @@ def lead_owes(ctx, node):
     """
     owed, marks = [], open_marks(ctx)
     kids = ctx.children(node)
+    held = reports_holding(ctx)
     for t, r in marks.items():
         # A presentation with the reviewer is the reviewer's to read, not this
         # lead's to sign off (log 172); its review is owed here once presented.
+        # One a report holds (T20) waits on the report, not on this lead.
         if r.get("_node") in kids and r.get("_presented_at") and not r.get("_review_task") \
-                and not parked_task(ctx, r, t):
+                and not parked_task(ctx, r, t) and tkey(r.get("_task") or t) not in held:
             then = _epoch(r["_presented_at"])
             if then and time.time() - then > STALLED_SIGNOFF:
                 owed.append(("sign off", r["_node"], mark_label(r, t),
@@ -4064,6 +4083,9 @@ def owed_line(kind, child, task, age):
                   f"  — harness recycle {child} --force (not the owner's, log 125)",
         "limit": f"{child} stopped at its usage limit until {task}; the ringer restarts it "
                  f"then (log 122)",
+        "report part": f"report {child} asked you {human_age(age)} ago for your part: "
+                       f"\"{clip(task, 140)}\"  — harness report {child} --part - (or "
+                       f"--decline \"why\")",
         "unwoken": f"{child} has {task}; the ringer woke it and it has not read them"
                    f"  — harness status, then harness recycle {child}",
         "unanswered": f"{child} asked you {human_age(age)} ago and has had no reply; it is "
@@ -4197,10 +4219,12 @@ def owed_now(ctx, node):
     so the ringer can ask it every minute."""
     out = {}
     kids = set(ctx.children(node))
+    held = reports_holding(ctx)
     for t, r in open_marks(ctx).items():
-        # A presentation in review is the reviewer's (log 172).
+        # A presentation in review is the reviewer's (log 172); one a report
+        # holds waits on the report (T20).
         if r.get("_node") not in kids or not r.get("_presented_at") or r.get("_review_task") \
-                or parked_task(ctx, r, t):
+                or parked_task(ctx, r, t) or tkey(r.get("_task") or t) in held:
             continue                       # parked: waits on something else first
         then = _epoch(r["_presented_at"])
         if then and time.time() - then >= OWED_IDLE:
@@ -4226,6 +4250,11 @@ def owed_now(ctx, node):
                 "waiting", e["frm"], e["what"], time.time() - then if then else 0)
     except Exception:
         pass
+    for rp, c in report_parts_of(ctx, node):
+        then = _epoch(c.get("asked_at"))
+        if then and time.time() - then >= OWED_IDLE:
+            out[f"report-part:{rp['id']}:{c.get('n')}"] = owed_line(
+                "report part", rp["id"], c.get("what") or "", time.time() - then)
     try:
         for kind, ident, label, age in rank0_owes(ctx, node):
             if kind in ("review", "approve", "task"):
@@ -4534,6 +4563,7 @@ def queue_items(ctx, node):
     except Exception:
         pass
     out.update(ask_notices(ctx, node))     # T17: rulings, rejections, returns
+    out.update(report_notices(ctx, node))  # T20: parts asked, tasks held, reports out
     if ctx.rank(node) == 0:
         out.update(docs_notices(ctx))      # T18: batches applied or refused, said once
     if fam is None:
@@ -4550,7 +4580,8 @@ def queue_items(ctx, node):
                              "asleep:",
                              "ruled:", "rejected:",
                              "returned:",
-                             "docs:", "review:", "done:", "imask:", "sign off:"))
+                             "docs:", "review:", "done:", "imask:", "sign off:",
+                             "report-part:", "report-hold:", "report-pub:"))
             or in_focus(fam, task_of(k))}
     if len(kept) < len(out):
         kept[f"fold:{len(out) - len(kept)}"] = (f"+{len(out) - len(kept)} item(s) "
@@ -4569,7 +4600,7 @@ def queue_items(ctx, node):
 # a debt costs one line every DEBT_RENAG, not one line every turn.
 DEBT_RENAG = 10 * 60
 DEBT_KINDS = ("sign off:", "start:", "down:", "orphan:", "stuck:", "heavy:", "approve:", "task:", "asked:", "handed:",
-              "sweep:", "hold old:", "untraced:", "lingering:", "stale:")
+              "sweep:", "hold old:", "untraced:", "lingering:", "stale:", "report-part:")
 HOLD_OLD = 30 * 60      # a hold this old is asked about (log 92: one stood three hours over nothing)
 
 
@@ -4851,7 +4882,8 @@ def cmd_hook_stop(a):
         # documenter, the owner's own) is not the node, and until 2026-10-06 that
         # did not matter, because no block here ever took effect (see stop_block).
         if os.environ.get("HARNESS_INTERMEDIARY") == "1" or \
-                os.environ.get("HARNESS_DOCUMENTER") == "1" or design_env():
+                os.environ.get("HARNESS_DOCUMENTER") == "1" or \
+                os.environ.get("HARNESS_REPORTER") == "1" or design_env():
             return
         who = MAIL().owner(ctx.state, node)
         if who and sid and who != sid:
@@ -5352,6 +5384,24 @@ def cmd_mark(a):
                          f"of the diff.\n           harness mark {a.task} --done --applied "
                          f"{','.join(_uses) or 'ponytail-review'} --note \"<findings, the cuts "
                          f"made, what was not checked>\"")
+        # T20: a report asked for on this task is published before it presents.
+        # The first try starts it, so the parts describe finished work.
+        _rp = report_open_for(ctx, a.task)
+        if _rp:
+            for r in _rp:
+                if r["state"] == "requested":
+                    report_begin(ctx.state, ctx.repo, r, f"{node} tried to present {a.task}",
+                                 skip=node)
+            _mine = [(r, c) for r in _rp for c in r.get("contributors") or []
+                     if c.get("node") == node and c.get("state") == "asked"]
+            die(REFUSED, f"'{a.task}' presents once report "
+                         + ", ".join(f"{r['id']} ({r['state']})" for r in _rp)
+                         + " is published.\n" + "".join(
+                             f"           {r['id']} asks you for part {c['n']}: {c['what']}\n"
+                             f"             harness report {r['id']} --part - <<'EOF' … EOF  "
+                             f"(figures: --asset FILE)\n" for r, c in _mine)
+                         + "           Then end your turn: you are rung when it is published, "
+                           "and present then.")
         # Presenting must not be blocked by an unmeasurable cost either. A
         # member that cannot present is a member whose finished work is
         # invisible to everyone above it, which is a strictly worse outcome
@@ -5637,6 +5687,15 @@ def cmd_mark(a):
         if rec.get("_closed_at") and not a.force:
             die(REFUSED, f"'{a.task}' was closed at {rec['_closed_at']} — "
                          f"--force to close it again")
+        _rp = report_open_for(ctx, a.task)
+        if _rp and not a.force:
+            for r in _rp:
+                if r["state"] == "requested":
+                    report_begin(ctx.state, ctx.repo, r, f"{node} tried to sign off {a.task}")
+            die(REFUSED, f"'{a.task}' is signed off once report "
+                         + ", ".join(f"{r['id']} ({r['state']})" for r in _rp)
+                         + " is published; you are rung then.\n           harness report "
+                         + _rp[0]["id"] + " --show. --force signs off without it.")
         _pend = check_pending(ctx, rec.get("_after_check"))
         if _pend and not a.force:
             die(REFUSED, f"'{a.task}' was presented to be signed off after its check "
@@ -15094,6 +15153,10 @@ def waits(ctx, rows=None, infer="cache", stops=None, about=None, rings=True):
 
     # gate: what a brief waits on before it starts, or a segment before it closes
     marks = open_marks(ctx)
+    reps = {}                                           # T20: open reports, by task
+    for r in reports_all(ctx.state):
+        if r.get("state") in REPORT_OPEN:
+            reps.setdefault(tkey(r.get("task") or ""), []).append(r)
     for key, b in all_briefs(ctx).items():
         task, x = b.get("task") or key, b.get("node")
         if not x or superseded(b):
@@ -15142,6 +15205,11 @@ def waits(ctx, rows=None, infer="cache", stops=None, about=None, rings=True):
                 ref = r.get("ref") if isinstance(r, dict) else r
                 add("gate", "requires", x, f"commit:{ref}", frm_task=task, stops="present",
                     what=f"presents once its HEAD holds {ref}")
+            for rp in reps.get(tkey(task), []):
+                add("gate", "report", x, f"report:{rp['id']}", frm_task=task, on_task=rp["id"],
+                    stops="present", since=rp.get("requested_at"),
+                    what=f"presents once report {rp['id']} is published ({rp['state']})",
+                    act=f"harness report {rp['id']} --show")
         w = deferral(b)
         if parked(b) and st not in TASK_ENDED:
             # Deferred on an event names what it waits on; on prose, nobody.
@@ -15160,6 +15228,13 @@ def waits(ctx, rows=None, infer="cache", stops=None, about=None, rings=True):
             add("gate", "review", w, reviewer_of(ctx, lead) or lead, frm_task=r.get("_task") or stem,
                 on_task=r["_review_task"], stops="signoff", since=r.get("_presented_at"),
                 what=f"in review as {r['_review_task']}")
+        elif lead and reps.get(tkey(r.get("_task") or stem)):
+            # A report asked for on it (T20): its sign-off waits for the report.
+            for rp in reps[tkey(r.get("_task") or stem)]:
+                add("gate", "report", w, f"report:{rp['id']}", frm_task=r.get("_task") or stem,
+                    on_task=rp["id"], stops="signoff", since=rp.get("requested_at"),
+                    what=f"signed off once report {rp['id']} is published ({rp['state']})",
+                    act=f"harness report {rp['id']} --show")
         elif lead and check_pending(ctx, r.get("_after_check")):
             # Presented to be signed off after its own check (log 187): the
             # lead owes nothing until the check reports.
@@ -15172,6 +15247,20 @@ def waits(ctx, rows=None, infer="cache", stops=None, about=None, rings=True):
                 since=r.get("_presented_at"), what="presented, awaiting sign-off",
                 act=f"harness mark {r.get('_task') or stem} --close",
                 id=f"sign off:{w}:{r.get('_task') or stem}:{r.get('_presented_sha')}")
+
+    # answer: the parts a report has asked for and not had (T20)
+    for rs in reps.values():
+        for rp in rs:
+            if rp["state"] == "requested":
+                continue                                # nobody asked yet
+            for c in rp.get("contributors") or []:
+                if c.get("state") != "asked":
+                    continue
+                add("answer", "report-part", f"report:{rp['id']}", c["node"],
+                    frm_task=rp["id"], what=c.get("what") or "", since=c.get("asked_at"),
+                    stale=None if c["node"] in nodes else f"{c['node']} is not a node any more",
+                    act=f"harness report {rp['id']} --part <file>",
+                    id=f"report-part:{rp['id']}:{c.get('n')}")
 
     # lock: a file held from the checks that read it, a merge frozen
     for h in live_holds(ctx):
@@ -17146,6 +17235,8 @@ def session_slot(ctx, r, wts, prefix):
     im = intermediary_name(ctx.repo)
     if name == im or name.startswith(im + "-"):
         return "intermediary"
+    if name.startswith(f"{REPORTER}-{Path(ctx.repo).name}-"):
+        return "reporter"
     if not name.startswith(prefix):
         return None
     if cwd in wts:
@@ -19793,6 +19884,63 @@ def reports_all(pdir):
     return sorted(out, key=lambda r: int(r["id"][4:]) if r["id"][4:].isdigit() else 0)
 
 
+def reports_holding(ctx):
+    """The tasks an open report holds, as tkeys."""
+    try:
+        return {tkey(r.get("task") or "") for r in reports_all(ctx.state)
+                if r.get("state") in REPORT_OPEN}
+    except Exception:
+        return set()
+
+
+def report_parts_of(ctx, node):
+    """[(report, contributor)]: the parts asked of `node` and not yet sent."""
+    try:
+        return [(r, c) for r in reports_all(ctx.state)
+                if r.get("state") in ("gathering", "composing")
+                for c in r.get("contributors") or []
+                if c.get("node") == node and c.get("state") == "asked"]
+    except Exception:
+        return []
+
+
+def report_notices(ctx, node):
+    """Orientation lines (T20), {id: line}: a part asked of this node, its task
+    held by a report, and a report on its work published in the last day."""
+    out = {}
+    try:
+        nodes = ctx.tree["nodes"]
+        for r in reports_all(ctx.state):
+            rid, t, st = r["id"], r.get("task"), r.get("state")
+            lead = (nodes.get(r.get("node")) or {}).get("parent")
+            if st in ("gathering", "composing"):
+                for c in r.get("contributors") or []:
+                    if c.get("node") == node and c.get("state") == "asked":
+                        out[f"report-part:{rid}:{c.get('n')}"] = (
+                            f"report {rid} on {t} asks you for your part: "
+                            f"{clip(c.get('what') or '', 100)}  — harness report {rid} "
+                            f"--part - (or --decline \"why\")")
+            if st in REPORT_OPEN and r.get("gate"):
+                if r.get("node") == node and r["gate"] == "present":
+                    out[f"report-hold:{rid}"] = (
+                        f"'{t}' presents once report {rid} is published ({st})"
+                        + ("; it starts at your first try to present" if st == "requested"
+                           else ""))
+                elif lead == node and r["gate"] == "signoff":
+                    out[f"report-hold:{rid}"] = (
+                        f"{r.get('node')}'s '{t}' is signed off once report {rid} is "
+                        f"published ({st}); you are rung then")
+            if st == "published" and node in (r.get("node"), lead, r.get("requester_node")):
+                at = _epoch((r.get("published") or {}).get("at")) or 0
+                if time.time() - at < 86400:
+                    out[f"report-pub:{rid}"] = (
+                        f"report {rid} on {t} is published; the owner reads it in the "
+                        f"viewer  — harness report {rid} --show")
+    except Exception:
+        pass
+    return out
+
+
 def report_open_for(ctx, task):
     """The open reports on a task: what holds its present or its sign-off."""
     k = tkey(task or "")
@@ -19905,15 +20053,16 @@ def brief_report(ctx, a):
           + ", ".join(c["node"] for c in rec["contributors"]) + " for parts")
 
 
-def report_begin(pdir, repo, rec, why):
-    """Gathering starts: every contributor asked is rung, and the session woken."""
+def report_begin(pdir, repo, rec, why, skip=None):
+    """Gathering starts: every contributor asked is rung (but `skip`, told
+    already), and the session woken."""
     if rec.get("state") == "requested":
         rec["state"] = "gathering"
         rec["started_at"] = _now()
         _report_log(rec, "harness", why)
         _save(report_path(pdir, rec["id"]), rec)
         for c in rec.get("contributors") or []:
-            if c.get("state") == "asked":
+            if c.get("state") == "asked" and c.get("node") != skip:
                 report_ring_part(pdir, rec, c)
     report_wake_detached(pdir, rec["id"], f"Report {rec['id']} on {rec['task']}: {why}. "
                                           f"Start with harness report {rec['id']} --show.")
@@ -22603,6 +22752,13 @@ def cmd_ringer(a):
                         print(f"{_now()} {what} {i}: {why}")
                 except Exception as e:
                     print(f"{_now()} waits not settled: {type(e).__name__}: {e}")
+                # A report queued behind the cap, or whose wake failed, starts
+                # when there is room (T20); nothing else would start it.
+                try:
+                    if any((Path(ctx.state) / "reporter").glob("*/inbox.jsonl")):
+                        _intermediary_bg(ctx.state, ["--next"], sub="report")
+                except Exception as e:
+                    print(f"{_now()} queued reports not started: {type(e).__name__}: {e}")
             # Finished turns that wait on someone, read once here for every
             # hook (owner, 2026-10-16: one wait relation, `waits`).
             if time.time() - S.get("_infer_at", 0) >= NUDGE_EVERY:

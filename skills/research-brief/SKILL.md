@@ -259,11 +259,27 @@ Running a brief uses the workflow shipped with this skill, `workflows/research-r
    - `size`: `quick`, `standard` or `deep`.
    - `angles`: for deep, `[{ "name": "...", "vocabulary": "..." }]`, from DISPATCH.
    - `extra`: the DISPATCH extra instructions, as a list of strings (may be empty).
-3. **Batches:** run each brief as its own workflow call. Independent briefs can run concurrently; briefs with a batch order wait for their predecessor.
+3. **Batches:** run each brief as its own workflow call, **one at a time**, with a 15-minute gap after each, and say the pacing and the expected total time before starting. In September 2026, five deep runs in parallel hit the account's usage limit within the hour, and three lost their synthesis after their searches were paid for. A session also has a web-search budget (200 by default, `CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION`), and a whole round run from one session spends it in the first half hour, after which every later run searches nothing and says so only in its search record. For more than a few deep briefs, run each from a fresh headless session, or use the harness (below). Briefs with a batch order wait for their predecessor.
 4. **On return,** write the result note from `references/result-note-template.md`. If `critique.answers_supported` is `partial` or `no`, lead with the critic's reformulated answers. Report the access basis (`accessCounts` for deep runs, each answer's `access_basis` otherwise). Then check the ROUTING stage-2 condition against `critique.coverage_gaps` and tell the user whether it fired.
 5. **Reading the answers against ROUTING** is where the human's expectation meets the evidence. Read the critic's block and the access counts before the answers, and note in the consuming decision where the evidence rests on abstracts or secondary accounts.
 
 ---
+
+## Inside a harness project
+
+In a project run by the agent workstream harness, write the brief with this skill, then hand it to the harness instead of dispatching it yourself. Never call the Workflow tool from a node.
+
+```bash
+harness research <task> --write briefs.md     # every `#### <ID>` block in the file
+```
+
+The harness keeps the three parts apart on the record and assembles the agent text itself, typing the fixed sentences. It runs Check 1 at write time, extended to the project's own names, and refuses the whole file if one brief fails. It runs Check 3 (the blind preflight) as its first stage, and you accept each direction against your ROUTING with `--accept`. Check 2 (consistency by eye) is still yours.
+
+The rest is the harness's:
+- **Approval:** rank 0 approves quick and standard runs; the owner approves deep ones.
+- **The run:** one machine-wide runner, one stage at a time, each stage a fresh session with its own search budget, pacing itself and waiting out usage limits.
+- **The result:** the note is rendered from the stages, as `references/result-note-template.md` lays out, and committed to the project.
+- **The stage-2 call** is yours when you record your reading: `harness research <id> --consumed "…" --stage2 none|"why"`.
 
 ## Worked example (a brief that passes)
 

@@ -186,6 +186,20 @@ A report session gathers the parts (the task's node by default), asks anyone els
 - **Already presented:** your sign-off waits for it. Nothing rings you for that sign-off meanwhile, `--close` refuses, and `--force` signs off without the report.
 - **Published:** you are rung.
 
+## Research (`T21`)
+
+A child may write research for a decision on its task (`harness research <task> --write FILE`), and so may you, on any task below you. Its present is held from approval until it has read the result on the record, when the research feeds a citation, limitation or design. Its Stop hook won't ask for that present meanwhile.
+
+```bash
+harness research --list               # this project's research, and the machine's queue
+harness research res-4 --show         # ROUTING is shown to you: you are above its writer
+harness research res-4 --want         # ring me when it lands
+harness research res-4 --withdraw "why"
+harness brief <task> --defer "until its evidence is in" --defer-until-research res-4
+```
+
+Research is not a way to ask questions of the code or the tree. It is for evidence that exists outside the project, gathered by agents that know nothing of it.
+
 ## Signing off
 
 ```bash

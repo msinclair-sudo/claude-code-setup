@@ -168,6 +168,27 @@ Someone may ask for an HTML report on a task of yours: its brief says so ("carri
 - **Then end your turn,** or carry on with other work. You are rung when the report is published; present then.
 - **A part is owed.** After five quiet minutes the ringer reminds you once.
 
+## Research for a decision on your task (`T21`)
+
+When a decision on your task needs evidence from outside the code (published work, field practice, what has been measured), don't search from your own session: you know the design, and what you find will be shaped like it. Write a research brief with the `research-brief` skill, then record it:
+
+```bash
+harness research <task> --write round.md     # one or more `#### <ID>` blocks: AGENT BRIEF, ROUTING, DISPATCH
+harness research res-4 --show                # what the agents get, the blind reader's guesses beside your ROUTING
+harness research res-4 --accept D1 "the reader guessed a gradient; ROUTING expects none"   # each direction, or `all`
+```
+
+- **The lint refuses** anything an agent would read that names the project: its repo, nodes, tasks, branches, coined terms, or an expected answer. Put all of that in ROUTING. Nothing is recorded until every brief in the file passes.
+- **A blind reader goes first.** If it recovers your design or an expected answer, rewrite and `--write` again; otherwise accept each direction and say why. Rank 0 approves quick and standard runs, and the owner approves deep ones.
+- **Your present is held** from approval until you have read the result, when the research feeds a citation, limitation or design. `--done` says where it stands. Go on with other work; nothing asks you to present meanwhile.
+- **When it lands** (on rank 0's branch: catch up to read it), read the critique before the answers, then record what it changed, direction by direction:
+
+  ```bash
+  harness research res-4 --consumed "D1: no direct comparison; the claim stays a limitation. D2 sizes the bias as small." --stage2 none
+  ```
+
+  A follow-up is a new brief that stands alone: `--write FILE --follows res-4`. It may not carry the earlier answers forward.
+
 ## Documents (`T5`)
 
 You never commit a document. Submit the change as data, a JSON list of `{file, old, new, why}` on stdin: `harness pairs submit - --task <task> <<'EOF' … EOF`. Each `old` must occur exactly once on the document branch, byte-exact, so send whole paragraphs; a refusal shows the nearest line. Rank 0 applies the batch whole or not at all.

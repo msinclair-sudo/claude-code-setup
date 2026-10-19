@@ -503,7 +503,73 @@ An `<a href>` may go to an anchor, a figure, or an http(s) page. SVG figures pas
 
 **Why this shape.** I9 refuses progress reporting: it costs the member effort and returns summaries that conceal problems, sent to a lead who can't act on them. A report here is the opposite case. Someone asks for it by name, on one step, and means to read it and act. It holds the step so it can't be skipped, and it is written by a session of its own so composing it spends neither the lane's context nor its lead's. The parts come from the nodes that did the work, attributed, beside the report session's own reading of the code.
 
+**Research.** A report session's `--show` lists the research landed on its task (T21), and landing wakes a report still gathering.
+
 **Enforcement** `--ask`, `--publish`, `--note` and `--idle` need `HARNESS_REPORTER` and the session's own `HARNESS_REPORT`, set through `--settings`. The session runs `--restricted` with read tools: `Bash` is allowed only for `harness report` and read-only git, and `Edit` only in its scratch folder under `~/.cache/harness/reports/`; it has no `SendMessage`. `--publish` takes files only from that folder or the contributors' parts. The viewer serves `/report/<slug>/<id>/[file]` only for a published record, only its page and the figures its record lists, and only from that report's `pub/`. It serves them under `default-src 'none'; … sandbox`, with images from that report alone, so even markup the check missed can't run, load or submit. The Reports tab shows the page in a sandboxed frame, with what was asked and each part's state; a node card carries a chip for each report in progress or unread.
+
+### T21 — Research is gathered blind, one run at a time, and read on the record
+
+**Direction** out of the tree and back. A node writes the brief; agents that know nothing of the project answer it; the result lands on rank 0's branch for every node, and its writer says on the record what it changed.
+**Rule** A node that needs outside evidence for a decision on its task writes a research brief with the `research-brief` skill and records it: `harness research <task> --write FILE|-` (the task's node, a lead above it, rank 0, or the owner). The file holds one or more `#### <ID>` blocks, each with its AGENT BRIEF, ROUTING and DISPATCH parts, as the skill's template and the owner's vault rounds are written. Each becomes `research/res-<n>.json`.
+
+The steps, each on the record:
+1. **Lint, at write time.** A brief that fails is refused, and so is the whole file; nothing is recorded.
+2. **A blind preflight.** One agent reads the agent text alone and guesses the design it serves and the answer hoped for in each direction. The writer compares that with its ROUTING and accepts each direction with a reason (`--accept D1 "why"`, or `all`), or rewrites. Any change to the agent text discards the reading; a change to ROUTING alone keeps it but clears the acceptances.
+3. **Approval.** Rank 0 approves a quick or standard run (or the owner does); a deep run is the owner's alone, in the viewer or a shell. `--decline "why"` ends it.
+4. **The run.** One runner on the machine, in the queue's order (`Batch order: runs after X` holds a brief until X lands).
+5. **Landing.** The result and its brief are committed onto rank 0's branch, under `research/results/` and `research/briefs/` (`.harness/research.json` moves them).
+6. **The reading.** The writer records what the result changed against its ROUTING, and whether a follow-up is needed: `--consumed "…" --stage2 none|"why"`. A follow-up is a new brief that stands alone (`--follows res-N` refuses one that shares an eight-word run with the answers it follows).
+
+**What reaches an agent.** Only the AGENT BRIEF, assembled by the harness from its fields, plus any DISPATCH extra instructions and the skill's researcher protocol. The harness types the fixed sentences itself, once: the evidence line, the out-of-scope block and the deliverable. ROUTING never leaves the record: `--show` prints it to the writer, its leads, rank 0 and the owner, and the viewer shows it to the owner beside the blind reader's guess. The lint refuses, in every word a writer typed that an agent will read:
+- wikilinks, self-reference ("our hypothesis", "this study"), and "project" outside the out-of-scope guard;
+- dashes, and the fixed evidence line repeated;
+- outcome language, a lone null included ("may not exist");
+- out-of-scope text that rules evidence out;
+- the project's own names: the repository, node, branch and task names, charter features, and top-level paths that carry a separator or digit, plus `.harness/research-terms.txt` (the owner's house terms).
+
+It reports plain-word node names and one-way comparisons for the writer to judge. It checks that the triage count, the directions and the ROUTING lines agree, that a deep run has two angles or more, and that a run feeding a citation, limitation or design is at least standard.
+
+**The runner.** One per machine, because the usage limit is the account's. It runs one stage at a time across every project: preflight, researcher, critic, or for deep one search per angle, then synthesis, then critic. Briefs are 15 minutes apart and stages a minute apart (`research/config.json` under the harness home). Each stage is its own headless session:
+- `claude -p --safe-mode --restricted --strict-mcp-config --disable-slash-commands` (never `--bare`, which drops the OAuth login);
+- in an empty scratch folder outside every repository;
+- with its own web-search budget, and `--json-schema` for the stage's shape (the shapes are `research-run.js`'s, and a test keeps them equal).
+
+What happens when a stage goes wrong:
+- **A usage limit:** it sleeps until the reset the message names (an hour when it names none), and costs the stage no attempt.
+- **A safety refusal:** it is retried twice. A refused angle or critic is then named in the result, and a refused researcher fails the run.
+- **A stage that dies:** finished stages are kept, so a run resumes where it stopped.
+
+Every stage's cost, tokens and searches go to the record and to `research/ledger.jsonl`. A stage that ran no search is named in the result.
+
+**The result** is rendered by the CLI from the stages' raw output, never written by an agent: provenance, access and cost first, then the critic's block and full findings, then the answers, then the critic's coverage gaps for the writer's stage-2 call, then the sources not obtained and the review.
+
+**Landing** runs in rank 0's own checkout:
+- `git add` and `git commit --only -- <the two paths>`, so rank 0's staged and unstaged work stays as it was;
+- paths already taken get ` (2)`;
+- it is deferred, retried every ten minutes, and said once to rank 0, while rank 0 is mid-merge or mid-rebase, while an integration runs (`integrate.lock`, which `integrate` holds for its run), or while the configured folder is gitignored or a document path rank 0 may not author.
+
+Landing rings the writer, any node that asked with `--want`, and rank 0 with an FYI, and wakes a report gathering on the task.
+
+**Why this shape.** The skill guards against the brief carrying its design to the agents, so the evidence comes back shaped like the design. Its guards were the writer's discipline; here they are the record's. The agents receive text the harness assembled, and ROUTING has no path to them.
+
+The rest is September 2026, when the owner's 29-brief round ran through one long session:
+- **The usage limit:** parallel deep runs hit it, and three syntheses were lost after their searches had been paid for.
+- **The search cap:** the session's 200 web searches were gone in half an hour, and later runs had none, silently.
+- **Safety refusals:** they emptied whole angles.
+- **Stage 2:** its follow-up condition fired on 28 of 30 results, so it carried no information.
+- **The reading:** after three weeks none of the 30 results had been read into the notes they were written for.
+
+So the runner works one stage at a time, each stage in a fresh session with its own budget, says what it could not do, and leaves the stage-2 call and the reading to the writer, on the record.
+
+**The task waits for its research.** Research that feeds a citation, limitation or design holds its task's present from approval until it is read or withdrawn. The refusal says where the research stands: its place in the queue, its stage, landing, or unread. The Stop hook does not ask for a held present meanwhile (`unreported()` skips it; a started report's hold is skipped the same way). Orientation-only research, and research not yet approved, hold nothing. `brief --defer … --defer-until-research res-N` lifts when it lands.
+
+**Who owes what, on the wait graph:** `waits` reads node → `research:<id>` → rank 0 or the owner (approval), the clock (queued or running), or the writer (accept the preflight; read the result).
+- **The writer** is rung for its two acts after five quiet minutes.
+- **Rank 0** gets a stalled quick or standard approval on its `approve` line.
+
+`--withdraw "why"` (the writer, a lead above the task, rank 0, the owner) ends research that has not landed.
+
+**Enforcement** `research_write` refuses lint failures before anything is saved. Approval checks rank and size: rank 0's session can't approve a deep run. The runner's environment drops the session's and project's variables, and its stage commands carry `--safe-mode --restricted` and no `--add-dir`. The viewer's Research tab lists every record with its stages, cost and queue place, and the per-direction table: the text sent, ROUTING, the reader's guess, the acceptance. Approve, decline and withdraw go through the CLI as the owner's. It serves `/research/<slug>/<id>/brief|result` as `text/plain` under `default-src 'none'; sandbox`, for records only. Measured 2026-10-20 in a scratch project with the guards live and a stand-in `claude`: two briefs written, read blind, accepted, approved and run one stage at a time; both landed on main as two-file commits, with rank 0 a code node and its staged and edited files untouched; no stage saw ROUTING or ran inside the repository.
 
 ## Invariants
 
@@ -805,7 +871,7 @@ This bounds a lead's knowledge to *k* interfaces rather than *k* implementations
 
 Understanding gained here also travels upward. A lead that reviewed its children's approaches can answer for its subtree at the rank above, which is what makes a [[#T8 — Deep conflict]] resolvable from a ledger read instead of a fetch down the tree.
 
-**Not adopted, deliberately.** Progress reporting: it costs the member real effort and returns fluent summaries that conceal problems, and a lead that cannot act on a report should not receive one. Diff review at integration: it scales with code volume rather than with interfaces, and a lead that writes no code is a poor reviewer of code. T4 stays mechanical. A report someone asks for on one named task, and acts on, is a different thing, and is [[#T20 — A report is a deliverable someone asked for, on one named task]].
+**Not adopted, deliberately.** Progress reporting: it costs the member real effort and returns fluent summaries that conceal problems, and a lead that cannot act on a report should not receive one. Diff review at integration: it scales with code volume rather than with interfaces, and a lead that writes no code is a poor reviewer of code. T4 stays mechanical. A report someone asks for on one named task, and acts on, is a different thing, and is [[#T20 — A report is a deliverable someone asked for, on one named task]]. So is evidence gathered from outside the tree for one decision, [[#T21 — Research is gathered blind, one run at a time, and read on the record]].
 
 ### I8 — Tasks are short
 

@@ -84,6 +84,10 @@ Each open item gets its own intermediary session, and the commands show in the o
 
 You may ask for a report on any task in the tree: `harness report <task> --request "what it should cover" [--from NODE:WHAT]`, or `--report` on a brief you write. The owner asks from a task's sheet in the viewer. Each report has its own session, holds the task's present (or its sign-off) until it is published, and lands in the viewer's Reports tab. Ask only when someone will act on what it says (I9); `--withdraw "why"` takes it back. The commands and rules are in `harness-downward`.
 
+## Research approvals (`T21`)
+
+A node's research brief, once its writer has accepted the blind reader's guesses, waits on approval. Quick and standard runs are yours: `harness research res-4 --show`, then `--approve` or `--decline "why"`. You are rung when one waits, and your Stop hook names it after an hour. A deep run (four or five sessions, about 25 minutes) is the owner's, in the viewer; you can't approve it. Read the table first: if the reader recovered the design or an expected answer and the writer accepted it anyway, decline with the reason. Results land on your branch as their own commits, each holding only its result and brief. Landing waits while you are mid-merge or integrating, and never touches your staged or edited files.
+
 ## Blocks: comments and closing them
 
 Operator comments on any block come to you, not the lane. `whoami` reports unread ones.

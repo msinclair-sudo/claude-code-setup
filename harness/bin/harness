@@ -22022,12 +22022,24 @@ def research_outcome(rc, stdout, stderr, now=None):
         d = {}
     text = " ".join(str(x) for x in (d.get("result"), d.get("error"), stderr) if x)
     u = d.get("usage") or {}
+    st = u.get("server_tool_use") or {}
+    # Searches run on a helper model and are counted under modelUsage, not the
+    # top-level usage (measured 2026-10-20: 4 searches there, 0 here); so are
+    # its tokens.
+    mu = {k: v for k, v in (d.get("modelUsage") or {}).items() if isinstance(v, dict)}
+    searches = None
+    if mu or st:
+        searches = max(sum(int(v.get("webSearchRequests") or 0) for v in mu.values()),
+                       int(st.get("web_search_requests") or 0))
+    tokens = (sum(int(v.get(k) or 0) for v in mu.values() for k in (
+        "inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens"))
+        if mu else sum(int(u.get(k) or 0) for k in (
+            "input_tokens", "output_tokens", "cache_read_input_tokens",
+            "cache_creation_input_tokens")))
     meta = {"cost_usd": d.get("total_cost_usd"), "turns": d.get("num_turns"),
-            "secs": round((d.get("duration_ms") or 0) / 1000),
-            "tokens": sum(int(u.get(k) or 0) for k in (
-                "input_tokens", "output_tokens", "cache_read_input_tokens",
-                "cache_creation_input_tokens")),
-            "searches": ((u.get("server_tool_use") or {}).get("web_search_requests")),
+            "secs": round((d.get("duration_ms") or 0) / 1000), "tokens": tokens,
+            "searches": searches, "fetches": st.get("web_fetch_requests"),
+            "denied": len(d.get("permission_denials") or []),
             "subtype": d.get("subtype"), "rc": rc}
     out = d.get("structured_output")
     if not isinstance(out, dict) and isinstance(d.get("result"), str):
@@ -22108,6 +22120,28 @@ def research_run_stage(pdir, rec, stage, cfg, runner=None):
     raw = research_dir(pdir, rec["id"]) / "stages" / f"{stage}.attempt{st['attempts']}.json"
     raw.parent.mkdir(parents=True, exist_ok=True)
     raw.write_text((so or "")[:2 * 2**20] + ("\n--- stderr ---\n" + se[:20000] if se else ""))
+    research_tidy(cwd, raw)
+    return research_result_logged(pdir, rec, stage, res)
+
+
+def research_tidy(cwd, raw):
+    """A stage's session leaves its transcript under ~/.claude/projects, in a
+    folder named for its scratch cwd: one folder per stage, forever. Keep the
+    transcript beside the stage's raw output (what a refusal is read from),
+    then remove that folder and the scratch."""
+    pd = PROJECTS / slug(cwd)
+    if pd.is_dir() and pd.name.startswith(slug(RESEARCH_SCRATCH)):
+        for i, t in enumerate(sorted(pd.glob("*.jsonl"))):
+            try:
+                shutil.copyfile(t, raw.with_name(raw.stem + (f".transcript{i or ''}.jsonl")))
+            except OSError:
+                pass
+        shutil.rmtree(pd, ignore_errors=True)
+    shutil.rmtree(cwd, ignore_errors=True)
+
+
+def research_result_logged(pdir, rec, stage, res):
+    """One ledger row per attempt, whatever it came to."""
     research_ledger({"slug": Path(pdir).name, "id": rec["id"], "stage": stage,
                      "outcome": "ok" if res.get("ok") else "limit" if "limit" in res
                      else "refused" if res.get("refused") else "error",
@@ -22121,7 +22155,8 @@ def research_stage_done(pdir, rec, stage, out, meta, refused=None):
           {"out": out, "meta": meta, "refused": refused})
     st = rec.setdefault("stages", {}).setdefault(stage, {"attempts": 0})
     st.update(state="refused" if refused else "done", at=_now(), **{
-        k: meta.get(k) for k in ("cost_usd", "tokens", "secs", "searches", "turns")})
+        k: meta.get(k) for k in ("cost_usd", "tokens", "secs", "searches", "fetches", "denied",
+                                 "turns")})
     if refused:
         st["refused"] = refused
     rec["cost_usd"] = round(sum(float(s.get("cost_usd") or 0)

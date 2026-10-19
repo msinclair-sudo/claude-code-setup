@@ -9719,6 +9719,33 @@ class ResearchRunner(ResearchFlow):
                                                "result": "rate limited"}), "")
         self.assertIn("limit", o)
         self.assertIsNone(o["limit"])                            # no time said: an hour, later
+        # Searches are counted on the helper model, under modelUsage (measured on
+        # a real run, 2026-10-20: 4 there, 0 in usage.server_tool_use).
+        o = hz.research_outcome(0, json.dumps({
+            "structured_output": {"a": 1}, "usage": {"server_tool_use": {
+                "web_search_requests": 0, "web_fetch_requests": 2}},
+            "modelUsage": {"opus": {"inputTokens": 20, "outputTokens": 10,
+                                    "webSearchRequests": 0},
+                           "haiku": {"inputTokens": 100, "webSearchRequests": 4}},
+            "permission_denials": [{"tool_name": "Bash"}]}), "")
+        self.assertEqual({k: o["meta"][k] for k in ("searches", "fetches", "denied", "tokens")},
+                         {"searches": 4, "fetches": 2, "denied": 1, "tokens": 130})
+
+    def test_a_stages_session_folder_is_kept_and_removed(self):
+        projects = self.home / "projects"
+        with mock.patch.object(hz, "PROJECTS", projects):
+            cwd = hz.research_scratch(self.ctx.state, "res-1", "researcher")
+            cwd.mkdir(parents=True)
+            pd = projects / hz.slug(cwd)
+            (pd / "tool-results").mkdir(parents=True)
+            (pd / "abc.jsonl").write_text('{"type": "user"}\n')
+            raw = self.home / "stages" / "researcher.attempt1.json"
+            raw.parent.mkdir()
+            hz.research_tidy(cwd, raw)
+        self.assertFalse(pd.exists())
+        self.assertFalse(cwd.exists())
+        self.assertEqual((raw.parent / "researcher.attempt1.transcript.jsonl").read_text(),
+                         '{"type": "user"}\n')
 
 
 class ResearchGate(ResearchFlow):

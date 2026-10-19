@@ -20,6 +20,9 @@ from unittest import mock
 # Every mail write starts the project's ringer when none runs (log 134). No
 # test may start a real daemon.
 os.environ["HARNESS_NO_RINGER"] = "1"
+# Nor the research runner (T21): the first draft of its tests started one per
+# test, each idling on a deleted temp home.
+os.environ["HARNESS_NO_RESEARCH_RUNNER"] = "1"
 
 _SRC = Path(__file__).resolve().parents[1] / "bin" / "harness"
 _ld = importlib.machinery.SourceFileLoader("harness_cli", str(_SRC))
@@ -31,6 +34,7 @@ _ld.exec_module(hz)
 import atexit as _ax, tempfile as _tf
 hz.HOME_STATE = Path(_tf.mkdtemp(prefix="harness-test-home-"))
 _ax.register(shutil.rmtree, hz.HOME_STATE, True)
+os.environ["HARNESS_RESEARCH_HOME"] = str(hz.HOME_STATE / "research")
 
 HOST = socket.gethostname()
 OLD = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() - 3 * 3600))
@@ -9114,3 +9118,604 @@ class SessionPrune(unittest.TestCase):
             hz._save(mark, dict(text, _node="dev_1"))                         # open: needed
             os.utime(mark, (old, old))
             self.assertEqual(self.chosen(rows)[sid], "marks/t")
+
+
+# ── T21: research ────────────────────────────────────────────────────────────
+
+RB_GOOD = """# Round
+
+Each brief is dispatched on its own.
+
+#### RA-01: model accuracy under structure
+
+> [!abstract] AGENT BRIEF (give this verbatim to the research agent)
+> **Task:** Investigate how two kinds of predictive model compare in accuracy when the system they predict is spatially structured. Collect empirical evidence. Do not evaluate or endorse any research design. Evidence on these directions may be abundant, sparse, conflicting or absent. Report what you find, whichever it is.
+>
+> **Scope:** predictive models of any biological, ecological or environmental system, evaluated on data where the system's structure varies. Both simulation benchmarks and field data count.
+>
+> **Directions:**
+> - **D1.** How does the prediction error of models that explicitly represent mechanism M compare with that of models using only aggregate features, in either direction, as the system moves from uniform to structured?
+> - **D2.** When mechanistic models assume the system is uniform and it is not, how are their predictions affected: magnitude, direction and conditions?
+>
+> **Evidence to gather** (any organism, community or field that predicts structured systems):
+> - Studies comparing the two model types on the same system.
+> - Bounding and contrary results: settings where either type's usual advantage failed to appear.
+>
+> **Out of scope:** do not evaluate or endorse any research design, and do not scope your answer to any specific project. Do not report indirect evidence as direct.
+>
+> **Deliverable: a literature review.** Write a synthesis.
+
+> [!note] ROUTING (human dispatcher only; do NOT give to the agent)
+> Feeds [[the design note]].
+> **D1:** decision needs whether claim C has direct support. Expected: no direct comparison exists. Changes the decision if one exists.
+> **D2:** decision needs the bias size. Expected: none.
+> **Stage 2:** if the critic's coverage gaps name a field, write a follow-up.
+
+> [!example] DISPATCH (orchestrator only; extra instructions reach the agent)
+> **Size:** standard. Triage: 2 directions; evidence; feeds a design note; vocabularies: modelling.
+> **Extra instructions:** none.
+> **Batch order:** none
+
+#### RA-02: what grouping returns
+
+> [!abstract] AGENT BRIEF
+> **Task:** Investigate what grouping procedures return on data with no group structure.
+>
+> **Scope:** unsupervised grouping procedures of any kind, on data of any type.
+>
+> **Directions:**
+> - **D1.** What has been reported about the output of grouping procedures on structureless data?
+>
+> **Evidence to gather** (any field):
+> - Simulation studies.
+>
+> **Out of scope:** do not evaluate or endorse any research design, and do not scope your answer to any specific project. Do not report indirect evidence as direct.
+
+> [!note] ROUTING
+> **D1:** decision needs a citation. Expected: groups are returned.
+> **Stage 2:** none
+
+> [!example] DISPATCH
+> **Size:** deep. Triage: one direction; evidence; cited; vocabularies: two.
+> **Angles:** validation: cluster validity statistics; nullmodels: null models for incidence data
+> **Extra instructions:** none.
+> **Batch order:** runs after RA-01
+"""
+
+RS_OUT = {
+    "preflight": {"inferred_design": "cannot tell", "inferred_hoped_answers": [
+        {"direction": "D1", "hoped_answer": "cannot tell"},
+        {"direction": "D2", "hoped_answer": "cannot tell"}],
+        "loaded_wording": [], "one_sided_requests": [], "evidence_rules_in_refusal": [],
+        "scope_inconsistencies": [], "nearest_precedent_risk": [], "communities": ["ecology"]},
+    "search": {"findings": [{"claim": "c", "reference": "R (2020) doi:1", "access": "full_text",
+                             "evidence_class": "measured", "setting": "s", "direction": "D1"}],
+               "not_obtained": [{"reference": "X (2019)", "routes_tried": "doi"}],
+               "search_record": "searched"},
+    "review": {"title": "Grouping on structureless data: a review", "answers": [
+        {"direction": "D1", "answer": "Groups are returned on structureless data in most "
+                                      "simulation studies examined", "strength": "moderate",
+         "access_basis": "full text"}],
+        "review_markdown": "## Review\n\nBody [1].\n\n## References\n1. R (2020).",
+        "not_obtained": [], "search_record": "searched"},
+    "critique": {"answers_supported": "partial", "reformulated_answers": [
+        {"direction": "D1", "answer": "Narrower"}], "answers_assessment": "over-reaches",
+        "single_source_claims": [], "access_errors": [], "reference_errors": [],
+        "coverage_gaps": [{"gap": "no psychometrics", "setting_or_class": "taxometrics"}],
+        "one_sided_handling": [], "merged_cases": [], "scope_drift": [],
+        "expectation_echo": {"brief_states_expectation": False, "review_repeats_it": False}},
+}
+
+
+class FakeClaude:
+    """Stands in for `claude -p`: answers by the role the prompt names, and
+    records every command, its cwd and its environment."""
+
+    def __init__(self, script=None):
+        self.calls, self.script = [], dict(script or {})
+
+    @staticmethod
+    def role(prompt):
+        for k, r in (("BLIND READER", "preflight"), ("SEARCH AGENT", "search"),
+                     ("SYNTHESIS AGENT", "synthesis"), ("You are the RESEARCHER", "researcher"),
+                     ("You are the CRITIC", "critic")):
+            if k in prompt:
+                return r
+        return "?"
+
+    def __call__(self, cmd, input=None, cwd=None, env=None, **kw):
+        role = self.role(input or "")
+        self.calls.append({"cmd": cmd, "cwd": cwd, "env": env, "role": role, "prompt": input})
+        q = self.script.get(role)
+        if q:
+            ans = q.pop(0) if isinstance(q, list) else q
+            if ans is not None:
+                return ans
+        out = RS_OUT["review" if role in ("researcher", "synthesis") else
+                     "critique" if role == "critic" else role]
+        body = {"type": "result", "subtype": "success", "is_error": False, "result": "",
+                "structured_output": out, "total_cost_usd": 0.5, "num_turns": 3,
+                "duration_ms": 1000, "usage": {"input_tokens": 10, "output_tokens": 5,
+                                               "server_tool_use": {"web_search_requests": 4}}}
+        return mock.Mock(returncode=0, stdout=json.dumps(body), stderr="")
+
+
+def rs_said(text, rc=1, **extra):
+    body = dict({"type": "result", "subtype": "error", "is_error": True, "result": text}, **extra)
+    return mock.Mock(returncode=rc, stdout=json.dumps(body), stderr="")
+
+
+class ResearchBrief(unittest.TestCase):
+    """The brief: parsed from the skill's template, assembled by the harness,
+    linted against the project's own names."""
+
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.d, True)
+        self.pdir, self.repo = self.d / "state", self.d / "biblion9"
+        (self.pdir / "briefs").mkdir(parents=True)
+        (self.repo / ".harness").mkdir(parents=True)
+        (self.repo / ".harness" / "tree.json").write_text(json.dumps({"nodes": {
+            "main": {}, "dev": {"parent": "main"}, "dev_tax": {"parent": "dev"}}}))
+        (self.pdir / "briefs" / "soft_clusters.json").write_text("{}")
+
+    def parsed(self, text=RB_GOOD):
+        return [hz.research_parse(b) for b in hz.research_split(text)]
+
+    def lint(self, f):
+        return hz.research_lint(self.pdir, self.repo, f)
+
+    def test_the_vault_round_format_is_read(self):
+        (a, fa), (b, fb) = self.parsed()
+        self.assertEqual((fa, fb), ([], []))
+        self.assertEqual((a["label"], a["title"]), ("RA-01", "model accuracy under structure"))
+        self.assertEqual([d["id"] for d in a["brief"]["directions"]], ["D1", "D2"])
+        self.assertEqual((a["dispatch"]["size"], a["routing"]["kind"], a["dispatch"]["count"]),
+                         ("standard", "design", 2))
+        self.assertEqual(a["brief"]["widen"], "any organism, community or field that predicts "
+                                              "structured systems")
+        self.assertEqual(len(a["brief"]["evidence"]), 2)
+        self.assertEqual(a["routing"]["per_direction"]["D1"][:20], "decision needs wheth")
+        self.assertEqual((b["routing"]["kind"], b["dispatch"]["after_label"]),
+                         ("citation", "RA-01"))
+        self.assertEqual([x["name"] for x in b["dispatch"]["angles"]], ["validation", "nullmodels"])
+        self.assertEqual(self.lint(a), ([], []))
+
+    def test_the_fixed_sentences_are_the_harnesss(self):
+        (a, _), (b, _) = self.parsed()
+        ta, tb = hz.research_agent_text(a["brief"]), hz.research_agent_text(b["brief"])
+        for t in (ta, tb):                     # typed once each, whatever the writer typed
+            self.assertEqual(t.count(hz.RESEARCH_FIXED), 1)
+            self.assertEqual(t.count("Collect empirical evidence."), 1)
+            self.assertIn(hz.RESEARCH_DELIVERABLE, t)
+        self.assertNotIn("Write a synthesis.\n", tb)            # its own deliverable dropped
+        self.assertNotIn("ROUTING", ta)
+        self.assertNotIn("Expected", ta)
+        self.assertNotIn("[[", ta)
+
+    def test_each_leak_is_refused(self):
+        (a, _), _ = self.parsed()
+        cases = {
+            "a wikilink": ("scope", "models of [[H1]] systems"),
+            "self-reference": ("scope", "models like our hypothesis says"),
+            "'project' outside": ("scope", "models in this project"),
+            "dash": ("scope", "models — of any kind"),
+            "outcome language": ("scope", "models, though such studies may not exist"),
+            "'biblion9'": ("scope", "models as in biblion9"),
+            "'soft_clusters'": ("scope", "models for soft_clusters"),
+            "'dev_tax'": ("scope", "models by dev_tax"),
+            "limits the evidence": ("oos_extra", "Do not treat co-occurrence as evidence of "
+                                                 "interaction."),
+        }
+        for want, (k, v) in cases.items():
+            f = json.loads(json.dumps(a))
+            f["brief"][k] = v
+            hard, _ = self.lint(f)
+            self.assertTrue(any(want in h for h in hard), (want, hard))
+        (self.repo / ".harness" / "research-terms.txt").write_text("far rank  # house term\n")
+        f = json.loads(json.dumps(a))
+        f["brief"]["directions"][0]["text"] = "What is the far rank of a model?"
+        self.assertIn("in .harness/research-terms.txt", " ".join(self.lint(f)[0]))
+        f = json.loads(json.dumps(a))
+        f["brief"]["scope"] = "models where one type is better than another; the main case"
+        hard, soft = self.lint(f)
+        self.assertEqual(hard, [])
+        self.assertTrue(any("one-way comparison" in s for s in soft))
+        self.assertTrue(any("'main' is a node or branch name" in s for s in soft))
+
+    def test_counts_sizes_and_routing_are_checked(self):
+        (a, _), (b, _) = self.parsed()
+        f = json.loads(json.dumps(a)); f["dispatch"]["count"] = 3
+        self.assertIn("triage counts 3 directions; the brief has 2", " ".join(self.lint(f)[0]))
+        f = json.loads(json.dumps(b)); f["dispatch"]["angles"] = f["dispatch"]["angles"][:1]
+        self.assertIn("at least two angles", " ".join(self.lint(f)[0]))
+        f = json.loads(json.dumps(a)); f["dispatch"]["size"] = "quick"
+        self.assertIn("one that feeds a design is at least standard", " ".join(self.lint(f)[0]))
+        bad = RB_GOOD.replace("> **D2:** decision needs the bias size. Expected: none.\n", "") \
+            .replace("> **Stage 2:** none\n", "")
+        (_, fa), (_, fb) = self.parsed(bad)
+        self.assertIn("ROUTING has no line for D2", " ".join(fa))
+        self.assertIn("no `**Stage 2:**` line", " ".join(fb))
+        old = RB_GOOD.replace("**Directions:**", "**Question:**")
+        self.assertIn("old verdict format", " ".join(self.parsed(old)[0][1]))
+
+    def test_a_follow_up_may_not_carry_the_answers_forward(self):
+        (a, _), _ = self.parsed()
+        self.pdir.joinpath("research", "res-1", "stages").mkdir(parents=True)
+        hz._save(hz.research_stage_file(self.pdir, "res-1", "researcher"),
+                 {"out": RS_OUT["review"], "meta": {}})
+        prev = {"id": "res-1", "_pdir": str(self.pdir)}
+        self.assertIsNone(hz.research_overlap(prev, a["brief"]))
+        a["brief"]["directions"][0]["text"] += (" Groups are returned on structureless data in "
+                                                 "most simulation studies, so where else?")
+        self.assertIn("groups are returned on structureless data in most",
+                      hz.research_overlap(prev, a["brief"]))
+
+    def test_the_schemas_match_the_skills_workflow(self):
+        # One protocol and one set of shapes: the harness's stages and the skill's
+        # research-run.js may not drift apart.
+        js = (Path(__file__).resolve().parents[2] / "skills" / "research-brief" / "workflows"
+              / "research-run.js").read_text()
+        reqs = re.findall(r"required: \[([^\]]*)\]", js.replace("\n", " "))
+        got = [sorted(re.findall(r"'(\w+)'", r)) for r in reqs]
+        ours = []
+        def walk(s):
+            if isinstance(s, dict):
+                if "required" in s:
+                    ours.append(sorted(s["required"]))
+                for v in s.values():
+                    walk(v)
+            elif isinstance(s, list):
+                for v in s:
+                    walk(v)
+        walk(hz.RESEARCH_SCHEMAS)
+        self.assertEqual(set(map(tuple, got)), set(map(tuple, ours)))
+
+
+class ResearchFlow(Log185to190):
+    """A brief on task t (dev_1's): written, read blind, accepted against its
+    ROUTING, approved by size, run by the runner, landed on main."""
+
+    test_news_goes_as_an_fyi_and_is_owed_by_nobody = None
+    test_a_presentation_can_wait_for_its_own_check = None
+    test_a_pending_part_stays_open_after_the_close = None
+    test_ask_ids_are_never_handed_out_twice = None
+    test_done_clauses_in_the_shapes_briefs_use = None
+
+    def setUp(self):
+        super().setUp()
+        self.home = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.home, True)
+        proto = self.home / "protocol.md"
+        proto.write_text("# Researcher protocol\n\n## Common rules\n1. Say what you read.\n")
+        hz._save(self.home / "research" / "config.json", {"gap": 0, "stage_gap": 0})
+        for p in (mock.patch.dict(os.environ, {"HARNESS_RESEARCH_HOME":
+                                               str(self.home / "research")}),
+                  mock.patch.object(hz, "ask_projects",
+                                    return_value=[(Path(self.ctx.state), str(self.ctx.repo))]),
+                  mock.patch.object(hz, "RESEARCH_SCRATCH", self.home / "scratch"),
+                  mock.patch.object(hz, "RESEARCH_PROTOCOL", proto),
+                  mock.patch.object(hz, "RESEARCH_USAGE", self.home / "usage.json"),
+                  mock.patch.object(hz, "report_wake_detached", lambda *a: None)):
+            p.start(); self.addCleanup(p.stop)
+        tj = Path(self.ctx.repo) / ".harness" / "tree.json"
+        tj.parent.mkdir(exist_ok=True)
+        tj.write_text(json.dumps(self.ctx.tree))
+        self.git("main", "add", "-A"); self.git("main", "commit", "-qm", "tree")
+        self.fake = FakeClaude()
+        self.brief = self.home / "round.md"
+        self.brief.write_text(RB_GOOD)
+
+    def said(self, node, text):
+        return any(text in m["text"] for m in self.inbox(node))
+
+    def res(self, rid="res-1"):
+        return hz._read_json(hz.research_path(self.ctx.state, rid))
+
+    def run1(self, fake=None):
+        with redirect_stdout(io.StringIO()):
+            return hz.research_loop(self.home / "research", once=True, runner=fake or self.fake)
+
+    def test_no_runner_is_started_here(self):
+        with mock.patch.object(hz.subprocess, "Popen") as po:
+            hz.research_ensure_runner()
+        po.assert_not_called()
+
+    def drain(self, n=20, fake=None):
+        out = []
+        for _ in range(n):
+            r = self.run1(fake)
+            out.append(r)
+            if r is None or isinstance(r, tuple) and r[1] is None:
+                break
+        return out
+
+    def written(self):
+        code, out = self.run_as("dev_1", "research", "t", "--write", str(self.brief), **self.op)
+        self.assertEqual(code, 0, out)
+        return out
+
+    def accepted(self, rid, node="dev_1"):
+        for d in [x["id"] for x in self.res(rid)["brief"]["directions"]]:
+            code, out = self.run_as(node, "research", rid, "--accept", d,
+                                    "the reader could not tell", **self.op)
+            self.assertEqual(code, 0, out)
+        return out
+
+    def test_who_writes_and_what_is_recorded(self):
+        code, out = self.run_as("main", "research", "nope", "--write", str(self.brief), **self.op)
+        self.assertEqual(code, hz.REFUSED)
+        out = self.written()
+        self.assertIn("res-1  RA-01", out)
+        self.assertIn("res-2  RA-02", out)
+        r1, r2 = self.res("res-1"), self.res("res-2")
+        self.assertEqual((r1["state"], r1["requester_node"], r1["node"]),
+                         ("preflighting", "dev_1", "dev_1"))
+        self.assertEqual(r2["after"], "res-1")
+        self.assertEqual([(j["id"], j["kind"]) for j in hz.research_queue()],
+                         [("res-1", "preflight"), ("res-2", "preflight")])
+        self.assertNotIn("Expected", hz.research_agent_text(r1["brief"]))
+
+    def test_a_leaking_file_records_nothing(self):
+        self.brief.write_text(RB_GOOD.replace("structureless data?", "structureless data, "
+                                              "as our hypothesis needs?"))
+        code, out = self.run_as("dev_1", "research", "t", "--write", str(self.brief), **self.op)
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("RA-02: REFUSED  D1: self-reference 'our hypothesis'", out)
+        self.assertIn("nothing was recorded", out)
+        self.assertEqual(hz.research_all(self.ctx.state), [])
+
+    def test_preflight_accept_approve_by_size(self):
+        self.written()
+        self.drain()
+        r = self.res()
+        self.assertEqual(r["state"], "preflighted")
+        self.assertEqual(self.fake.calls[0]["role"], "preflight")
+        self.assertTrue(self.said("dev_1", "The blind reader is back on research res-1"))
+        code, out = self.run_as("dev", "research", "res-1", "--accept", "D1", "it can't tell",
+                                **self.op)
+        self.assertEqual(code, hz.REFUSED)                       # the writer accepts
+        code, out = self.run_as("dev_1", "research", "res-1", "--accept", "D1", "short", **self.op)
+        self.assertEqual(code, hz.REFUSED)
+        code, out = self.run_as("dev_1", "research", "res-1", "--accept", "D1",
+                                "the reader could not tell", **self.op)
+        self.assertIn("still to accept: D2", out)
+        self.accepted("res-1")
+        r = self.res()
+        self.assertEqual((r["state"], r["approval"]["needs"]), ("pending", "rank 0"))
+        self.assertTrue(self.said("main", "res-1 (RA-01, standard) on t waits on your approval"))
+        code, out = self.run_as("dev", "research", "res-1", "--approve", **self.op)
+        self.assertEqual(code, hz.REFUSED)
+        code, out = self.run_as("main", "research", "res-1", "--approve", **self.op)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.res()["state"], "approved")
+        self.assertNotIn("self_approved", self.res()["approval"])
+        # Deep: the owner's.
+        self.accepted("res-2")
+        self.assertEqual(self.res("res-2")["approval"]["needs"], "owner")
+        code, out = self.run_as("main", "research", "res-2", "--approve", **self.op)
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("the owner approves it", out)
+        code, out = self.run_as("main", "research", "res-2", "--approve", sid=None, **self.op)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.res("res-2")["approval"]["by"], "owner")
+
+    def test_a_rewrite_is_read_again(self):
+        self.written()
+        self.drain()
+        self.accepted("res-1")
+        self.brief.write_text(RB_GOOD.replace("Studies comparing the two model types on the same "
+                                              "system.", "Studies comparing both types."))
+        out = self.written()
+        r = self.res()
+        self.assertEqual((r["state"], r["id"]), ("preflighting", "res-1"))
+        self.assertNotIn("approval", r)
+        n = len(self.fake.calls)
+        self.drain()
+        self.assertEqual([c["role"] for c in self.fake.calls[n:]], ["preflight"])
+        self.assertIn("Studies comparing both types.", self.fake.calls[-1]["prompt"])
+        # ROUTING alone changed: the reading stands, the acceptances do not.
+        self.brief.write_text(self.brief.read_text().replace("Expected: none.", "Expected: small."))
+        self.written()
+        self.assertEqual(self.res()["state"], "preflighted")
+        self.assertEqual(self.res()["preflight"]["accepted"], {})
+
+    def test_the_run_lands_on_main_without_touching_rank_0s_work(self):
+        self.written()
+        self.drain()
+        self.accepted("res-1")
+        self.run_as("main", "research", "res-1", "--approve", **self.op)
+        (self.wt["main"] / "staged.txt").write_text("rank 0's\n")
+        self.git("main", "add", "staged.txt")
+        (self.wt["main"] / "a.txt").write_text("rank 0 is editing\n")
+        self.drain()
+        r = self.res()
+        self.assertEqual(r["state"], "landed", r.get("land"))
+        self.assertEqual([c["role"] for c in self.fake.calls[-2:]], ["researcher", "critic"])
+        res = r["result"]
+        self.assertTrue(res["path"].startswith("research/results/Grouping on structureless"))
+        self.assertEqual(res["brief_path"], "research/briefs/RA-01.md")
+        files = self.git("main", "show", "--name-only", "--format=", res["commit"]).splitlines()
+        self.assertEqual(sorted(files), sorted([res["path"], res["brief_path"]]))
+        self.assertEqual(self.git("main", "log", "-1", "--format=%s"),
+                         f"Research RA-01: {r['title_result']}")
+        st = self.git("main", "status", "--porcelain")
+        self.assertIn("A  staged.txt", st)                      # still staged, uncommitted
+        self.assertIn("M a.txt", st)                            # still edited
+        note = (self.wt["main"] / res["path"]).read_text()
+        for a, b in (("Provenance", "Critic: answers partly supported"),
+                     ("Critic: answers partly supported", "Answers as delivered"),
+                     ("Answers as delivered", "> [!todo] Stage 2")):
+            self.assertLess(note.index(a), note.index(b))
+        self.assertLess(note.index("> [!todo] Stage 2"), note.rindex("taxometrics"))
+        self.assertIn("ROUTING was withheld from every agent", note)
+        self.assertNotIn("Expected", note)
+        brief = (self.wt["main"] / res["brief_path"]).read_text()
+        self.assertIn("Expected: no direct comparison", brief)   # the brief keeps its ROUTING
+        self.assertTrue(self.said("dev_1", "landed on main"))
+        self.assertTrue(self.said("dev_1", "--consumed"))
+        self.assertEqual(hz.research_queue(), [])
+
+    def test_reading_it_is_on_the_record(self):
+        self.test_the_run_lands_on_main_without_touching_rank_0s_work()
+        code, out = self.run_as("dev", "research", "res-1", "--consumed", "x" * 50, "--stage2",
+                                "none", **self.op)
+        self.assertEqual(code, hz.REFUSED)                       # the requester's
+        code, out = self.run_as("dev_1", "research", "res-1", "--consumed", "too short",
+                                "--stage2", "none", **self.op)
+        self.assertEqual(code, hz.REFUSED)
+        code, out = self.run_as("dev_1", "research", "res-1", "--consumed",
+                                "D1 has no direct comparison; claim C stays a limitation. D2 "
+                                "sizes the bias as small.", **self.op)
+        self.assertEqual(code, hz.REFUSED)                       # --stage2 is required
+        code, out = self.run_as("dev_1", "research", "res-1", "--consumed",
+                                "D1 has no direct comparison; claim C stays a limitation. D2 "
+                                "sizes the bias as small.", "--stage2", "none", **self.op)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.res()["state"], "consumed")
+
+    def test_withdraw_and_want(self):
+        self.written()
+        code, out = self.run_as("dev", "research", "res-2", "--want", **self.op)
+        self.assertEqual(self.res("res-2")["want"], ["dev"])
+        code, out = self.run_as("dev", "research", "res-2", "--withdraw", "not needed", **self.op)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.res("res-2")["state"], "withdrawn")
+        self.assertTrue(self.said("dev_1", "was withdrawn by dev"))
+        self.assertEqual([j["id"] for j in hz.research_queue()], ["res-1"])
+
+    def test_routing_is_shown_to_the_line_above_not_beside(self):
+        self.written()
+        code, out = self.run_as("dev", "research", "res-1", "--show", **self.op)
+        self.assertIn("Expected: no direct comparison", out)
+        with mock.patch.dict(os.environ, {"HARNESS_DESIGN": "x"}):
+            code, out = self.run_as("main", "research", "res-1", "--show", **self.op)
+        self.assertIn("ROUTING: withheld", out)
+        self.assertNotIn("Expected:", out)
+
+
+class ResearchRunner(ResearchFlow):
+    """The machine's runner: one stage at a time, its own session each, nothing
+    of the owner's or the project's in it; limits, refusals and resumes."""
+
+    test_who_writes_and_what_is_recorded = None
+    test_a_leaking_file_records_nothing = None
+    test_preflight_accept_approve_by_size = None
+    test_a_rewrite_is_read_again = None
+    test_the_run_lands_on_main_without_touching_rank_0s_work = None
+    test_reading_it_is_on_the_record = None
+    test_withdraw_and_want = None
+    test_routing_is_shown_to_the_line_above_not_beside = None
+
+    def approved(self, rid, owner=False):
+        self.accepted(rid)
+        code, out = self.run_as("main", "research", rid, "--approve",
+                                **(dict(sid=None) if owner else {}), **self.op)
+        self.assertEqual(code, 0, out)
+
+    def test_each_stage_is_a_blind_fresh_session(self):
+        self.written()
+        with mock.patch.dict(os.environ, {"HARNESS_PROJECT": "leak", "CLAUDECODE": "1"}):
+            self.drain()
+        c = self.fake.calls[0]
+        cmd = c["cmd"]
+        for f in ("-p", "--safe-mode", "--restricted", "--strict-mcp-config",
+                  "--disable-slash-commands", "--json-schema"):
+            self.assertIn(f, cmd)
+        self.assertNotIn("--bare", cmd)
+        self.assertNotIn("--add-dir", cmd)
+        self.assertEqual(cmd[cmd.index("--tools") + 1], "Read")      # a reader searches nothing
+        self.assertTrue(Path(c["cwd"]).is_relative_to(self.home / "scratch"))
+        self.assertFalse(str(c["cwd"]).startswith(str(self.ctx.repo)))
+        self.assertEqual(c["env"]["CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION"], "500")
+        self.assertEqual(c["env"]["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"], "0")
+        for k in ("HARNESS_PROJECT", "CLAUDECODE", "CLAUDE_CODE_SESSION_ID"):
+            self.assertNotIn(k, c["env"])
+        self.assertNotIn("Expected", c["prompt"])
+        self.assertNotIn("design note", c["prompt"])
+
+    def test_deep_stages_run_in_order_and_resume(self):
+        self.written()
+        self.drain()
+        self.approved("res-1"); self.approved("res-2", owner=True)
+        self.drain(n=2)                                          # res-1: researcher; critic, landed
+        self.drain(n=1)                                          # search-1 of res-2
+        roles = [c["role"] for c in self.fake.calls]
+        self.assertEqual(roles[-3:], ["researcher", "critic", "search"])
+        self.assertEqual(self.res("res-2")["state"], "running")
+        n = len(self.fake.calls)
+        self.drain()                                             # a new runner picks it up
+        self.assertEqual([c["role"] for c in self.fake.calls[n:]],
+                         ["search", "synthesis", "critic"])
+        syn = next(c for c in self.fake.calls[n:] if c["role"] == "synthesis")
+        self.assertIn('"angle": "validation"', syn["prompt"])
+        self.assertIn('"angle": "nullmodels"', syn["prompt"])
+        self.assertEqual(self.res("res-2")["state"], "landed")
+
+    def test_a_usage_limit_waits_for_the_reset_and_costs_no_attempt(self):
+        self.written()
+        fake = FakeClaude({"preflight": [rs_said("You've hit your limit · resets 11:50pm "
+                                                 "(Australia/Sydney)")]})
+        r = self.run1(fake)
+        self.assertEqual(r[0], "wait")
+        want = hz._reset_epoch("resets 11:50pm", time.time()) + 120
+        self.assertAlmostEqual(r[1], want, delta=5)
+        self.assertEqual(self.res()["stages"]["preflight"]["attempts"], 0)
+        S = hz._read_json(self.home / "research" / "runner.json")
+        self.assertAlmostEqual(S["until"], want, delta=5)
+        self.assertEqual(self.run1(fake)[0], "wait")             # nothing runs before then
+        self.assertEqual(len(fake.calls), 1)
+
+    def test_refusals_are_retried_then_named(self):
+        self.written()
+        self.drain()
+        self.approved("res-1"); self.approved("res-2", owner=True)
+        no = rs_said("I'm unable to help with that request.", rc=0,
+                     **{"is_error": False, "subtype": "success", "stop_reason": "refusal"})
+        fake = FakeClaude({"search": [no, no, no]})
+        self.drain(fake=fake)
+        st = self.res("res-2")["stages"]
+        self.assertEqual((st["search-1"]["state"], st["search-1"]["attempts"]), ("refused", 3))
+        self.assertEqual(st["search-2"]["state"], "done")
+        note = (self.wt["main"] / self.res("res-2")["result"]["path"]).read_text()
+        self.assertIn("**Refused stages:** search-1", note)
+        self.assertIn("validation: refused, nothing returned", note)
+        # A researcher refused is the run's end, not a hole in it.
+        hz._save(hz.research_path(self.ctx.state, "res-1"),
+                 dict(self.res("res-1"), state="approved", stages={}, started_at=None))
+        for f in (hz.research_dir(self.ctx.state, "res-1") / "stages").glob("*"):
+            f.unlink()
+        hz.research_enqueue(self.ctx.state, self.res("res-1"), "run")
+        self.drain(fake=FakeClaude({"researcher": [no, no, no]}))
+        self.assertEqual(self.res("res-1")["state"], "failed")
+        self.assertTrue(self.said("dev_1", "failed at researcher"))
+
+    def test_gaps_between_briefs_and_stages(self):
+        hz._save(self.home / "research" / "config.json", {"gap": 900, "stage_gap": 60})
+        self.written()
+        r = self.run1()                                          # res-1's preflight
+        r = self.run1()
+        self.assertEqual(r[0], "wait")
+        self.assertIn("the gap between stages", r[2])
+        S = hz._read_json(self.home / "research" / "runner.json")
+        hz._save(self.home / "research" / "runner.json",
+                 dict(S, last_stage_end=time.time() - 61, last_run_end=time.time()))
+        self.run1()                                              # res-2's preflight: no brief gap
+        self.assertEqual(self.res("res-2")["state"], "preflighted")
+
+    def test_a_halted_project_waits_and_others_run(self):
+        self.written()
+        (Path(self.ctx.state) / "halt.json").write_text(json.dumps({"at": hz._now(), "why": "x"}))
+        r = self.run1()
+        self.assertEqual((r[0], r[1]), ("wait", None))
+        self.assertEqual(self.fake.calls, [])
+
+    def test_the_outcome_of_a_stage(self):
+        o = hz.research_outcome(0, json.dumps({"result": '```json\n{"a": 1}\n```'}), "")
+        self.assertEqual(o["out"], {"a": 1})
+        o = hz.research_outcome(1, "", "Error: overloaded")
+        self.assertIn("error", o)
+        o = hz.research_outcome(1, json.dumps({"is_error": True, "api_error_status": 429,
+                                               "result": "rate limited"}), "")
+        self.assertIn("limit", o)
+        self.assertIsNone(o["limit"])                            # no time said: an hour, later

@@ -20925,6 +20925,2097 @@ def cmd_report(a):
         return
 
 
+# ── research: evidence gathered blind, one run at a time (owner, 2026-10-20) ─
+#
+# T21. A node that needs outside evidence for a decision on its task writes a
+# research brief with /research-brief: an AGENT BRIEF, which is all the research
+# agents ever see; a ROUTING, which says what the decision needs and what its
+# writer expects; a DISPATCH, which sizes the run. The CLI keeps them apart (the
+# agents get text it assembles from the brief's fields, with the fixed sentences
+# typed by it, not by the writer), lints the brief against the project's own
+# names, and has a blind reader guess what the brief serves before anyone
+# approves the spend. One runner on the machine runs every project's research,
+# one stage at a time, each stage a fresh headless session. September 2026 is
+# why: parallel deep runs hit the account's usage limit and lost their
+# syntheses after paying for their searches, and one long session spent its 200
+# web searches in half an hour and ran the rest of a round without any. The
+# result is committed onto rank 0's branch, and its requester owes, on the
+# record, what it changed: 30 results that month were never read into anything.
+
+RESEARCH_ID_RE = re.compile(r"^res-\d+$")
+RESEARCH_SCRATCH = ASK_SCRATCH.parent / "research"
+RESEARCH_PROTOCOL = Path.home() / ".claude" / "skills" / "research-brief" / "references" / \
+    "researcher-protocol.md"
+RESEARCH_USAGE = Path.home() / ".cache" / "harness" / "usage.json"   # the statusline's copy
+RESEARCH_SIZES = ("quick", "standard", "deep")
+RESEARCH_KINDS = ("citation", "limitation", "design", "orientation")
+RESEARCH_HOLDS = ("citation", "limitation", "design")     # what a decision waits on
+RESEARCH_DRAFT = ("drafted", "preflighting", "preflighted", "pending")
+RESEARCH_RUN = ("approved", "running", "rendered")
+RESEARCH_OPEN = RESEARCH_DRAFT + RESEARCH_RUN + ("landed",)
+RESEARCH_ENDED = ("consumed", "withdrawn", "declined", "failed")
+RESEARCH_IDLE = 120             # a runner with nothing queued exits after this
+RESEARCH_WEB = ("WebSearch", "WebFetch", "Read", "Write", "Bash")
+RESEARCH_ALLOW = ("WebSearch", "WebFetch", "Read", "Write", "Bash(curl:*)")
+RESEARCH_DEFAULTS = {
+    "gap": 900,                 # between one brief's last stage and the next brief
+    "stage_gap": 60,
+    "usage_wait_pct": 80,       # the 5-hour window, when the statusline's copy is fresh
+    "usage_fresh": 600,
+    "web_searches": 500,        # per stage: each stage is its own session
+    "budget_usd": 40,
+    "stage_timeout": 3 * 3600,
+    "model": "opus",
+    "effort": {"preflight": "medium", "search": "medium", "synthesis": "medium",
+               "researcher": "medium", "critic": "high"},
+    "turns": {"preflight": 30, "search": 150, "synthesis": 120, "researcher": 200,
+              "critic": 120},
+    "retries": 3, "refusal_retries": 2, "transient_sleep": 300, "limit_sleep": 3600,
+    "land_retry": 600,
+}
+RESEARCH_FIXED = ("Evidence on these directions may be abundant, sparse, conflicting or "
+                  "absent. Report what you find, whichever it is.")
+RESEARCH_TASK_TAIL = ("Collect empirical evidence. Do not evaluate or endorse any research "
+                      "design. " + RESEARCH_FIXED)
+RESEARCH_OOS = ("do not evaluate or endorse any research design, and do not scope your "
+                "answer to any specific project. Do not report indirect evidence as direct.")
+RESEARCH_DELIVERABLE = (
+    "**Deliverable: a literature review.** Write a synthesis (not a bare list): what the "
+    "field shows, where the strongest evidence sits, where it conflicts, the bounds and "
+    "failure modes, how the cases relate. Close with one answer per direction, in your own "
+    "words: what the evidence shows, how strong it is, where it conflicts, which cases or "
+    "settings have not been measured, and what access it rests on. Keep distinct cases "
+    "apart. Label every source's access (full text, abstract only, or secondary) and label "
+    "indirect support. Every \"not found\" names the search routes used. Every source cited "
+    "must have a **complete reference**: all authors, full title, venue, year, "
+    "volume/issue/pages where applicable, and DOI (or stable URL/arXiv ID). Provide a "
+    "reference list and in-text markers.")
+RESEARCH_DIRS = {"briefs_dir": "research/briefs", "results_dir": "research/results"}
+
+
+def research_home():
+    """The machine's research runner: its queue, lock, log and ledger."""
+    return Path(os.environ.get("HARNESS_RESEARCH_HOME") or HOME_STATE / "research")
+
+
+def research_config():
+    c = json.loads(json.dumps(RESEARCH_DEFAULTS))
+    got = _read_json(research_home() / "config.json")
+    for k, v in (got or {}).items() if isinstance(got, dict) else ():
+        if isinstance(v, dict) and isinstance(c.get(k), dict):
+            c[k].update(v)
+        else:
+            c[k] = v
+    return c
+
+
+def research_path(pdir, rid):
+    return Path(pdir) / "research" / f"{rid}.json"
+
+
+def research_dir(pdir, rid):
+    return Path(pdir) / "research" / rid
+
+
+def research_next_id(pdir):
+    """res-<n>, never handed out twice."""
+    d = Path(pdir) / "research"
+    ns = [int(p.stem[4:]) for p in (d.glob("res-*.json") if d.is_dir() else [])
+          if p.stem[4:].isdigit()]
+    seqf = Path(pdir) / "research-seq.json"
+    seq = _read_json(seqf) or {}
+    n = max(ns + [int(seq.get("n") or 0)], default=0) + 1
+    try:
+        seqf.write_text(json.dumps({"n": n}) + "\n")
+    except OSError:
+        pass
+    return f"res-{n}"
+
+
+def research_all(pdir):
+    d = Path(pdir) / "research"
+    out = []
+    for p in (d.glob("res-*.json") if d.is_dir() else []):
+        r = _read_json(p)
+        if isinstance(r, dict) and r.get("id"):
+            out.append(r)
+    return sorted(out, key=lambda r: int(r["id"][4:]) if r["id"][4:].isdigit() else 0)
+
+
+def _research_log(rec, by, what):
+    rec.setdefault("history", []).append({"at": _now(), "by": by, "what": what})
+
+
+def research_save(pdir, rec):
+    _save(research_path(pdir, rec["id"]), rec)
+
+
+def research_find(ident, project=None):
+    """A research record anywhere on this machine -> (state dir, repo, path, record)."""
+    if not RESEARCH_ID_RE.match(ident or ""):
+        die(REFUSED, f"'{ident}' is not a research id (res-<n>). harness research --list")
+    bound = ask_bound()
+    hits = []
+    for pdir, repo in ask_projects():
+        if bound and pdir != bound[0]:
+            continue
+        if project and project not in (Path(repo).name, pdir.name):
+            continue
+        f = research_path(pdir, ident)
+        r = _read_json(f) if f.exists() else None
+        if isinstance(r, dict):
+            hits.append((pdir, repo, f, r))
+    if not hits:
+        die(REFUSED, f"no research '{ident}'. harness research --list")
+    if len(hits) > 1:
+        try:
+            ctx = Ctx()
+            mine = [h for h in hits if Path(h[0]) == Path(ctx.state)]
+            if len(mine) == 1:
+                return mine[0]
+        except SystemExit:
+            pass
+        die(REFUSED, f"'{ident}' is in {len(hits)} projects; run it from inside the one meant")
+    return hits[0]
+
+
+def research_root(nodes):
+    """(rank 0's node, its branch) from a tree's nodes."""
+    root = next((n for n, sp in nodes.items() if not sp.get("parent")), None)
+    return root, ((nodes.get(root) or {}).get("branch") or root)
+
+
+# ── the brief: parsed from the skill's own template ──────────────────────────
+
+_RB_HEAD = re.compile(r"^#{2,6}\s+([A-Za-z][A-Za-z0-9]*(?:[-_][A-Za-z0-9]+)*)\s*(?::\s*(.*))?$")
+_RB_PART = re.compile(r"^(?:\[!\w+\][+-]?\s*)?(?:#+\s*)?(AGENT BRIEF|ROUTING|DISPATCH)\b")
+_RB_FIELD = re.compile(r"^\*\*(Task|Scope|Directions|Evidence to gather|Out of scope|"
+                       r"Deliverable|Question|Facts to return|Refuse)\b([^*]*)\*\*:?\s*(.*)$", re.I)
+_RB_DIR = re.compile(r"^[-*]\s+\*\*(D\d+)[.:]?\*\*[.:]?\s*(.*)$")
+_RB_NUM = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+           "eight": 8, "nine": 9, "ten": 10}
+
+
+def _rb_unquote(line):
+    s = line.rstrip()
+    if s.startswith(">"):
+        s = s[1:]
+        if s.startswith(" "):
+            s = s[1:]
+    return s
+
+
+def research_split(text):
+    """[{label, title, agent, routing, dispatch}] from a briefs file: one block per
+    `#### <ID>` heading (a file with none is one brief, labelled B1), each with
+    AGENT BRIEF, ROUTING and DISPATCH parts, as callouts or as headed blocks."""
+    blocks, cur, part, callout = [], None, None, False
+    for raw in (text or "").splitlines():
+        line = _rb_unquote(raw)
+        m = _RB_HEAD.match(raw.strip())
+        if m and not _RB_PART.match(m.group(1) or ""):
+            cur = {"label": m.group(1), "title": (m.group(2) or "").strip(),
+                   "agent": [], "routing": [], "dispatch": []}
+            blocks.append(cur)
+            part = None
+            continue
+        p = _RB_PART.match(line.strip())
+        if p:
+            if cur is None:
+                cur = {"label": "B1", "title": "", "agent": [], "routing": [], "dispatch": []}
+                blocks.append(cur)
+            part = {"AGENT BRIEF": "agent", "ROUTING": "routing", "DISPATCH": "dispatch"}[
+                p.group(1)]
+            callout = raw.lstrip().startswith(">")
+            continue
+        if cur is not None and part:
+            if callout and not raw.lstrip().startswith(">"):
+                # A callout ends at its first unquoted line, blank or not.
+                part = None
+                continue
+            cur[part].append(line)
+    for b in blocks:
+        for k in ("agent", "routing", "dispatch"):
+            b[k] = "\n".join(b[k]).strip()
+    return [b for b in blocks if b["agent"] or b["routing"] or b["dispatch"]]
+
+
+def _rb_fields(agent):
+    """{field: text} of an AGENT BRIEF, plus the evidence widener."""
+    out, cur, widen = {}, None, ""
+    for line in agent.splitlines():
+        m = _RB_FIELD.match(line.strip())
+        if m:
+            cur = m.group(1).lower()
+            if cur == "evidence to gather":
+                w = re.search(r"\(([^)]*)\)", m.group(2) + " " + m.group(3))
+                widen = w.group(1).strip() if w else ""
+                rest = re.sub(r"^\s*\([^)]*\)\s*:?\s*", "", m.group(3))
+                out[cur] = rest
+            else:
+                out[cur] = m.group(3)
+            continue
+        if cur:
+            out[cur] = (out[cur] + "\n" + line) if out.get(cur) else line
+    return {k: v.strip() for k, v in out.items()}, widen
+
+
+def _rb_bullets(text):
+    items = []
+    for line in (text or "").splitlines():
+        s = line.strip()
+        if re.match(r"^[-*]\s+", s):
+            items.append(re.sub(r"^[-*]\s+", "", s))
+        elif s and items:
+            items[-1] += " " + s
+    return [" ".join(i.split()) for i in items if i.strip()]
+
+
+def _rb_strip(text, sentences):
+    t = " ".join((text or "").split())
+    for s in sentences:
+        t = t.replace(" ".join(s.split()), " ")
+    return " ".join(t.split()).strip()
+
+
+def research_parse(block):
+    """A block -> (fields, faults). The fields are what the record stores; the
+    agent text is assembled from them, never taken whole from the writer."""
+    faults = []
+    f, widen = _rb_fields(block["agent"])
+    if not block["agent"]:
+        faults.append("no AGENT BRIEF part")
+    if "question" in f or "facts to return" in f:
+        faults.append("this is the old verdict format (Question / Facts to return / verdict "
+                      "options); rewrite it with Directions D1..Dn, the research-brief skill's "
+                      "current template")
+    task = _rb_strip(f.get("task", ""), ["Collect empirical evidence.",
+                                         "Do not evaluate or endorse any research design.",
+                                         RESEARCH_FIXED])
+    task = task.rstrip(" .") + "." if task else ""
+    dirs = []
+    for line in (f.get("directions") or "").splitlines():
+        m = _RB_DIR.match(line.strip())
+        if m:
+            dirs.append({"id": m.group(1).upper(), "text": m.group(2).strip()})
+        elif line.strip() and dirs:
+            dirs[-1]["text"] += " " + line.strip()
+    for d in dirs:
+        d["text"] = " ".join(d["text"].split())
+    oos = _rb_strip(f.get("out of scope", ""), [RESEARCH_OOS, RESEARCH_OOS[:1].upper()
+                                               + RESEARCH_OOS[1:]])
+    for k, what in (("task", task), ("scope", f.get("scope"))):
+        if not what:
+            faults.append(f"no {k.title()} field")
+    if not dirs:
+        faults.append("no directions (`- **D1.** …` under **Directions:**)")
+    ids = [d["id"] for d in dirs]
+    if len(set(ids)) != len(ids):
+        faults.append(f"direction ids repeat: {ids}")
+    # ROUTING
+    per, feeds, stage2 = {}, [], None
+    for line in (block["routing"] or "").splitlines():
+        s = line.strip()
+        m = re.match(r"^\*\*(D\d+(?:\s*(?:,|and|&)\s*D\d+)*)\s*:?\*\*:?\s*(.*)$", s)
+        if m:
+            for d in re.findall(r"D\d+", m.group(1)):
+                per[d] = m.group(2).strip()
+            continue
+        m = re.match(r"^\*\*Stage 2:?\*\*:?\s*(.*)$", s)
+        if m:
+            stage2 = m.group(1).strip()
+            continue
+        if s:
+            feeds.append(s)
+    if not block["routing"]:
+        faults.append("no ROUTING part: what the decision needs from each direction, and "
+                      "what you expect")
+    for d in ids:
+        if d not in per:
+            faults.append(f"ROUTING has no line for {d} (`**{d}:** decision needs …. "
+                          f"Expected: …. Changes the decision if ….`)")
+    for d in per:
+        if d not in ids:
+            faults.append(f"ROUTING has a line for {d}, which is not a direction")
+    if stage2 is None and block["routing"]:
+        faults.append("ROUTING has no `**Stage 2:**` line (write `none` if there is no "
+                      "follow-up condition)")
+    # DISPATCH
+    disp = block["dispatch"] or ""
+    m = re.search(r"\*\*Size:?\*\*:?\s*(quick|standard|deep)\b", disp, re.I)
+    size = m.group(1).lower() if m else None
+    if not size:
+        faults.append("DISPATCH has no Size (quick, standard or deep)")
+    tri = re.search(r"Triage:\s*(.+)", disp)
+    triage = tri.group(1).strip() if tri else ""
+    segs = [x.strip() for x in triage.split(";")]
+    count = None
+    if segs and segs[0]:
+        n = re.match(r"(\d+|[a-z]+)\b", segs[0].lower())
+        if n:
+            count = int(n.group(1)) if n.group(1).isdigit() else _RB_NUM.get(n.group(1))
+    feeds_seg = " ".join(segs[1:3]).lower() if len(segs) > 1 else ""
+    kind = None
+    km = re.search(r"\*\*Kind:?\*\*:?\s*(\w+)", block["routing"] + "\n" + disp)
+    if km and km.group(1).lower() in RESEARCH_KINDS:
+        kind = km.group(1).lower()
+    elif "not cited" in feeds_seg or "orientation" in feeds_seg or "nowhere" in feeds_seg:
+        kind = "orientation"
+    elif "limitation" in feeds_seg:
+        kind = "limitation"
+    elif "design" in feeds_seg or "decision" in feeds_seg:
+        kind = "design"
+    elif "cit" in feeds_seg:
+        kind = "citation"
+    if not kind:
+        faults.append("DISPATCH triage does not say where the answer goes: `Triage: <n> "
+                      "directions; <practice|evidence>; <cited|limitation|design|not cited>; "
+                      "vocabularies: …` (or `**Kind:** citation|limitation|design|orientation`)")
+    angles = []
+    am = re.search(r"\*\*Angles:?\*\*\s*(?:\([^)]*\))?\s*:?\s*(.+)", disp)
+    if am:
+        for seg in am.group(1).split(";"):
+            name, _, voc = seg.partition(":")
+            if name.strip():
+                angles.append({"name": " ".join(name.split()),
+                               "vocabulary": " ".join((voc or name).split())})
+    em = re.search(r"\*\*Extra instructions:?\*\*:?\s*(.+)", disp)
+    extra = []
+    if em and em.group(1).strip().rstrip(".").lower() not in ("none", "n/a", ""):
+        extra = [em.group(1).strip()]
+    bm = re.search(r"\*\*Batch order:?\*\*:?\s*(.+)", disp)
+    after = None
+    if bm:
+        a2 = re.search(r"runs after\s+([A-Za-z][A-Za-z0-9_-]*)", bm.group(1))
+        after = a2.group(1) if a2 else None
+    fields = {"label": block["label"],
+              "title": block["title"] or clip(task, 90),
+              "brief": {"task": task, "scope": " ".join((f.get("scope") or "").split()),
+                        "directions": dirs, "widen": widen,
+                        "evidence": _rb_bullets(f.get("evidence to gather")),
+                        "oos_extra": oos, "extra": extra},
+              "routing": {"feeds": "\n".join(feeds), "kind": kind, "per_direction": per,
+                          "stage2": stage2 or "none", "text": block["routing"]},
+              "dispatch": {"size": size, "triage": triage, "count": count,
+                           "angles": angles, "after_label": after}}
+    return fields, faults
+
+
+def research_agent_text(brief):
+    """The AGENT BRIEF exactly as every research agent receives it: the
+    writer's fields between sentences only the harness types."""
+    b = brief
+    out = [f"**Task:** {b['task']} {RESEARCH_TASK_TAIL}", "", f"**Scope:** {b['scope']}", "",
+           "**Directions:**"]
+    out += [f"- **{d['id']}.** {d['text']}" for d in b["directions"]]
+    out += ["", "**Evidence to gather**" + (f" ({b['widen']})" if b.get("widen") else "") + ":"]
+    out += [f"- {e}" for e in b.get("evidence") or []]
+    out += ["", f"**Out of scope:** {RESEARCH_OOS}"
+            + (f" {b['oos_extra']}" if b.get("oos_extra") else ""), "", RESEARCH_DELIVERABLE]
+    return "\n".join(out)
+
+
+def research_sha(brief):
+    t = research_agent_text(brief) + "\n" + "\n".join(brief.get("extra") or [])
+    return hashlib.sha256(t.encode()).hexdigest()[:16]
+
+
+# ── lint: what reaches the agents may not say what it serves ─────────────────
+
+_RL_SELF = re.compile(r"\b(this|our|the present) (project|study|thesis|proposal|design|model|"
+                      r"hypothesis|work)\b|\bour (hypothesis|design|model|cohort|approach)\b|"
+                      r"\bthe (thesis|proposal)\b|\bwe\b", re.I)
+_RL_PROJECT_OK = re.compile(r"\b(any|a) specific project\b", re.I)
+_RL_OUTCOME = re.compile(r"[^.]*\b(expect\w*|likely|unlikely|probabl\w*|anticipat\w*|"
+                         r"may not exist|no (?:direct )?evidence|point(?:s|ing)? (?:toward|in)|"
+                         r"should (?:show|find|confirm)|we think)\b[^.]*", re.I)
+_RL_ONEWAY = re.compile(r"[^.]*\b((?:better|worse|more|less|lower|higher|greater|smaller|"
+                        r"faster|slower) than|exceed\w*|outperform\w*|superior|inferior)\b[^.]*",
+                        re.I)
+_RL_TWOWAY = re.compile(r"either direction|or (?:lower|higher|less|more|worse|better|smaller|"
+                        r"greater|slower|faster)|in both directions", re.I)
+_RL_OOSRULE = re.compile(r"as evidence (?:of|for)|do not (?:treat|count|accept|interpret)|"
+                         r"\bignore\b|\bdiscount\b", re.I)
+
+
+def research_vocabulary(pdir, repo):
+    """{term: why}: names a stranger to the project would not write. Names with a
+    separator or digit, the repo's name and the owner's terms file are refused;
+    plain-word node names are reported, since 'main' and 'instruments' are words."""
+    hard, soft = {}, {}
+    nodes = _tree_nodes(repo)
+    rname = Path(repo).name
+    hard[rname.lower()] = "the repository's name"
+    distinctive = lambda s: bool(re.search(r"[_\-.0-9]", s)) and len(s) >= 4
+    for n, sp in nodes.items():
+        for t in {n, sp.get("branch") or n}:
+            (hard if distinctive(t) else soft)[t.lower()] = "a node or branch name"
+    bdir = Path(pdir) / "briefs"
+    for p in (bdir.glob("*.json") if bdir.is_dir() else []):
+        if distinctive(p.stem):
+            hard[p.stem.lower()] = "a task name"
+    try:
+        c = _read_json(Path(pdir) / "charter.json") or {}
+        for k in (c.get("features") or {}):
+            if distinctive(str(k)):
+                hard[str(k).lower()] = "a charter feature"
+    except Exception:
+        pass
+    try:
+        for p in Path(repo).iterdir():
+            if p.name.startswith(".") or not distinctive(p.name):
+                continue
+            hard[p.name.lower()] = "a path at the repository's top level"
+    except OSError:
+        pass
+    tf = Path(repo) / ".harness" / "research-terms.txt"
+    if tf.exists():
+        for line in tf.read_text().splitlines():
+            t = line.split("#", 1)[0].strip()
+            if t:
+                hard[t.lower()] = "in .harness/research-terms.txt"
+    return hard, soft
+
+
+def research_lint(pdir, repo, fields):
+    """(hard, soft) faults of one parsed brief: skill Check 1 and the vault's
+    lint_briefs vocabulary, on every word a research agent will read that the
+    writer typed (the harness's own sentences are not the writer's)."""
+    b, d = fields["brief"], fields["dispatch"]
+    hard, soft = [], []
+    typed = [("Task", b["task"]), ("Scope", b["scope"])] + \
+        [(x["id"], x["text"]) for x in b["directions"]] + \
+        [("Evidence", e) for e in (b.get("evidence") or [])] + \
+        ([("Evidence", b["widen"])] if b.get("widen") else []) + \
+        ([("Out of scope", b["oos_extra"])] if b.get("oos_extra") else []) + \
+        [("Extra instructions", x) for x in (b.get("extra") or [])] + \
+        [(f"angle {a['name']}", a["name"] + " " + a["vocabulary"]) for a in d.get("angles") or []]
+    vhard, vsoft = research_vocabulary(pdir, repo)
+    for where, t in typed:
+        if "[[" in t:
+            hard.append(f"{where}: a wikilink")
+        for m in _RL_SELF.finditer(t):
+            hard.append(f"{where}: self-reference '{m.group(0)}'")
+        stray = [m.start() for m in re.finditer(r"\bproject\b", t, re.I)]
+        ok = {m.start() + m.group(0).lower().index("project")
+              for m in _RL_PROJECT_OK.finditer(t)}
+        if [s for s in stray if s not in ok]:
+            hard.append(f"{where}: 'project' outside the 'any specific project' guard")
+        if re.search("[—–]", t):
+            hard.append(f"{where}: an em or en dash")
+        if RESEARCH_FIXED[:40] in t:
+            hard.append(f"{where}: repeats the fixed evidence line, which the harness adds once")
+        for m in _RL_OUTCOME.finditer(t):
+            hard.append(f"{where}: outcome language '{clip(m.group(0).strip(), 90)}'")
+        for m in _RL_ONEWAY.finditer(t):
+            if not _RL_TWOWAY.search(m.group(0)):
+                soft.append(f"{where}: a one-way comparison '{clip(m.group(0).strip(), 90)}'; "
+                            f"ask it in either direction unless it is one")
+        low = t.lower()
+        for term, why in vhard.items():
+            if re.search(r"(?<![A-Za-z0-9])" + re.escape(term) + r"(?![A-Za-z0-9])", low):
+                hard.append(f"{where}: '{term}' ({why})")
+        for term, why in vsoft.items():
+            if re.search(r"\b" + re.escape(term) + r"\b", low):
+                soft.append(f"{where}: '{term}' is {why}; fine if it is the ordinary word")
+    if b.get("oos_extra") and _RL_OOSRULE.search(b["oos_extra"]):
+        hard.append("Out of scope: limits the evidence, not the task (constraint 4); write it "
+                    "as a reporting duty that applies both ways")
+    n = len(b["directions"])
+    if d.get("count") is not None and d["count"] != n:
+        hard.append(f"DISPATCH triage counts {d['count']} directions; the brief has {n}")
+    if d.get("size") == "deep" and len(d.get("angles") or []) < 2:
+        hard.append("a deep run needs at least two angles (vocabulary communities)")
+    kind = fields["routing"].get("kind")
+    if d.get("size") == "quick" and kind in RESEARCH_HOLDS:
+        hard.append(f"a quick run is uncritiqued; one that feeds a {kind} is at least standard")
+    return hard, soft
+
+
+def research_overlap(prev, brief):
+    """An 8-word run a follow-up shares with the answers of the result it follows:
+    carrying a result forward is the skill's first warning about follow-ups."""
+    words = lambda s: re.findall(r"[a-z0-9]+", (s or "").lower())
+    said = []
+    for st in ("synthesis", "researcher"):
+        out = (research_stage(prev, st) or {}).get("out") or {}
+        said += [x.get("answer") for x in out.get("answers") or [] if isinstance(x, dict)]
+    crit = (research_stage(prev, "critic") or {}).get("out") or {}
+    said += [x.get("answer") for x in crit.get("reformulated_answers") or []
+             if isinstance(x, dict)]
+    seen = set()
+    for s in said:
+        w = words(s)
+        seen |= {" ".join(w[i:i + 8]) for i in range(max(0, len(w) - 7))}
+    w = words(research_agent_text(brief) + " " + " ".join(brief.get("extra") or []))
+    for i in range(max(0, len(w) - 7)):
+        g = " ".join(w[i:i + 8])
+        if g in seen:
+            return g
+    return None
+
+
+# ── who may do what ──────────────────────────────────────────────────────────
+
+def research_actor(ctx=None):
+    """(label, node) of whoever runs this: the owner (no session), or a node."""
+    for k, what in (("HARNESS_INTERMEDIARY", "an intermediary"),
+                    ("HARNESS_DOCUMENTER", "the documenter"),
+                    ("HARNESS_REPORTER", "a report session")):
+        if os.environ.get(k) == "1":
+            die(REFUSED, f"research is a node's or the owner's; this is {what}")
+    if design_env():
+        die(REFUSED, "a design session reads research (harness research --list / --show); it "
+                     "does not write or decide it")
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if not sid:
+        return "owner", "owner"
+    ctx = ctx or Ctx()
+    ctx.require_enrolled()
+    me, _ = ctx.node()
+    return f"{me} (session {sid[:8]})", me
+
+
+def research_sees_routing(ctx, rec, me):
+    if me in ("owner", rec.get("requester_node")):
+        return True
+    try:
+        return ctx is not None and (ctx.rank(me) == 0 or
+                                    me in ancestors(ctx, rec.get("requester_node") or ""))
+    except Exception:
+        return False
+
+
+# ── the queue, machine-wide ──────────────────────────────────────────────────
+
+def research_queue(mutate=None):
+    """The queue's jobs; `mutate(jobs)` edits them under the queue lock."""
+    home = research_home()
+    home.mkdir(parents=True, exist_ok=True)
+    lk = _flock(home / "queue.lock", block=True)
+    try:
+        q = _read_json(home / "queue.json") or {}
+        jobs = q.get("jobs") if isinstance(q.get("jobs"), list) else []
+        if mutate:
+            mutate(jobs)
+            _save(home / "queue.json", {"jobs": jobs})
+        return jobs
+    finally:
+        if lk:
+            lk.close()
+
+
+def research_enqueue(pdir, rec, kind):
+    def m(jobs):
+        jobs[:] = [j for j in jobs if not (j.get("slug") == Path(pdir).name
+                                           and j.get("id") == rec["id"])]
+        jobs.append({"slug": Path(pdir).name, "id": rec["id"], "kind": kind, "at": _now()})
+    research_queue(m)
+    research_ensure_runner()
+
+
+def research_dequeue(pdir, rid, kind=None):
+    def m(jobs):
+        jobs[:] = [j for j in jobs if not (j.get("slug") == Path(pdir).name
+                                           and j.get("id") == rid
+                                           and (kind is None or j.get("kind") == kind))]
+    research_queue(m)
+
+
+def research_position(pdir, rid):
+    """(1-based place among queued jobs, how many) or (None, n)."""
+    jobs = research_queue()
+    for i, j in enumerate(jobs, 1):
+        if j.get("slug") == Path(pdir).name and j.get("id") == rid:
+            return i, len(jobs)
+    return None, len(jobs)
+
+
+def research_env():
+    """The runner's environment: nothing of the session or project that started it."""
+    keep = ("HARNESS_RESEARCH_HOME", "HARNESS_NO_RINGER", "HARNESS_RESEARCH_CLAUDE")
+    return {k: v for k, v in os.environ.items()
+            if not (k.startswith("CLAUDECODE") or k in ("CLAUDE_CODE_SESSION_ID",
+                                                         "CLAUDE_CODE_ENTRYPOINT",
+                                                         "CLAUDE_JOB_DIR")
+                    or (k.startswith("HARNESS_") and k not in keep))}
+
+
+def research_runner_alive():
+    fh = _flock(research_home() / "runner.lock", block=False)
+    if fh is None:
+        return True
+    fh.close()
+    return False
+
+
+def research_ensure_runner():
+    if os.environ.get("HARNESS_NO_RESEARCH_RUNNER"):
+        return
+    home = research_home()
+    home.mkdir(parents=True, exist_ok=True)
+    if research_runner_alive():
+        return
+    with open(home / "runner.log", "a") as fh:
+        subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "researchd"],
+                         cwd=str(home), env=research_env(), stdout=fh,
+                         stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                         start_new_session=True)
+
+
+# ── stages ───────────────────────────────────────────────────────────────────
+
+_RS_ACCESS = {"type": "string", "enum": ["full_text", "abstract_only", "secondary"]}
+_RS_NOT_OBTAINED = {"type": "array", "items": {"type": "object", "properties": {
+    "reference": {"type": "string"}, "routes_tried": {"type": "string"},
+    "why_relevant": {"type": "string"}}, "required": ["reference", "routes_tried"]}}
+RESEARCH_SCHEMAS = {
+    "preflight": {"type": "object", "properties": {
+        "inferred_design": {"type": "string"},
+        "inferred_hoped_answers": {"type": "array", "items": {"type": "object", "properties": {
+            "direction": {"type": "string"}, "hoped_answer": {"type": "string"},
+            "cue": {"type": "string"}}, "required": ["direction", "hoped_answer"]}},
+        "loaded_wording": {"type": "array", "items": {"type": "string"}},
+        "one_sided_requests": {"type": "array", "items": {"type": "string"}},
+        "evidence_rules_in_refusal": {"type": "array", "items": {"type": "string"}},
+        "scope_inconsistencies": {"type": "array", "items": {"type": "string"}},
+        "nearest_precedent_risk": {"type": "array", "items": {"type": "string"}},
+        "communities": {"type": "array", "items": {"type": "string"}}},
+        "required": ["inferred_design", "inferred_hoped_answers", "loaded_wording",
+                     "one_sided_requests", "evidence_rules_in_refusal",
+                     "scope_inconsistencies", "nearest_precedent_risk", "communities"]},
+    "findings": {"type": "object", "properties": {
+        "findings": {"type": "array", "items": {"type": "object", "properties": {
+            "direction": {"type": "string"}, "claim": {"type": "string"},
+            "reference": {"type": "string"}, "access": _RS_ACCESS,
+            "quote_or_figure": {"type": "string"},
+            "evidence_class": {"type": "string",
+                               "enum": ["measured", "derived", "modelled", "asserted"]},
+            "setting": {"type": "string"},
+            "standing": {"type": "string",
+                         "enum": ["replicated", "contested", "single_study", "unclear"]},
+            "single_source": {"type": "boolean"}, "bounding_or_contrary": {"type": "boolean"},
+            "nearest_precedent": {"type": "boolean"}},
+            "required": ["claim", "reference", "access", "evidence_class", "setting"]}},
+        "not_obtained": _RS_NOT_OBTAINED, "search_record": {"type": "string"}},
+        "required": ["findings", "not_obtained", "search_record"]},
+    "review": {"type": "object", "properties": {
+        "title": {"type": "string"},
+        "answers": {"type": "array", "items": {"type": "object", "properties": {
+            "direction": {"type": "string"}, "answer": {"type": "string"},
+            "strength": {"type": "string"}, "conflicts": {"type": "string"},
+            "not_measured": {"type": "string"}, "access_basis": {"type": "string"},
+            "single_source_sensitivity": {"type": "string"}},
+            "required": ["direction", "answer", "strength", "access_basis"]}},
+        "review_markdown": {"type": "string"}, "not_obtained": _RS_NOT_OBTAINED,
+        "search_record": {"type": "string"}},
+        "required": ["title", "answers", "review_markdown", "not_obtained", "search_record"]},
+    "critique": {"type": "object", "properties": {
+        "answers_supported": {"type": "string", "enum": ["yes", "partial", "no"]},
+        "reformulated_answers": {"type": "array", "items": {"type": "object", "properties": {
+            "direction": {"type": "string"}, "answer": {"type": "string"}},
+            "required": ["direction", "answer"]}},
+        "answers_assessment": {"type": "string"},
+        "single_source_claims": {"type": "array", "items": {"type": "string"}},
+        "access_errors": {"type": "array", "items": {"type": "string"}},
+        "reference_errors": {"type": "array", "items": {"type": "string"}},
+        "coverage_gaps": {"type": "array", "items": {"type": "object", "properties": {
+            "gap": {"type": "string"}, "setting_or_class": {"type": "string"},
+            "direction": {"type": "string"}}, "required": ["gap", "setting_or_class"]}},
+        "one_sided_handling": {"type": "array", "items": {"type": "string"}},
+        "merged_cases": {"type": "array", "items": {"type": "string"}},
+        "scope_drift": {"type": "array", "items": {"type": "string"}},
+        "expectation_echo": {"type": "object", "properties": {
+            "brief_states_expectation": {"type": "boolean"}, "brief_wording": {"type": "string"},
+            "review_repeats_it": {"type": "boolean"}, "independent_support": {"type": "string"}},
+            "required": ["brief_states_expectation", "review_repeats_it"]}},
+        "required": ["answers_supported", "reformulated_answers", "answers_assessment",
+                     "single_source_claims", "access_errors", "reference_errors",
+                     "coverage_gaps", "one_sided_handling", "merged_cases", "scope_drift",
+                     "expectation_echo"]},
+}
+
+
+def research_stages(rec, kind=None):
+    """The stage names of a record's job, in order."""
+    if (kind or "run") == "preflight":
+        return ["preflight"]
+    size = rec["dispatch"]["size"]
+    if size == "quick":
+        return ["researcher"]
+    if size == "standard":
+        return ["researcher", "critic"]
+    return [f"search-{i}" for i in range(1, len(rec["dispatch"]["angles"]) + 1)] + \
+        ["synthesis", "critic"]
+
+
+def research_role(stage):
+    return "search" if stage.startswith("search-") else stage
+
+
+def research_stage_file(pdir, rid, stage):
+    return research_dir(pdir, rid) / "stages" / f"{stage}.json"
+
+
+def research_stage(rec_or_pdir, stage, rid=None):
+    """A finished stage's saved output {out, meta, refused}, or None."""
+    if isinstance(rec_or_pdir, dict):
+        pdir, rid = rec_or_pdir.get("_pdir"), rec_or_pdir["id"]
+    else:
+        pdir = rec_or_pdir
+    if not pdir:
+        return None
+    return _read_json(research_stage_file(pdir, rid, stage))
+
+
+def research_protocol(rec):
+    """The researcher protocol the record runs under: read from the installed
+    skill once, then kept on the record (install.sh replaces the skill folder
+    while it copies, and a stage reading it then would read nothing)."""
+    if rec.get("protocol"):
+        return rec["protocol"]
+    try:
+        t = RESEARCH_PROTOCOL.read_text()
+    except OSError:
+        return None
+    return t if t.strip() else None
+
+
+def research_prompt(pdir, rec, stage):
+    brief = f"=== AGENT BRIEF ===\n{research_agent_text(rec['brief'])}\n=== END AGENT BRIEF ==="
+    ex = rec["brief"].get("extra") or []
+    extra = ("\n\nADDITIONAL INSTRUCTIONS\n" + "\n".join(f"- {x}" for x in ex)) if ex else ""
+    if stage == "preflight":
+        return ("You are a BLIND READER checking a research brief before it is sent to research "
+                "agents. Do not do the research. Research agents will receive exactly the text "
+                "below and nothing else. The brief is meant to be neutral: it should not reveal "
+                "what design it serves or what answer its author hopes for. Your job is to find "
+                "where it fails that.\n\nRead it as a sharp, suspicious reader would. "
+                "Reconstruct, if you can, the design it serves and the answer hoped for in each "
+                "direction, and quote the wording that gave each away. Then list loaded wording, "
+                "one-sided requests, out-of-scope text that discounts evidence, scope defined "
+                "inconsistently, boundaries that would exclude the nearest relevant work, and "
+                "the research communities you would search. Say \"cannot tell\" where you "
+                "genuinely cannot; do not invent a leak.\n\n" + brief + extra)
+    proto = f"=== RESEARCHER PROTOCOL ===\n{rec['protocol']}\n=== END RESEARCHER PROTOCOL ==="
+    if stage == "researcher":
+        return ("You are the RESEARCHER for this brief. Follow the Common rules, and both the "
+                "Search agent and Synthesis agent sections of the protocol: search, read, then "
+                f"write the review.\n\n{brief}\n\n{proto}{extra}")
+    if stage.startswith("search-"):
+        ang = rec["dispatch"]["angles"][int(stage.split("-")[1]) - 1]
+        return ("You are a SEARCH AGENT. Follow the Common rules and the Search agent section "
+                f"of the protocol.\n\nYour angle: {ang['name']}\nSearch in this community's "
+                f"vocabulary: {ang['vocabulary']}\n\n{brief}\n\n{proto}{extra}\n\nReturn "
+                "findings for your angle only. Do not write a review or an answer.")
+    if stage == "synthesis":
+        sweeps = []
+        for i, ang in enumerate(rec["dispatch"]["angles"], 1):
+            s = research_stage(pdir, f"search-{i}", rec["id"]) or {}
+            if s.get("out") and not s.get("refused"):
+                sweeps.append(dict(angle=ang["name"], **s["out"]))
+        return ("You are the SYNTHESIS AGENT. Follow the Common rules and the Synthesis agent "
+                f"section of the protocol.\n\n{brief}\n\n{proto}{extra}\n\n=== SEARCH FINDINGS "
+                "(one block per angle; the angles were searched blind to each other) ===\n"
+                f"{json.dumps(sweeps, indent=1)}\n=== END SEARCH FINDINGS ===")
+    if stage == "critic":
+        rv = research_review(pdir, rec) or {}
+        return ("You are the CRITIC. Follow the Common rules and the Critic section of the "
+                "protocol. Verify against the sources themselves, and check references against "
+                f"Crossref.\n\n{brief}\n\n{proto}{extra}\n\n=== REVIEW UNDER CRITIQUE ===\n"
+                f"Answers: {json.dumps(rv.get('answers'))}\n\n{rv.get('review_markdown', '')}"
+                f"\n\nSources the reviewer did not obtain: {json.dumps(rv.get('not_obtained'))}"
+                "\n=== END REVIEW ===")
+    raise ValueError(stage)
+
+
+def research_review(pdir, rec):
+    for st in ("synthesis", "researcher"):
+        s = research_stage(pdir, st, rec["id"])
+        if s and s.get("out"):
+            return s["out"]
+    return None
+
+
+def research_schema(stage):
+    role = research_role(stage)
+    return RESEARCH_SCHEMAS[{"preflight": "preflight", "search": "findings",
+                             "researcher": "review", "synthesis": "review",
+                             "critic": "critique"}[role]]
+
+
+def research_scratch(pdir, rid, stage):
+    return RESEARCH_SCRATCH / Path(pdir).name / rid / stage
+
+
+def research_cmd(cfg, stage):
+    """One stage's command. Nothing of the owner's loads (--safe-mode: no
+    CLAUDE.md, skills, hooks, plugins or MCP; --restricted: no user settings,
+    file tools held to the cwd), so a stage knows the brief and nothing else.
+    Never --bare: it ignores the OAuth login a subscription runs on."""
+    role = research_role(stage)
+    tools = ("Read",) if role == "preflight" else RESEARCH_WEB
+    allow = ("Read",) if role == "preflight" else RESEARCH_ALLOW
+    claude = os.environ.get("HARNESS_RESEARCH_CLAUDE") or "claude"
+    return [claude, "-p", "--output-format", "json",
+            "--json-schema", json.dumps(research_schema(stage)),
+            "--model", str(cfg.get("model") or "opus"),
+            "--effort", str((cfg.get("effort") or {}).get(role) or "medium"),
+            "--max-turns", str((cfg.get("turns") or {}).get(role) or 120),
+            "--max-budget-usd", str(cfg.get("budget_usd") or 40),
+            "--safe-mode", "--restricted", "--strict-mcp-config", "--disable-slash-commands",
+            "--tools", ",".join(tools), "--allowedTools", ",".join(allow),
+            "--permission-mode", "dontAsk", "--permission-prompts", "none"]
+
+
+_RS_LIMIT = re.compile(r"usage limit|hit your limit|limit reached|rate.?limit|session limit|"
+                       r"\b429\b", re.I)
+_RS_TRANSIENT = re.compile(r"overloaded|\b5\d\d\b|timed? ?out|ECONNRESET|network", re.I)
+_RS_REFUSAL = re.compile(r"usage polic|safeguard|unable to (?:help|respond|assist)|"
+                         r"declin(?:e|ed) to", re.I)
+
+
+def research_outcome(rc, stdout, stderr, now=None):
+    """What a stage's process did: {ok, out, meta} or {limit: until} or
+    {refused: why} or {error: why}. Read from the -p JSON result, not a transcript."""
+    now = now or time.time()
+    try:
+        d = json.loads(stdout or "")
+        if isinstance(d, list):          # stream form: the result is the last entry
+            d = next((x for x in reversed(d) if isinstance(x, dict)
+                      and x.get("type") == "result"), {})
+    except ValueError:
+        d = {}
+    text = " ".join(str(x) for x in (d.get("result"), d.get("error"), stderr) if x)
+    u = d.get("usage") or {}
+    meta = {"cost_usd": d.get("total_cost_usd"), "turns": d.get("num_turns"),
+            "secs": round((d.get("duration_ms") or 0) / 1000),
+            "tokens": sum(int(u.get(k) or 0) for k in (
+                "input_tokens", "output_tokens", "cache_read_input_tokens",
+                "cache_creation_input_tokens")),
+            "searches": ((u.get("server_tool_use") or {}).get("web_search_requests")),
+            "subtype": d.get("subtype"), "rc": rc}
+    out = d.get("structured_output")
+    if not isinstance(out, dict) and isinstance(d.get("result"), str):
+        try:
+            got = json.loads(d["result"])
+            out = got if isinstance(got, dict) else None
+        except ValueError:
+            m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", d["result"], re.S)
+            try:
+                out = json.loads(m.group(1)) if m else None
+            except ValueError:
+                out = None
+    if isinstance(out, dict) and not d.get("is_error"):
+        return {"ok": True, "out": out, "meta": meta}
+    if d.get("api_error_status") == 429 or _RS_LIMIT.search(text):
+        until = _reset_epoch(text, now)
+        return {"limit": until, "text": clip(text, 200), "meta": meta}
+    if d.get("stop_reason") == "refusal" or "refusal" in str(d.get("terminal_reason") or "") \
+            or _RS_REFUSAL.search(str(d.get("result") or "")):
+        return {"refused": clip(text, 200) or "refused", "meta": meta}
+    if not d:
+        return {"error": clip((stderr or stdout or "no output").strip(), 300), "meta": meta}
+    why = d.get("subtype") or "no structured output"
+    if d.get("is_error"):
+        why = f"{why}: {clip(text, 200)}"
+    return {"error": why, "transient": bool(_RS_TRANSIENT.search(text)), "meta": meta}
+
+
+_RESEARCH_CHILD = []             # the running stage's pid, for the runner's SIGTERM
+
+
+def research_ledger(row):
+    p = research_home() / "ledger.jsonl"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open("a") as fh:
+        fh.write(json.dumps(dict(row, at=_now())) + "\n")
+
+
+def research_run_stage(pdir, rec, stage, cfg, runner=None):
+    """Run one stage, once. -> research_outcome(); the raw result is kept."""
+    cwd = research_scratch(pdir, rec["id"], stage)
+    if cwd.exists():
+        shutil.rmtree(cwd, ignore_errors=True)
+    cwd.mkdir(parents=True, exist_ok=True)
+    env = dict(research_env(), CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION=str(
+        cfg.get("web_searches") or 500), CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS="0")
+    cmd = research_cmd(cfg, stage)
+    prompt = research_prompt(pdir, rec, stage)
+    t0 = time.time()
+    limit = cfg.get("stage_timeout") or 3 * 3600
+    try:
+        if runner:
+            r = runner(cmd, input=prompt, cwd=str(cwd), env=env, capture_output=True,
+                       text=True, timeout=limit)
+            rc, so, se = r.returncode, r.stdout, r.stderr
+        else:
+            p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, text=True, cwd=str(cwd), env=env,
+                                 start_new_session=True)
+            _RESEARCH_CHILD[:] = [p.pid]
+            try:
+                so, se = p.communicate(prompt, timeout=limit)
+                rc = p.returncode
+            except subprocess.TimeoutExpired:
+                kill_tree(p.pid)
+                so, se = p.communicate()
+                rc, se = -1, f"timed out after {limit}s\n{se or ''}"
+            finally:
+                _RESEARCH_CHILD[:] = []
+    except subprocess.TimeoutExpired:
+        rc, so, se = -1, "", f"timed out after {limit}s"
+    except OSError as e:
+        rc, so, se = -1, "", f"could not start {cmd[0]}: {e}"
+    res = research_outcome(rc, so, se)
+    res["meta"]["secs"] = res["meta"].get("secs") or round(time.time() - t0)
+    st = rec.setdefault("stages", {}).setdefault(stage, {"attempts": 0})
+    st["attempts"] = st.get("attempts", 0) + 1
+    raw = research_dir(pdir, rec["id"]) / "stages" / f"{stage}.attempt{st['attempts']}.json"
+    raw.parent.mkdir(parents=True, exist_ok=True)
+    raw.write_text((so or "")[:2 * 2**20] + ("\n--- stderr ---\n" + se[:20000] if se else ""))
+    research_ledger({"slug": Path(pdir).name, "id": rec["id"], "stage": stage,
+                     "outcome": "ok" if res.get("ok") else "limit" if "limit" in res
+                     else "refused" if res.get("refused") else "error",
+                     **{k: res["meta"].get(k) for k in ("cost_usd", "tokens", "secs",
+                                                         "searches", "turns")}})
+    return res
+
+
+def research_stage_done(pdir, rec, stage, out, meta, refused=None):
+    _save(research_stage_file(pdir, rec["id"], stage),
+          {"out": out, "meta": meta, "refused": refused})
+    st = rec.setdefault("stages", {}).setdefault(stage, {"attempts": 0})
+    st.update(state="refused" if refused else "done", at=_now(), **{
+        k: meta.get(k) for k in ("cost_usd", "tokens", "secs", "searches", "turns")})
+    if refused:
+        st["refused"] = refused
+    rec["cost_usd"] = round(sum(float(s.get("cost_usd") or 0)
+                                for s in rec["stages"].values()), 4)
+
+
+def research_ring(pdir, node, text, priority="high"):
+    if node and node != "owner":
+        try:
+            ring_inbox(pdir, node, "research", text, priority)
+        except Exception:
+            pass
+
+
+def research_fail(pdir, rec, stage, why):
+    rec["state"] = "failed"
+    rec["failed"] = {"at": _now(), "stage": stage, "why": why}
+    _research_log(rec, "runner", f"failed at {stage}: {why}")
+    research_save(pdir, rec)
+    research_dequeue(pdir, rec["id"])
+    msg = (f"Research {rec['id']} ({rec['label']}) on {rec['task']} failed at {stage}: {why}. "
+           f"Its finished stages are kept: harness research {rec['id']} --show. Withdraw it, or "
+           f"tell the owner.")
+    research_ring(pdir, rec.get("requester_node"), msg)
+    root, _ = research_root(_tree_nodes(_research_repo(pdir)))
+    if root and root != rec.get("requester_node"):
+        research_ring(pdir, root, msg, "low")
+    append_inbox({"event": "research-failed", "project": Path(pdir).name, "id": rec["id"],
+                  "at": _now(), "why": why})
+
+
+def _research_repo(pdir):
+    for p, repo in ask_projects():
+        if Path(p) == Path(pdir):
+            return repo
+    return ""
+
+
+def research_step(pdir, repo, rec, job, cfg, S, runner=None):
+    """Run the next stage of a job, once. -> "done" (the job is finished),
+    "stage" (a stage ran or was settled), or ("wait", until, why)."""
+    rec["_pdir"] = str(pdir)
+    kind = job.get("kind")
+    if kind == "land":
+        ok, why = research_land(pdir, repo, rec, cfg)
+        return "done" if ok else ("wait", time.time() + cfg["land_retry"], why)
+    stages = research_stages(rec, kind)
+    if kind == "preflight":
+        # A reading of an older text is no reading of this one (rewritten while
+        # it waited, or after it came back).
+        sha = research_sha(rec["brief"])
+        old = research_stage(pdir, "preflight", rec["id"])
+        if old and (old.get("meta") or {}).get("sha") != sha:
+            research_stage_file(pdir, rec["id"], "preflight").unlink()
+        rec.setdefault("preflight", {})["sha"] = sha
+    todo = [s for s in stages if not research_stage_file(pdir, rec["id"], s).exists()]
+    if not todo:
+        return research_finish(pdir, repo, rec, kind, cfg)
+    stage = todo[0]
+    if stage == "synthesis" and not any(
+            not (research_stage(pdir, s, rec["id"]) or {}).get("refused")
+            for s in stages if s.startswith("search-")):
+        research_fail(pdir, rec, stage, "every search angle was refused or came back empty")
+        return "done"
+    if kind == "run" and not rec.get("protocol"):
+        p = research_protocol(rec)
+        if not p:
+            return ("wait", time.time() + 300, f"the researcher protocol is missing at "
+                                               f"{RESEARCH_PROTOCOL} (an install in progress?)")
+        rec["protocol"] = p
+    if rec["state"] == "approved":
+        rec["state"] = "running"
+        rec["started_at"] = _now()
+    rec.setdefault("stages", {}).setdefault(stage, {"attempts": 0})["state"] = "running"
+    research_save(pdir, {k: v for k, v in rec.items() if k != "_pdir"})
+    print(f"{_now()} {Path(pdir).name} {rec['id']} {stage}: starting", flush=True)
+    def settled():
+        # The job's last stage is in: finish it now, not a stage gap later.
+        left = [s for s in stages if not research_stage_file(pdir, rec["id"], s).exists()]
+        return "stage" if left else research_finish(pdir, repo, rec, kind, cfg)
+
+    res = research_run_stage(pdir, rec, stage, cfg, runner)
+    if stage == "preflight":
+        res.setdefault("meta", {})["sha"] = research_sha(rec["brief"])
+    st = rec["stages"][stage]
+    S["last_stage_end"] = time.time()
+    if res.get("ok"):
+        research_stage_done(pdir, rec, stage, res["out"], res["meta"])
+        print(f"{_now()} {rec['id']} {stage}: done (${res['meta'].get('cost_usd')}, "
+              f"{res['meta'].get('searches')} searches)", flush=True)
+        research_save(pdir, {k: v for k, v in rec.items() if k != "_pdir"})
+        return settled()
+    if "limit" in res:
+        until = (res["limit"] or time.time() + cfg["limit_sleep"]) + 120
+        st["attempts"] -= 1                 # a limit is not the stage's failure
+        st["state"] = "waiting"
+        S["until"], S["why"] = until, f"usage limit: {res.get('text')}"
+        research_save(pdir, {k: v for k, v in rec.items() if k != "_pdir"})
+        print(f"{_now()} {rec['id']} {stage}: usage limit; sleeping until "
+              f"{time.strftime('%H:%M', time.localtime(until))}", flush=True)
+        return ("wait", until, S["why"])
+    if res.get("refused"):
+        if st["attempts"] <= cfg["refusal_retries"]:
+            st["state"] = "retrying"
+            research_save(pdir, {k: v for k, v in rec.items() if k != "_pdir"})
+            return "stage"
+        if research_role(stage) in ("search", "critic", "preflight"):
+            # A refused preflight goes back to its writer to reword; a refused
+            # angle or critic is named in the result.
+            research_stage_done(pdir, rec, stage, None, res["meta"], refused=res["refused"])
+            research_save(pdir, {k: v for k, v in rec.items() if k != "_pdir"})
+            return settled()
+        research_fail(pdir, rec, stage, f"refused {st['attempts']} times by a safety "
+                                        f"classifier: {res['refused']}")
+        return "done"
+    if st["attempts"] < cfg["retries"]:
+        st["state"] = "retrying"
+        st["last_error"] = res.get("error")
+        research_save(pdir, {k: v for k, v in rec.items() if k != "_pdir"})
+        return ("wait", time.time() + cfg["transient_sleep"], f"{stage}: {res.get('error')}")
+    if research_role(stage) == "critic":
+        research_stage_done(pdir, rec, stage, None, res["meta"],
+                            refused=f"failed {st['attempts']} times: {res.get('error')}")
+        research_save(pdir, {k: v for k, v in rec.items() if k != "_pdir"})
+        return settled()
+    research_fail(pdir, rec, stage, f"failed {st['attempts']} times: {res.get('error')}")
+    return "done"
+
+
+def research_finish(pdir, repo, rec, kind, cfg):
+    """Every stage of a job is in: a preflight goes back to its writer; a run is
+    rendered and landed."""
+    rid = rec["id"]
+    if kind == "preflight":
+        s = research_stage(pdir, "preflight", rid) or {}
+        pf = rec.setdefault("preflight", {})
+        pf.update(at=_now(), report=s.get("out"), refused=s.get("refused"), accepted={})
+        rec["state"] = "preflighted"
+        _research_log(rec, "runner", "preflight returned")
+        research_save(pdir, {k: v for k, v in rec.items() if k != "_pdir"})
+        research_dequeue(pdir, rid, "preflight")
+        if s.get("refused"):
+            research_ring(pdir, rec.get("requester_node"),
+                          f"The blind reader of research {rid} ({rec['label']}) was stopped by a "
+                          f"safety classifier ({s['refused']}). Reword what it may have read as "
+                          f"clinical or harmful, and --write it again.")
+            return "done"
+        research_ring(pdir, rec.get("requester_node"),
+                      f"The blind reader is back on research {rid} ({rec['label']}). Compare "
+                      f"its guesses with your ROUTING: harness research {rid} --show. Where it "
+                      f"recovered the design or your expected answer, rewrite and --write again; "
+                      f"otherwise accept each direction: harness research {rid} --accept D1 "
+                      f"\"why its guess doesn't leak\".")
+        return "done"
+    text, brief_md, title = research_render(pdir, repo, rec)
+    d = research_dir(pdir, rid)
+    (d / "result.md").write_text(text)
+    (d / "brief.md").write_text(brief_md)
+    rec["title_result"] = title
+    rec["state"] = "rendered"
+    rec["finished_at"] = _now()
+    _research_log(rec, "runner", "rendered")
+    research_save(pdir, {k: v for k, v in rec.items() if k != "_pdir"})
+    ok, why = research_land(pdir, repo, rec, cfg)
+    if ok:
+        return "done"
+    def m(jobs):
+        for j in jobs:
+            if j.get("slug") == Path(pdir).name and j.get("id") == rid:
+                j["kind"] = "land"
+    research_queue(m)
+    return ("wait", time.time() + cfg["land_retry"], why)
+
+
+# ── the result: rendered from the raw stages, never written by an agent ───────
+
+def _rr_one(s):
+    return " ".join(str(s or "").split())
+
+
+def _rr_items(x):
+    out = []
+    for v in x or []:
+        out.append("; ".join(f"{k}: {_rr_one(w)}" for k, w in v.items())
+                   if isinstance(v, dict) else _rr_one(v))
+    return out
+
+
+def _rr_block(label, xs):
+    xs = _rr_items(xs)
+    return [f"> **{label}** ({len(xs)}):" + (" none" if not xs else "")] + \
+        [f"> - {x}" for x in xs]
+
+
+def _rr_quote(text):
+    return "\n".join("> " + l if l.strip() else ">" for l in str(text).split("\n"))
+
+
+def research_title(rec, review):
+    t = (review or {}).get("title") or rec.get("title") or rec["id"]
+    t = re.sub(r'[\\:*?"<>|#^\[\]]', "", t.replace("/", "-")).strip()
+    return clip(t, 150).rstrip(". ") or rec["id"]
+
+
+def research_pconfig(repo):
+    """The project's research settings: where results and briefs go, their tags,
+    how they link."""
+    c = dict(RESEARCH_DIRS, tags=["research", "result"], links="md")
+    got = _read_json(Path(repo) / ".harness" / "research.json")
+    if isinstance(got, dict):
+        c.update({k: v for k, v in got.items() if k in ("briefs_dir", "results_dir", "tags",
+                                                         "links")})
+    for k in ("briefs_dir", "results_dir"):
+        c[k] = str(c[k]).strip("/") or RESEARCH_DIRS[k]
+    return c
+
+
+def research_brief_md(rec):
+    """The brief as it ran: all three parts, and the preflight on the record."""
+    b, r, d = rec["brief"], rec["routing"], rec["dispatch"]
+    pf = rec.get("preflight") or {}
+    lines = ["---", f"created: {rec['requested_at'][:10]}", f"updated: {_now()[:10]}",
+             "tags:", "  - research", "  - brief", "---", f"# {rec['label']}: {rec['title']}", "",
+             f"Research {rec['id']} on task `{rec['task']}`, asked by {rec['requested_by']}.", "",
+             "> [!abstract] AGENT BRIEF (what every research agent received, verbatim)",
+             _rr_quote(research_agent_text(b)), ""]
+    if b.get("extra"):
+        lines += ["> [!example] Extra instructions (also sent)"] + \
+            [f"> - {x}" for x in b["extra"]] + [""]
+    lines += ["> [!note] ROUTING (never sent to any agent)", _rr_quote(r.get("text") or ""), "",
+              "> [!example] DISPATCH",
+              f"> **Size:** {d['size']}. Triage: {d.get('triage') or 'n/a'}. Kind: {r['kind']}."]
+    if d.get("angles"):
+        lines.append("> **Angles:** " + "; ".join(f"{a['name']}: {a['vocabulary']}"
+                                                   for a in d["angles"]))
+    if rec.get("after"):
+        lines.append(f"> **Runs after:** {rec['after']}")
+    lines.append("")
+    rep = pf.get("report") or {}
+    if rep:
+        lines += ["> [!info] Preflight (blind reader)",
+                  f"> Inferred design: {_rr_one(rep.get('inferred_design'))}"]
+        for h in rep.get("inferred_hoped_answers") or []:
+            acc = (pf.get("accepted") or {}).get(h.get("direction"), {})
+            lines.append(f"> - **{h.get('direction')}** guessed: {_rr_one(h.get('hoped_answer'))}"
+                         + (f" (cue: {_rr_one(h.get('cue'))})" if h.get("cue") else "")
+                         + (f". Accepted: {_rr_one(acc.get('why'))}" if acc else ""))
+        lines.append("")
+    return "\n".join(lines) + "\n"
+
+
+def research_render(pdir, repo, rec):
+    """(result markdown, brief markdown, title), from the stages on disk. A port of
+    the vault's write_note2.py: how far the evidence reaches comes before what it
+    says, and nothing about the project but its tags is written in."""
+    rid = rec["id"]
+    pc = research_pconfig(repo)
+    rv = research_review(pdir, rec) or {}
+    crs = research_stage(pdir, "critic", rid) or {}
+    cr = crs.get("out") or {}
+    title = research_title(rec, rv)
+    today = _now()[:10]
+    stages = research_stages(rec)
+    sweeps, refused, blind = [], [], []
+    acc = {"full_text": 0, "abstract_only": 0, "secondary": 0}
+    for i, s in enumerate(stages):
+        got = research_stage(pdir, s, rid) or {}
+        meta = got.get("meta") or {}
+        if got.get("refused"):
+            refused.append(f"{s}: {got['refused']}")
+        if research_role(s) != "preflight" and meta.get("searches") == 0:
+            blind.append(s)
+        if s.startswith("search-"):
+            ang = rec["dispatch"]["angles"][int(s.split("-")[1]) - 1]["name"]
+            out = got.get("out") or {}
+            fs = out.get("findings") or []
+            for f in fs:
+                if f.get("access") in acc:
+                    acc[f["access"]] += 1
+            sweeps.append(f"{ang}: " + ("refused, nothing returned" if got.get("refused")
+                                        else f"{len(fs)} findings, "
+                                             f"{len(out.get('not_obtained') or [])} not obtained"))
+    brief_file = f"{rec['label']}.md"
+    link = (f"[[{Path(brief_file).stem}]]" if pc.get("links") == "wiki"
+            else f"[{rec['label']}](../{Path(pc['briefs_dir']).name}/{brief_file})"
+            if Path(pc["briefs_dir"]).parent == Path(pc["results_dir"]).parent
+            else f"`{pc['briefs_dir']}/{brief_file}`")
+    cost = "; ".join(f"{s} ${float((rec.get('stages') or {}).get(s, {}).get('cost_usd') or 0):.2f}"
+                     for s in stages)
+    access = (f"full text {acc['full_text']} / abstract only {acc['abstract_only']} / "
+              f"secondary {acc['secondary']}" if rec["dispatch"]["size"] == "deep" else
+              "; ".join(f"{x.get('direction')}: {_rr_one(x.get('access_basis'))}"
+                        for x in rv.get("answers") or []))
+    out = ["---", f"created: {today}", f"updated: {today}", "tags:"] + \
+        [f"  - {t}" for t in pc.get("tags") or []] + ["---", f"# {title}", "",
+         "> [!abstract] Note Role",
+         f"> **Contains**: The returned literature review for {rec['label']} ({rid}) of {link}, "
+         f"its answers, reference list, and the adversarial critique of it.",
+         f"> **Cannot contain**: Design decisions drawn from the review. Those belong to task "
+         f"`{rec['task']}`, whose node records what this changed "
+         f"(`harness research {rid} --consumed`).", "",
+         "> [!info] Provenance",
+         f"> Returned {today} by the harness research runner at size **{rec['dispatch']['size']}**, "
+         f"one fresh session per stage, given the AGENT BRIEF of {rec['label']} verbatim plus the "
+         f"researcher protocol. ROUTING was withheld from every agent."
+         + (f" Search angles: {'; '.join(sweeps)}." if sweeps else ""),
+         ">", "> **Search record:** " + _rr_one(rv.get("search_record")),
+         ">", f"> **Access:** {access}",
+         ">", f"> **Cost:** ${float(rec.get('cost_usd') or 0):.2f} ({cost})"]
+    if refused:
+        out += [">", "> **Refused stages:** " + "; ".join(refused)]
+    if blind:
+        out += [">", "> **No web search ran in:** " + ", ".join(blind)
+                + ". What those stages report rests on what the model already knew."]
+    out.append("")
+    sup = cr.get("answers_supported")
+    if not cr:
+        out += ["> [!danger] No critique",
+                "> " + ("No critic ran at quick size." if rec["dispatch"]["size"] == "quick"
+                        else f"The critic returned nothing ({crs.get('refused') or 'no output'}).")
+                + " Treat this review as uncritiqued and do not cite it.", ""]
+    else:
+        if sup in ("partial", "no"):
+            out += [f"> [!danger] Critic: answers {'partly supported' if sup == 'partial' else 'not supported'}",
+                    "> **Reformulated answers:**"] + \
+                [f"> - **{x.get('direction')}**: {_rr_one(x.get('answer'))}"
+                 for x in cr.get("reformulated_answers") or []] + \
+                [">", _rr_quote(cr.get("answers_assessment", "")), ""]
+        w = ["> [!warning] Adversarial critique, full findings"
+             + (" (answers supported: read before citing)" if sup == "yes" else "")]
+        if sup == "yes":
+            w += [_rr_quote(cr.get("answers_assessment", "")), ">"]
+        for label, key in (("Access errors", "access_errors"),
+                           ("Single-source claims", "single_source_claims"),
+                           ("Reference errors", "reference_errors"),
+                           ("Coverage gaps", "coverage_gaps"),
+                           ("One-sided handling", "one_sided_handling"),
+                           ("Merged cases", "merged_cases"), ("Scope drift", "scope_drift")):
+            w += _rr_block(label, cr.get(key))
+        ee = cr.get("expectation_echo") or {}
+        w += ["> **Expectation echo:** " + "; ".join(f"{k}: {_rr_one(v)}" for k, v in ee.items())]
+        out += w + [""]
+    out.append("> [!quote] Answers as delivered")
+    for x in rv.get("answers") or []:
+        out.append(f"> **{x.get('direction')}**: {_rr_one(x.get('answer'))} *Strength:* "
+                   f"{_rr_one(x.get('strength'))}. *Conflicts:* {_rr_one(x.get('conflicts'))}. "
+                   f"*Not measured:* {_rr_one(x.get('not_measured'))}. *Access:* "
+                   f"{_rr_one(x.get('access_basis'))}. *Single-source sensitivity:* "
+                   f"{_rr_one(x.get('single_source_sensitivity'))}.")
+    out += ["", "> [!todo] Stage 2",
+            f"> ROUTING condition: {_rr_one(rec['routing'].get('stage2'))}",
+            "> The critic's coverage gaps:"] + \
+        ([f"> - {g}" for g in _rr_items(cr.get("coverage_gaps"))] or ["> - none"]) + \
+        ["> Whether a follow-up is written is the requester's call, made on the record when it "
+         "reads this (`--consumed … --stage2`). A follow-up stands alone and never says what "
+         "this found.", ""]
+    seen, rows = set(), []
+    nob = list(rv.get("not_obtained") or [])
+    for s in stages:
+        if s.startswith("search-"):
+            nob += ((research_stage(pdir, s, rid) or {}).get("out") or {}).get("not_obtained") or []
+    for n in nob:
+        if not isinstance(n, dict):
+            continue
+        k = str(n.get("reference", ""))[:80]
+        if k not in seen:
+            seen.add(k)
+            rows.append(f"> - {_rr_one(n.get('reference'))} (routes tried: "
+                        f"{_rr_one(n.get('routes_tried'))})")
+    out += ["> [!failure] Sources not obtained",
+            "> Nothing beyond a citation was reachable for these; none supports any claim in the "
+            "review."] + (rows or ["> - none"]) + ["", "---", ""]
+    out.append(str(rv.get("review_markdown") or "(the review returned no body)").strip() + "\n")
+    return "\n".join(out), research_brief_md(rec), title
+
+
+# ── landing: one commit on rank 0's branch, holding only the result ──────────
+
+def _worktree_of(repo, branch):
+    rc, out, _ = git("worktree", "list", "--porcelain", cwd=repo)
+    wt = None
+    for line in out.splitlines():
+        if line.startswith("worktree "):
+            wt = line[9:]
+        elif line == f"branch refs/heads/{branch}" and wt:
+            return wt
+    return None
+
+
+def research_paths_ok(pdir, repo, pc, nodes):
+    """Why the configured folders can't take a result, or None."""
+    root, _ = research_root(nodes)
+    probe = [f"{pc['results_dir']}/x.md", f"{pc['briefs_dir']}/x.md"]
+    if (nodes.get(root) or {}).get("kind") != "doc":
+        cls = guard_classify(ProjCtx(pdir, repo), probe)
+        docs = [p.rsplit("/", 1)[0] for p in probe if cls.get(p) == "doc"]
+        if docs:
+            return (f"{', '.join(docs)} is a document path in the manifest, and rank 0 is not "
+                    f"the document node, so the guard refuses rank 0 committing there. Set "
+                    f"briefs_dir/results_dir in .harness/research.json to a path outside "
+                    f"`docs`")
+    for p in probe:
+        rc, _, _ = git("check-ignore", "-q", p, cwd=repo)
+        if rc == 0:
+            return f"{p.rsplit('/', 1)[0]} is ignored by git; research can't be committed there"
+    return None
+
+
+def _research_free(wt, rel):
+    """rel, or rel with ' (2)', ' (3)'… when the path is taken or dirty."""
+    base, ext = os.path.splitext(rel)
+    cand, n = rel, 1
+    while (Path(wt) / cand).exists() or git("ls-files", "--error-unmatch", "--", cand,
+                                            cwd=wt)[0] == 0:
+        n += 1
+        cand = f"{base} ({n}){ext}"
+    return cand
+
+
+def research_land(pdir, repo, rec, cfg=None):
+    """Commit the result and its brief onto rank 0's branch, in rank 0's own
+    checkout, without touching anything else there. -> (ok, why not)."""
+    rid = rec["id"]
+    d = research_dir(pdir, rid)
+    if not (d / "result.md").exists():
+        return False, "nothing rendered"
+    nodes = _tree_nodes(repo)
+    root, branch = research_root(nodes)
+    if not root:
+        return False, "no rank 0 in the tree"
+    pc = research_pconfig(repo)
+    bad = research_paths_ok(pdir, repo, pc, nodes)
+    wt = _worktree_of(repo, branch)
+
+    def defer(why):
+        land = rec.setdefault("land", {})
+        first = land.get("why") != why
+        land.update(deferred_at=_now(), why=why)
+        research_save(pdir, {k: v for k, v in rec.items() if k != "_pdir"})
+        if first:
+            research_ring(pdir, root, f"Research {rid} ({rec['label']}) is finished but can't "
+                                      f"land on {branch}: {why}. It retries every "
+                                      f"{(cfg or RESEARCH_DEFAULTS)['land_retry'] // 60} minutes.",
+                          "low")
+        return False, why
+    if bad:
+        return defer(bad)
+    if not wt:
+        return defer(f"no checkout has {branch} out")
+    rc, head, _ = git("symbolic-ref", "-q", "HEAD", cwd=wt)
+    if head != f"refs/heads/{branch}":
+        return defer(f"rank 0's checkout is on {head or 'a detached HEAD'}, not {branch}")
+    for marker, what in (("MERGE_HEAD", "merge"), ("rebase-merge", "rebase"),
+                         ("rebase-apply", "rebase"), ("CHERRY_PICK_HEAD", "cherry-pick"),
+                         ("REVERT_HEAD", "revert")):
+        rc, gp, _ = git("rev-parse", "--git-path", marker, cwd=wt)
+        if gp and (Path(gp) if os.path.isabs(gp) else Path(wt) / gp).exists():
+            return defer(f"rank 0 is mid-{what}")
+    lk = _flock(Path(pdir) / "integrate.lock", block=False)
+    if lk is None:
+        return defer("an integration is running")
+    try:
+        res_rel = _research_free(wt, f"{pc['results_dir']}/{rec.get('title_result') or rid}.md")
+        brief_rel = _research_free(wt, f"{pc['briefs_dir']}/{rec['label']}.md")
+        paths = [res_rel, brief_rel]
+        for rel, src in ((res_rel, d / "result.md"), (brief_rel, d / "brief.md")):
+            (Path(wt) / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, Path(wt) / rel)
+        subject = f"Research {rec['label']}: {clip(rec.get('title_result') or rec['title'], 100)}"
+        msg = (subject + "\n\n"
+               f"Task: {rec['task']}\nRequested-by: {rec['requested_by']}\n"
+               f"Research: {rid} ({rec['dispatch']['size']}, ${float(rec.get('cost_usd') or 0):.2f})\n"
+               f"Approved-by: {(rec.get('approval') or {}).get('by') or '?'}\n\n"
+               f"Co-Authored-By: Claude (harness research, "
+               f"{(cfg or RESEARCH_DEFAULTS).get('model')}) <noreply@anthropic.com>\n")
+        err = ""
+        for _ in range(5):
+            rc, _, err = git("add", "--", *paths, cwd=wt)
+            if rc == 0:
+                rc, _, err = git("commit", "--only", "-q", "-m", msg, "--", *paths, cwd=wt)
+            if rc == 0 or "index.lock" not in err:
+                break
+            time.sleep(2)
+        if rc:
+            git("rm", "--cached", "-q", "--ignore-unmatch", "--", *paths, cwd=wt)
+            for rel in paths:
+                try:
+                    (Path(wt) / rel).unlink()
+                except OSError:
+                    pass
+            return defer(f"the commit was refused: {clip(err, 200)}")
+        rc, sha, _ = git("log", "-1", "--format=%H", "--", res_rel, cwd=wt)
+        rc2, subj, _ = git("log", "-1", "--format=%s", sha, cwd=wt)
+    finally:
+        lk.close()
+    rec["result"] = {"path": res_rel, "brief_path": brief_rel, "commit": sha, "branch": branch,
+                     "at": _now(), "own_commit": subj == subject}
+    rec["state"] = "landed"
+    rec.pop("land", None)
+    _research_log(rec, "runner", f"landed on {branch} in {sha[:8]}")
+    research_save(pdir, {k: v for k, v in rec.items() if k != "_pdir"})
+    research_dequeue(pdir, rid)
+    me = rec.get("requester_node")
+    research_ring(pdir, me,
+                  f"Research {rid} ({rec['label']}) on {rec['task']} landed on {branch} "
+                  f"({sha[:8]}): {res_rel}. Catch up, read the critique before the answers, "
+                  f"then record what it changed against your ROUTING: harness research {rid} "
+                  f"--consumed \"…\" --stage2 none|\"why a follow-up\". "
+                  + ("Your present of the task waits on that." if rec["routing"]["kind"]
+                     in RESEARCH_HOLDS else ""))
+    for n in rec.get("want") or []:
+        if n != me:
+            research_ring(pdir, n, f"Research {rid} ({rec['label']}) landed on {branch}: "
+                                   f"{res_rel}", "low")
+    if root not in (me, None):
+        research_ring(pdir, root, f"Research {rid} ({rec['label']}) on {rec['task']} landed on "
+                                  f"{branch} in {sha[:8]}: {res_rel}", "fyi")
+    try:
+        for r in report_open_for(ProjCtx(pdir, repo), rec["task"]):
+            if r.get("state") in ("gathering", "composing"):
+                report_wake_detached(pdir, r["id"], f"Research {rid} on this task landed: "
+                                                    f"{res_rel} ({sha[:8]} on {branch}).")
+    except Exception:
+        pass
+    append_inbox({"event": "research-landed", "project": Path(pdir).name, "id": rid,
+                  "at": _now(), "path": res_rel, "commit": sha})
+    return True, ""
+
+
+# ── the runner ───────────────────────────────────────────────────────────────
+
+def research_usage_wait(cfg, now=None):
+    """(until, why) when the statusline's fresh copy of the account's usage says
+    the 5-hour window is nearly spent; None otherwise (or when it is stale)."""
+    now = now or time.time()
+    u = _read_json(RESEARCH_USAGE) or {}
+    if not u or now - float(u.get("at") or 0) > cfg["usage_fresh"]:
+        return None
+    fh = (u.get("rate_limits") or {}).get("five_hour") or {}
+    pct, at = fh.get("used_percentage"), fh.get("resets_at")
+    if pct is not None and at and float(pct) >= cfg["usage_wait_pct"] and float(at) > now:
+        return float(at) + 120, f"the 5-hour usage window is at {pct}%"
+    return None
+
+
+def research_pick(jobs, S, cfg, now=None):
+    """(job, pdir, repo, rec) to run now, or (None, until, why) to wait, or
+    (None, None, why) when nothing can run."""
+    now = now or time.time()
+    projs = {p.name: (p, r) for p, r in ask_projects()}
+    if S.get("until") and now < S["until"]:
+        return None, S["until"], S.get("why") or "waiting"
+    waits, drop = [], []
+    order = sorted(jobs, key=lambda j: (0 if j.get("kind") == "preflight" else
+                                        1 if j.get("kind") == "land" else 2))
+    for j in order:
+        if (j.get("slug"), j.get("id")) in S.get("later", {}):
+            t, why = S["later"][(j["slug"], j["id"])]
+            if now < t:
+                waits.append((t, why))
+                continue
+        pr = projs.get(j.get("slug"))
+        if not pr:
+            drop.append(j)
+            continue
+        pdir, repo = pr
+        rec = _read_json(research_path(pdir, j.get("id")))
+        if not isinstance(rec, dict) or rec.get("state") in RESEARCH_ENDED + ("landed",):
+            drop.append(j)
+            continue
+        if j.get("kind") == "preflight" and rec.get("state") != "preflighting":
+            drop.append(j)
+            continue
+        if j.get("kind") == "run" and rec.get("state") not in ("approved", "running", "rendered"):
+            drop.append(j)
+            continue
+        if j.get("kind") == "land" and rec.get("state") != "rendered":
+            drop.append(j)
+            continue
+        if halted(ProjCtx(pdir, repo)):
+            continue
+        if j.get("kind") == "run" and rec.get("after"):
+            prev = _read_json(research_path(pdir, rec["after"])) or {}
+            if prev.get("state") not in ("landed", "consumed", "withdrawn", "declined",
+                                         "failed"):
+                continue
+        new_brief = j.get("kind") == "run" and not rec.get("started_at")
+        if new_brief and S.get("last_run_end") and now < S["last_run_end"] + cfg["gap"]:
+            waits.append((S["last_run_end"] + cfg["gap"], "the gap between briefs"))
+            continue
+        if j.get("kind") != "land" and S.get("last_stage_end") and \
+                now < S["last_stage_end"] + cfg["stage_gap"]:
+            waits.append((S["last_stage_end"] + cfg["stage_gap"], "the gap between stages"))
+            continue
+        if j.get("kind") != "land":
+            uw = research_usage_wait(cfg, now)
+            if uw:
+                return None, uw[0], uw[1]
+        return j, pdir, repo, rec
+    if drop:
+        def m(js):
+            js[:] = [x for x in js if x not in drop]
+        research_queue(m)
+    if waits:
+        t, why = min(waits)
+        return None, t, why
+    return None, None, "nothing runnable"
+
+
+def research_crashed(e):
+    """The runner died: say so once per error to rank 0 of every project waiting."""
+    import traceback
+    home = research_home()
+    tb = traceback.extract_tb(e.__traceback__)
+    where = f"{tb[-1].name}:{tb[-1].lineno}" if tb else "?"
+    err = f"{type(e).__name__}: {e}"[:300]
+    f = home / "runner.crash.json"
+    old = _read_json(f) or {}
+    first = old.get("error") != err
+    _save(f, {"at": _now(), "error": err, "where": where,
+              "first": old.get("first") if not first else _now()})
+    if not first:
+        return
+    slugs = {j.get("slug") for j in (_read_json(home / "queue.json") or {}).get("jobs") or []}
+    for pdir, repo in ask_projects():
+        if pdir.name in slugs:
+            root, _ = research_root(_tree_nodes(repo))
+            research_ring(pdir, root, f"The research runner died: {err} (in {where}). Research "
+                                      f"stays queued; tell the owner, with "
+                                      f"{home / 'runner.log'}.", "high")
+
+
+def cmd_researchd(a):
+    """The machine's research runner (internal: started by research_ensure_runner)."""
+    home = research_home()
+    home.mkdir(parents=True, exist_ok=True)
+    slot = _flock(home / "runner.lock", block=False)
+    if slot is None:
+        return
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except Exception:
+        pass
+    import signal
+
+    def on_term(signum, frame):
+        # The stage in flight is lost, not its predecessors: it runs again from
+        # the start when the runner is next up.
+        for pid in list(_RESEARCH_CHILD):
+            kill_tree(pid)
+        print(f"{_now()} research runner stopped", flush=True)
+        sys.exit(1)
+    signal.signal(signal.SIGTERM, on_term)
+    try:
+        research_loop(home)
+        (home / "runner.crash.json").unlink(missing_ok=True)
+    except SystemExit:
+        raise
+    except Exception as e:
+        research_crashed(e)
+        raise
+    finally:
+        slot.close()
+
+
+def research_loop(home, once=False, runner=None, clock=None, sleep=None):
+    """Pick, run one stage, save; wait out gaps and limits; leave when idle. The
+    hooks (`once`, `runner`, `clock`, `sleep`) are for tests."""
+    clock = clock or time.time
+    sleep = sleep or time.sleep
+    S = _read_json(home / "runner.json") or {}
+    S["later"] = {}
+    me = Path(__file__).resolve()
+    born = ringer_stamp(me)
+    idle_since = clock()
+    print(f"{_now()} research runner up", flush=True)
+    while True:
+        if not once and ringer_stamp(me) != born:
+            print(f"{_now()} the harness was updated; research runner restarts", flush=True)
+            os.execv(sys.executable, [sys.executable, str(me), "researchd"])
+        cfg = research_config()
+        jobs = research_queue()
+        if not jobs:
+            if once or clock() - idle_since > RESEARCH_IDLE:
+                print(f"{_now()} nothing queued; research runner exits", flush=True)
+                return
+            sleep(2)
+            continue
+        idle_since = clock()
+        job, a2, a3, *rest = research_pick(jobs, S, cfg, clock())
+        if job is None:
+            until, why = a2, a3
+            if until is None:
+                # Every job waits on something no clock moves (a halted project, a
+                # run after one not yet landed): leave; resume and landing restart it.
+                print(f"{_now()} {why}; research runner exits", flush=True)
+                return ("wait", None, why) if once else None
+            if S.get("said") != why:
+                print(f"{_now()} waiting until {time.strftime('%H:%M', time.localtime(until))}"
+                      f": {why}", flush=True)
+                S["said"] = why
+            if once:
+                return ("wait", until, why)
+            sleep(min(30, max(1, until - clock())))
+            continue
+        pdir, repo, rec = a2, a3, rest[0]
+        S["said"] = ""
+        r = research_step(pdir, repo, rec, job, cfg, S, runner)
+        if r == "done" and job.get("kind") in ("run", "land"):
+            S["last_run_end"] = clock()
+        if isinstance(r, tuple) and r[0] == "wait" and not S.get("until"):
+            S["later"][(job["slug"], job["id"])] = (r[1], r[2])
+        if S.get("until") and clock() >= S["until"]:
+            S["until"] = None
+        _save(home / "runner.json", {k: v for k, v in S.items() if k != "later"})
+        if once:
+            return r
+
+
+# ── the verbs ────────────────────────────────────────────────────────────────
+
+def research_line(r):
+    pos = ""
+    st = r.get("state")
+    if st == "running":
+        done = sum(1 for s in (r.get("stages") or {}).values() if s.get("state") in
+                   ("done", "refused"))
+        pos = f" {done}/{len(research_stages(r))}"
+    where = (r.get("result") or {}).get("path")
+    return (f"{r['id']:<7} {st + pos:<14} {r.get('dispatch', {}).get('size', '?'):<8} "
+            f"{r.get('label', ''):<10} {clip(r.get('title', ''), 52)}  ({r.get('task')}, "
+            f"{r.get('requester_node')})" + (f"\n        {where}" if where else ""))
+
+
+def research_write(ctx, a):
+    """`research <task> --write FILE`: parse, lint, and record each brief; queue
+    its blind preflight."""
+    by, me = research_actor(ctx)
+    task = a.target
+    _, b = load_brief(ctx, task)
+    if b is None:
+        die(REFUSED, f"no brief '{task}': research is written on a briefed task, the one whose "
+                     f"decision it feeds")
+    node = b.get("node") or task_node(ctx, task)
+    if me != "owner" and me != node and ctx.rank(me) != 0 and me not in ancestors(ctx, node):
+        die(REFUSED, f"'{me}' may not write research on {node}'s task: its node, a lead above "
+                     f"it, rank 0 or the owner does")
+    refuse_if_halted(ctx, "new research")
+    text = report_text(a.write, cap=400 * 2**10)
+    blocks = research_split(text)
+    if not blocks:
+        die(REFUSED, "no brief found: a `#### <ID>` heading with AGENT BRIEF, ROUTING and "
+                     "DISPATCH parts (the research-brief skill's template)")
+    existing = research_all(ctx.state)
+    parsed = []
+    for blk in blocks:
+        fields, faults = research_parse(blk)
+        if not faults:
+            hard, soft = research_lint(ctx.state, ctx.repo, fields)
+        else:
+            hard, soft = faults, []
+        parsed.append((fields, hard, soft))
+    labels = {f["label"] for f, _, _ in parsed}
+    if len(labels) != len(parsed):
+        die(REFUSED, "two briefs in the file share a label; each `#### <ID>` is one brief")
+    for f, hard, _ in parsed:
+        al = f["dispatch"].get("after_label")
+        if al and al not in labels and not any(r.get("label") == al for r in existing
+                                               if r.get("state") not in ("withdrawn", "declined")):
+            hard.append(f"DISPATCH runs after {al}, which is no brief here or on record")
+    if a.follows:
+        prev = _read_json(research_path(ctx.state, a.follows))
+        if not isinstance(prev, dict):
+            die(REFUSED, f"--follows {a.follows}: no such research in this project")
+        prev["_pdir"] = str(ctx.state)
+        for f, hard, _ in parsed:
+            g = research_overlap(prev, f["brief"])
+            if g:
+                hard.append(f"carries the result of {a.follows} forward ('{g}'): a follow-up "
+                            f"stands alone and never says what the earlier one found")
+    bad = [f["label"] for f, hard, _ in parsed if hard]
+    for f, hard, soft in parsed:
+        for x in hard:
+            print(f"  {f['label']}: REFUSED  {x}")
+        for x in soft:
+            print(f"  {f['label']}: check    {x}")
+    if bad:
+        die(REFUSED, f"{len(bad)} of {len(parsed)} brief(s) refused ({', '.join(bad)}); nothing "
+                     f"was recorded. Fix them and --write the file again.")
+    made = {}
+    for f, _, soft in parsed:
+        old = next((r for r in existing if r.get("label") == f["label"]
+                    and tkey(r.get("task") or "") == tkey(task)
+                    and r.get("state") in RESEARCH_OPEN), None)
+        if old and old.get("state") not in RESEARCH_DRAFT:
+            die(REFUSED, f"{old['id']} ({f['label']}) is {old['state']}: it can't be rewritten. "
+                         f"Withdraw it and write a new one under another label.")
+        rec = old or {"id": research_next_id(ctx.state), "task": b.get("task") or task,
+                      "node": node, "requested_by": by, "requester_node": me,
+                      "requested_at": _now(), "history": [], "want": []}
+        same = old and research_sha(old["brief"]) == research_sha(f["brief"])
+        rec.update(label=f["label"], title=f["title"], brief=f["brief"], routing=f["routing"],
+                   dispatch=f["dispatch"], lint={"at": _now(), "soft": soft},
+                   follows=a.follows or rec.get("follows"))
+        if same and (rec.get("preflight") or {}).get("report"):
+            rec["preflight"]["accepted"] = {}
+            rec["state"] = "preflighted"
+            _research_log(rec, by, "ROUTING rewritten; the agent text is unchanged, so its "
+                                   "preflight stands, but every direction is accepted again")
+        else:
+            rec["preflight"] = {"sha": research_sha(f["brief"]), "queued_at": _now()}
+            rec["state"] = "preflighting"
+            research_stage_file(ctx.state, rec["id"], "preflight").unlink(missing_ok=True)
+            rec.pop("approval", None)
+            _research_log(rec, by, "rewritten" if old else "written")
+        made[f["label"]] = rec
+    for rec in made.values():
+        al = rec["dispatch"].get("after_label")
+        if al:
+            tgt = made.get(al) or next((r for r in reversed(existing) if r.get("label") == al),
+                                       None)
+            rec["after"] = tgt["id"] if tgt else None
+        research_save(ctx.state, rec)
+        if rec["state"] == "preflighting":
+            research_enqueue(ctx.state, rec, "preflight")
+        print(f"{rec['id']}  {rec['label']}: {clip(rec['title'], 70)}  [{rec['dispatch']['size']}, "
+              f"feeds a {rec['routing']['kind']}]  {rec['state']}"
+              + (f", runs after {rec['after']}" if rec.get("after") else ""))
+    print("  A blind reader gets each AGENT BRIEF next, with nothing else, and guesses what it "
+          "serves; you are rung when it is back. Then: harness research <id> --show, and "
+          "--accept each direction or rewrite.")
+
+
+def research_accept(pdir, path, rec, by, me, pairs):
+    if me not in ("owner", rec.get("requester_node")):
+        die(REFUSED, f"{rec['id']} is {rec.get('requester_node')}'s: its writer accepts the "
+                     f"preflight, against its own ROUTING")
+    if rec["state"] != "preflighted":
+        die(REFUSED, f"{rec['id']} is {rec['state']}: there is no preflight to accept"
+            + (" yet" if rec["state"] == "preflighting" else ""))
+    pf = rec["preflight"]
+    if pf.get("refused") or not pf.get("report"):
+        die(REFUSED, f"the blind reader of {rec['id']} returned nothing to accept"
+            + (f" (refused: {pf['refused']})" if pf.get("refused") else "")
+            + "; reword the brief and --write it again")
+    if pf.get("sha") != research_sha(rec["brief"]):
+        die(REFUSED, f"the preflight read an older text of {rec['id']}; it runs again")
+    ids = [d["id"] for d in rec["brief"]["directions"]]
+    for k, why in pairs:
+        why = (why or "").strip()
+        if len(why) < 12:
+            die(REFUSED, f"--accept {k} \"why\": say why the reader's guess for it does not "
+                         f"match your ROUTING (a few words at least)")
+        for d in (ids if k.lower() == "all" else [k.upper()]):
+            if d not in ids:
+                die(REFUSED, f"{k}: not a direction of {rec['id']} ({', '.join(ids)})")
+            pf.setdefault("accepted", {})[d] = {"why": why, "by": by, "at": _now()}
+    left = [d for d in ids if d not in pf["accepted"]]
+    if left:
+        _research_log(rec, by, f"accepted {', '.join(sorted(pf['accepted']))}")
+        _save(path, rec)
+        print(f"accepted; still to accept: {', '.join(left)}")
+        return
+    rec["state"] = "pending"
+    deep = rec["dispatch"]["size"] == "deep"
+    rec["approval"] = {"state": "pending", "needs": "owner" if deep else "rank 0",
+                       "asked_at": _now()}
+    _research_log(rec, by, "preflight accepted; awaiting approval")
+    _save(path, rec)
+    repo = _research_repo(pdir)
+    root, _ = research_root(_tree_nodes(repo))
+    if deep:
+        append_inbox({"event": "research-approval", "project": Path(pdir).name,
+                      "id": rec["id"], "at": _now(), "size": "deep"})
+        print(f"{rec['id']} waits for the owner's approval (a deep run is theirs: about 25 "
+              f"minutes and five sessions). It is on their queue in the viewer.")
+    else:
+        if root != me:
+            research_ring(pdir, root, f"Research {rec['id']} ({rec['label']}, "
+                                      f"{rec['dispatch']['size']}) on {rec['task']} waits on "
+                                      f"your approval: harness research {rec['id']} --show, then "
+                                      f"--approve or --decline \"why\".")
+        print(f"{rec['id']} waits for rank 0's approval" + (" (yours)" if root == me else "")
+              + ".")
+
+
+def research_show(pdir, repo, rec, me, ctx=None):
+    r = rec
+    print(f"{r['id']}  {r['label']}: {r['title']}")
+    print(f"  task {r['task']} ({r['node']}), asked by {r['requested_by']} at "
+          f"{r['requested_at'][:16]}")
+    print(f"  {r['state']}; {r['dispatch']['size']}; feeds a {r['routing']['kind']}"
+          + (f"; runs after {r['after']}" if r.get("after") else "")
+          + (f"; follows {r['follows']}" if r.get("follows") else ""))
+    pos, n = research_position(pdir, r["id"])
+    if pos:
+        print(f"  queue: {pos} of {n} on this machine")
+    print("\n  AGENT BRIEF (all any research agent sees)")
+    for l in research_agent_text(r["brief"]).splitlines():
+        print("    " + l)
+    for x in r["brief"].get("extra") or []:
+        print(f"    + extra: {x}")
+    if r["dispatch"].get("angles"):
+        print("  angles: " + "; ".join(f"{a['name']}: {a['vocabulary']}"
+                                       for a in r["dispatch"]["angles"]))
+    see = research_sees_routing(ctx, r, me)
+    pf = r.get("preflight") or {}
+    rep = pf.get("report") or {}
+    if see:
+        print("\n  ROUTING (never sent)")
+        for l in (r["routing"].get("text") or "").splitlines():
+            print("    " + l)
+    else:
+        print("\n  ROUTING: withheld (the requester, its leads, rank 0 and the owner read it)")
+    if pf.get("refused"):
+        print(f"\n  PREFLIGHT refused: {pf['refused']}")
+    if rep:
+        print(f"\n  PREFLIGHT ({pf.get('at', '')[:16]}): the blind reader guessed")
+        print(f"    design: {clip(_rr_one(rep.get('inferred_design')), 300)}")
+        guess = {h.get("direction"): h for h in rep.get("inferred_hoped_answers") or []}
+        for d in r["brief"]["directions"]:
+            h = guess.get(d["id"]) or {}
+            acc = (pf.get("accepted") or {}).get(d["id"])
+            print(f"    {d['id']} guessed: {clip(_rr_one(h.get('hoped_answer') or 'no guess'), 200)}"
+                  + (f"  [cue: {clip(_rr_one(h.get('cue')), 80)}]" if h.get("cue") else ""))
+            if see:
+                print(f"       yours: {clip(_rr_one(r['routing']['per_direction'].get(d['id'])), 200)}")
+            print(f"       {'accepted: ' + acc['why'] if acc else 'not accepted'}")
+        for k in ("loaded_wording", "one_sided_requests", "evidence_rules_in_refusal",
+                  "scope_inconsistencies", "nearest_precedent_risk", "communities"):
+            if rep.get(k):
+                print(f"    {k.replace('_', ' ')}: " + "; ".join(clip(_rr_one(x), 120)
+                                                            for x in rep[k]))
+    ap = r.get("approval") or {}
+    if ap:
+        print(f"\n  approval: {ap.get('state')}"
+              + (f", needs {ap['needs']}" if ap.get("state") == "pending" else
+                 f" by {ap.get('by')} at {str(ap.get('at'))[:16]}"
+                 + (" (self-approved)" if ap.get("self_approved") else ""))
+              + (f": {ap['why']}" if ap.get("why") else ""))
+    if r.get("stages"):
+        print("\n  stages")
+        for s in research_stages(r):
+            st = (r["stages"] or {}).get(s) or {}
+            print(f"    {s:<12} {st.get('state', 'to run'):<9} "
+                  + (f"${float(st.get('cost_usd') or 0):.2f} " if st.get("cost_usd") else "")
+                  + (f"{st.get('searches')} searches " if st.get("searches") is not None else "")
+                  + (f"refused: {clip(st['refused'], 80)}" if st.get("refused") else "")
+                  + (f"last error: {clip(st['last_error'], 80)}" if st.get("last_error")
+                     and st.get("state") != "done" else ""))
+        print(f"    cost so far ${float(r.get('cost_usd') or 0):.2f}")
+    if r.get("land"):
+        print(f"\n  landing deferred: {r['land'].get('why')}")
+    if r.get("result"):
+        res = r["result"]
+        print(f"\n  landed on {res['branch']} in {res['commit'][:8]}: {res['path']}\n"
+              f"  brief: {res['brief_path']}")
+    if r.get("consumed"):
+        c = r["consumed"]
+        print(f"\n  read by {c['by']} at {c['at'][:16]}: {c['entry']}\n  stage 2: {c['stage2']}")
+    if r.get("failed"):
+        print(f"\n  failed at {r['failed']['stage']}: {r['failed']['why']}")
+
+
+def cmd_research(a):
+    """T21: research gathered blind, one run at a time, read on the record."""
+    verbs = [v for v in ("write", "show", "accept", "approve", "decline", "withdraw", "want",
+                         "consumed", "run_once") if getattr(a, v, None) not in (None, False, [])]
+    if len(verbs) > 1:
+        die(REFUSED, "one verb at a time: " + ", ".join("--" + v.replace("_", "-") for v in verbs))
+    if a.stage2 and "consumed" not in verbs:
+        die(REFUSED, "--stage2 goes with --consumed")
+    if a.run_once:
+        r = research_loop(research_home(), once=True)
+        print(r); return
+    if not verbs and not a.target or a.list:
+        bound = ask_bound()
+        try:
+            ctx = Ctx(); ctx.require_enrolled()
+            projs = [(Path(ctx.state), str(ctx.repo))] if not a.all else ask_projects()
+        except SystemExit:
+            projs = [bound] if bound else ask_projects()
+        rows = [dict(r, project=Path(repo).name) for pdir, repo in projs
+                for r in research_all(pdir) if a.all or r.get("state") in RESEARCH_OPEN
+                or time.time() - (_epoch((r.get("consumed") or {}).get("at")
+                                         or r.get("requested_at")) or 0) < 7 * 86400]
+        if a.json:
+            print(json.dumps(rows, indent=2)); return
+        jobs = research_queue()
+        if jobs:
+            print(f"queue ({len(jobs)}): " + ", ".join(f"{j['id']} {j['kind']}" for j in jobs)
+                  + ("" if research_runner_alive() else "  — no runner is up"))
+        if not rows:
+            print("no research" + ("" if a.all else " open or read this week")); return
+        for r in rows:
+            print(research_line(r))
+        return
+    if not verbs:
+        die(REFUSED, "harness research <task> --write FILE (the research-brief skill's "
+                     "template), or harness research <id> --show")
+    v = verbs[0]
+    if v == "write":
+        ctx = Ctx(); ctx.require_enrolled()
+        research_write(ctx, a); return
+    pdir, repo, path, rec = research_find(a.target, a.project)
+    rec["_pdir"] = str(pdir)
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    ctx = None
+    if v == "show":
+        me = "owner"
+        if sid and not design_env():
+            try:
+                ctx = Ctx(); ctx.require_enrolled()
+                me, _ = ctx.node()
+            except SystemExit:
+                me = "?"
+        elif design_env():
+            me = "design"
+        research_show(pdir, repo, rec, me, ctx); return
+    by, me = research_actor()
+    if sid:
+        ctx = Ctx()
+        if Path(ctx.state) != Path(pdir):
+            die(REFUSED, f"{rec['id']} is another project's research")
+    rec.pop("_pdir", None)
+    if v == "accept":
+        research_accept(pdir, path, rec, by, me, a.accept); return
+    if v in ("approve", "decline"):
+        if rec["state"] != "pending":
+            die(REFUSED, f"{rec['id']} is {rec['state']}; only a pending run is approved or "
+                         f"declined")
+        deep = rec["dispatch"]["size"] == "deep"
+        if me != "owner":
+            if ctx.rank(me) != 0:
+                die(REFUSED, f"research is approved by rank 0 (quick, standard) or the owner "
+                             f"(deep); '{me}' is neither")
+            if deep:
+                die(REFUSED, f"{rec['id']} is a deep run (about 25 minutes, five sessions): the "
+                             f"owner approves it, in the viewer or a shell")
+        ap = rec.setdefault("approval", {})
+        if v == "decline":
+            why = (a.decline or "").strip()
+            if not why:
+                die(REFUSED, '--decline "why"')
+            ap.update(state="declined", by=by, at=_now(), why=why)
+            rec["state"] = "declined"
+            _research_log(rec, by, f"declined: {why}")
+            _save(path, rec)
+            research_ring(pdir, rec.get("requester_node"),
+                          f"Research {rec['id']} ({rec['label']}) was declined by {by}: {why}")
+            print(f"declined {rec['id']}"); return
+        ap.update(state="approved", by=by, at=_now())
+        if me != "owner" and me == rec.get("requester_node"):
+            ap["self_approved"] = True
+        rec["state"] = "approved"
+        rec["approved_at"] = _now()
+        _research_log(rec, by, "approved" + (" (self-approved)" if ap.get("self_approved")
+                                             else ""))
+        _save(path, rec)
+        research_enqueue(pdir, rec, "run")
+        pos, n = research_position(pdir, rec["id"])
+        research_ring(pdir, rec.get("requester_node"),
+                      f"Research {rec['id']} ({rec['label']}) is approved and queued ({pos} of "
+                      f"{n} on this machine). It runs one stage at a time with gaps; you are "
+                      f"rung when it lands.", "low")
+        print(f"approved {rec['id']}" + (" (self-approved: you asked for it)"
+                                         if ap.get("self_approved") else "")
+              + f"; queued, {pos} of {n} on this machine"); return
+    if v == "withdraw":
+        if me != "owner":
+            ok = (me == rec.get("requester_node") or ctx.rank(me) == 0
+                  or me in ancestors(ctx, rec.get("node") or ""))
+            if not ok:
+                die(REFUSED, f"{rec['id']} is {rec.get('requester_node')}'s: it, a lead above "
+                             f"{rec.get('node')}, rank 0 or the owner withdraws it")
+        if rec["state"] not in RESEARCH_OPEN or rec["state"] == "landed":
+            die(REFUSED, f"{rec['id']} is {rec['state']}"
+                + ("; it has landed: its requester records what it changed with --consumed"
+                   if rec["state"] == "landed" else ""))
+        why = (a.withdraw or "").strip() or "withdrawn"
+        rec["state"] = "withdrawn"
+        rec["withdrawn"] = {"by": by, "at": _now(), "why": why}
+        _research_log(rec, by, f"withdrawn: {why}")
+        _save(path, rec)
+        research_dequeue(pdir, rec["id"])
+        if me != rec.get("requester_node"):
+            research_ring(pdir, rec.get("requester_node"),
+                          f"Research {rec['id']} ({rec['label']}) was withdrawn by {by}: {why}")
+        print(f"withdrew {rec['id']}" + ("; a stage already running finishes, and nothing after "
+                                         "it runs" if rec.get("started_at") else "")); return
+    if v == "want":
+        if me == "owner":
+            die(REFUSED, "--want is a node's: the owner reads every result in the viewer")
+        if me not in rec.setdefault("want", []):
+            rec["want"].append(me)
+            _save(path, rec)
+        print(f"you are rung when {rec['id']} lands"
+              + (f" (it landed: {rec['result']['path']})" if rec.get("result") else "")); return
+    if v == "consumed":
+        if me not in ("owner", rec.get("requester_node")) or \
+                (me == "owner" and rec.get("requester_node") != "owner"):
+            die(REFUSED, f"{rec['id']} is {rec.get('requester_node')}'s: its requester records "
+                         f"what it changed")
+        if rec["state"] != "landed":
+            die(REFUSED, f"{rec['id']} is {rec['state']}; it is read once it has landed")
+        entry = (a.consumed or "").strip()
+        if len(entry) < 40:
+            die(REFUSED, "--consumed \"…\": what the evidence changed, or confirmed, against "
+                         "your ROUTING, direction by direction, in a sentence or two at least")
+        if not (a.stage2 or "").strip():
+            die(REFUSED, "--stage2 none, or --stage2 \"why a follow-up brief\" (the critic's "
+                         "coverage gaps are listed in the result)")
+        rec["consumed"] = {"by": by, "at": _now(), "entry": entry, "stage2": a.stage2.strip()}
+        rec["state"] = "consumed"
+        _research_log(rec, by, "read and recorded")
+        _save(path, rec)
+        research_consumed_hook(pdir, repo, rec)
+        print(f"recorded; {rec['id']} is read"
+              + ("" if a.stage2.strip().lower() == "none" else
+                 f". Write the follow-up as a new brief that stands alone: harness research "
+                 f"{rec['task']} --write FILE --follows {rec['id']}")); return
+
+
+def research_consumed_hook(pdir, repo, rec):
+    """What reading a result releases (gates come later in this file)."""
+    return None
+
+
 def read_dash_from_stdin(a):
     """`--write -` takes the body from stdin instead of from argv.
 
@@ -23015,6 +25106,7 @@ DESIGN_READ = {
     "fact": {"name", "list"}, "finding": {"name", "list", "all"},
     "idle": {"all", "roster"},
     "waits": {"node", "owes", "stale", "json", "dry_run"},
+    "research": {"target", "show", "list", "all", "json", "project"},
 }
 DESIGN_REFUSAL = ("a design session reads the tree and writes design documents; briefs, "
                   "marks, rings and the charter are rank 0's")
@@ -23987,6 +26079,36 @@ def main():
         rp.add_argument(f, help=argparse.SUPPRESS)
     for f in ("--settle", "--close-session", "--next", "--print-cmd"):
         rp.add_argument(f, action="store_true", help=argparse.SUPPRESS)
+    rs = add("research", cmd_research)
+    rs.add_argument("target", nargs="?", metavar="TASK|ID",
+                    help="a task, to --write research on it; a research id (res-<n>) otherwise")
+    rs.add_argument("--write", metavar="FILE",
+                    help="the brief(s), in the research-brief skill's template: a file, or '-'")
+    rs.add_argument("--follows", metavar="ID",
+                    help="with --write: a follow-up of this research (it may not carry its "
+                         "answers forward)")
+    rs.add_argument("--show", action="store_true",
+                    help="the agent text, the preflight against your ROUTING, stages and result")
+    rs.add_argument("--accept", nargs=2, action="append", metavar=("DIRECTION", "WHY"),
+                    help="the writer: the blind reader's guess for DIRECTION (or 'all') does "
+                         "not leak, and why; repeat")
+    rs.add_argument("--approve", action="store_true",
+                    help="rank 0 (quick, standard) or the owner (deep): run it")
+    rs.add_argument("--decline", metavar="WHY", help="rank 0 or the owner: don't run it")
+    rs.add_argument("--withdraw", metavar="WHY",
+                    help="the requester, a lead above it, rank 0 or the owner: take it back")
+    rs.add_argument("--want", action="store_true", help="a node: ring me when it lands")
+    rs.add_argument("--consumed", metavar="TEXT",
+                    help="the requester: what the landed result changed, against your ROUTING")
+    rs.add_argument("--stage2", metavar="none|WHY",
+                    help="with --consumed: none, or why a follow-up brief")
+    rs.add_argument("--list", action="store_true",
+                    help="open research, and what was read this week; the machine's queue")
+    rs.add_argument("--all", action="store_true", help="with --list: every record, every project")
+    rs.add_argument("--json", action="store_true")
+    rs.add_argument("--project", metavar="NAME", help=argparse.SUPPRESS)
+    rs.add_argument("--run-once", dest="run_once", action="store_true", help=argparse.SUPPRESS)
+    add("researchd", cmd_researchd)      # internal: started by research_ensure_runner
     im = add("intermediary", cmd_intermediary)
     im.add_argument("--project", metavar="NAME",
                     help="the repo directory name or state slug; default: the enrolled "

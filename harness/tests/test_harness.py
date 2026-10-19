@@ -8589,6 +8589,98 @@ class ReportHtml(unittest.TestCase):
         self.assertIn("line 3, <script>", f)
 
 
+class ReportGui(unittest.TestCase):
+    """The viewer serves a published report's page and listed figures only, with
+    a policy that runs nothing, and asks for reports through the CLI."""
+
+    def setUp(self):
+        gp = Path(__file__).resolve().parents[1] / "bin" / "harness-gui"
+        ld = importlib.machinery.SourceFileLoader("harness_gui", str(gp))
+        self.gui = importlib.util.module_from_spec(importlib.util.spec_from_loader("harness_gui", ld))
+        ld.exec_module(self.gui)
+        self.pdir = Path(tempfile.mkdtemp()) / "-slug-x"
+        self.pdir.mkdir()
+        self.addCleanup(shutil.rmtree, self.pdir.parent, True)
+        pub = self.pdir / "reports" / "rep-1" / "pub"
+        pub.mkdir(parents=True)
+        (pub / "index.html").write_text('<h1>r</h1><img src="fig.svg">')
+        (pub / "fig.svg").write_text("<svg/>")
+        (pub / "secret.png").write_bytes(PNG)                  # on disk, not listed
+        (self.pdir / "secret.json").write_text("{}")
+        self.rec = {"id": "rep-1", "task": "t", "node": "dev_1", "state": "published",
+                    "contributors": [{"node": "dev_1", "state": "submitted"}],
+                    "published": {"at": hz._now(), "assets": [{"file": "fig.svg"}]}}
+        self.save()
+        m = mock.patch.object(self.gui, "_project_dir",
+                              side_effect=lambda s: self.pdir if s == self.pdir.name else None)
+        m.start(); self.addCleanup(m.stop)
+
+    def save(self, **kw):
+        hz._save(self.pdir / "reports" / "rep-1.json", dict(self.rec, **kw))
+
+    def test_only_a_published_reports_listed_files(self):
+        f = self.gui.report_file
+        s = self.pdir.name
+        self.assertEqual(f(s, "rep-1")[1], "text/html; charset=utf-8")
+        self.assertEqual(f(s, "rep-1", "fig.svg")[1], "image/svg+xml")
+        for args in ((s, "rep-1", "secret.png"), (s, "rep-1", "../../secret.json"),
+                     ("..", "rep-1"), (s, "rep-2"), (s, "../rep-1")):
+            self.assertIsNone(f(*args), args)
+        self.save(published={"at": hz._now(), "assets": [{"file": "../../secret.json"}]})
+        self.assertIsNone(f(s, "rep-1", "../../secret.json"))
+        self.save(state="gathering")
+        self.assertIsNone(f(s, "rep-1"))
+
+    def test_the_route_runs_nothing_in_the_page(self):
+        import http.client
+        from http.server import ThreadingHTTPServer
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), self.gui.H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        port = srv.server_address[1]
+
+        def get(path):
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+            c.request("GET", path)
+            r = c.getresponse()
+            r.read()
+            return r
+        r = get(f"/report/{self.pdir.name}/rep-1/")
+        self.assertEqual(r.status, 200)
+        csp = r.getheader("Content-Security-Policy")
+        self.assertIn("default-src 'none'", csp)
+        self.assertIn("sandbox", csp)
+        self.assertIn(f"img-src data: http://127.0.0.1:{port}/report/{self.pdir.name}/rep-1/", csp)
+        self.assertEqual(r.getheader("X-Content-Type-Options"), "nosniff")
+        r = get(f"/report/{self.pdir.name}/rep-1/fig.svg")
+        self.assertEqual((r.status, r.getheader("Content-Type")), (200, "image/svg+xml"))
+        self.assertIn("sandbox", r.getheader("Content-Security-Policy"))
+        self.assertEqual(get(f"/report/{self.pdir.name}/rep-1/secret.png").status, 404)
+        self.assertEqual(get(f"/report/{self.pdir.name}/rep-1/x/y").status, 404)
+
+    def test_asking_goes_through_the_cli(self):
+        calls = []
+        with mock.patch.object(self.gui, "_ask_cli",
+                               side_effect=lambda s, a, sub="ask": calls.append((a, sub)) or (True, "ok")), \
+             mock.patch.object(self.gui, "task_detail", return_value={"task": "t"}):
+            self.assertEqual(self.gui.report_action(self.pdir.name, "request", task="t",
+                                                    text="the numbers", frm=["dev:plan"])[0], True)
+            self.gui.report_action(self.pdir.name, "withdraw", rid="rep-1", text="no")
+            self.assertEqual(self.gui.report_action(self.pdir.name, "withdraw", rid="x")[1],
+                             "no such report")
+        self.assertEqual(calls[0], (["t", "--request", "the numbers", "--origin", "gui",
+                                     "--from", "dev:plan"], "report"))
+        self.assertEqual(calls[1][0][1:], ["rep-1", "--withdraw", "no"])
+
+    def test_the_payload_lists_reports(self):
+        (r,) = self.gui.reports_of(self.pdir, None, "/r/proj")
+        self.assertEqual((r["id"], r["state"], r["parts_in"], r["session"]),
+                         ("rep-1", "published", 1, "unknown"))
+        self.save(published={"at": "2020-01-01T00:00:00+0000", "assets": []})
+        self.assertEqual(self.gui.reports_of(self.pdir, None, "/r/proj"), [])   # long gone
+
+
 class ReportSessions(unittest.TestCase):
     """One session per report, as an item session is one per ask."""
 

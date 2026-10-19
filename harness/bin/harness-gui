@@ -177,6 +177,107 @@ def owner_waits(live, tree, cctx):
     return out
 
 
+REPORT_KEEP = 30 * 86400        # published or withdrawn reports listed this long
+
+
+def reports_of(pdir, rows, repo):
+    """A project's reports (T20), newest first: what the Reports tab lists and
+    the node cards badge. Ended ones drop off after REPORT_KEEP."""
+    live = {}
+    if rows is not None:
+        try:
+            live = CLI.report_sessions(repo, CLI.live_rows(rows))
+        except Exception:
+            live = {}
+    out = []
+    for r in CLI.reports_all(pdir):
+        pub, wd = r.get("published") or {}, r.get("withdrawn") or {}
+        ended = pub.get("at") or wd.get("at")
+        if ended and time.time() - (CLI._epoch(ended) or 0) > REPORT_KEEP:
+            continue
+        cs = r.get("contributors") or []
+        lr = (live.get(r["id"]) or (None, None))[0]
+        out.append({
+            "id": r["id"], "task": r.get("task"), "node": r.get("node"),
+            "state": r.get("state"), "gate": r.get("gate"), "what": r.get("what") or "",
+            "requested_by": r.get("requested_by"), "requested_at": r.get("requested_at"),
+            "parts": [{"node": c.get("node"), "what": c.get("what") or "",
+                       "state": c.get("state"), "by": c.get("asked_by"),
+                       "why": c.get("why") or ""} for c in cs],
+            "parts_in": sum(1 for c in cs if c.get("state") in ("submitted", "declined")),
+            "published_at": pub.get("at"), "withdrawn": wd or None,
+            "session": ("unknown" if rows is None else "none" if not lr else
+                        "working" if lr.get("status") == "busy" else "idle")})
+    return list(reversed(out))
+
+
+def report_file(slug, rid, fname=None):
+    """One file of a published report -> (bytes, content type), or None. As
+    ask_evidence: the project exists, the id is a record already in reports/,
+    it is published, the file is its page or a figure the record lists, and the
+    resolved file sits directly in that report's pub/."""
+    pdir = _project_dir(slug)
+    if pdir is None or not CLI.REPORT_ID_RE.match(rid or ""):
+        return None
+    rd = pdir / "reports"
+    rf = next((f for f in rd.glob("rep-*.json") if f.stem == rid), None) if rd.is_dir() else None
+    if rf is None:
+        return None
+    try:
+        rec = json.loads(rf.read_text())
+    except Exception:
+        return None
+    pub = rec.get("published") or {}
+    if rec.get("state") != "published" or not pub:
+        return None
+    fname = fname or "index.html"
+    names = {"index.html"} | {str(a.get("file") or "") for a in pub.get("assets") or []
+                              if isinstance(a, dict)}
+    if fname not in names:
+        return None
+    base = (rd / rf.stem / "pub").resolve()
+    try:
+        f = (base / fname).resolve()
+    except Exception:
+        return None
+    if f.parent != base or not f.is_file():
+        return None
+    ctype = ("text/html; charset=utf-8" if fname == "index.html"
+             else EVIDENCE_TYPES.get(f.suffix.lower()))
+    if not ctype:
+        return None
+    try:
+        return f.read_bytes(), ctype
+    except Exception:
+        return None
+
+
+def report_action(slug, action, task="", rid="", text="", frm=()):
+    """Ask for, withdraw or start a report — delegated to the CLI with the
+    session id stripped, like every write: the button was pressed by a person."""
+    if action == "request":
+        if not task or task_detail(slug, task) is None:
+            return False, "no such task"
+        if not text:
+            return False, "say what the report should cover"
+        args = [task, "--request", text, "--origin", "gui"]
+        for f in frm or ():
+            if str(f).strip():
+                args += ["--from", str(f).strip()]
+        return _ask_cli(slug, args, sub="report")
+    if not CLI.REPORT_ID_RE.match(rid or ""):
+        return False, "no such report"
+    if action == "withdraw":
+        return _ask_cli(slug, [f"--project={slug}", rid, "--withdraw",
+                               text or "withdrawn by the owner"], sub="report")
+    if action == "start":
+        return _ask_cli(slug, [f"--project={slug}", rid, "--wake",
+                               "The owner opened this report in the viewer and asked it to go "
+                               "on. Read where it stands (--show) and carry it on."],
+                        sub="report")
+    return False, "unknown action"
+
+
 def intermediary(rows, repo, asks=None, pdir=None):
     """A project's item sessions: one intermediary per open ask, found by name
     on the roster. Each open ask gets `session` (working, idle, queued or
@@ -812,6 +913,7 @@ def read_state():
                          "asks": asks, "rulings": rulings,
                          "intermediary": intermediary(rows, repo, asks, pdir),
                          "owed": owed,
+                         "reports": reports_of(pdir, rows, repo),
                          "tests": tests_queue(pdir, repo),
                          "halt": CLI._read_json(Path(pdir) / "halt.json"),
                          "documenter": documenter(rows, pdir, repo, asks,
@@ -1051,6 +1153,23 @@ font-size:10px;line-height:1.6}
    count in the header, and the word on a row. Everything else stays muted. */
 /* The page tabs: one boxed panel under the title, a box per page. A new page
    is one entry in TABS. */
+/* Reports (T20): the list as the Issues list; the page in a sandboxed frame. */
+.rframe{display:block;width:100%;height:calc(var(--h,700px) - 190px);min-height:360px;
+border:1px solid var(--line);border-radius:4px;background:#fff}
+.rmeta{padding:12px 14px 6px}
+.rmeta .rparts{margin:6px 0 0;padding:0;list-style:none;font-size:12px}
+.rmeta .rparts li{margin:2px 0;color:var(--dim)}
+.rmeta .rparts b{color:var(--ink);font-weight:600}
+.rbtn{background:#00000040;color:var(--dim);border:1px solid var(--line);border-radius:4px;
+font:inherit;font-size:11px;padding:2px 8px;cursor:pointer;margin-right:6px}
+.rbtn:hover{color:var(--ink)}
+.rst{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--wait)}
+.rst.published{color:var(--busy)}.rst.withdrawn{color:var(--none)}
+.rchip{display:inline-block;margin:4px 6px 0 0;font-size:10.5px;color:var(--dim);
+border:1px dashed var(--line2);border-radius:3px;padding:0 5px;text-decoration:none}
+.rchip.new{color:var(--busy);border-style:solid;border-color:color-mix(in srgb,var(--s-busy) 50%,var(--line))}
+.rreq textarea,.rreq input{width:100%;box-sizing:border-box;background:var(--field);color:var(--ink);
+border:1px solid var(--line);border-radius:6px;padding:6px;font:inherit;margin:4px 0}
 #tabs{flex-basis:100%;display:flex;gap:6px;padding:6px;border:1px solid var(--line);
 border-radius:4px}
 #tabs a{color:var(--dim);font-size:12px;text-decoration:none;padding:5px 14px;
@@ -1553,6 +1672,16 @@ async function openTask(slug, task) {
           esc(sg.by) + ' &middot; against rev ' + esc(sg.against_revision) + '</div>' +
           '<div class="cmt-b">' + esc(sg.text) + '</div></div>').join('') + '</dd>' : '') +
         '<dt>comments</dt><dd>' + cs + '</dd>' +
+        '<dt>reports</dt><dd>' + ((d.reports || []).map(r =>
+          '<div><a href="#reports" data-rgo="' + esc(rkey(d.slug, r.id)) + '">' + esc(r.id) +
+          '</a> <span class="rst ' + esc(r.state) + '">' + esc(r.state) + '</span> ' +
+          esc(r.what) + '</div>').join('') || '<span class="q">none</span>') +
+          '<div class="rreq"><textarea id="rbox" rows="2" placeholder="ask for an HTML report ' +
+          'on this task: what it should cover"></textarea><input id="rfrom" placeholder="' +
+          'optional: who gives a part, as node:what, separated by ;">' +
+          '<div class="row"><button id="rsend">request report</button><span class="ln q" ' +
+          'id="rmsg">a report session gathers the parts and writes it; the task waits ' +
+          'until it is published</span></div></div></dd>' +
       '</dl>' +
       '<textarea id="cbox" placeholder="context for whoever works on this..."></textarea>' +
       '<div class="row"><button id="csend">comment</button>' +
@@ -1563,6 +1692,24 @@ async function openTask(slug, task) {
         : 'appended to the task record, never edited') + '</span></div>' +
     '</div></div>';
   document.getElementById('csend').onclick = sendComment;
+  document.getElementById('rsend').onclick = requestReport;
+}
+
+async function requestReport() {
+  const box = document.getElementById('rbox'), msg = document.getElementById('rmsg');
+  const text = box.value.trim();
+  if (!text || !MODAL) return;
+  const frm = document.getElementById('rfrom').value.split(';').map(x => x.trim()).filter(Boolean);
+  msg.textContent = 'asking...';
+  try {
+    const r = await fetch('/api/report', { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Harness-Local': '1' },
+      body: JSON.stringify({ slug: MODAL.slug, task: MODAL.task, action: 'request', text,
+                             from: frm }) });
+    const j = await r.json();
+    if (!j.ok) { msg.textContent = 'refused: ' + (j.message || r.status); return; }
+    openTask(MODAL.slug, MODAL.task);
+  } catch (e) { msg.textContent = 'failed: ' + e; }
 }
 
 async function sendComment() {
@@ -1790,7 +1937,7 @@ function card(n) {
     '<div class="sig" title="' + esc(g.do) + '"><span class="frm">&larr; ' + esc(g.frm || '?') +
     '</span><span class="kind">' + esc(g.kind) + '</span><span class="txt">' + esc(g.text) +
     '</span><span class="act cp" data-copy="' + esc(g.do) + '">' +
-    esc(VERB[g.kind] || 'copy') + '</span></div>').join('');
+    esc(VERB[g.kind] || 'copy') + '</span></div>').join('') + reportChips(n);
 
   // Three task groups: now, next, done. Gone folds to a count.
   const chip = (task, label, cls, title) => '<span class="chip ' + cls + '" data-task="' +
@@ -2180,8 +2327,8 @@ async function tick() {
   // the only notification the owner gets, so they must never be a poll behind.
   const N = (d.owner && d.owner.count) || 0;
   document.title = N ? '(' + N + ') harness' : 'harness';
-  tabs(N);
   LASTD = d;
+  tabs(N);
   // First visit: the project description is open, its features shut. That is
   // what this panel looked like before it could fold at all, so nobody arrives
   // to find their charter apparently empty.
@@ -2215,8 +2362,10 @@ async function tick() {
          'than the source. Run <code>bash install.sh</code> from the source tree.</div>';
   }
   if (ROUTE() === 'issues') { paint(h + ownerView(d)); return; }
+  if (ROUTE() === 'reports') { paint(h + reportsView(d)); return; }
   h += d.projects.map((p, pi) => {
-    p.nodes.forEach(n => n._slug = p.slug);
+    p.nodes.forEach(n => { n._slug = p.slug;
+      n._reports = (p.reports || []).filter(r => r.node === n.name); });
     return '<div class="proj"><h2>' + esc(p.project) + '</h2>' +
       '<div class="repo">' + esc(p.repo) + '</div>' + haltBanner(p) +
       // The charter in the one panel, on the left, and the tree out to the
@@ -2354,7 +2503,8 @@ const AMSG = {};          // ask key -> the CLI's last refusal, shown on the ite
 let FILTER = '';          // the rulings filter, applied client-side
 let LASTD = null;         // the last state read, so a keystroke can re-filter
 // The pages, in tab order. The first is the default (no hash).
-const TABS = [{route: 'agents', label: 'Agents'}, {route: 'issues', label: 'Issues'}];
+const TABS = [{route: 'agents', label: 'Agents'}, {route: 'issues', label: 'Issues'},
+              {route: 'reports', label: 'Reports'}];
 // Old addresses, kept so a bookmark still lands.
 const ALIAS = {owner: 'issues', tree: 'agents'};
 const ROUTE = () => {
@@ -2363,10 +2513,12 @@ const ROUTE = () => {
 };
 function tabs(N) {
   document.getElementById('tabs').innerHTML = TABS.map((t, i) => {
-    const n = t.route === 'issues' && N ? ' (' + N + ')' : '';
+    const R = t.route === 'reports' ? reportItems(LASTD).filter(i => runread(i)).length : 0;
+    const n = t.route === 'issues' && N ? ' (' + N + ')' : R ? ' (' + R + ')' : '';
     const cls = (t.route === ROUTE() ? 'on' : '') + (n ? ' due' : '');
     const tip = t.route === 'issues'
-      ? (N ? N + ' ask(s) waiting on your ruling' : 'nothing waiting on you') : '';
+      ? (N ? N + ' ask(s) waiting on your ruling' : 'nothing waiting on you')
+      : t.route === 'reports' ? (R ? R + ' report(s) published since you last looked' : '') : '';
     return '<a class="' + cls + '" href="#' + t.route + '" title="' + tip +
            '">' + t.label + n + '</a>';
   }).join('');
@@ -3332,6 +3484,132 @@ function observeTree(t) {
   });
 }
 
+// ── Reports (T20): asked for on a task, written by a report session ─────────
+// Which one is shown, and which have been read, live in localStorage, as the
+// Issues tab's do. The page is a sandboxed frame outside every data-live
+// element, so a poll never reloads it under the reader.
+const RSKEY = 'harness.report.sel', RSEENKEY = 'harness.report.seen';
+let RSEL = localStorage.getItem(RSKEY) || '';
+let RSEEN = {};
+try { RSEEN = JSON.parse(localStorage.getItem(RSEENKEY) || '{}') || {}; } catch (x) { RSEEN = {}; }
+const RMSG = {};
+const rkey = (slug, id) => slug + ':' + id;
+function reportItems(d) {
+  return ((d && d.projects) || []).flatMap(p => (p.reports || []).map(r =>
+    ({ k: rkey(p.slug, r.id), r: r, p: p })));
+}
+const runread = it => !!it.r.published_at && tsec(it.r.published_at) > (RSEEN[it.k] || 0);
+function rseen(it) {
+  if (!it || !it.r.published_at || !runread(it)) return;
+  RSEEN[it.k] = tsec(it.r.published_at);
+  try { localStorage.setItem(RSEENKEY, JSON.stringify(RSEEN)); } catch (x) {}
+}
+function reportChips(n) {
+  return (n._reports || []).filter(r => r.state !== 'withdrawn' && (r.state !== 'published' ||
+      runread({ k: rkey(n._slug, r.id), r: r }))).map(r => {
+    const pub = r.state === 'published';
+    return '<a class="rchip' + (pub ? ' new' : '') + '" href="#reports" data-rgo="' +
+      esc(rkey(n._slug, r.id)) + '" title="' + esc(r.task + ': ' + r.what) + '">report ' +
+      esc(r.id) + ' &middot; ' + (pub ? 'new' : esc(r.state) + ' ' + r.parts_in + '/' +
+      r.parts.length) + '</a>';
+  }).join('');
+}
+function reportCard(it, many) {
+  const r = it.r;
+  return '<div class="icard' + (runread(it) ? ' unread' : '') + (it.k === RSEL ? ' sel' : '') +
+    '" data-rsel="' + esc(it.k) + '" data-live="rcard:' + esc(it.k) + '">' +
+    '<div class="ic1"><span class="ict">' + esc(r.id) + ' &middot; ' + esc(r.task) + '</span>' +
+    '<span class="ica rst ' + esc(r.state) + '">' + esc(r.state) + '</span></div>' +
+    '<div class="ictl">' + esc(r.what) + '</div>' +
+    '<div class="ic3"><span class="icm">parts ' + r.parts_in + '/' + r.parts.length +
+    '</span><span class="icw">' + (many ? esc(it.p.project) + ' &middot; ' : '') +
+    esc(r.node || '?') + '</span></div></div>';
+}
+function reportPane(it) {
+  if (!it) return '<div class="ln q" style="padding:14px">no report chosen</div>';
+  const r = it.r, slug = it.p.slug, open = ['requested', 'gathering', 'composing'].includes(r.state);
+  const hold = !open || !r.gate ? '' : ' &middot; holds the task\'s ' +
+    (r.gate === 'present' ? 'present' : 'sign-off');
+  const parts = r.parts.map(c => '<li><b>' + esc(c.node) + '</b> ' + esc(c.state) +
+    (c.by === 'reporter' ? ' <span class="q">(asked by the reporter)</span>' : '') +
+    ' &mdash; ' + esc(c.what) + (c.why ? ' <span class="q">(' + esc(c.why) + ')</span>' : '') +
+    '</li>').join('') || '<li class="q">nobody asked yet</li>';
+  const meta = '<div class="rmeta" data-live="rmeta:' + esc(it.k) + '">' +
+    '<div class="ih1"><b>' + esc(r.id) + '</b> on <span class="chip" data-task="' +
+    esc(r.task) + '" data-slug="' + esc(slug) + '">' + esc(r.task) + '</span> ' +
+    '<span class="rst ' + esc(r.state) + '">' + esc(r.state) + '</span>' + hold + '</div>' +
+    '<div class="ln">' + esc(r.what) + '</div>' +
+    '<div class="ln q">asked for by ' + esc(r.requested_by === 'owner' ? 'you' : r.requested_by) +
+    ' &middot; ' + esc(String(r.requested_at || '').slice(0, 16).replace('T', ' ')) +
+    (r.published_at ? ' &middot; published ' +
+      esc(String(r.published_at).slice(0, 16).replace('T', ' ')) : '') +
+    (r.withdrawn ? ' &middot; withdrawn: ' + esc(r.withdrawn.why) : '') +
+    (open ? ' &middot; its session: ' + esc(r.session) : '') + '</div>' +
+    '<ul class="rparts">' + parts + '</ul>' +
+    '<div style="margin-top:8px">' +
+    (open ? '<button class="rbtn" data-rstart="' + esc(it.k) + '">start / wake</button>' +
+            '<button class="rbtn" data-rwithdraw="' + esc(it.k) + '">withdraw</button>' : '') +
+    (r.published_at ? '<a class="rbtn" target="_blank" rel="noopener noreferrer" href="/report/' +
+      encodeURIComponent(slug) + '/' + esc(r.id) + '/">open alone</a>' : '') +
+    (RMSG[it.k] ? '<span class="ln q">' + esc(RMSG[it.k]) + '</span>' : '') + '</div></div>';
+  const page = r.state === 'published'
+    ? '<iframe class="rframe" sandbox="" referrerpolicy="no-referrer" title="' + esc(r.id) +
+      '" src="/report/' + encodeURIComponent(slug) + '/' + esc(r.id) + '/"></iframe>'
+    : '<div class="ln q" style="padding:0 14px 14px">' + (open
+        ? 'Not published yet. The page shows here once the report session publishes it.'
+        : 'Withdrawn; nothing was published.') + '</div>';
+  return meta + page;
+}
+function reportsView(d) {
+  const items = reportItems(d), many = (d.projects || []).length > 1;
+  if (!items.some(i => i.k === RSEL)) RSEL = items.length ? items[0].k : '';
+  const cur = items.find(i => i.k === RSEL);
+  if (cur && document.hasFocus()) rseen(cur);
+  const list = items.map(i => reportCard(i, many)).join('') ||
+    '<div class="ln q ipnone">no reports. Ask for one on a task: click its chip on the ' +
+    'Agents page, or harness report &lt;task&gt; --request "..."</div>';
+  return '<div class="owner split"><div class="ilist" data-keep="rlist">' +
+    '<h3 class="osec">reports &middot; ' + items.length + '</h3>' + list + '</div>' +
+    '<div class="ipane" data-keep="rpane:' + esc(RSEL) + '">' + reportPane(cur) + '</div></div>';
+}
+function reportDo(k, action) {
+  const it = reportItems(LASTD).find(i => i.k === k);
+  if (!it) return;
+  let text = '';
+  if (action === 'withdraw') {
+    text = prompt('Withdraw ' + it.r.id + ': why?') || '';
+    if (!text.trim()) return;
+  }
+  RMSG[k] = action === 'start' ? 'waking...' : 'withdrawing...'; LAST = ''; tick();
+  fetch('/api/report', { method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Harness-Local': '1' },
+    body: JSON.stringify({ slug: it.p.slug, id: it.r.id, action: action, text: text }) })
+    .then(r => r.json())
+    .then(j => { RMSG[k] = j.message || (j.ok ? 'done' : 'refused'); LAST = ''; tick(); })
+    .catch(() => { RMSG[k] = 'could not reach the server'; LAST = ''; tick(); });
+}
+document.addEventListener('click', e => {
+  const g = e.target.closest('[data-rgo]');
+  if (g) {
+    RSEL = g.dataset.rgo;
+    try { localStorage.setItem(RSKEY, RSEL); } catch (x) {}
+    rseen(reportItems(LASTD).find(i => i.k === RSEL));      // opened on purpose: read
+    if (typeof closeModal === 'function' && MODAL) closeModal();
+    LAST = '';
+    return;                       // the link itself goes to #reports
+  }
+  const c = e.target.closest('[data-rsel]');
+  if (c && c.dataset.rsel !== RSEL) {
+    RSEL = c.dataset.rsel;
+    try { localStorage.setItem(RSKEY, RSEL); } catch (x) {}
+    rseen(reportItems(LASTD).find(i => i.k === RSEL));
+    LAST = ''; tick(); return;
+  }
+  const st = e.target.closest('[data-rstart]'), wd = e.target.closest('[data-rwithdraw]');
+  if (st) reportDo(st.dataset.rstart, 'start');
+  else if (wd) reportDo(wd.dataset.rwithdraw, 'withdraw');
+});
+
 function paint(h) {
   // Nothing is replaced while prose is being written into this page. The
   // include list protects a textarea that the poll knows about; it cannot
@@ -3427,7 +3705,10 @@ def task_detail(slug, task):
             "suggestions": (brief or {}).get("suggestions") or [],
             "brief_comments": (brief or {}).get("comments") or [],
             "mark_note": rec.get("_note") or "",
-            "comments": rec.get("_comments") or []}
+            "comments": rec.get("_comments") or [],
+            "reports": [{"id": r["id"], "state": r.get("state"), "what": r.get("what") or ""}
+                        for r in CLI.reports_all(pdir)
+                        if CLI.tkey(r.get("task") or "") == CLI.tkey(task)]}
 
 
 def add_comment(slug, task, text):
@@ -3708,8 +3989,42 @@ class H(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             self.close_connection = True
 
+    def _send_report(self, b, ctype, slug, rid):
+        # A report is written by a session and could hold anything the check
+        # missed, so the browser is told to run nothing in it: no script, no
+        # form, no frame of ours to reach, and images only from this report.
+        # `sandbox` gives it an opaque origin even opened alone in a tab, which
+        # is why img-src names the host and path rather than 'self'.
+        host = self.headers.get("Host") or ""
+        src = (f"http://{host}/report/{slug}/{rid}/"
+               if re.fullmatch(r"(127\.0\.0\.1|localhost):\d+", host) else "'self'")
+        csp = ("default-src 'none'; style-src 'unsafe-inline'; sandbox"
+               + (f"; img-src data: {src}; base-uri 'none'; form-action 'none'; "
+                  f"frame-ancestors 'self'" if ctype.startswith("text/html") else ""))
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Security-Policy", csp)
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
+        except (BrokenPipeError, ConnectionResetError):
+            self.close_connection = True
+
     def do_GET(self):
-        if self.path.startswith("/api/evidence?"):
+        if self.path.startswith("/report/"):
+            # /report/<slug>/<id>/[file]: a path, so a figure's relative src works.
+            parts = urlparse(self.path).path.split("/")
+            if len(parts) != 5 or parts[1] != "report":
+                self.send_error(404); return
+            hit = report_file(parts[2], parts[3], parts[4] or None)
+            if hit is None:
+                self.send_error(404); return
+            self._send_report(*hit, parts[2], parts[3])
+        elif self.path.startswith("/api/evidence?"):
             q = parse_qs(urlparse(self.path).query)
             g = lambda k: (q.get(k) or [""])[0]
             hit = ask_evidence(g("p"), g("id"), g("n"), q["f"][0] if "f" in q else None)
@@ -3751,7 +4066,7 @@ class H(BaseHTTPRequestHandler):
         if origin and not origin.startswith(("http://127.0.0.1:", "http://localhost:")):
             self.send_error(403, "cross-origin"); return
         if not self.path.startswith(("/api/comment", "/api/charter", "/api/ask",
-                                     "/api/documenter", "/api/intermediary")):
+                                     "/api/documenter", "/api/intermediary", "/api/report")):
             self.send_error(404); return
         try:
             n = int(self.headers.get("Content-Length") or 0)
@@ -3768,6 +4083,14 @@ class H(BaseHTTPRequestHandler):
             ok, msg = intermediary_action(str(body.get("slug") or ""),
                                           (body.get("action") or "start").strip(), text,
                                           str(body.get("id") or ""))
+            self._send(json.dumps({"ok": ok, "message": msg}), "application/json")
+            return
+        if self.path.startswith("/api/report"):
+            frm = body.get("from") or []
+            ok, msg = report_action(str(body.get("slug") or ""),
+                                    (body.get("action") or "").strip(),
+                                    str(body.get("task") or ""), str(body.get("id") or ""),
+                                    text, frm if isinstance(frm, list) else [])
             self._send(json.dumps({"ok": ok, "message": msg}), "application/json")
             return
         if self.path.startswith("/api/ask"):

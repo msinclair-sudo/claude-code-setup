@@ -4917,13 +4917,9 @@ def cmd_hook_stop(a):
             for f, b in back:
                 b.pop("returned", None)
                 f.write_text(json.dumps(b, indent=2) + nl)
-            def _why(b):
-                h = (b.get("wait_history") or [{}])[-1]
-                return f"{h.get('why')} — " + (f"lifted: {h['lifted']}" if h.get("lifted")
-                                               else f"its {human_age(WAIT_FOR)} ran out")
             stop_block(
                 f"Back from deferral, in the normal pool again:{nl}"
-                + nl.join(f"  '{b.get('task')}' was deferred: {_why(b)}" for f, b in back[:6])
+                + nl.join(f"  '{b.get('task')}' was deferred: {defer_back_why(b)}" for f, b in back[:6])
                 + f"{nl}Still waiting? Defer it again: harness brief <task> --defer \"<condition>\" "
                   f"[--defer-until-task T]. Otherwise act on it as you would any task (approve, "
                   f"brief, start, or supersede).")
@@ -6659,7 +6655,19 @@ def default_queue(ctx, node):
 
 
 def known_path(ctx):
+    # Not under checks/: every reader there globs *.json as a check report, and
+    # the runner died on this list (log 193). The old place is still read.
+    return ctx.state / "known.json"
+
+
+def _known_old(ctx):
     return ctx.state / "checks" / "known.json"
+
+
+def known_write(ctx, recs):
+    known_path(ctx).write_text(json.dumps(
+        [{k: v for k, v in r.items() if k != "cleared"} for r in recs], indent=2) + "\n")
+    _known_old(ctx).unlink(missing_ok=True)
 
 
 def known_cleared(ctx, r):
@@ -6683,8 +6691,9 @@ def known_cleared(ctx, r):
 def known_reds(ctx, live=True):
     """The recorded known reds: the live ones, or (live=False) all, each that no
     longer applies carrying `cleared`."""
+    p = known_path(ctx) if known_path(ctx).exists() else _known_old(ctx)
     try:
-        recs = json.loads(known_path(ctx).read_text())
+        recs = json.loads(p.read_text())
     except Exception:
         return []
     out = []
@@ -6731,8 +6740,7 @@ def cmd_known(ctx, node, a):
     if a.drop:
         if len(raw) == len(recs):
             die(REFUSED, f"no known red {arm}: {file}")
-        known_path(ctx).write_text(json.dumps(
-            [{k: v for k, v in r.items() if k != "cleared"} for r in raw], indent=2) + "\n")
+        known_write(ctx, raw)
         print(f"dropped {arm}: {file}; it reads as new again where it fails")
         return
     if not (a.why or "").strip():
@@ -6745,7 +6753,7 @@ def cmd_known(ctx, node, a):
     rep = _read_json(shared_report_path(ctx, sha)) if not rc else None
     if rep is None and not rc:
         rep = next((r for r in (_read_json(f) for f in (ctx.state / "checks").glob("*.json"))
-                    if r and r.get("sha") == sha and r.get("checks")), None)
+                    if isinstance(r, dict) and r.get("sha") == sha and r.get("checks")), None)
     if rep is None:
         die(REFUSED, f"no check report for {a.report}")
     row = next((r for r in rep.get("checks") or [] if r.get("name") == arm), None)
@@ -6758,9 +6766,7 @@ def cmd_known(ctx, node, a):
            "faults": (row.get("failedFaults") or {}).get(file) or {},
            "why": a.why.strip(), "by": node or "owner", "at": _now(),
            "until_task": a.until_task, "until_ask": a.until_ask}
-    known_path(ctx).parent.mkdir(parents=True, exist_ok=True)
-    known_path(ctx).write_text(json.dumps(
-        [{k: v for k, v in r.items() if k != "cleared"} for r in raw] + [rec], indent=2) + "\n")
+    known_write(ctx, raw + [rec])
     n = sum(rec["faults"].values())
     print(f"known: {arm}: {file}" + (f", up to {n} fault(s) as at {sha[:8]}" if n else "")
           + ". Every comparison with the baseline reads it as known, and no other failure;\n"
@@ -7438,6 +7444,14 @@ def usage_append(ctx, key, rec):
     return u[key]
 
 
+def report_rows(f):
+    """A check report's rows; none for a file in checks/ that is not a report
+    (a list there killed the runner, log 193)."""
+    rep = _read_json(f)
+    return [r for r in (rep.get("checks") or [] if isinstance(rep, dict) else [])
+            if isinstance(r, dict)]
+
+
 def report_peaks(ctx, name, n=TEST_HISTORY):
     """An arm's recorded peaks from check reports, newest first: what a test had
     before its usage history began."""
@@ -7445,7 +7459,7 @@ def report_peaks(ctx, name, n=TEST_HISTORY):
     out = []
     for f in sorted(d.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True) \
             if d.is_dir() else []:
-        for r in (_read_json(f) or {}).get("checks") or []:
+        for r in report_rows(f):
             if isinstance(r, dict) and r.get("name") == name and r.get("peakMemory") \
                     and not r.get("memoryKilled"):
                 out.append(r["peakMemory"])
@@ -7616,8 +7630,7 @@ def arm_seconds(ctx):
         for f in files:
             if f.name.endswith(".running.json"):
                 continue
-            rep = _read_json(f) or {}
-            for r in rep.get("checks") or []:
+            for r in report_rows(f):
                 if (isinstance(r, dict) and r.get("seconds") and not r.get("timedOut")
                         and not r.get("memoryKilled")           # cut short: not its time
                         and len(runs.setdefault(r.get("name"), [])) < 5):
@@ -7830,8 +7843,47 @@ def testd(pdir, repo):
         print("another runner holds the lock"); return
     try:
         _testd_loop(ctx)
+        runner_crash_path(ctx).unlink(missing_ok=True)
+    except Exception as e:
+        runner_crashed(ctx, e)
+        raise
     finally:
         lock.close()
+
+
+def runner_crash_path(ctx):
+    return testq_dir(ctx) / "runner.crash.json"
+
+
+def runner_crashed(ctx, e):
+    """Record why the runner died and ring rank 0, once per distinct error: a
+    runner that died on every start left 7 jobs queued and nobody told (log 193)."""
+    import traceback
+    tb = traceback.extract_tb(e.__traceback__)
+    where = f"{tb[-1].name}, line {tb[-1].lineno}" if tb else "?"
+    err = f"{type(e).__name__}: {e}"
+    old = _read_json(runner_crash_path(ctx)) or {}
+    rec = {"at": _now(), "error": err, "where": where, "starts": 1,
+           "first": _now()}
+    if old.get("error") == err:
+        rec.update(starts=old.get("starts", 1) + 1, first=old.get("first") or rec["at"])
+    try:
+        runner_crash_path(ctx).write_text(json.dumps(rec, indent=2))
+    except OSError:
+        pass
+    if old.get("error") == err:
+        return
+    try:
+        nodes = json.loads((Path(ctx.repo) / ".harness" / "tree.json").read_text())["nodes"]
+        root = next((n for n, v in nodes.items() if not v.get("parent")), None)
+    except Exception:
+        root = None
+    queued = len(testq_jobs(ctx, ("queued",)))
+    if root:
+        ring_inbox(ctx.state, root, "test queue",
+                   f"The test runner died: {err} (in {where}). {queued} job(s) stay queued, "
+                   f"and every start dies the same way until it is fixed; tell the owner, with "
+                   f"{testq_dir(ctx) / 'runner.log'}. harness test shows it.")
 
 
 def _testd_loop(ctx):
@@ -8555,6 +8607,14 @@ def cmd_test(a):
               + ("  (goes before queued jobs)" if t["state"] == "waiting" else ""))
     if not jobs and not slots:
         print("the test queue is empty" + ("" if testq_runner_alive(ctx) else "; no runner up"))
+    elif jobs and not testq_runner_alive(ctx):
+        c = _read_json(runner_crash_path(ctx)) or {}
+        print("NO RUNNER: nothing will start"
+              + (f". It died at {(c.get('at') or '')[11:16]}: {c.get('error')} (in "
+                 f"{c.get('where')})" + (f", on each of its last {c['starts']} starts"
+                                        if c.get("starts", 1) > 1 else "")
+                 + f"; see {testq_dir(ctx) / 'runner.log'}" if c else
+                 "; harness testd starts one"))
     for k, j in enumerate(jobs):
         est = testq_wait_estimate(ctx, j)
         over = testq_overdue(ctx, j)
@@ -12322,11 +12382,15 @@ def deferral_lifted(ctx, w):
     return None
 
 
+TASK_ENDED = ("closed", "superseded", "abandoned")
+
+
 def expire_waits(ctx):
     """Move every deferral that has run out, or whose condition has come true,
     back to the normal pool (owner, 2026-10-08): it is not renewed by itself, so
     it can't fade into a footnote. The brief keeps `returned` until the node
-    that deferred it is told."""
+    that deferred it is told. A deferral on a task that has ended is dropped,
+    and nobody is told: there is nothing to come back to (log 191)."""
     out = []
     bd = ctx.state / "briefs"
     for f in (sorted(bd.glob("*.json")) if bd.is_dir() else []):
@@ -12337,6 +12401,14 @@ def expire_waits(ctx):
         key = "defer" if b.get("defer") else "wait"
         w = b.get(key)
         if not w:
+            continue
+        st = task_state(ctx, b.get("task")) if b.get("task") else None
+        if st in TASK_ENDED:
+            b.setdefault("wait_history", []).append(
+                dict(w, dropped_at=_now(), dropped=f"{b['task']} is {st}"))
+            del b[key]
+            b.pop("returned", None)
+            f.write_text(json.dumps(b, indent=2) + "\n")
             continue
         lifted = deferral_lifted(ctx, w)
         if not lifted and time.time() < (w.get("until") or 0):
@@ -12349,6 +12421,19 @@ def expire_waits(ctx):
         f.write_text(json.dumps(b, indent=2) + "\n")
         out.append(b)
     return out
+
+
+def defer_back_why(b):
+    """Why a deferral came back, for the node that made it: its own span, not
+    the 12h most a deferral may run (log 191 read that as a clock fault)."""
+    h = (b.get("wait_history") or [{}])[-1]
+    try:
+        span = human_age(h["until"] - _epoch(h["at"]))
+    except Exception:
+        span = None
+    return f"{h.get('why')} — " + (f"lifted: {h['lifted']}" if h.get("lifted")
+                                   else f"its {span} ran out" if span
+                                   else "its time ran out")
 
 
 def returned_for(ctx, node):
@@ -12364,6 +12449,8 @@ def returned_for(ctx, node):
         r = b.get("returned")
         if not r:
             continue
+        if b.get("task") and task_state(ctx, b["task"]) in TASK_ENDED:
+            continue                    # ended since it came back: nothing to act on
         by = r.get("by_node")
         if by == node or (ctx.rank(node) == 0 and by not in ctx.tree["nodes"]):
             out.append((f, b))
@@ -13744,6 +13831,16 @@ def cmd_brief(a):
             print(f"  NOT STAFFABLE until it is approved. It is queued nowhere and\n"
                   f"  `harness mark {a.task}` is refused until then.")
             print(f"  Rank 0 approves it: harness brief {a.task} --approve")
+            # Rung now, as a presentation is: the hourly "owed by you" found
+            # two such briefs an hour late, the lanes idle meanwhile (log 192).
+            root = next((n for n in ctx.tree["nodes"] if ctx.rank(n) == 0), None)
+            if root and root != me and ((b or {}).get("approval") or {}).get("state") != "pending":
+                src = f" from {a.from_finding}'s finding" if a.from_finding else ""
+                ring_inbox(ctx.state, root, me,
+                           f"{me} briefed {a.task}{src} for {target}; it waits on your approval "
+                           f"and starts nowhere until then: harness brief {a.task} --approve "
+                           f"(or --decline \"why\"). harness brief {a.task} shows it.")
+                print(f"  {root} is rung to approve it")
         if a.with_task:
             print(f"  runs in the SAME session as '{a.with_task}', which is why it "
                   f"is not queued separately")
@@ -14870,6 +14967,8 @@ def wait_stale(ctx, r, marks):
     or the waiter has presented since it asked (it moved on)."""
     if r.get("answered"):
         return f"answered: {clip(r['answered'], 60)}"
+    if wait_on(r) == "harness" and harness_installed_at() > (_epoch(r.get("since")) or 0):
+        return f"the harness was installed again at {utc_label(harness_installed_at())}"
     if r.get("on_task") and task_state(ctx, r["on_task"]) in DONE_STATES:
         return f"{r['on_task']} is {task_state(ctx, r['on_task'])}"
     since = _epoch(r.get("since"))
@@ -14877,6 +14976,17 @@ def wait_stale(ctx, r, marks):
                      for m in marks.values()):
         return f"{r.get('node')} has presented since"
     return None
+
+
+def harness_installed_at():
+    """When this CLI was last installed: the file's own time (install.sh copies it)."""
+    try:
+        return Path(__file__).resolve().stat().st_mtime
+    except OSError:
+        return 0
+
+
+WAIT_OUTSIDE = ("owner", "harness")     # waits on no node: nobody in the tree owes them (log 194)
 
 
 def block_stale(ctx, r, marks):
@@ -15026,7 +15136,7 @@ def waits(ctx, rows=None, infer="cache", stops=None, about=None, rings=True):
                 add("gate", "requires", x, f"commit:{ref}", frm_task=task, stops="present",
                     what=f"presents once its HEAD holds {ref}")
         w = deferral(b)
-        if parked(b):
+        if parked(b) and st not in TASK_ENDED:
             # Deferred on an event names what it waits on; on prose, nobody.
             lift = w.get("lift") or {}
             on, on_task = ((task_node(ctx, lift["task"]), lift["task"]) if lift.get("task")
@@ -15101,6 +15211,11 @@ def settle_waits(ctx, by="harness", dry=False):
         if e["via"] == "waiting":
             if not dry:
                 clear_wait(ctx, e["frm"], e["on"])
+                if e["on"] == "harness":
+                    ring_inbox(ctx.state, e["frm"], "harness",
+                               f"Your wait on a harness fix is lifted: {e['stale']}. Check "
+                               f"whether it is fixed (\"{clip(e['what'], 80)}\"); if not, "
+                               f"harness waiting \"...\" --on harness again.", "low")
             done.append((e["id"], "cleared", e["stale"]))
         elif e["via"] == "block" and not e.get("answered"):
             stem = e["id"].split(":", 1)[1]
@@ -15289,6 +15404,37 @@ def cmd_waiting(a):
             print(f"{node} was not waiting" + (f" on {a.on}" if a.on else ""))
         return
 
+    if a.pass_wait:
+        # The node a wait is on can't answer it when its cause is outside the
+        # tree: it passes it on, and stops being nagged for it (log 194: main
+        # was rung every few minutes for a wait only a harness fix could end).
+        to = a.to or "harness"
+        hit = [(f, r) for f, r in every if r["node"] == a.pass_wait
+               and (r["on"] == node or (ctx.rank(node) == 0 and r["on"] not in WAIT_OUTSIDE))]
+        if not hit:
+            die(REFUSED, f"{a.pass_wait} has no wait on {node}"
+                         + ("" if ctx.rank(node) == 0 else
+                            " (rank 0 passes any wait in the tree)"))
+        why = (a.asked or "").strip()
+        for f, r in hit:
+            old = r["on"]
+            r.update(on=to, passed={"by": node, "from": old, "at": _now(), "why": why})
+            r.pop("parent", None)
+            g = waiting_path(ctx, r["node"], to)
+            g.parent.mkdir(parents=True, exist_ok=True)
+            g.write_text(json.dumps(r, indent=2) + "\n")
+            if g != f:
+                f.unlink(missing_ok=True)
+            ring_inbox(ctx.state, r["node"], node,
+                       f"{node} passed your wait on it to "
+                       + ("a harness fix" if to == "harness" else "the owner")
+                       + (f": {why}" if why else "")
+                       + (". It lifts when the harness is next installed, and you are rung then."
+                          if to == "harness" else ". The owner sees it in the viewer."), "low")
+            print(f"{r['node']}'s wait ({clip(r.get('asked') or '', 60)}) is on "
+                  f"{to} now, not {old}; nothing in the tree owes it")
+        return
+
     if not a.asked:
         # Reading the state is the commonest use, so it is what the bare verb
         # does. Both directions, because a lead wants the other one.
@@ -15309,9 +15455,9 @@ def cmd_waiting(a):
     # Who it is on, named (owner, 2026-10-16; obs 90: a lane waited 2h22 "on
     # dev" when it was waiting on the owner's approval). Its lead by default.
     on, on_task = a.on or parent, None
-    if a.on and a.on != "owner" and a.on not in ctx.tree["nodes"]:
+    if a.on and a.on not in WAIT_OUTSIDE and a.on not in ctx.tree["nodes"]:
         if load_brief(ctx, a.on)[1] is None and not ctx.state_file("marks", a.on, ".json").exists():
-            die(REFUSED, f"--on {a.on}: not a node, a task or 'owner'")
+            die(REFUSED, f"--on {a.on}: not a node, a task, 'owner' or 'harness'")
         on, on_task = task_node(ctx, a.on), a.on
     if on is None:
         die(REFUSED, "rank 0 has no lead to wait on. Say whom: harness waiting \"...\" --on owner")
@@ -15321,7 +15467,7 @@ def cmd_waiting(a):
         # News about the other side asks it nothing, so nothing is owed (log
         # 186: a status note to main was rung as "owed by you" and held its
         # stop hook). It goes as an FYI ring, and no wait is recorded.
-        if on == "owner":
+        if on in WAIT_OUTSIDE:
             die(REFUSED, "the owner reads no FYI rings: put it on the task, "
                          "harness note <task> --add \"...\"")
         ring_inbox(ctx.state, on, node, a.asked, "fyi")
@@ -15356,6 +15502,12 @@ def cmd_waiting(a):
     if on == "owner":
         print(f"  The owner reads asks in the viewer, not this record. If they must act:\n"
               f"    harness ask <task> --kind intent|judgement|risk --question \"...\"")
+        return
+    if on == "harness":
+        print(f"  Nothing in the tree owes this, so nobody is rung for it. The owner fixes "
+              f"the harness:\n  if the fault is not in the harness log yet, add it "
+              f"(~/.claude/harness/OBSERVATIONS.md).\n  It lifts when the harness is next "
+              f"installed, and you are rung then to check.")
         return
     # The record is read at the lead's next harness command, and a lead parked on
     # a long job runs none, so the wait sat unseen behind a 29-minute check (obs 68).
@@ -16637,7 +16789,8 @@ def stale_caches(ctx, live):
             keep.add(r["_presented_sha"])
     for kind in ("checks", "reviews"):
         d = ctx.state / kind
-        files = [f for f in (d.glob("*.json") if d.is_dir() else []) if f.name != "baseline.json"]
+        files = [f for f in (d.glob("*.json") if d.is_dir() else [])
+                 if f.name not in ("baseline.json", "known.json")]
         latest = {}
         for f in files:
             node = f.stem.rsplit("_", 1)[0] if "_" in f.stem else f.stem
@@ -16824,8 +16977,10 @@ def live_holds(ctx):
             h = json.loads(f.read_text())
         except Exception:
             continue
-        if h.get("until") and task_state(ctx, h["until"]) in ("closed", "superseded"):
+        if h.get("until") and task_state(ctx, h["until"]) in TASK_ENDED:
             continue
+        if h.get("for") and task_state(ctx, h["for"]) in TASK_ENDED:
+            continue                    # the work it was held for has ended (log 191)
         out.append(h)
     return out
 
@@ -22224,9 +22379,14 @@ def main():
     wt.add_argument("--still-moving", dest="still_moving",
                     help="what carries on while you wait — without it this reads "
                          "as a full stop, and gets answered as one")
-    wt.add_argument("--on", metavar="NODE|owner|TASK",
-                    help="who you are waiting on: a node, the owner, or a task (its node); "
-                         "default your lead. With --clear: only that wait")
+    wt.add_argument("--on", metavar="NODE|owner|harness|TASK",
+                    help="who you are waiting on: a node, the owner, a harness fix, or a task "
+                         "(its node); default your lead. With --clear: only that wait")
+    wt.add_argument("--pass", dest="pass_wait", metavar="NODE",
+                    help="NODE's wait on you has a cause outside the tree: pass it --to the "
+                         "owner or the harness (the positional says why)")
+    wt.add_argument("--to", choices=WAIT_OUTSIDE,
+                    help="with --pass: owner, or harness (the default)")
     wt.add_argument("--clear", action="store_true",
                     help="the answer arrived; you are working again")
     wt.add_argument("--list", action="store_true",

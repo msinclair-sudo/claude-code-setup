@@ -8136,6 +8136,115 @@ class Log185to190(unittest.TestCase):
         self.assertEqual(hz.brief_clauses("**DONE.**\n1. a\n2. b\n"), {1, 2})
 
 
+class Log191to194(Log185to190):
+    """Log entries 191-194 (2026-10-16 to 10-19), on CatchUp's real repositories."""
+
+    test_news_goes_as_an_fyi_and_is_owed_by_nobody = None
+    test_a_presentation_can_wait_for_its_own_check = None
+    test_a_pending_part_stays_open_after_the_close = None
+    test_ask_ids_are_never_handed_out_twice = None
+    test_done_clauses_in_the_shapes_briefs_use = None
+
+    def test_a_known_red_list_does_not_kill_the_runner(self):
+        # Log 193: checks/known.json was a list, and arm_seconds died on it.
+        st = Path(self.ctx.state)
+        (st / "checks").mkdir(exist_ok=True)
+        rec = {"arm": "a", "file": "f.py", "sha": "s" * 40, "why": "w", "by": "main"}
+        (st / "checks" / "known.json").write_text(json.dumps([rec]))
+        (st / "checks" / "r.json").write_text(json.dumps(
+            {"sha": "x", "checks": [{"name": "a", "seconds": 7, "peakMemory": 9}]}))
+        hz._ARM_SECONDS.clear()
+        self.assertEqual(hz.arm_seconds(self.ctx), {"a": 7.0})
+        self.assertEqual(hz.report_peaks(self.ctx, "a"), [9])
+        self.assertEqual([r["file"] for r in hz.known_reds(self.ctx)], ["f.py"])  # still read
+        self.assertNotIn("known.json", " ".join(f for f, _ in hz.stale_caches(self.ctx, set())))
+        hz.known_write(self.ctx, hz.known_reds(self.ctx))
+        self.assertFalse((st / "checks" / "known.json").exists())
+        self.assertEqual(hz.known_path(self.ctx).parent, st)
+        self.assertEqual([r["file"] for r in hz.known_reds(self.ctx)], ["f.py"])
+
+    def test_a_runner_that_dies_says_so_once(self):
+        # Log 193: 7 jobs queued behind a dead runner, and nobody was told.
+        tj = Path(self.ctx.repo) / ".harness" / "tree.json"
+        if not tj.exists():
+            tj.parent.mkdir(exist_ok=True)
+            tj.write_text(json.dumps(self.ctx.tree))
+        (hz.testq_dir(self.ctx) / "j1.json").write_text(json.dumps(
+            {"id": "j1", "state": "queued", "kind": "check", "at": hz._now(),
+             "requested_by": [{"node": "dev"}]}))
+        for _ in range(2):
+            try:
+                {}["x"]
+            except KeyError as e:
+                hz.runner_crashed(self.ctx, e)
+        (m,) = self.inbox("main")
+        self.assertIn("The test runner died: KeyError", m["text"])
+        self.assertEqual(hz._read_json(hz.runner_crash_path(self.ctx))["starts"], 2)
+        code, out = self.run_as("main", "test", **self.op)
+        self.assertIn("NO RUNNER: nothing will start", out)
+        self.assertIn("on each of its last 2 starts", out)
+
+    def test_an_ended_tasks_deferral_and_hold_end_with_it(self):
+        # Log 191: a superseded review's deferral ran out and came back.
+        at = time.time() - 4 * 3600
+        bf = self.ctx.dir / "briefs" / "r.json"
+        bf.write_text(json.dumps({"task": "r", "node": "dev", "superseded_at": hz._now(),
+                                  "defer": {"why": "w", "by_node": "dev", "until": at + 3 * 3600,
+                                            "at": time.strftime("%Y-%m-%dT%H:%M:%S%z",
+                                                                time.localtime(at))}}))
+        self.assertEqual(hz.expire_waits(self.ctx), [])
+        b = hz._read_json(bf)
+        self.assertNotIn("defer", b)
+        self.assertEqual(b["wait_history"][-1]["dropped"], "r is superseded")
+        self.assertEqual(hz.returned_for(self.ctx, "dev"), [])
+        # Its own span, not WAIT_FOR's 12h.
+        b = {"wait_history": [{"why": "w", "until": at + 3 * 3600,
+                               "at": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(at))}]}
+        self.assertIn("its 3h00m ran out", hz.defer_back_why(b))
+        (self.ctx.dir / "holds").mkdir(exist_ok=True)
+        (self.ctx.dir / "holds" / "h.json").write_text(json.dumps(
+            {"path": "p", "by": "dev", "for": "r", "at": hz._now()}))
+        self.assertEqual(hz.live_holds(self.ctx), [])
+
+    def test_a_brief_gated_on_approval_rings_rank_0_at_once(self):
+        # Log 192: main heard of two gated briefs an hour after they were written.
+        code, out = self.run_as("dev", "brief", "g", "--for", "dev_1", "--needs-approval",
+                                "--write", "Do g.\n\n**DONE.** 1. g done.", **self.op)
+        self.assertEqual(code, 0, out)
+        self.assertIn("main is rung to approve it", out)
+        (m,) = self.inbox("main")
+        self.assertIn("harness brief g --approve", m["text"])
+        self.run_as("dev", "brief", "g", "--for", "dev_1", "--needs-approval",
+                    "--write", "Do g, again.\n\n**DONE.** 1. g done.", **self.op)
+        self.assertEqual(len(self.inbox("main")), 1)           # still pending: not rung again
+
+    def test_a_wait_on_a_harness_fix_is_owed_by_nobody(self):
+        # Log 194: main was nagged for a wait only a harness fix could end.
+        code, out = self.run_as("dev_1", "waiting", "can the runner read known.json?", "--on",
+                                "dev", **self.op)
+        self.assertEqual(code, 0, out)
+        old = time.time() - 2 * hz.OWED_IDLE
+        f = hz.waiting_path(self.ctx, "dev_1", "dev")
+        f.write_text(json.dumps(dict(hz._read_json(f), since=time.strftime(
+            "%Y-%m-%dT%H:%M:%S%z", time.localtime(old)))))
+        with mock.patch.object(hz, "harness_installed_at", return_value=old - 60):
+            self.assertTrue(any(k.startswith("waiting:dev_1") for k in hz.owed_now(self.ctx, "dev")))
+            code, out = self.run_as("dev", "waiting", "obs 193", "--pass", "dev_1", **self.op)
+            self.assertEqual(code, 0, out)
+            self.assertIn("is on harness now, not dev", out)
+            self.assertFalse(any(k.startswith("waiting:") for k in hz.owed_now(self.ctx, "dev")))
+            (e,) = [e for e in hz.waits(self.ctx, infer="off") if e["via"] == "waiting"]
+            self.assertEqual((e["frm"], e["on"], e["stale"]), ("dev_1", "harness", None))
+            self.assertTrue(any("passed your wait on it to a harness fix: obs 193" in m["text"]
+                                for m in self.inbox("dev_1")))
+            self.assertEqual(self.run_as("dev_1", "waiting", "x", "--on", "harness", "--fyi",
+                                         **self.op)[0], hz.REFUSED)
+        hz.settle_waits(self.ctx)                    # this CLI's file is newer than the wait
+        self.assertEqual(hz.open_waits_all(self.ctx), [])
+        self.assertTrue(any("Your wait on a harness fix is lifted" in m["text"]
+                            for m in self.inbox("dev_1")))
+
+
 class WaitEdges(unittest.TestCase):
     """Owner, 2026-10-16: "it's not clear who is blocking who, and who is waiting
     on who." Every wait reads as one edge, A waits on B for C, with B named."""

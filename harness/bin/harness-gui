@@ -161,7 +161,7 @@ def owner_waits(live, tree, cctx):
         return sorted(seen)
     out = []
     for e in live:
-        if e["on"] != "owner":
+        if e["on"] not in CLI.WAIT_OUTSIDE:     # the owner, or a harness fix (log 194)
             continue
         who = e["frm"]
         if e["via"] == "ask" and e.get("frm_task"):
@@ -2085,7 +2085,7 @@ function intermCard(p) {
   const owes = Object.keys(by).sort().map(nd => {
     const os = by[nd], behind = [...new Set(os.flatMap(o => o.behind || []))].sort();
     const what = os.map(o => o.via === 'ask' ? (o.id || '').replace(/^ask:/, '')
-      : o.via === 'block' ? 'blocked' : 'waiting');
+      : o.via === 'block' ? 'blocked' : o.on === 'harness' ? 'a harness fix' : 'waiting');
     return '<div class="ln owe" data-pair="' + esc(nd) + '>intermediary" data-behind="' +
       esc(behind.join(',')) + '" title="' +
       esc(os.map(o => (o.id || o.via) + ': ' + (o.what || '')).join('\n') +

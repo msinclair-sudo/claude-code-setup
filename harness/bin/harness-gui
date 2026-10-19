@@ -211,6 +211,106 @@ def reports_of(pdir, rows, repo):
     return list(reversed(out))
 
 
+RESEARCH_KEEP = 30 * 86400      # read, withdrawn, declined or failed research listed this long
+
+
+def research_of(pdir):
+    """A project's research (T21), newest first: the Research tab's list, the
+    node chips, and for each direction the blind reader's guess beside the
+    writer's ROUTING. The owner sees ROUTING; no agent ever did."""
+    try:
+        jobs = CLI.research_jobs()
+    except Exception:
+        jobs = []
+    out = []
+    for r in CLI.research_all(pdir):
+        st = r.get("state")
+        ended = ((r.get("consumed") or {}).get("at") or (r.get("withdrawn") or {}).get("at")
+                 or (r.get("failed") or {}).get("at")
+                 or ((r.get("approval") or {}).get("at") if st == "declined" else None))
+        if ended and time.time() - (CLI._epoch(ended) or 0) > RESEARCH_KEEP:
+            continue
+        d, rt = r.get("dispatch") or {}, r.get("routing") or {}
+        pf = r.get("preflight") or {}
+        rep_ = pf.get("report") or {}
+        guess = {h.get("direction"): h for h in rep_.get("inferred_hoped_answers") or []
+                 if isinstance(h, dict)}
+        acc = pf.get("accepted") or {}
+        try:
+            names = CLI.research_stages(r)
+        except Exception:
+            names = []
+        sts = r.get("stages") or {}
+        pos = next((i for i, j in enumerate(jobs, 1) if j.get("slug") == Path(pdir).name
+                    and j.get("id") == r["id"]), None)
+        out.append({
+            "id": r["id"], "label": r.get("label"), "title": r.get("title"),
+            "task": r.get("task"), "node": r.get("node"),
+            "requester": r.get("requester_node"), "requested_by": r.get("requested_by"),
+            "requested_at": r.get("requested_at"), "state": st, "size": d.get("size"),
+            "kind": rt.get("kind"), "after": r.get("after"), "follows": r.get("follows"),
+            "feeds": rt.get("feeds") or "", "stage2": rt.get("stage2") or "",
+            "directions": [{"id": x["id"], "text": x["text"],
+                            "routing": (rt.get("per_direction") or {}).get(x["id"]) or "",
+                            "guess": (guess.get(x["id"]) or {}).get("hoped_answer") or "",
+                            "cue": (guess.get(x["id"]) or {}).get("cue") or "",
+                            "accepted": (acc.get(x["id"]) or {}).get("why") or ""}
+                           for x in (r.get("brief") or {}).get("directions") or []],
+            "design_guess": rep_.get("inferred_design") or "",
+            "preflight_at": pf.get("at"), "preflight_refused": pf.get("refused"),
+            "approval": r.get("approval") or None,
+            "stages": [{"name": n, "state": (sts.get(n) or {}).get("state") or "to run",
+                        "cost": (sts.get(n) or {}).get("cost_usd"),
+                        "searches": (sts.get(n) or {}).get("searches"),
+                        "refused": (sts.get(n) or {}).get("refused") or ""} for n in names],
+            "cost": r.get("cost_usd"), "queue": pos, "queue_n": len(jobs),
+            "result": r.get("result") or None, "consumed": r.get("consumed") or None,
+            "failed": r.get("failed") or None, "withdrawn": r.get("withdrawn") or None,
+            "land": (r.get("land") or {}).get("why")})
+    return list(reversed(out))
+
+
+def research_text(slug, rid, which):
+    """A research record's brief (all three parts) or its rendered result, as
+    text -> bytes, or None. Only ids already on the record are read."""
+    pdir = _project_dir(slug)
+    if pdir is None or not CLI.RESEARCH_ID_RE.match(rid or "") or which not in ("brief",
+                                                                              "result"):
+        return None
+    rd = pdir / "research"
+    rf = next((f for f in rd.glob("res-*.json") if f.stem == rid), None) if rd.is_dir() else None
+    if rf is None:
+        return None
+    try:
+        rec = json.loads(rf.read_text())
+    except Exception:
+        return None
+    if which == "brief":
+        try:
+            return CLI.research_brief_md(rec).encode()
+        except Exception:
+            return None
+    f = rd / rid / "result.md"
+    try:
+        return f.read_bytes() if f.is_file() else None
+    except Exception:
+        return None
+
+
+def research_action(slug, action, rid="", text=""):
+    """Approve, decline or withdraw research: the CLI decides, with the session
+    id stripped, so it reads as the owner's (a deep run is theirs to approve)."""
+    if not CLI.RESEARCH_ID_RE.match(rid or ""):
+        return False, "no such research"
+    if action == "approve":
+        return _ask_cli(slug, [f"--project={slug}", rid, "--approve"], sub="research")
+    if action in ("decline", "withdraw"):
+        if not text:
+            return False, f"say why ({action})"
+        return _ask_cli(slug, [f"--project={slug}", rid, f"--{action}", text], sub="research")
+    return False, "unknown action"
+
+
 def report_file(slug, rid, fname=None):
     """One file of a published report -> (bytes, content type), or None. As
     ask_evidence: the project exists, the id is a record already in reports/,
@@ -914,6 +1014,7 @@ def read_state():
                          "intermediary": intermediary(rows, repo, asks, pdir),
                          "owed": owed,
                          "reports": reports_of(pdir, rows, repo),
+                         "research": research_of(pdir),
                          "tests": tests_queue(pdir, repo),
                          "halt": CLI._read_json(Path(pdir) / "halt.json"),
                          "documenter": documenter(rows, pdir, repo, asks,
@@ -1168,6 +1269,18 @@ font:inherit;font-size:11px;padding:2px 8px;cursor:pointer;margin-right:6px}
 .rchip{display:inline-block;margin:4px 6px 0 0;font-size:10.5px;color:var(--dim);
 border:1px dashed var(--line2);border-radius:3px;padding:0 5px;text-decoration:none}
 .rchip.new{color:var(--busy);border-style:solid;border-color:color-mix(in srgb,var(--s-busy) 50%,var(--line))}
+/* Research (T21): the Reports layout; the blind reader beside the writer's ROUTING. */
+.xdirs{width:100%;border-collapse:collapse;font-size:12px;margin:8px 0}
+.xdirs th{text-align:left;color:var(--dim);font-weight:500;padding:3px 6px;border-bottom:1px solid var(--line)}
+.xdirs td{vertical-align:top;padding:4px 6px;border-bottom:1px solid var(--line);color:var(--dim)}
+.xdirs td.d{color:var(--ink);white-space:nowrap}
+.xdirs td.ok{color:var(--busy)}
+.xstages{font-size:12px;color:var(--dim);margin:4px 0}
+.xstages span{margin-right:10px}
+.xstages .done{color:var(--busy)}.xstages .refused{color:var(--warn)}.xstages .running{color:var(--wait)}
+.xnote{white-space:pre-wrap;font:12px/1.5 ui-monospace,monospace;color:var(--ink);
+background:var(--field);border:1px solid var(--line);border-radius:4px;padding:10px;
+max-height:calc(var(--h,700px) - 260px);overflow:auto;margin:8px 14px 14px}
 .rreq textarea,.rreq input{width:100%;box-sizing:border-box;background:var(--field);color:var(--ink);
 border:1px solid var(--line);border-radius:6px;padding:6px;font:inherit;margin:4px 0}
 #tabs{flex-basis:100%;display:flex;gap:6px;padding:6px;border:1px solid var(--line);
@@ -1937,7 +2050,7 @@ function card(n) {
     '<div class="sig" title="' + esc(g.do) + '"><span class="frm">&larr; ' + esc(g.frm || '?') +
     '</span><span class="kind">' + esc(g.kind) + '</span><span class="txt">' + esc(g.text) +
     '</span><span class="act cp" data-copy="' + esc(g.do) + '">' +
-    esc(VERB[g.kind] || 'copy') + '</span></div>').join('') + reportChips(n);
+    esc(VERB[g.kind] || 'copy') + '</span></div>').join('') + reportChips(n) + researchChips(n);
 
   // Three task groups: now, next, done. Gone folds to a count.
   const chip = (task, label, cls, title) => '<span class="chip ' + cls + '" data-task="' +
@@ -2363,9 +2476,11 @@ async function tick() {
   }
   if (ROUTE() === 'issues') { paint(h + ownerView(d)); return; }
   if (ROUTE() === 'reports') { paint(h + reportsView(d)); return; }
+  if (ROUTE() === 'research') { paint(h + researchView(d)); return; }
   h += d.projects.map((p, pi) => {
     p.nodes.forEach(n => { n._slug = p.slug;
-      n._reports = (p.reports || []).filter(r => r.node === n.name); });
+      n._reports = (p.reports || []).filter(r => r.node === n.name);
+      n._research = (p.research || []).filter(r => r.node === n.name); });
     return '<div class="proj"><h2>' + esc(p.project) + '</h2>' +
       '<div class="repo">' + esc(p.repo) + '</div>' + haltBanner(p) +
       // The charter in the one panel, on the left, and the tree out to the
@@ -2504,7 +2619,7 @@ let FILTER = '';          // the rulings filter, applied client-side
 let LASTD = null;         // the last state read, so a keystroke can re-filter
 // The pages, in tab order. The first is the default (no hash).
 const TABS = [{route: 'agents', label: 'Agents'}, {route: 'issues', label: 'Issues'},
-              {route: 'reports', label: 'Reports'}];
+              {route: 'reports', label: 'Reports'}, {route: 'research', label: 'Research'}];
 // Old addresses, kept so a bookmark still lands.
 const ALIAS = {owner: 'issues', tree: 'agents'};
 const ROUTE = () => {
@@ -2513,7 +2628,8 @@ const ROUTE = () => {
 };
 function tabs(N) {
   document.getElementById('tabs').innerHTML = TABS.map((t, i) => {
-    const R = t.route === 'reports' ? reportItems(LASTD).filter(i => runread(i)).length : 0;
+    const R = t.route === 'reports' ? reportItems(LASTD).filter(i => runread(i)).length
+      : t.route === 'research' ? researchItems(LASTD).filter(i => xyours(i)).length : 0;
     const n = t.route === 'issues' && N ? ' (' + N + ')' : R ? ' (' + R + ')' : '';
     const cls = (t.route === ROUTE() ? 'on' : '') + (n ? ' due' : '');
     const tip = t.route === 'issues'
@@ -3610,6 +3726,164 @@ document.addEventListener('click', e => {
   else if (wd) reportDo(wd.dataset.rwithdraw, 'withdraw');
 });
 
+// ── Research (T21): briefs read blind, run one stage at a time, landed on main ──
+// A run waits on you when it is deep and pending: the tab counts those. The
+// brief and the result are fetched as text when asked for and shown escaped.
+const XSKEY = 'harness.research.sel';
+let XSEL = localStorage.getItem(XSKEY) || '';
+const XMSG = {}, XTEXT = {};
+const XOPEN = ['drafted', 'preflighting', 'preflighted', 'pending', 'approved', 'running',
+               'rendered', 'landed'];
+function researchItems(d) {
+  return ((d && d.projects) || []).flatMap(p => (p.research || []).map(r =>
+    ({ k: rkey(p.slug, r.id), r: r, p: p })));
+}
+const xyours = it => it.r.state === 'pending' && (it.r.approval || {}).needs === 'owner';
+function xwhere(r) {
+  if (r.state === 'running') return 'running, ' + r.stages.filter(s => s.state === 'done' ||
+    s.state === 'refused').length + '/' + r.stages.length;
+  if ((r.state === 'approved' || r.state === 'preflighting') && r.queue)
+    return r.state + ', ' + r.queue + ' of ' + r.queue_n + ' queued';
+  if (r.state === 'landed') return 'landed, unread';
+  if (r.state === 'pending') return 'pending ' + ((r.approval || {}).needs === 'owner' ? 'you' :
+    'rank 0');
+  return r.state;
+}
+function researchChips(n) {
+  return (n._research || []).filter(r => XOPEN.includes(r.state)).map(r =>
+    '<a class="rchip' + (r.state === 'landed' || xyours({ r: r }) ? ' new' : '') +
+    '" href="#research" data-xgo="' + esc(rkey(n._slug, r.id)) + '" title="' +
+    esc((r.label || '') + ': ' + (r.title || '')) + '">research ' + esc(r.id) + ' &middot; ' +
+    esc(xwhere(r)) + '</a>').join('');
+}
+function researchCard(it, many) {
+  const r = it.r;
+  return '<div class="icard' + (xyours(it) ? ' unread' : '') + (it.k === XSEL ? ' sel' : '') +
+    '" data-xsel="' + esc(it.k) + '" data-live="xcard:' + esc(it.k) + '">' +
+    '<div class="ic1"><span class="ict">' + esc(r.id) + ' &middot; ' + esc(r.label || '') +
+    '</span><span class="ica rst ' + esc(r.state) + '">' + esc(xwhere(r)) + '</span></div>' +
+    '<div class="ictl">' + esc(r.title || '') + '</div>' +
+    '<div class="ic3"><span class="icm">' + esc(r.size || '?') + ' &middot; feeds a ' +
+    esc(r.kind || '?') + (r.cost ? ' &middot; $' + Number(r.cost).toFixed(2) : '') +
+    '</span><span class="icw">' + (many ? esc(it.p.project) + ' &middot; ' : '') +
+    esc(r.task || '') + ' &middot; ' + esc(r.requester || '?') + '</span></div></div>';
+}
+function researchPane(it) {
+  if (!it) return '<div class="ln q" style="padding:14px">no research chosen</div>';
+  const r = it.r, slug = it.p.slug, ap = r.approval || {};
+  const t16 = s => esc(String(s || '').slice(0, 16).replace('T', ' '));
+  const dirs = r.directions.map(x => '<tr><td class="d">' + esc(x.id) + '</td><td>' +
+    esc(x.text) + '</td><td>' + esc(x.routing) + '</td><td>' +
+    (r.preflight_at ? esc(x.guess || 'no guess') + (x.cue ? ' <span class="q">(cue: ' +
+      esc(x.cue) + ')</span>' : '') : '<span class="q">not read yet</span>') + '</td><td' +
+    (x.accepted ? ' class="ok">' + esc(x.accepted) : '>' + (r.preflight_at ? 'not accepted' :
+      '')) + '</td></tr>').join('');
+  const stages = r.stages.length ? '<div class="xstages">' + r.stages.map(s =>
+    '<span class="' + esc(s.state) + '">' + esc(s.name) + ' ' + esc(s.state) +
+    (s.cost ? ' $' + Number(s.cost).toFixed(2) : '') +
+    (s.searches != null ? ' &middot; ' + s.searches + ' searches' : '') + '</span>').join('') +
+    '</div>' : '';
+  const k = it.k, txt = XTEXT[k];
+  const pending = r.state === 'pending', open = XOPEN.includes(r.state) && r.state !== 'landed';
+  const meta = '<div class="rmeta" data-live="xmeta:' + esc(k) + '">' +
+    '<div class="ih1"><b>' + esc(r.id) + '</b> ' + esc(r.label || '') + ' on <span class="chip" ' +
+    'data-task="' + esc(r.task) + '" data-slug="' + esc(slug) + '">' + esc(r.task) + '</span> ' +
+    '<span class="rst ' + esc(r.state) + '">' + esc(xwhere(r)) + '</span></div>' +
+    '<div class="ln">' + esc(r.title || '') + '</div>' +
+    '<div class="ln q">' + esc(r.size || '?') + ' run &middot; feeds a ' + esc(r.kind || '?') +
+    ' &middot; written by ' + esc(r.requested_by === 'owner' ? 'you' : r.requested_by) + ' ' +
+    t16(r.requested_at) + (r.after ? ' &middot; runs after ' + esc(r.after) : '') +
+    (ap.state ? ' &middot; ' + esc(ap.state) + (ap.by ? ' by ' + esc(ap.by) : '') +
+      (ap.self_approved ? ' (self-approved)' : '') + (ap.why ? ': ' + esc(ap.why) : '') : '') +
+    (r.cost ? ' &middot; $' + Number(r.cost).toFixed(2) : '') + '</div>' +
+    (r.feeds ? '<div class="ln q">feeds: ' + esc(r.feeds) + '</div>' : '') +
+    (r.design_guess ? '<div class="ln q">the blind reader guessed the design: ' +
+      esc(r.design_guess) + '</div>' : '') +
+    (r.preflight_refused ? '<div class="ln q">the blind reader was refused: ' +
+      esc(r.preflight_refused) + '</div>' : '') +
+    '<table class="xdirs"><tr><th></th><th>direction (sent)</th><th>ROUTING (never sent)</th>' +
+    '<th>the blind reader guessed</th><th>accepted</th></tr>' + dirs + '</table>' + stages +
+    (r.land ? '<div class="ln q">landing deferred: ' + esc(r.land) + '</div>' : '') +
+    (r.result ? '<div class="ln q">landed on ' + esc(r.result.branch) + ' in ' +
+      esc(String(r.result.commit || '').slice(0, 8)) + ': ' + esc(r.result.path) + '</div>' : '') +
+    (r.consumed ? '<div class="ln">read by ' + esc(r.consumed.by) + ': ' +
+      esc(r.consumed.entry) + ' <span class="q">(stage 2: ' + esc(r.consumed.stage2) +
+      ')</span></div>' : '') +
+    (r.failed ? '<div class="ln q">failed at ' + esc(r.failed.stage) + ': ' +
+      esc(r.failed.why) + '</div>' : '') +
+    (r.withdrawn ? '<div class="ln q">withdrawn by ' + esc(r.withdrawn.by) + ': ' +
+      esc(r.withdrawn.why) + '</div>' : '') +
+    '<div style="margin-top:8px">' +
+    (pending ? '<button class="rbtn" data-xdo="' + esc(k) + '|approve">approve' +
+      (ap.needs === 'owner' ? ' (deep: yours)' : '') + '</button><button class="rbtn" ' +
+      'data-xdo="' + esc(k) + '|decline">decline</button>' : '') +
+    (open ? '<button class="rbtn" data-xdo="' + esc(k) + '|withdraw">withdraw</button>' : '') +
+    '<button class="rbtn" data-xshow="' + esc(k) + '|brief">brief</button>' +
+    (r.result ? '<button class="rbtn" data-xshow="' + esc(k) + '|result">result</button>' : '') +
+    (XMSG[k] ? '<span class="ln q">' + esc(XMSG[k]) + '</span>' : '') + '</div></div>';
+  // Keyed by which text is open, so opening or closing one is a change of
+  // shape (paint rebuilds) and the poll never redraws a text under the reader.
+  return meta + '<div data-live="xtext:' + esc(k) + ':' + esc(txt ? txt.which : '') + '">' +
+    (txt ? '<pre class="xnote">' + esc(txt.text) + '</pre>' : '') + '</div>';
+}
+function researchView(d) {
+  const items = researchItems(d), many = (d.projects || []).length > 1;
+  if (!items.some(i => i.k === XSEL)) XSEL = items.length ? items[0].k : '';
+  const cur = items.find(i => i.k === XSEL);
+  const list = items.map(i => researchCard(i, many)).join('') ||
+    '<div class="ln q ipnone">no research. A node writes it with the research-brief skill, ' +
+    'then harness research &lt;task&gt; --write FILE</div>';
+  return '<div class="owner split"><div class="ilist" data-keep="xlist">' +
+    '<h3 class="osec">research &middot; ' + items.length + '</h3>' + list + '</div>' +
+    '<div class="ipane" data-keep="xpane:' + esc(XSEL) + ':' +
+    esc((XTEXT[XSEL] || {}).which || '') + '">' + researchPane(cur) + '</div></div>';
+}
+function researchDo(k, action) {
+  const it = researchItems(LASTD).find(i => i.k === k);
+  if (!it) return;
+  let text = '';
+  if (action !== 'approve') {
+    text = prompt((action === 'decline' ? 'Decline ' : 'Withdraw ') + it.r.id + ': why?') || '';
+    if (!text.trim()) return;
+  }
+  XMSG[k] = action + '...'; LAST = ''; tick();
+  fetch('/api/research', { method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Harness-Local': '1' },
+    body: JSON.stringify({ slug: it.p.slug, id: it.r.id, action: action, text: text }) })
+    .then(r => r.json())
+    .then(j => { XMSG[k] = j.message || (j.ok ? 'done' : 'refused'); LAST = ''; tick(); })
+    .catch(() => { XMSG[k] = 'could not reach the server'; LAST = ''; tick(); });
+}
+function researchShow(k, which) {
+  const it = researchItems(LASTD).find(i => i.k === k);
+  if (!it) return;
+  if (XTEXT[k] && XTEXT[k].which === which) { delete XTEXT[k]; LAST = ''; tick(); return; }
+  fetch('/research/' + encodeURIComponent(it.p.slug) + '/' + encodeURIComponent(it.r.id) +
+        '/' + which)
+    .then(r => r.ok ? r.text() : Promise.reject(r.status))
+    .then(t => { XTEXT[k] = { which: which, text: t }; LAST = ''; tick(); })
+    .catch(() => { XMSG[k] = 'could not read the ' + which; LAST = ''; tick(); });
+}
+document.addEventListener('click', e => {
+  const g = e.target.closest('[data-xgo]');
+  if (g) {
+    XSEL = g.dataset.xgo;
+    try { localStorage.setItem(XSKEY, XSEL); } catch (x) {}
+    if (typeof closeModal === 'function' && MODAL) closeModal();
+    LAST = '';
+    return;                       // the link itself goes to #research
+  }
+  const c = e.target.closest('[data-xsel]');
+  if (c && c.dataset.xsel !== XSEL) {
+    XSEL = c.dataset.xsel;
+    try { localStorage.setItem(XSKEY, XSEL); } catch (x) {}
+    LAST = ''; tick(); return;
+  }
+  const a = e.target.closest('[data-xdo]'), sh = e.target.closest('[data-xshow]');
+  if (a) { const [k, act] = a.dataset.xdo.split('|'); researchDo(k, act); }
+  else if (sh) { const [k, w] = sh.dataset.xshow.split('|'); researchShow(k, w); }
+});
+
 function paint(h) {
   // Nothing is replaced while prose is being written into this page. The
   // include list protects a textarea that the poll knows about; it cannot
@@ -4015,7 +4289,26 @@ class H(BaseHTTPRequestHandler):
             self.close_connection = True
 
     def do_GET(self):
-        if self.path.startswith("/report/"):
+        if self.path.startswith("/research/"):
+            # /research/<slug>/<id>/brief|result: markdown, shown as text.
+            parts = urlparse(self.path).path.split("/")
+            if len(parts) != 5 or parts[1] != "research":
+                self.send_error(404); return
+            b = research_text(parts[2], parts[3], parts[4])
+            if b is None:
+                self.send_error(404); return
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Security-Policy", "default-src 'none'; sandbox")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(b)))
+                self.end_headers()
+                self.wfile.write(b)
+            except (BrokenPipeError, ConnectionResetError):
+                self.close_connection = True
+        elif self.path.startswith("/report/"):
             # /report/<slug>/<id>/[file]: a path, so a figure's relative src works.
             parts = urlparse(self.path).path.split("/")
             if len(parts) != 5 or parts[1] != "report":
@@ -4066,7 +4359,8 @@ class H(BaseHTTPRequestHandler):
         if origin and not origin.startswith(("http://127.0.0.1:", "http://localhost:")):
             self.send_error(403, "cross-origin"); return
         if not self.path.startswith(("/api/comment", "/api/charter", "/api/ask",
-                                     "/api/documenter", "/api/intermediary", "/api/report")):
+                                     "/api/documenter", "/api/intermediary", "/api/report",
+                                     "/api/research")):
             self.send_error(404); return
         try:
             n = int(self.headers.get("Content-Length") or 0)
@@ -4083,6 +4377,12 @@ class H(BaseHTTPRequestHandler):
             ok, msg = intermediary_action(str(body.get("slug") or ""),
                                           (body.get("action") or "start").strip(), text,
                                           str(body.get("id") or ""))
+            self._send(json.dumps({"ok": ok, "message": msg}), "application/json")
+            return
+        if self.path.startswith("/api/research"):
+            ok, msg = research_action(str(body.get("slug") or ""),
+                                      (body.get("action") or "").strip(),
+                                      str(body.get("id") or ""), text)
             self._send(json.dumps({"ok": ok, "message": msg}), "application/json")
             return
         if self.path.startswith("/api/report"):

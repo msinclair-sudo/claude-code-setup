@@ -9885,3 +9885,79 @@ class ResearchGate(ResearchFlow):
         ok, why = self.land(self.res())
         self.assertTrue(ok, why)
         self.assertTrue(self.res()["result"]["path"].startswith("notes/results/"))
+
+
+class ResearchGui(unittest.TestCase):
+    """The Research tab: the blind reader beside ROUTING, the owner's approval,
+    the brief and the result served as text that runs nothing."""
+
+    def setUp(self):
+        gp = Path(__file__).resolve().parents[1] / "bin" / "harness-gui"
+        ld = importlib.machinery.SourceFileLoader("harness_gui", str(gp))
+        self.gui = importlib.util.module_from_spec(importlib.util.spec_from_loader("harness_gui", ld))
+        ld.exec_module(self.gui)
+        self.pdir = Path(tempfile.mkdtemp()) / "-slug-x"
+        self.pdir.mkdir()
+        self.addCleanup(shutil.rmtree, self.pdir.parent, True)
+        (f, _), = [hz.research_parse(b) for b in hz.research_split(RB_GOOD)][:1]
+        self.rec = dict(f, id="res-1", task="t", node="dev_1", requester_node="dev_1",
+                        requested_by="dev_1 (session s)", requested_at=hz._now(),
+                        state="pending", approval={"state": "pending", "needs": "owner"},
+                        preflight={"at": hz._now(), "report": RS_OUT["preflight"],
+                                   "accepted": {"D1": {"why": "it could not tell"}}})
+        hz._save(self.pdir / "research" / "res-1.json", self.rec)
+        d = self.pdir / "research" / "res-1"
+        d.mkdir()
+        (d / "result.md").write_text("# Result\n\n<script>alert(1)</script>\n")
+        (self.pdir / "secret.md").write_text("no")
+        m = mock.patch.object(self.gui, "_project_dir",
+                              side_effect=lambda s: self.pdir if s == self.pdir.name else None)
+        m.start(); self.addCleanup(m.stop)
+
+    def test_the_payload_sets_the_reader_beside_routing(self):
+        (r,) = self.gui.research_of(self.pdir)
+        self.assertEqual((r["id"], r["state"], r["size"], r["kind"]),
+                         ("res-1", "pending", "standard", "design"))
+        d1 = r["directions"][0]
+        self.assertTrue(d1["routing"].startswith("decision needs whether claim C"))
+        self.assertEqual((d1["guess"], d1["accepted"]), ("cannot tell", "it could not tell"))
+        self.assertEqual(r["approval"]["needs"], "owner")
+        self.assertEqual([s["name"] for s in r["stages"]], ["researcher", "critic"])
+
+    def test_text_is_served_plain_and_only_for_records(self):
+        import http.client
+        from http.server import ThreadingHTTPServer
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), self.gui.H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        port = srv.server_address[1]
+
+        def get(path):
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+            c.request("GET", path)
+            r = c.getresponse()
+            return r, r.read()
+        r, b = get(f"/research/{self.pdir.name}/res-1/result")
+        self.assertEqual((r.status, r.getheader("Content-Type")),
+                         (200, "text/plain; charset=utf-8"))
+        self.assertIn("sandbox", r.getheader("Content-Security-Policy"))
+        self.assertEqual(r.getheader("X-Content-Type-Options"), "nosniff")
+        r, b = get(f"/research/{self.pdir.name}/res-1/brief")
+        self.assertIn(b"ROUTING (never sent to any agent)", b)
+        for bad in ("res-2/result", "res-1/secret", "../secret.md/result", "res-1/x/result"):
+            self.assertEqual(get(f"/research/{self.pdir.name}/{bad}")[0].status, 404, bad)
+
+    def test_decisions_go_through_the_cli(self):
+        calls = []
+        with mock.patch.object(self.gui, "_ask_cli",
+                               side_effect=lambda s, a, sub="ask": calls.append((a, sub)) or (True, "ok")):
+            self.gui.research_action(self.pdir.name, "approve", rid="res-1")
+            self.assertEqual(self.gui.research_action(self.pdir.name, "decline", rid="res-1")[1],
+                             "say why (decline)")
+            self.gui.research_action(self.pdir.name, "withdraw", rid="res-1", text="moot")
+            self.assertEqual(self.gui.research_action(self.pdir.name, "approve", rid="x")[1],
+                             "no such research")
+        self.assertEqual(calls, [([f"--project={self.pdir.name}", "res-1", "--approve"], "research"),
+                                 ([f"--project={self.pdir.name}", "res-1", "--withdraw", "moot"],
+                                  "research")])

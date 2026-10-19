@@ -22819,7 +22819,7 @@ def research_loop(home, once=False, runner=None, clock=None, sleep=None):
                 # run after one not yet landed): leave; resume and landing restart it.
                 print(f"{_now()} {why}; research runner exits", flush=True)
                 return ("wait", None, why) if once else None
-            if S.get("said") != why:
+            if S.get("said") != why and until - clock() > 30:
                 print(f"{_now()} waiting until {time.strftime('%H:%M', time.localtime(until))}"
                       f": {why}", flush=True)
                 S["said"] = why

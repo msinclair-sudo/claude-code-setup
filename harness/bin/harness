@@ -1744,6 +1744,11 @@ def _whoami(a):
             print(f"report   {line}")
     except Exception:
         pass
+    try:
+        for line in research_notices(ctx, node).values():
+            print(f"research {line}")
+    except Exception:
+        pass
     # Orientation has just said all of it, so record it as told. Without this
     # the very next harness command would repeat the lot as "new" — and a
     # notice that arrives twice in a row is one a reader learns to skip, which
@@ -2110,6 +2115,18 @@ def cmd_status(a):
             print(f"    {report_line(r)}")
         print("  harness report <id> --show")
 
+    try:
+        _rss = [r for r in research_all(ctx.state) if r.get("state") in RESEARCH_OPEN]
+    except Exception:
+        _rss = []
+    if _rss:
+        print(f"\n  {len(_rss)} research record(s) open (T21):")
+        for r in _rss:
+            print(f"    {research_line(r)}")
+        _jobs = research_jobs()
+        print(f"  harness research <id> --show; the machine's queue holds {len(_jobs)} job(s)"
+              + ("" if not _jobs or research_runner_alive() else ", and no runner is up"))
+
     stale_m, unattr_m = orphan_marks(ctx)
     if stale_m or unattr_m:
         print()
@@ -2376,6 +2393,11 @@ def cmd_halt(a):
         try:
             if testq_jobs(ctx, ("queued",)):
                 testq_ensure_runner(ctx)
+        except Exception:
+            pass
+        try:
+            if any(j.get("slug") == Path(ctx.state).name for j in research_jobs()):
+                research_ensure_runner()
         except Exception:
             pass
         told = 0
@@ -3779,6 +3801,14 @@ def unreported(ctx, node):
     # every part is signed off (log 169: dev_dag was told at every turn end to
     # present a segment it had split three ways).
     split = {tkey(b.get("from")) for b in all_briefs(ctx).values() if b.get("from")}
+    # Held from presenting by research or a started report (T20, T21): asking
+    # for the present at every turn end would make the hold a trap.
+    split |= research_holding(ctx)
+    try:
+        split |= {tkey(r.get("task") or "") for r in reports_all(ctx.state)
+                  if r.get("state") in ("gathering", "composing") and r.get("gate") == "present"}
+    except Exception:
+        pass
     parent = (ctx.tree["nodes"].get(node) or {}).get("parent")
     pb = (ctx.tree["nodes"].get(parent) or {}).get("branch") or parent
     for t, r in open_marks(ctx).items():
@@ -4083,6 +4113,12 @@ def owed_line(kind, child, task, age):
                   f"  — harness recycle {child} --force (not the owner's, log 125)",
         "limit": f"{child} stopped at its usage limit until {task}; the ringer restarts it "
                  f"then (log 122)",
+        "research accept": f"the blind reader came back on research {child} "
+                           f"{human_age(age)} ago: \"{clip(task, 100)}\"  — harness research "
+                           f"{child} --show, then --accept <D> \"why\" or rewrite",
+        "research read": f"research {child} landed {human_age(age)} ago and is yours to read: "
+                         f"\"{clip(task, 100)}\"  — then harness research {child} --consumed "
+                         f"\"what it changed\" --stage2 none|\"why\"",
         "report part": f"report {child} asked you {human_age(age)} ago for your part: "
                        f"\"{clip(task, 140)}\"  — harness report {child} --part - (or "
                        f"--decline \"why\")",
@@ -4150,6 +4186,19 @@ def rank0_owes(ctx, node):
         if then and time.time() - then > STALLED_APPROVAL:
             owed.append(("approve", b.get("task") or f.stem,
                          b.get("task") or f.stem, time.time() - then))
+    # T21: research waiting on rank 0's approval (quick and standard runs).
+    try:
+        for r in research_all(ctx.state):
+            ap = r.get("approval") or {}
+            if r.get("state") != "pending" or ap.get("needs") == "owner":
+                continue
+            then = _epoch(ap.get("asked_at"))
+            if then and time.time() - then > STALLED_APPROVAL:
+                owed.append(("approve", f"research:{r['id']}",
+                             f"{r['id']} ({r.get('label')}, {r['dispatch']['size']})",
+                             time.time() - then))
+    except Exception:
+        pass
     for key, r in decided_blocks(ctx).items():
         # The last thing the operator said on it. `answered()` is what put it
         # here, so there is one by construction; the max is for a block they
@@ -4184,6 +4233,9 @@ def rank0_line(kind, ident, label, age):
     else-branch hardcoded the word "block", so the day a third kind arrived it
     would have described itself as a block and named a command that could not
     find it."""
+    if kind == "approve" and str(ident).startswith("research:"):
+        return (f"research {label} waits on your approval ({human_age(age)})"
+                f"  — harness research {ident[9:]} --show, then --approve or --decline \"why\"")
     return {
         "review": f"documenter batch {label} awaits your review ({human_age(age)})"
                   f"  — harness pairs {ident}, then apply or --decline",
@@ -4255,6 +4307,21 @@ def owed_now(ctx, node):
         if then and time.time() - then >= OWED_IDLE:
             out[f"report-part:{rp['id']}:{c.get('n')}"] = owed_line(
                 "report part", rp["id"], c.get("what") or "", time.time() - then)
+    try:
+        for r in research_all(ctx.state):           # T21: the requester's own acts
+            if r.get("requester_node") != node:
+                continue
+            if r.get("state") == "preflighted":
+                kind, then = "research accept", _epoch((r.get("preflight") or {}).get("at"))
+            elif r.get("state") == "landed":
+                kind, then = "research read", _epoch((r.get("result") or {}).get("at"))
+            else:
+                continue
+            if then and time.time() - then >= OWED_IDLE:
+                out[f"{kind.replace(' ', '-')}:{r['id']}"] = owed_line(
+                    kind, r["id"], r.get("title") or "", time.time() - then)
+    except Exception:
+        pass
     try:
         for kind, ident, label, age in rank0_owes(ctx, node):
             if kind in ("review", "approve", "task"):
@@ -4564,6 +4631,7 @@ def queue_items(ctx, node):
         pass
     out.update(ask_notices(ctx, node))     # T17: rulings, rejections, returns
     out.update(report_notices(ctx, node))  # T20: parts asked, tasks held, reports out
+    out.update(research_notices(ctx, node))  # T21: preflights, results, holds
     if ctx.rank(node) == 0:
         out.update(docs_notices(ctx))      # T18: batches applied or refused, said once
     if fam is None:
@@ -4581,7 +4649,7 @@ def queue_items(ctx, node):
                              "ruled:", "rejected:",
                              "returned:",
                              "docs:", "review:", "done:", "imask:", "sign off:",
-                             "report-part:", "report-hold:", "report-pub:"))
+                             "report-part:", "report-hold:", "report-pub:", "research-"))
             or in_focus(fam, task_of(k))}
     if len(kept) < len(out):
         kept[f"fold:{len(out) - len(kept)}"] = (f"+{len(out) - len(kept)} item(s) "
@@ -4600,7 +4668,8 @@ def queue_items(ctx, node):
 # a debt costs one line every DEBT_RENAG, not one line every turn.
 DEBT_RENAG = 10 * 60
 DEBT_KINDS = ("sign off:", "start:", "down:", "orphan:", "stuck:", "heavy:", "approve:", "task:", "asked:", "handed:",
-              "sweep:", "hold old:", "untraced:", "lingering:", "stale:", "report-part:")
+              "sweep:", "hold old:", "untraced:", "lingering:", "stale:", "report-part:",
+              "research-accept:", "research-read:")
 HOLD_OLD = 30 * 60      # a hold this old is asked about (log 92: one stood three hours over nothing)
 
 
@@ -5402,6 +5471,18 @@ def cmd_mark(a):
                              f"(figures: --asset FILE)\n" for r, c in _mine)
                          + "           Then end your turn: you are rung when it is published, "
                            "and present then.")
+        # T21: research that feeds this task's decision is read first. Parked,
+        # not a trap: the Stop hook does not ask for this present meanwhile.
+        _rs = research_open_for(ctx, a.task)
+        if _rs:
+            die(REFUSED, f"'{a.task}' presents once its research is read:\n" + "".join(
+                f"           {r['id']} ({r.get('label')}, feeds a {r['routing']['kind']}): "
+                f"{research_where(ctx.state, r)}\n" for r in _rs)
+                + "".join(f"             read it, then: harness research {r['id']} --consumed "
+                          f"\"what it changed\" --stage2 none|\"why\"\n"
+                          for r in _rs if r["state"] == "landed")
+                + "           Until then go on with other work, or end your turn: you are rung "
+                  "when it lands, and nothing asks you to present this meanwhile.")
         # Presenting must not be blocked by an unmeasurable cost either. A
         # member that cannot present is a member whose finished work is
         # invisible to everyone above it, which is a strictly worse outcome
@@ -9968,6 +10049,9 @@ def cmd_integrate(a):
     here = idx["byBranch"].get(ctx.branch)
     if here is None:
         die(NOT_ENROLLED, f"branch '{ctx.branch}' is not a node — nothing to integrate into")
+    # T21: research lands on rank 0's branch from the runner, never between a
+    # catch-up here and its fast-forward. Held until this command ends.
+    _ilock = None if a.dry_run else _flock(Path(ctx.state) / "integrate.lock", block=True)
     if a.children:
         targets = idx["nodes"][here]["children"]
         if not targets:
@@ -12436,6 +12520,10 @@ def deferral_lifted(ctx, w):
         r = _read_json(ctx.state / "asks" / f"{lift['ask']}.json")
         if r is None or r.get("state") not in ASK_OPEN:
             return f"{lift['ask']} was " + ((r or {}).get("state") or "settled")
+    if lift.get("research"):
+        r = _read_json(research_path(ctx.state, lift["research"]))
+        if r is None or r.get("state") in ("landed", "consumed") + RESEARCH_ENDED:
+            return f"research {lift['research']} " + ((r or {}).get("state") or "is gone")
     if lift.get("at") and time.time() >= lift["at"]:
         return f"its time came ({utc_label(lift['at'])})"
     return None
@@ -13503,6 +13591,7 @@ def cmd_brief(a):
         die(REFUSED, f"--wait is now --defer (and --wait-for is --defer-for):\n"
                      f"           harness brief {a.task} --defer \"<condition>\"")
     _FLAG = {"defer_task": "--defer-until-task", "defer_ask": "--defer-until-ask",
+             "defer_research": "--defer-until-research",
              "defer_until": "--defer-until", "defer_for": "--defer-for"}
     _lifts = [f for x, f in _FLAG.items() if a.__dict__.get(x)]
     if _lifts and a.__dict__.get("defer") is None:
@@ -14051,6 +14140,11 @@ def cmd_brief(a):
             if not (ctx.state / "asks" / f"{a.defer_ask}.json").exists():
                 die(REFUSED, f"--defer-until-ask {a.defer_ask}: no open ask by that id")
             lift["ask"] = a.defer_ask
+        if a.__dict__.get("defer_research"):
+            if not research_path(ctx.state, a.defer_research).exists():
+                die(REFUSED, f"--defer-until-research {a.defer_research}: no research by that id "
+                             f"in this project")
+            lift["research"] = a.defer_research
         if a.__dict__.get("defer_until"):
             at = parse_utc(a.defer_until)
             if not at:
@@ -14080,6 +14174,7 @@ def cmd_brief(a):
         _when = " or ".join(x for x in (
             f"{lift['task']} is signed off" if lift.get("task") else "",
             f"{lift['ask']} is ruled" if lift.get("ask") else "",
+            f"research {lift['research']} lands" if lift.get("research") else "",
             utc_label(lift["at"]) if lift.get("at") else "") if x)
         print(f"  Nothing {'asks for its sign-off' if _owed else 'starts it'} and nothing nags "
               f"about it until " + (f"{_when} (at most " if _when else "")
@@ -15216,6 +15311,8 @@ def waits(ctx, rows=None, infer="cache", stops=None, about=None, rings=True):
             lift = w.get("lift") or {}
             on, on_task = ((task_node(ctx, lift["task"]), lift["task"]) if lift.get("task")
                            else ("owner", lift["ask"]) if lift.get("ask")
+                           else (f"research:{lift['research']}", lift["research"])
+                           if lift.get("research")
                            else ("clock", None) if lift.get("at") else (None, None))
             add("pause", "defer", x, on, frm_task=task, on_task=on_task, by=w.get("by_node"),
                 until=w.get("until"), what=w.get("why") or "", since=w.get("at"))
@@ -15261,6 +15358,42 @@ def waits(ctx, rows=None, infer="cache", stops=None, about=None, rings=True):
                     stale=None if c["node"] in nodes else f"{c['node']} is not a node any more",
                     act=f"harness report {rp['id']} --part <file>",
                     id=f"report-part:{rp['id']}:{c.get('n')}")
+
+    # T21: research. A task waits on it; it waits on an approval, the machine's
+    # queue, or its requester's reading.
+    for r in research_all(ctx.state):
+        st, rid = r.get("state"), r["id"]
+        if st not in RESEARCH_OPEN:
+            continue
+        rr = f"research:{rid}"
+        if st in RESEARCH_HOLDING and (r.get("routing") or {}).get("kind") in RESEARCH_HOLDS \
+                and task_state(ctx, r.get("task") or "") in ("briefed", "gated", "open"):
+            add("gate", "research", r.get("node") or "?", rr, frm_task=r.get("task"),
+                on_task=rid, stops="present", since=r.get("approved_at"),
+                what=f"presents once research {rid} ({r.get('label')}) is read: "
+                     f"{research_where(ctx.state, r)}",
+                act=f"harness research {rid} --show")
+        if st == "pending":
+            ap = r.get("approval") or {}
+            on = "owner" if ap.get("needs") == "owner" else (roots[0] if roots else "owner")
+            add("answer", "research-approval", rr, on, frm_task=rid, since=ap.get("asked_at"),
+                what=f"{r['dispatch']['size']} run of {r.get('label')} waits on approval",
+                act=f"harness research {rid} --approve (or --decline \"why\")")
+        elif st == "preflighted":
+            add("answer", "research-accept", rr, r.get("requester_node") or "?", frm_task=rid,
+                since=(r.get("preflight") or {}).get("at"),
+                what="the blind reader is back; accept each direction or rewrite",
+                act=f"harness research {rid} --show", id=f"research-accept:{rid}")
+        elif st in ("preflighting", "approved", "running", "rendered"):
+            add("pause", "research-queue", rr, "clock", frm_task=rid,
+                since=r.get("approved_at") or r.get("requested_at"),
+                what=research_where(ctx.state, r))
+        elif st == "landed":
+            add("answer", "research-read", rr, r.get("requester_node") or "?", frm_task=rid,
+                since=(r.get("result") or {}).get("at"),
+                what=f"landed at {(r.get('result') or {}).get('path')}; read it on the record",
+                act=f"harness research {rid} --consumed \"…\" --stage2 none|\"why\"",
+                id=f"research-read:{rid}")
 
     # lock: a file held from the checks that read it, a merge frozen
     for h in live_holds(ctx):
@@ -20436,6 +20569,16 @@ def report_show(pdir, repo, rec):
         print("  (none asked yet)")
     for n in rec.get("notes") or []:
         print(f"note {n.get('at', '')[:16]}: {n.get('text')}")
+    _rs = [r for r in research_all(pdir) if tkey(r.get("task") or "") == tkey(rec["task"])
+           and r.get("state") in ("landed", "consumed")]
+    if _rs:
+        print("\nresearch on this task (T21; read the critique before the answers):")
+        for r in _rs:
+            res = r.get("result") or {}
+            print(f"  {r['id']} {r.get('label')}: {res.get('path')} ({res.get('commit', '')[:8]} "
+                  f"on {res.get('branch')})  {Path(repo) / str(res.get('path'))}")
+            if r.get("consumed"):
+                print(f"     read by {r['consumed']['by']}: {r['consumed']['entry']}")
     if rec["state"] in REPORT_OPEN:
         sc = report_scratch(pdir, rec["id"])
         print(f"\nwrite: {sc}/report.html (and figures beside it)\n"
@@ -21079,6 +21222,91 @@ def research_find(ident, project=None):
     return hits[0]
 
 
+RESEARCH_HOLDING = ("approved", "running", "rendered", "landed")
+
+
+def research_open_for(ctx, task):
+    """The research that holds a task's present (T21): decision-feeding,
+    approved, and not yet read by its requester."""
+    k = tkey(task or "")
+    try:
+        return [r for r in research_all(ctx.state) if tkey(r.get("task") or "") == k
+                and r.get("state") in RESEARCH_HOLDING
+                and (r.get("routing") or {}).get("kind") in RESEARCH_HOLDS]
+    except Exception:
+        return []
+
+
+def research_holding(ctx):
+    """The tkeys of tasks research holds."""
+    try:
+        return {tkey(r.get("task") or "") for r in research_all(ctx.state)
+                if r.get("state") in RESEARCH_HOLDING
+                and (r.get("routing") or {}).get("kind") in RESEARCH_HOLDS}
+    except Exception:
+        return set()
+
+
+def research_where(pdir, r):
+    """Where a record stands, in a few words, for the lines that wait on it."""
+    st = r.get("state")
+    if st in ("approved", "preflighting"):
+        pos, n = research_position(pdir, r["id"])
+        return (f"{'preflight ' if st == 'preflighting' else ''}queued, {pos} of {n} on this "
+                f"machine") if pos else st
+    if st == "running":
+        done = sum(1 for x in (r.get("stages") or {}).values()
+                   if x.get("state") in ("done", "refused"))
+        return f"running, {done} of {len(research_stages(r))} stages done"
+    if st == "rendered":
+        return "finished; landing on rank 0's branch" + (
+            f" (deferred: {r['land']['why']})" if r.get("land") else "")
+    if st == "landed":
+        return f"landed at {(r.get('result') or {}).get('path')}, unread"
+    return st
+
+
+def research_notices(ctx, node):
+    """Orientation lines (T21), {id: line}: a preflight to accept, a result to
+    read, a task held, a result wanted that landed, a run that failed."""
+    out = {}
+    try:
+        for r in research_all(ctx.state):
+            rid, st, lab = r["id"], r.get("state"), r.get("label")
+            mine = r.get("requester_node") == node
+            if mine and st == "preflighted":
+                out[f"research-accept:{rid}"] = (
+                    f"the blind reader is back on research {rid} ({lab}): compare its guesses "
+                    f"with your ROUTING  — harness research {rid} --show, then --accept "
+                    f"<D> \"why\" (or rewrite)")
+            if mine and st == "landed":
+                out[f"research-read:{rid}"] = (
+                    f"research {rid} ({lab}) landed: {(r.get('result') or {}).get('path')}  — "
+                    f"read it, then harness research {rid} --consumed \"what it changed\" "
+                    f"--stage2 none|\"why\"")
+            if r.get("node") == node and st in RESEARCH_HOLDING and \
+                    (r.get("routing") or {}).get("kind") in RESEARCH_HOLDS:
+                out[f"research-hold:{rid}"] = (
+                    f"'{r.get('task')}' presents once research {rid} ({lab}) is read: "
+                    f"{research_where(ctx.state, r)}")
+            if node in (r.get("want") or []) and st == "landed":
+                at = _epoch((r.get("result") or {}).get("at")) or 0
+                if time.time() - at < 86400:
+                    out[f"research-pub:{rid}"] = (
+                        f"research {rid} ({lab}) on {r.get('task')} landed: "
+                        f"{(r.get('result') or {}).get('path')}")
+            if mine and st == "failed":
+                at = _epoch((r.get("failed") or {}).get("at")) or 0
+                if time.time() - at < 86400:
+                    out[f"research-failed:{rid}"] = (
+                        f"research {rid} ({lab}) failed at {r['failed'].get('stage')}: "
+                        f"{clip(r['failed'].get('why') or '', 120)}  — harness research {rid} "
+                        f"--show")
+    except Exception:
+        pass
+    return out
+
+
 def research_root(nodes):
     """(rank 0's node, its branch) from a tree's nodes."""
     root = next((n for n, sp in nodes.items() if not sp.get("parent")), None)
@@ -21522,9 +21750,15 @@ def research_dequeue(pdir, rid, kind=None):
     research_queue(m)
 
 
+def research_jobs():
+    """The queue, read without its lock (for lines that only report it)."""
+    q = _read_json(research_home() / "queue.json") or {}
+    return q.get("jobs") if isinstance(q.get("jobs"), list) else []
+
+
 def research_position(pdir, rid):
     """(1-based place among queued jobs, how many) or (None, n)."""
-    jobs = research_queue()
+    jobs = research_jobs()
     for i, j in enumerate(jobs, 1):
         if j.get("slug") == Path(pdir).name and j.get("id") == rid:
             return i, len(jobs)
@@ -23004,16 +23238,11 @@ def cmd_research(a):
         rec["state"] = "consumed"
         _research_log(rec, by, "read and recorded")
         _save(path, rec)
-        research_consumed_hook(pdir, repo, rec)
         print(f"recorded; {rec['id']} is read"
               + ("" if a.stage2.strip().lower() == "none" else
                  f". Write the follow-up as a new brief that stands alone: harness research "
                  f"{rec['task']} --write FILE --follows {rec['id']}")); return
 
-
-def research_consumed_hook(pdir, repo, rec):
-    """What reading a result releases (gates come later in this file)."""
-    return None
 
 
 def read_dash_from_stdin(a):
@@ -25762,6 +25991,8 @@ def main():
                     help="with --defer: lifts when TASK is signed off")
     br.add_argument("--defer-until-ask", dest="defer_ask", metavar="ASK",
                     help="with --defer: lifts when the owner rules on ASK")
+    br.add_argument("--defer-until-research", dest="defer_research", metavar="ID",
+                    help="with --defer: lifts when research ID lands (or ends)")
     br.add_argument("--defer-until", dest="defer_until", metavar="UTC",
                     help="with --defer: lifts at this UTC time (00:05Z or an ISO time)")
     br.add_argument("--defer-for", dest="defer_for", metavar="45m|3h|2d",

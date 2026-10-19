@@ -9719,3 +9719,169 @@ class ResearchRunner(ResearchFlow):
                                                "result": "rate limited"}), "")
         self.assertIn("limit", o)
         self.assertIsNone(o["limit"])                            # no time said: an hour, later
+
+
+class ResearchGate(ResearchFlow):
+    """What research holds, and who owes what while it runs (T21)."""
+
+    test_who_writes_and_what_is_recorded = None
+    test_a_leaking_file_records_nothing = None
+    test_preflight_accept_approve_by_size = None
+    test_a_rewrite_is_read_again = None
+    test_the_run_lands_on_main_without_touching_rank_0s_work = None
+    test_reading_it_is_on_the_record = None
+    test_withdraw_and_want = None
+    test_routing_is_shown_to_the_line_above_not_beside = None
+    test_no_runner_is_started_here = None
+
+    def to_pending(self, text=None):
+        if text:
+            self.brief.write_text(text)
+        self.written()
+        self.drain()
+        self.accepted("res-1")
+
+    def approve(self):
+        code, out = self.run_as("main", "research", "res-1", "--approve", **self.op)
+        self.assertEqual(code, 0, out)
+
+    def work(self):
+        self.assertEqual(self.run_as("dev_1", "mark", "t", **self.op)[0], 0)
+        self.commit("dev_1", "w.py")
+
+    def unreported_dev_1(self):
+        self.ctx.me, self.ctx.branch, self.ctx.worktree = "dev_1", "dev_1", self.wt["dev_1"]
+        return [lab for lab, _, _ in hz.unreported(self.ctx, "dev_1")]
+
+    def present(self):
+        return self.run_as("dev_1", "mark", "t", "--done", "--note", "n", **self.op)
+
+    def test_research_holds_the_present_until_it_is_read(self):
+        self.work()
+        self.to_pending()
+        self.assertTrue(self.unreported_dev_1())                # pending holds nothing yet
+        self.approve()
+        self.assertEqual(self.unreported_dev_1(), [])           # held: no "present it"
+        code, out = self.present()
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("'t' presents once its research is read", out)
+        self.assertIn("res-1 (RA-01, feeds a design): queued, 1 of 1 on this machine", out)
+        self.assertIn("nothing asks you to present this meanwhile", out)
+        es = [e for e in hz.waits(self.ctx, infer="off") if e["frm"] == "dev_1"]
+        self.assertIn(("research", "research:res-1"), [(e["via"], e["on"]) for e in es])
+        self.assertIn(("research-queue", "clock"),
+                      [(e["via"], e["on"]) for e in hz.waits(self.ctx, infer="off")
+                       if e["frm"] == "research:res-1"])
+        self.drain()
+        code, out = self.present()
+        self.assertEqual(code, hz.REFUSED)                      # landed, not yet read
+        self.assertIn("read it, then: harness research res-1 --consumed", out)
+        self.assertIn(("research-read", "dev_1"),
+                      [(e["via"], e["on"]) for e in hz.waits(self.ctx, infer="off")
+                       if e["frm"] == "research:res-1"])
+        code, out = self.run_as("dev_1", "research", "res-1", "--consumed",
+                                "D1 has no direct comparison; claim C stays a limitation. D2 "
+                                "sizes the bias as small.", "--stage2", "none", **self.op)
+        self.assertEqual(code, 0, out)
+        code, out = self.present()
+        self.assertEqual(code, 0, out)
+
+    def test_a_started_report_does_not_ask_for_the_present_either(self):
+        # The same trap under T20: a report gathering parts refused the present
+        # while the Stop hook asked for it at every turn end.
+        self.work()
+        rep = {"id": "rep-1", "task": "t", "state": "requested", "gate": "present"}
+        hz._save(hz.report_path(self.ctx.state, "rep-1"), rep)
+        self.assertTrue(self.unreported_dev_1())                # the present starts it
+        hz._save(hz.report_path(self.ctx.state, "rep-1"), dict(rep, state="gathering"))
+        self.assertEqual(self.unreported_dev_1(), [])
+
+    def test_orientation_and_pending_research_hold_nothing(self):
+        self.work()
+        self.to_pending(RB_GOOD.replace("feeds a design note", "not cited"))
+        self.approve()
+        self.assertEqual(self.res()["routing"]["kind"], "orientation")
+        self.assertEqual(self.present()[0], 0)
+
+    def test_the_requester_owes_its_acts(self):
+        self.written()
+        self.drain()
+        r = self.res()
+        hz._save(hz.research_path(self.ctx.state, "res-1"),
+                 dict(r, preflight=dict(r["preflight"], at=OLD)))
+        owed = hz.owed_now(self.ctx, "dev_1")
+        self.assertIn("research-accept:res-1", owed)
+        self.assertTrue(hz.is_debt("research-accept:res-1"))
+        self.accepted("res-1")
+        r = self.res()
+        hz._save(hz.research_path(self.ctx.state, "res-1"),
+                 dict(r, approval=dict(r["approval"], asked_at=OLD)))
+        (kind, ident, label, _), = [x for x in hz.rank0_owes(self.ctx, "main")
+                                    if str(x[1]).startswith("research:")]
+        line = hz.rank0_line(kind, ident, label, 3 * 3600)
+        self.assertIn("harness research res-1 --show, then --approve", line)
+        self.approve()
+        self.drain()
+        r = self.res()
+        hz._save(hz.research_path(self.ctx.state, "res-1"),
+                 dict(r, result=dict(r["result"], at=OLD)))
+        self.assertIn("research-read:res-1", hz.owed_now(self.ctx, "dev_1"))
+        notes = hz.research_notices(self.ctx, "dev_1")
+        self.assertIn("research-read:res-1", notes)
+        with mock.patch.object(hz, "focus_family", return_value={"elsewhere"}):
+            self.assertIn("research-read:res-1", hz.queue_items(self.ctx, "dev_1"))
+
+    def test_a_deferral_lifts_when_the_research_lands(self):
+        self.to_pending()
+        code, out = self.run_as("dev", "brief", "t", "--defer", "until its evidence is in",
+                                "--defer-until-research", "res-1", **self.op)
+        self.assertEqual(code, 0, out)
+        self.assertIn("research res-1 lands", out)
+        w = hz.deferral(hz.load_brief(self.ctx, "t")[1])
+        self.assertIsNone(hz.deferral_lifted(self.ctx, w))
+        self.approve()
+        self.drain()
+        self.assertEqual(hz.deferral_lifted(self.ctx, w), "research res-1 landed")
+
+    def landing(self):
+        self.to_pending()
+        self.approve()
+        fake = FakeClaude()
+        with mock.patch.object(hz, "research_land", return_value=(False, "held for the test")):
+            self.drain(fake=fake)
+        self.assertEqual(self.res()["state"], "rendered")
+        return self.res()
+
+    def land(self, rec):
+        rec["_pdir"] = str(self.ctx.state)
+        return hz.research_land(Path(self.ctx.state), str(self.ctx.repo), rec)
+
+    def test_landing_waits_for_an_integration_and_a_merge(self):
+        rec = self.landing()
+        lk = hz._flock(Path(self.ctx.state) / "integrate.lock", block=True)
+        self.assertEqual(self.land(rec), (False, "an integration is running"))
+        lk.close()
+        gp = self.git("main", "rev-parse", "--git-path", "MERGE_HEAD")
+        (self.wt["main"] / gp).write_text(self.git("main", "rev-parse", "HEAD") + "\n")
+        self.assertEqual(self.land(rec), (False, "rank 0 is mid-merge"))
+        self.assertTrue(self.said("main", "can't land on main: rank 0 is mid-merge"))
+        (self.wt["main"] / gp).unlink()
+        (self.wt["main"] / "research" / "briefs").mkdir(parents=True)
+        (self.wt["main"] / "research" / "briefs" / "RA-01.md").write_text("someone else's\n")
+        ok, why = self.land(self.res())
+        self.assertTrue(ok, why)
+        self.assertEqual(self.res()["result"]["brief_path"], "research/briefs/RA-01 (2).md")
+        self.assertEqual((self.wt["main"] / "research" / "briefs" / "RA-01.md").read_text(),
+                         "someone else's\n")
+
+    def test_landing_refuses_an_ignored_folder(self):
+        rec = self.landing()
+        (self.wt["main"] / ".gitignore").write_text("research/\n")
+        ok, why = self.land(rec)
+        self.assertFalse(ok)
+        self.assertIn("research/results is ignored by git", why)
+        (self.wt["main"] / ".harness" / "research.json").write_text(json.dumps(
+            {"results_dir": "notes/results", "briefs_dir": "notes/briefs"}))
+        ok, why = self.land(self.res())
+        self.assertTrue(ok, why)
+        self.assertTrue(self.res()["result"]["path"].startswith("notes/results/"))

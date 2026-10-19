@@ -8245,6 +8245,338 @@ class Log191to194(Log185to190):
                             for m in self.inbox("dev_1")))
 
 
+PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 32
+
+
+class Reports(Log185to190):
+    """T20 (owner, 2026-10-19): an HTML report asked for on one task, built by
+    its own session from the parts nodes send, holding the task until it is
+    published."""
+
+    test_news_goes_as_an_fyi_and_is_owed_by_nobody = None
+    test_a_presentation_can_wait_for_its_own_check = None
+    test_a_pending_part_stays_open_after_the_close = None
+    test_ask_ids_are_never_handed_out_twice = None
+    test_done_clauses_in_the_shapes_briefs_use = None
+
+    def setUp(self):
+        super().setUp()
+        self.woken, self.closed = [], []
+        sc = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, sc, True)
+        for p in (mock.patch.object(hz, "report_wake_detached",
+                                    side_effect=lambda pd, rid, why: self.woken.append((rid, why))),
+                  mock.patch.object(hz, "report_close_detached",
+                                    side_effect=lambda pd, rid: self.closed.append(rid)),
+                  mock.patch.object(hz, "ask_projects",
+                                    return_value=[(Path(self.ctx.state), str(self.ctx.repo))]),
+                  mock.patch.object(hz, "REPORT_SCRATCH", sc / "reports")):
+            p.start(); self.addCleanup(p.stop)
+        tj = Path(self.ctx.repo) / ".harness" / "tree.json"   # what a report session reads
+        tj.parent.mkdir(exist_ok=True)
+        tj.write_text(json.dumps(self.ctx.tree))
+
+    def said(self, node, text):
+        return any(text in m["text"] for m in self.inbox(node))
+
+    def rep(self, rid="rep-1"):
+        return hz._read_json(hz.report_path(self.ctx.state, rid))
+
+    def as_reporter(self, rid, *argv):
+        env = {"HARNESS_REPORTER": "1", "HARNESS_REPORT": rid,
+               "HARNESS_PROJECT": Path(self.ctx.state).name}
+        with mock.patch.dict(os.environ, env):
+            return self.run_as("main", "report", rid, *argv, **self.op)
+
+    def present(self):
+        self.assertEqual(self.run_as("dev_1", "mark", "t", **self.op)[0], 0)
+        self.commit("dev_1", "w.py")
+        code, out = self.run_as("dev_1", "mark", "t", "--done", "--note", "n", **self.op)
+        self.assertEqual(code, 0, out)
+
+    def test_ids_count_up_and_are_never_reused(self):
+        st = Path(self.ctx.state)
+        self.assertEqual([hz.report_next_id(st) for _ in range(2)], ["rep-1", "rep-2"])
+        (st / "reports").mkdir(exist_ok=True)
+        self.assertEqual(hz.report_next_id(st), "rep-3")       # rep-1, 2 left no record
+
+    def test_who_may_ask_for_one(self):
+        code, out = self.run_as("dev_1", "report", "t", "--request", "a", **self.op)
+        self.assertEqual(code, hz.REFUSED)                     # a lane, on its own task
+        self.assertIn("may not ask for a report", out)
+        self.assertEqual(self.run_as("dev", "report", "t", "--request", "b", **self.op)[0], 0)
+        self.assertEqual(self.run_as("main", "report", "t", "--request", "c", **self.op)[0], 0)
+        code, out = self.run_as("main", "report", "t", "--request", "c", **self.op)
+        self.assertIn("rep-2 already asks for that", out)
+        self.assertEqual(self.run_as("main", "report", "t", "--request", "d", sid=None,
+                                     **self.op)[0], 0)
+        self.assertEqual(self.rep("rep-3")["requested_by"], "owner")
+        with mock.patch.dict(os.environ, {"HARNESS_INTERMEDIARY": "1"}):
+            self.assertEqual(self.run_as("main", "report", "t", "--request", "e",
+                                         **self.op)[0], hz.REFUSED)
+        self.assertEqual(self.run_as("dev", "report", "nope", "--request", "x",
+                                     **self.op)[0], hz.REFUSED)
+
+    def test_on_an_open_task_it_waits_for_the_present(self):
+        code, out = self.run_as("dev", "report", "t", "--request", "what the loader reads",
+                                "--from", "dev:the plan", **self.op)
+        self.assertEqual(code, 0, out)
+        r = self.rep()
+        self.assertEqual((r["state"], r["gate"], r["node"]), ("requested", "present", "dev_1"))
+        self.assertEqual([(c["node"], c["what"]) for c in r["contributors"]],
+                         [("dev", "the plan")])
+        self.assertEqual(self.woken, [])                        # starts at the present
+        self.run_as("dev", "report", "t", "--request", "x", **self.op)
+        self.assertEqual([c["node"] for c in self.rep("rep-2")["contributors"]], ["dev_1"])
+
+    def test_on_a_presented_task_it_starts_at_once(self):
+        self.present()
+        code, out = self.run_as("dev", "report", "t", "--request", "what it showed", **self.op)
+        self.assertEqual(code, 0, out)
+        r = self.rep()
+        self.assertEqual((r["state"], r["gate"]), ("gathering", "signoff"))
+        self.assertEqual([w[0] for w in self.woken], ["rep-1"])
+        self.assertTrue(self.said("dev_1", "asks for your part: what it showed"))
+
+    def test_a_brief_can_carry_one(self):
+        code, out = self.run_as("dev", "brief", "t2", "--for", "dev_1", "--write",
+                                "Do t2.\n\n**DONE.** 1. done.", "--report", "the numbers",
+                                **self.op)
+        self.assertEqual(code, 0, out)
+        self.assertIn("carries report rep-1", out)
+        r = self.rep()
+        self.assertEqual((r["task"], r["origin"], r["gate"]), ("t2", "brief", "present"))
+        code, out = self.run_as("dev", "brief", "t2", "--for", "dev_1", "--write",
+                                "Do t2, again.\n\n**DONE.** 1. done.", "--report", "the numbers",
+                                **self.op)
+        self.assertIn("still carries report rep-1", out)
+        self.assertEqual(self.run_as("dev", "brief", "t2", "--report", "x", **self.op)[0],
+                         hz.REFUSED)                            # not without --write
+        self.run_as("dev", "brief", "t2", "--for", "dev_1", "--write",
+                    "Do t2.\n\n**DONE.** 1. done.", "--report", "none", **self.op)
+        self.assertEqual(self.rep()["state"], "withdrawn")
+
+    def started(self):
+        self.present()
+        self.run_as("dev", "report", "t", "--request", "what it showed", **self.op)
+        return self.rep()
+
+    def test_parts_come_only_from_nodes_asked(self):
+        self.started()
+        code, out = self.run_as("dev", "report", "rep-1", "--part", "mine", **self.op)
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("asks nothing of dev", out)
+        fig = self.root / "counts.png"
+        fig.write_bytes(PNG)
+        part = self.root / "part.md"
+        part.write_text("Counts went from 3 to 9 (w.py:1).\n")
+        code, out = self.run_as("dev_1", "report", "rep-1", "--part", str(part), "--asset",
+                                str(fig), **self.op)
+        self.assertEqual(code, 0, out)
+        r = self.rep()
+        c = r["contributors"][0]
+        self.assertEqual((r["state"], c["state"], c["assets"][0]["file"]),
+                         ("composing", "submitted", "1-dev_1-counts.png"))
+        d = hz.report_dir(self.ctx.state, "rep-1") / "parts"
+        self.assertIn("3 to 9", (d / "1-dev_1.md").read_text())
+        self.assertTrue((d / "1-dev_1-counts.png").exists())
+        self.assertIn("every part asked for is in", self.woken[-1][1])
+        bad = self.root / "x.txt"
+        bad.write_text("x")
+        self.as_reporter("rep-1", "--ask", "dev_1", "--what", "and the timing")
+        code, out = self.run_as("dev_1", "report", "rep-1", "--part", "t", "--asset", str(bad),
+                                **self.op)
+        self.assertEqual(code, hz.REFUSED)                      # figures only
+        code, out = self.run_as("dev_1", "report", "rep-1", "--decline", "not measured",
+                                **self.op)
+        self.assertEqual(self.rep()["contributors"][1]["state"], "declined")
+
+    def test_the_report_sessions_verbs_are_its_own(self):
+        self.started()
+        code, out = self.run_as("main", "report", "rep-1", "--ask", "dev", "--what", "x",
+                                **self.op)
+        self.assertEqual(code, hz.REFUSED)
+        self.assertIn("is the report session's", out)
+        code, out = self.as_reporter("rep-2", "--show")
+        self.assertEqual(code, hz.REFUSED)                      # no such report
+        code, out = self.as_reporter("rep-1", "--ask", "dev", "--what", "why it was split")
+        self.assertEqual(code, 0, out)
+        c = self.rep()["contributors"][-1]
+        self.assertEqual((c["node"], c["asked_by"], c["n"]), ("dev", "reporter", 2))
+        (m,) = [m for m in self.inbox("dev") if "why it was split" in m["text"]]
+        self.assertEqual(m["priority"], "low")
+        self.assertEqual(self.as_reporter("rep-1", "--ask", "nobody", "--what", "x")[0],
+                         hz.REFUSED)
+
+    def test_publish_takes_a_clean_page_and_rings(self):
+        self.started()
+        sc = hz.report_scratch(self.ctx.state, "rep-1")
+        sc.mkdir(parents=True)
+        (sc / "fig1.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg"><rect '
+                                     'width="4" height="4"/></svg>')
+        (sc / "report.html").write_text(
+            '<!doctype html><html><head><style>body{font:14px sans-serif}</style></head><body>'
+            '<h1>t</h1><p>See <a href="#f">the figure</a>, '
+            '<a href="https://example.org/x">a page</a>.</p>'
+            '<img id="f" src="fig1.svg" alt="f"><img src="data:image/png;base64,AAAA" alt="d">'
+            '</body></html>')
+        outside = self.root / "o.svg"
+        outside.write_text("<svg/>")
+        code, out = self.as_reporter("rep-1", "--publish", str(sc / "report.html"),
+                                     "--asset", str(outside))
+        self.assertEqual(code, hz.REFUSED)                      # not from scratch or parts
+        code, out = self.as_reporter("rep-1", "--publish", str(sc / "report.html"),
+                                     "--asset", str(sc / "fig1.svg"))
+        self.assertEqual(code, 0, out)
+        r = self.rep()
+        self.assertEqual((r["state"], [x["file"] for x in r["published"]["assets"]]),
+                         ("published", ["fig1.svg"]))
+        pub = hz.report_dir(self.ctx.state, "rep-1") / "pub"
+        self.assertEqual(sorted(p.name for p in pub.iterdir()), ["fig1.svg", "index.html"])
+        self.assertTrue(self.said("dev", "is published"))                 # the lead
+        self.assertEqual(self.closed, ["rep-1"])
+        self.assertEqual(self.as_reporter("rep-1", "--publish", str(sc / "report.html"))[0],
+                         hz.REFUSED)                            # once
+
+    def test_withdraw(self):
+        self.run_as("dev", "report", "t", "--request", "x", **self.op)
+        self.assertEqual(self.run_as("dev_1", "report", "rep-1", "--withdraw", "w",
+                                     **self.op)[0], hz.REFUSED)
+        code, out = self.run_as("main", "report", "rep-1", "--withdraw", "not needed", **self.op)
+        self.assertEqual(code, 0, out)
+        r = self.rep()
+        self.assertEqual((r["state"], r["contributors"][0]["state"]), ("withdrawn", "dropped"))
+        self.assertTrue(self.said("dev_1", "nothing holds your present now"))
+
+    def test_list_and_show(self):
+        self.started()
+        code, out = self.run_as("dev", "report", **self.op)
+        self.assertIn("rep-1   gathering  t (dev_1)  parts 0/1", out)
+        code, out = self.run_as("dev", "report", "rep-1", "--show", **self.op)
+        self.assertIn("asked for by dev (session", out)
+        self.assertIn("Part 1.", out)                           # the brief
+        self.assertIn("1. dev_1 (requester): asked", out)
+
+
+class ReportHtml(unittest.TestCase):
+    """What a published report may hold: nothing that runs, loads or submits."""
+
+    def faults(self, html, assets=("fig.svg",)):
+        return hz.report_html_check(html, list(assets))
+
+    def test_a_static_page_passes(self):
+        self.assertEqual(self.faults(
+            '<html><head><style>p{color:#333} .x{background:url(fig.svg)}</style></head><body>'
+            '<table><caption>c</caption><tr><td style="color:red">1</td></tr></table>'
+            '<a href="#s">s</a><a href="https://x.org">x</a><img src="fig.svg" alt="">'
+            '<svg><use href="#g"/></svg></body></html>'), [])
+
+    def test_everything_that_could_run_or_load_is_refused(self):
+        for bad in ('<script>alert(1)</script>', '<img src="fig.svg" onerror="x()">',
+                    '<a href="javascript:x()">a</a>', '<a href="jav&#x61;script:x()">a</a>',
+                    '<a href=" JaVaScRiPt:x()">a</a>', '<iframe src="fig.svg"></iframe>',
+                    '<object data="fig.svg"></object>', '<embed src="fig.svg">',
+                    '<form><input></form>', '<base href="https://x.org/">',
+                    '<link rel="stylesheet" href="https://x.org/a.css">',
+                    '<meta http-equiv="refresh" content="0;url=https://x.org">',
+                    '<img src="https://x.org/a.png">', '<img src="//x.org/a.png">',
+                    '<p style="background:url(https://x.org/a.png)">',
+                    '<style>@import url(fig.svg);</style>',
+                    '<svg><foreignObject></foreignObject></svg>',
+                    '<svg><use href="https://x.org/s.svg#a"/></svg>',
+                    '<a href="data:text/html,<b>x</b>">a</a>', '<img src="other.png">',
+                    '<svg><set attributeName="href" to="javascript:x()"/></svg>',
+                    '<img srcset="fig.svg 1x, https://x.org/b.png 2x">'):
+            self.assertTrue(self.faults(bad), bad)
+
+    def test_faults_name_the_line(self):
+        (f,) = self.faults("<p>a</p>\n<p>b</p>\n<script></script>")
+        self.assertIn("line 3, <script>", f)
+
+
+class ReportSessions(unittest.TestCase):
+    """One session per report, as an item session is one per ask."""
+
+    def setUp(self):
+        self.pdir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.pdir, True)
+        (self.pdir / "reports").mkdir()
+        for i in (1, 2, 3):
+            hz._save(hz.report_path(self.pdir, f"rep-{i}"),
+                     {"id": f"rep-{i}", "task": "t", "state": "gathering"})
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d, True)
+        m = mock.patch.object(hz, "REPORT_SCRATCH", d / "reports")
+        m.start(); self.addCleanup(m.stop)
+
+    def row(self, rid, status="idle", sid=None, kind="background", t=1):
+        return {"name": f"harness-reporter-proj-{rid}", "sessionId": sid or rid * 9,
+                "status": status, "kind": kind, "startedAt": t, "pid": 1}
+
+    def wake(self, rows, rid="rep-1", why="hello", rc=0):
+        calls = []
+
+        def run(cmd, **kw):
+            calls.append(cmd)
+            return mock.Mock(returncode=rc, stdout="", stderr="")
+        with mock.patch.object(hz, "roster_all", return_value=rows), \
+             mock.patch.object(hz, "live_rows", side_effect=lambda rs: [r for r in rs if r.get("pid")]), \
+             mock.patch.object(hz, "report_cmd", side_effect=lambda *a, **k:
+                               ["claude", "--bg", "FRESH", a[2], k.get("start")]), \
+             mock.patch.object(hz, "report_profile", return_value="P1"), \
+             mock.patch.object(hz.subprocess, "run", side_effect=run):
+            ok, msg = hz.report_wake(self.pdir, "/r/proj", rid, why)
+        return ok, msg, calls
+
+    def test_names_are_per_report_and_not_intermediaries(self):
+        self.assertEqual(hz.report_name("/x/proj", "rep-3"), "harness-reporter-proj-rep-3")
+        self.assertFalse(hz.report_name("/x/proj", "rep-3").startswith(
+            hz.intermediary_name("/x/proj")))
+
+    def test_start_resume_and_cap(self):
+        ok, msg, calls = self.wake([])
+        self.assertEqual(calls[0][2:4], ["FRESH", "rep-1"])
+        self.assertIn("harness report --idle", calls[0][4])
+        home = hz.report_home(self.pdir, "rep-1")
+        self.assertEqual((home / "profile").read_text().strip(), "P1")
+        sid = "abcd1234" + "x" * 28
+        ok, msg, calls = self.wake([self.row("rep-1", sid=sid)])
+        self.assertEqual(calls[1][:4], ["claude", "--bg", "--resume", sid])
+        ok, msg, calls = self.wake([self.row("rep-2"), self.row("rep-3")])
+        self.assertTrue(msg.startswith("queued: 2 report sessions"))
+        self.assertEqual(hz.report_inbox(self.pdir, "rep-1", take=True), ["hello"])
+        hz._save(hz.report_path(self.pdir, "rep-1"), {"id": "rep-1", "state": "published"})
+        self.assertEqual(self.wake([])[:2], (False, "rep-1 is not open"))
+
+    def test_its_command_writes_only_its_scratch(self):
+        repo = self.pdir / "repo"
+        repo.mkdir()
+        with mock.patch.object(hz, "report_prompt", return_value=self.pdir / "p.md"):
+            cmd = hz.report_cmd(self.pdir, str(repo), "rep-1", start="go")
+        env = json.loads(cmd[cmd.index("--settings") + 1])["env"]
+        self.assertEqual(env, {"HARNESS_REPORTER": "1", "HARNESS_PROJECT": self.pdir.name,
+                               "HARNESS_REPORT": "rep-1"})
+        allow = cmd[cmd.index("--allowedTools") + 1:cmd.index("--permission-mode")]
+        sc = hz.report_scratch(self.pdir, "rep-1")
+        self.assertEqual(allow[:2], ["Bash(harness report *)", f"Edit(/{sc}/**)"])
+        self.assertTrue(all(" log *" in x or " show *" in x or " diff *" in x or " status *" in x
+                            for x in allow[2:]))
+        tools = cmd[cmd.index("--tools") + 1:cmd.index("--allowedTools")]
+        self.assertNotIn("SendMessage", tools)
+        self.assertNotIn(".claude", str(sc))
+        self.assertEqual((cmd[0], cmd[-1]), ("claude", "go"))
+
+    def test_close_keeps_the_record_and_its_page(self):
+        pub = hz.report_dir(self.pdir, "rep-1") / "pub"
+        pub.mkdir(parents=True)
+        hz.report_home(self.pdir, "rep-1").mkdir(parents=True)
+        with mock.patch.object(hz, "roster_all", return_value=[]), \
+             mock.patch.object(hz, "reports_next"), redirect_stdout(io.StringIO()):
+            hz.report_close(self.pdir, "/r/proj", "rep-1")
+        self.assertTrue(pub.is_dir())
+        self.assertFalse(hz.report_home(self.pdir, "rep-1").exists())
+
+
 class WaitEdges(unittest.TestCase):
     """Owner, 2026-10-16: "it's not clear who is blocking who, and who is waiting
     on who." Every wait reads as one edge, A waits on B for C, with B named."""

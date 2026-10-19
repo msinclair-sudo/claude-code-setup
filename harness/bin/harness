@@ -13449,6 +13449,11 @@ def cmd_brief(a):
     if _lifts and a.__dict__.get("defer") is None:
         die(REFUSED, f"{_lifts[0]} goes with --defer, which says what it waits on:\n"
                      f"           harness brief {a.task} --defer \"<condition>\" {_lifts[0]} ...")
+    if a.__dict__.get("report") is not None and not a.write:
+        die(REFUSED, f"--report goes in with --write, so the brief says it is coming:\n"
+                     f"           harness brief {a.task} --write - --report \"what it covers\"")
+    if a.__dict__.get("report_from") and a.__dict__.get("report") is None:
+        die(REFUSED, '--report-from goes with --report "what it covers"')
     if a.__dict__.get("uses") and not a.write:
         die(REFUSED, f"--uses goes in with --write, so the revision sees it:\n"
                      f"           harness brief {a.task} --write - --uses {','.join(a.uses)}")
@@ -13853,6 +13858,8 @@ def cmd_brief(a):
             else:
                 print(f"  no block named '{blk}' — nothing stamped. "
                       f"`harness blocked --decided` lists them.")
+        if a.__dict__.get("report") is not None:
+            brief_report(ctx, a)
         if rev > 1:
             print("  the previous text is gone — a brief is a plan, not a record")
         if _CLAUSE_LABEL.search(a.write) and not brief_clauses(a.write):
@@ -19602,15 +19609,17 @@ def _attach_hint(out, sid=None):
     return f" — open it: claude attach {i}" if i else ""
 
 
-def _intermediary_bg(pdir, args, delay=0):
-    """Run `harness intermediary --project=<slug> ARGS` detached: a session's Bash
-    call, or the GUI, returns now. With delay, after that many seconds."""
-    log = Path(pdir) / "intermediary" / "wake.log"
+def _intermediary_bg(pdir, args, delay=0, sub="intermediary"):
+    """Run `harness <sub> --project=<slug> ARGS` detached: a session's Bash
+    call, or the GUI, returns now. With delay, after that many seconds. `sub` is
+    the intermediary's verb, or `report` for a report session."""
+    log = Path(pdir) / ("reporter" if sub == "report" else "intermediary") / "wake.log"
     log.parent.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items()
            if k not in ("CLAUDE_CODE_SESSION_ID", "HARNESS_INTERMEDIARY", "HARNESS_PROJECT",
-                        "HARNESS_ASK", "HARNESS_DOCUMENTER")}
-    cmd = shlex.join([sys.executable, str(Path(__file__).resolve()), "intermediary",
+                        "HARNESS_ASK", "HARNESS_DOCUMENTER", "HARNESS_REPORTER",
+                        "HARNESS_REPORT")}
+    cmd = shlex.join([sys.executable, str(Path(__file__).resolve()), sub,
                       project_arg(pdir), *args])
     with open(log, "a") as fh:
         subprocess.Popen(["sh", "-c", (f"sleep {delay}; " if delay else "") + f"exec {cmd}"],
@@ -19721,6 +19730,1050 @@ def cmd_intermediary(a):
         "few lines where it stands."))
     print(msg)
     sys.exit(0 if ok else 1)
+
+
+# ── reports: a deliverable asked for on one named step (owner, 2026-10-19) ───
+#
+# Not progress reporting (I9 refuses that): a report is asked for by name, on
+# one task, by someone who will act on it — the brief's writer (`brief
+# --report`), a lead or rank 0 after the fact, or the owner from the viewer.
+# One background session per report gathers each contributor's part, composes
+# one static HTML page, and publishes it; it is removed when the report is.
+# The task it covers waits: an unpresented task presents once the report is
+# published, a presented one is signed off then.
+
+REPORTER = "harness-reporter"
+REPORT_CAP = 2                  # report sessions running at once; the rest queue
+REPORT_MODEL = ("opus", "high")
+REPORT_OPEN = ("requested", "gathering", "composing")
+REPORT_ID_RE = re.compile(r"^rep-\d+$")
+REPORT_SCRATCH = ASK_SCRATCH.parent / "reports"
+REPORT_WHAT_CAP = 1500
+REPORT_PART_CAP = 60 * 2**10
+REPORT_PART_ASSETS = 8
+REPORT_HTML_CAP = 2 * 2**20
+REPORT_ASSETS_MAX, REPORT_ASSET_CAP, REPORT_ASSETS_TOTAL = 30, 10 * 2**20, 40 * 2**20
+REPORT_ASSET_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$")
+REPORT_IMAGE = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg")
+REPORT_WRITING = INTERMEDIARY_WRITING + ("dataviz",)
+REPORT_ENV = ("HARNESS_REPORTER", "HARNESS_REPORT")
+
+
+def report_path(pdir, rid):
+    return Path(pdir) / "reports" / f"{rid}.json"
+
+
+def report_dir(pdir, rid):
+    return Path(pdir) / "reports" / rid
+
+
+def report_next_id(pdir):
+    """rep-<n>, never handed out twice: the records and a high-water mark."""
+    d = Path(pdir) / "reports"
+    ns = [int(p.stem[4:]) for p in (d.glob("rep-*.json") if d.is_dir() else [])
+          if p.stem[4:].isdigit()]
+    seqf = Path(pdir) / "report-seq.json"
+    seq = _read_json(seqf) or {}
+    n = max(ns + [int(seq.get("n") or 0)], default=0) + 1
+    try:
+        seqf.write_text(json.dumps({"n": n}) + "\n")
+    except OSError:
+        pass
+    return f"rep-{n}"
+
+
+def reports_all(pdir):
+    """Every report record of a project, oldest first."""
+    d = Path(pdir) / "reports"
+    out = []
+    for p in (d.glob("rep-*.json") if d.is_dir() else []):
+        r = _read_json(p)
+        if isinstance(r, dict) and r.get("id"):
+            out.append(r)
+    return sorted(out, key=lambda r: int(r["id"][4:]) if r["id"][4:].isdigit() else 0)
+
+
+def report_open_for(ctx, task):
+    """The open reports on a task: what holds its present or its sign-off."""
+    k = tkey(task or "")
+    return [r for r in reports_all(ctx.state)
+            if r.get("state") in REPORT_OPEN and tkey(r.get("task") or "") == k]
+
+
+def _report_log(rec, by, what):
+    rec.setdefault("history", []).append({"at": _now(), "by": by, "what": what})
+
+
+def _tree_nodes(repo):
+    try:
+        return json.loads((Path(repo) / ".harness" / "tree.json").read_text()).get("nodes") or {}
+    except Exception:
+        return {}
+
+
+def report_parse_from(spec, nodes, default_what):
+    """`NODE` or `NODE:WHAT` -> (node, what), refusing a node not in the tree."""
+    node, _, what = (spec or "").partition(":")
+    node = node.strip()
+    if node not in nodes:
+        die(REFUSED, f"--from {spec}: '{node}' is not a node in this tree")
+    return node, (what.strip() or default_what)[:REPORT_WHAT_CAP]
+
+
+def report_contributor(node, what, by):
+    return {"node": node, "what": what, "asked_by": by, "asked_at": _now(), "state": "asked"}
+
+
+def report_requester(ctx, task_node, brief):
+    """Who is asking, and whether they may: (label, node). Rank 0, a node above
+    the task's, the brief's writer, or the owner (a shell, or the viewer)."""
+    for k in ("HARNESS_INTERMEDIARY", "HARNESS_DOCUMENTER", "HARNESS_REPORTER"):
+        if os.environ.get(k) == "1":
+            die(REFUSED, "a report is asked for by the owner, rank 0 or a lead; this session "
+                         "is none of them")
+    if design_env():
+        die(REFUSED, "a design session does not ask for reports")
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if not sid:
+        return "owner", "owner"
+    me, _ = ctx.node()
+    writer = str((brief or {}).get("direct_by") or (brief or {}).get("written_by") or "").split()[:1]
+    if ctx.rank(me) != 0 and me not in ancestors(ctx, task_node) and [me] != writer:
+        die(REFUSED, f"'{me}' may not ask for a report on {task_node}'s task: rank 0, a "
+                     f"lead above it, or the brief's writer asks (or the owner, in the viewer)")
+    return f"{me} (session {sid[:8]})", me
+
+
+def report_create(ctx, task, what, froms=(), origin="request"):
+    """A new report record on a task. -> the record, saved."""
+    what = (what or "").strip()
+    if not what:
+        die(REFUSED, 'say what the report should cover: --request "what it covers"')
+    if len(what) > REPORT_WHAT_CAP:
+        die(REFUSED, f"what it covers is {len(what)} chars; at most {REPORT_WHAT_CAP}. Say "
+                     f"what each node covers with --from NODE:WHAT")
+    _, b = load_brief(ctx, task)
+    if b is None:
+        die(REFUSED, f"no brief '{task}': a report covers a briefed task")
+    node = b.get("node") or task_node(ctx, task)
+    by, me = report_requester(ctx, node, b)
+    refuse_if_halted(ctx, "a new report")
+    for r in report_open_for(ctx, task):
+        if " ".join(r.get("what", "").split()) == " ".join(what.split()):
+            die(REFUSED, f"{r['id']} already asks for that on {task} ({r['state']}). "
+                         f"harness report {r['id']} --show")
+    nodes = ctx.tree["nodes"]
+    cons = [report_contributor(*report_parse_from(f, nodes, what), "requester")
+            for f in froms or ()]
+    if not cons and node in nodes:
+        cons = [report_contributor(node, what, "requester")]
+    st = task_state(ctx, task)
+    gate = None if st in DONE_STATES else "signoff" if st == "presented" else "present"
+    for i, c in enumerate(cons, 1):
+        c["n"] = i
+    rid = report_next_id(ctx.state)
+    rec = {"id": rid, "task": b.get("task") or task, "node": node, "what": what,
+           "origin": origin, "requested_by": by, "requester_node": me,
+           "requested_at": _now(), "brief_rev": b.get("rev"), "gate": gate,
+           "state": "requested", "contributors": cons, "notes": [],
+           "published": None, "withdrawn": None, "history": []}
+    _report_log(rec, by, f"asked for, on {task}")
+    _save(report_path(ctx.state, rid), rec)
+    return rec
+
+
+def brief_report(ctx, a):
+    """`brief --write … --report WHAT`: the task carries a report (T20); `none`
+    withdraws one the brief asked for that has not started."""
+    mine = [r for r in report_open_for(ctx, a.task) if r.get("origin") == "brief"]
+    if a.report.strip().lower() == "none":
+        me, _ = ctx.node()
+        for r in mine:
+            if r["state"] == "requested":
+                report_withdraw(ctx.state, report_path(ctx.state, r["id"]), r,
+                                f"{me} (brief)", "the brief no longer asks for it")
+                print(f"  withdrew {r['id']}")
+        return
+    same = [r for r in mine if " ".join(r.get("what", "").split()) == " ".join(a.report.split())]
+    if same:
+        print(f"  still carries report {same[0]['id']} ({same[0]['state']})")
+        return
+    rec = report_create(ctx, a.task, a.report, a.__dict__.get("report_from") or (), "brief")
+    print(f"  carries report {rec['id']}: {clip(rec['what'], 80)}\n  {rec['node']} presents "
+          f"it once the report is published; the report starts when {rec['node']} first "
+          f"tries to present, and asks "
+          + ", ".join(c["node"] for c in rec["contributors"]) + " for parts")
+
+
+def report_begin(pdir, repo, rec, why):
+    """Gathering starts: every contributor asked is rung, and the session woken."""
+    if rec.get("state") == "requested":
+        rec["state"] = "gathering"
+        rec["started_at"] = _now()
+        _report_log(rec, "harness", why)
+        _save(report_path(pdir, rec["id"]), rec)
+        for c in rec.get("contributors") or []:
+            if c.get("state") == "asked":
+                report_ring_part(pdir, rec, c)
+    report_wake_detached(pdir, rec["id"], f"Report {rec['id']} on {rec['task']}: {why}. "
+                                          f"Start with harness report {rec['id']} --show.")
+
+
+def report_ring_part(pdir, rec, c):
+    ring_inbox(pdir, c["node"], f"reporter ({rec['id']})",
+               f"Report {rec['id']} on {rec['task']} asks for your part: {c['what']}\n"
+               f"Write it from what you did, with evidence (file:line, short shas), and send "
+               f"it: harness report {rec['id']} --part - <<'EOF' … EOF  (figures: --asset "
+               f"FILE.png|svg). If you can't help: harness report {rec['id']} --decline "
+               f"\"why\".", "low")
+
+
+def report_find(ident, project=None):
+    """A report anywhere on this machine -> (state dir, repo, path, record); a
+    report session finds only its own project's."""
+    if not REPORT_ID_RE.match(ident or ""):
+        die(REFUSED, f"'{ident}' is not a report id (rep-<n>). harness report --list")
+    bound = ask_bound()
+    hits = []
+    for pdir, repo in ask_projects():
+        if bound and pdir != bound[0]:
+            continue
+        if project and project not in (Path(repo).name, pdir.name):
+            continue
+        f = report_path(pdir, ident)
+        r = _read_json(f) if f.exists() else None
+        if isinstance(r, dict):
+            hits.append((pdir, repo, f, r))
+    if not hits:
+        die(REFUSED, f"no report '{ident}'" + (f" in {Path(bound[1]).name}" if bound else "")
+                     + ". harness report --list")
+    if len(hits) > 1:
+        # Ids are per project: the one this session stands in, when it is in one.
+        try:
+            ctx = Ctx()
+            mine = [h for h in hits if Path(h[0]) == Path(ctx.state)]
+            if len(mine) == 1:
+                return mine[0]
+        except SystemExit:
+            pass
+        die(REFUSED, f"'{ident}' is in {len(hits)} projects; run it from inside the one meant")
+    return hits[0]
+
+
+def report_text(arg, pdir=None, rid=None, cap=REPORT_PART_CAP):
+    """The text of `arg`: stdin for '-', a file when it names one, else itself."""
+    if arg == "-":
+        t = sys.stdin.read()
+    elif arg and "\n" not in arg and len(arg) < 4096 and Path(arg).expanduser().is_file():
+        t = Path(arg).expanduser().read_text()
+    else:
+        t = arg or ""
+    if len(t.encode()) > cap:
+        die(REFUSED, f"{len(t.encode())} bytes; at most {cap}. Put figures in --asset files")
+    return t
+
+
+def report_copy_assets(files, dest, prefix, limit):
+    """Copy image files into `dest` under safe names -> [{file, bytes, kind}]."""
+    out = []
+    if len(files or []) > limit:
+        die(REFUSED, f"{len(files)} files; at most {limit}")
+    for src in files or []:
+        p = Path(src).expanduser()
+        if not p.is_file():
+            die(REFUSED, f"no file '{src}'")
+        if p.suffix.lower() not in REPORT_IMAGE:
+            die(REFUSED, f"{p.name}: a figure is {', '.join(REPORT_IMAGE)}")
+        n = p.stat().st_size
+        if n > REPORT_ASSET_CAP:
+            die(REFUSED, f"{p.name} is {n} bytes; at most {REPORT_ASSET_CAP}")
+        name = prefix + re.sub(r"[^A-Za-z0-9._-]", "_", p.name).lstrip("._-")
+        dest.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(p, dest / name)
+        out.append({"file": name, "bytes": n, "kind": p.suffix.lower()[1:]})
+    return out
+
+
+def report_part(pdir, path, rec, node, text, assets, n=None):
+    """A contributor's part, for the oldest ask of it still open (or ask n)."""
+    if rec.get("state") not in REPORT_OPEN:
+        die(REFUSED, f"{rec['id']} is {rec.get('state')}; it takes no more parts")
+    asked = [c for c in rec.get("contributors") or [] if c.get("node") == node
+             and c.get("state") == "asked" and (n is None or c.get("n") == n)]
+    if not asked:
+        die(REFUSED, f"{rec['id']} asks nothing of {node}" + (f" as part {n}" if n else "")
+                     + f". harness report {rec['id']} --show")
+    if not (text or "").strip():
+        die(REFUSED, "the part is empty")
+    c = asked[0]
+    d = report_dir(pdir, rec["id"]) / "parts"
+    d.mkdir(parents=True, exist_ok=True)
+    pf = d / f"{c['n']}-{node}.md"
+    pf.write_text(text)
+    c.update(state="submitted", part=f"parts/{pf.name}", submitted_at=_now(),
+             assets=report_copy_assets(assets, d, f"{c['n']}-{node}-", REPORT_PART_ASSETS))
+    left = [x for x in rec["contributors"] if x.get("state") == "asked"]
+    if not left and rec["state"] == "gathering":
+        rec["state"] = "composing"
+    _report_log(rec, node, f"part {c['n']} submitted")
+    _save(path, rec)
+    report_wake_detached(pdir, rec["id"], (
+        f"{node} sent part {c['n']} of {rec['id']}" + (
+            "; every part asked for is in: compose and publish" if not left else
+            f"; still out: {', '.join(x['node'] for x in left)}")
+        + f". harness report {rec['id']} --show"))
+    return c, left
+
+
+def report_decline(pdir, path, rec, node, why, n=None):
+    if not (why or "").strip():
+        die(REFUSED, 'say why: --decline "why"')
+    asked = [c for c in rec.get("contributors") or [] if c.get("node") == node
+             and c.get("state") == "asked" and (n is None or c.get("n") == n)]
+    if not asked:
+        die(REFUSED, f"{rec['id']} asks nothing of {node}")
+    c = asked[0]
+    c.update(state="declined", why=why.strip(), submitted_at=_now())
+    _report_log(rec, node, f"part {c['n']} declined: {why.strip()}")
+    _save(path, rec)
+    report_wake_detached(pdir, rec["id"], f"{node} declined part {c['n']} of {rec['id']}: "
+                                          f"{why.strip()}")
+    return c
+
+
+def report_withdraw(pdir, path, rec, by, why):
+    if rec.get("state") not in REPORT_OPEN:
+        die(REFUSED, f"{rec['id']} is {rec.get('state')}")
+    if not (why or "").strip():
+        die(REFUSED, 'say why: --withdraw "why"')
+    held = rec.get("gate")
+    rec.update(state="withdrawn", withdrawn={"at": _now(), "by": by, "why": why.strip()})
+    for c in rec.get("contributors") or []:
+        if c.get("state") == "asked":
+            c["state"] = "dropped"
+    _report_log(rec, by, f"withdrawn: {why.strip()}")
+    _save(path, rec)
+    if rec.get("node") and rec["node"] != by.split()[0]:
+        ring_inbox(pdir, rec["node"], by.split()[0],
+                   f"Report {rec['id']} on {rec['task']} is withdrawn ({why.strip()})"
+                   + ("; nothing holds your present now" if held == "present" else
+                      "; nothing holds its sign-off now" if held == "signoff" else ""), "low")
+    report_close_detached(pdir, rec["id"])
+
+
+# ── what a published report may contain ──────────────────────────────────────
+
+_REPORT_BAD_TAGS = {"script", "iframe", "frame", "frameset", "object", "embed", "applet",
+                    "form", "input", "button", "textarea", "select", "base", "link", "portal",
+                    "audio", "video", "source", "track", "foreignobject", "noscript"}
+_REPORT_URL_ATTRS = {"src", "href", "xlink:href", "srcset", "poster", "action", "formaction",
+                     "background", "data", "cite", "longdesc", "usemap", "lowsrc", "dynsrc"}
+_REPORT_IMG_ATTRS = {"src", "srcset", "poster", "xlink:href", "lowsrc", "dynsrc", "background"}
+_REPORT_DATA_IMG = re.compile(r"^data:image/(png|jpeg|gif|webp|svg\+xml)[;,]")
+_REPORT_CSS_BAD = re.compile(r"@import|expression\s*\(|behavior\s*:|-moz-binding", re.I)
+_REPORT_CSS_URL = re.compile(r"url\(\s*(['\"]?)(.*?)\1\s*\)", re.I | re.S)
+
+
+def _report_url(v):
+    return re.sub(r"[\x00-\x20]", "", v or "").lower()
+
+
+def report_html_check(text, assets):
+    """The faults that keep `text` from being published: [str]. A report is a
+    static page — nothing in it may run, load from elsewhere, or submit."""
+    from html.parser import HTMLParser
+    names = set(assets or ())
+    faults = []
+
+    def css(s, where):
+        if _REPORT_CSS_BAD.search(s or ""):
+            faults.append(f"{where}: @import, expression(), behavior or -moz-binding")
+        for m in _REPORT_CSS_URL.finditer(s or ""):
+            u = m.group(2).strip()
+            if not (_REPORT_DATA_IMG.match(_report_url(u)) or u in names):
+                faults.append(f"{where}: url({u[:60]}) is not a listed figure or a data image")
+
+    class P(HTMLParser):
+        style = False
+
+        def handle_starttag(self, tag, attrs):
+            self.check(tag, attrs)
+            if tag == "style":
+                self.style = True
+
+        def handle_startendtag(self, tag, attrs):
+            self.check(tag, attrs)
+
+        def handle_endtag(self, tag):
+            if tag == "style":
+                self.style = False
+
+        def handle_data(self, data):
+            if self.style:
+                css(data, "<style>")
+
+        def check(self, tag, attrs):
+            line = self.getpos()[0]
+            at = f"line {line}, <{tag}>"
+            if tag in _REPORT_BAD_TAGS:
+                faults.append(f"{at}: no {tag} in a report (nothing may run, load or submit)")
+            a = {k: (v or "") for k, v in attrs}
+            if tag == "meta" and "http-equiv" in a:
+                faults.append(f"{at}: no meta http-equiv")
+            if tag in ("set", "animate", "animatemotion", "animatetransform") and \
+                    a.get("attributename", "").lower() in ("href", "xlink:href"):
+                faults.append(f"{at}: no animated link")
+            for k, v in a.items():
+                if k.startswith("on"):
+                    faults.append(f"{at}: no {k}= handler")
+                elif k == "style":
+                    css(v, at)
+                elif k in _REPORT_URL_ATTRS:
+                    for u in ([x.strip().split(" ")[0] for x in v.split(",")] if k == "srcset"
+                              else [v.strip()]):
+                        lu = _report_url(u)
+                        if lu.startswith(("javascript:", "vbscript:")):
+                            faults.append(f"{at}: {k}={u[:60]}: no script URLs")
+                        elif lu.startswith("data:") and not _REPORT_DATA_IMG.match(lu):
+                            faults.append(f"{at}: {k}: data: only for images")
+                        elif k in _REPORT_IMG_ATTRS or (tag in ("use", "image", "img")):
+                            if not (_REPORT_DATA_IMG.match(lu) or u in names
+                                    or (tag == "use" and u.startswith("#"))):
+                                faults.append(f"{at}: {k}={u[:60]} is not a listed figure or "
+                                              f"a data image")
+                        elif k == "href" and tag == "a":
+                            if not (u.startswith("#") or u in names
+                                    or lu.startswith(("http://", "https://"))):
+                                faults.append(f"{at}: href={u[:60]}: link to #a-section, a "
+                                              f"listed figure, or an http(s) page")
+                        elif lu and not lu.startswith("#"):
+                            faults.append(f"{at}: {k}={u[:60]}: nothing is loaded from "
+                                          f"elsewhere")
+
+    try:
+        P(convert_charrefs=True).feed(text or "")
+    except Exception as e:
+        faults.append(f"unreadable HTML: {e}")
+    return faults
+
+
+def report_publish(pdir, repo, path, rec, html_file, assets, by="reporter"):
+    """Check, copy into pub/, record, ring, and close the session."""
+    if rec.get("state") not in REPORT_OPEN:
+        die(REFUSED, f"{rec['id']} is {rec.get('state')}; a correction is a new request")
+    allowed = [report_scratch(pdir, rec["id"]).resolve(),
+               (report_dir(pdir, rec["id"]) / "parts").resolve()]
+
+    def inside(p):
+        try:
+            rp = Path(p).expanduser().resolve()
+        except OSError:
+            return None
+        return rp if rp.is_file() and any(rp.is_relative_to(d) for d in allowed) else None
+
+    hf = inside(html_file)
+    if hf is None:
+        die(REFUSED, f"{html_file}: write the report in {report_scratch(pdir, rec['id'])} "
+                     f"and publish it from there")
+    raw = hf.read_bytes()
+    if len(raw) > REPORT_HTML_CAP:
+        die(REFUSED, f"the report is {len(raw)} bytes; at most {REPORT_HTML_CAP}. Put figures "
+                     f"in --asset files")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        die(REFUSED, "the report is not UTF-8")
+    files, total = [], 0
+    if len(assets or []) > REPORT_ASSETS_MAX:
+        die(REFUSED, f"{len(assets)} figures; at most {REPORT_ASSETS_MAX}")
+    for a_ in assets or []:
+        af = inside(a_)
+        if af is None:
+            die(REFUSED, f"{a_}: a figure comes from your scratch folder or a contributor's part")
+        if not REPORT_ASSET_RE.match(af.name) or af.name == "index.html":
+            die(REFUSED, f"{af.name}: name figures with letters, digits, '.', '_' and '-' only")
+        if af.suffix.lower() not in REPORT_IMAGE:
+            die(REFUSED, f"{af.name}: a figure is {', '.join(REPORT_IMAGE)}")
+        n = af.stat().st_size
+        total += n
+        if n > REPORT_ASSET_CAP or total > REPORT_ASSETS_TOTAL:
+            die(REFUSED, f"{af.name}: figures are at most {REPORT_ASSET_CAP} bytes each and "
+                         f"{REPORT_ASSETS_TOTAL} in all")
+        body = af.read_bytes()
+        if af.suffix.lower() == ".svg":
+            bad = report_html_check(body.decode("utf-8", "replace"), [])
+            if bad:
+                die(REFUSED, f"{af.name}: " + "; ".join(bad[:5]))
+        elif not body.startswith({".png": b"\x89PNG", ".gif": b"GIF8", ".webp": b"RIFF"}.get(
+                af.suffix.lower(), b"\xff\xd8")):
+            die(REFUSED, f"{af.name} is not the image its name says")
+        files.append((af, n))
+    names = [f.name for f, _ in files]
+    if len(set(names)) != len(names):
+        die(REFUSED, "two figures share a name")
+    bad = report_html_check(text, names)
+    if bad:
+        die(REFUSED, f"the report can't be published as it is ({len(bad)} fault(s)):\n  "
+                     + "\n  ".join(bad[:20]))
+    pub = report_dir(pdir, rec["id"]) / "pub"
+    shutil.rmtree(pub, ignore_errors=True)
+    pub.mkdir(parents=True)
+    (pub / "index.html").write_bytes(raw)
+    for f, _ in files:
+        shutil.copyfile(f, pub / f.name)
+    unused = [n for n in names if n not in text]
+    rec.update(state="published", published={
+        "at": _now(), "by": by, "file": "index.html", "bytes": len(raw),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "assets": [{"file": f.name, "bytes": n, "kind": f.suffix.lower()[1:]} for f, n in files]})
+    _report_log(rec, by, "published")
+    _save(path, rec)
+    held = rec.get("gate")
+    told = set()
+    nodes = _tree_nodes(repo)
+    lead = (nodes.get(rec.get("node")) or {}).get("parent")
+    for who, pr, text_ in (
+            (rec.get("node"), "low" if held == "present" else "fyi",
+             f"Report {rec['id']} on {rec['task']} is published"
+             + ("; present it now (harness mark " + rec["task"] + " --done)"
+                if held == "present" else "") + "."),
+            (lead, "low" if held == "signoff" else "fyi",
+             f"Report {rec['id']} on {rec['task']} is published"
+             + (f"; its sign-off waits on nothing else of the report's now"
+                if held == "signoff" else "") + ". The owner reads it in the viewer."),
+            (rec.get("requester_node"), "fyi",
+             f"Report {rec['id']} you asked for on {rec['task']} is published.")):
+        if who and who in nodes and who not in told:
+            ring_inbox(pdir, who, f"reporter ({rec['id']})", text_, pr)
+            told.add(who)
+    append_inbox({"event": "report-published", "id": rec["id"], "task": rec["task"],
+                  "repo": str(repo), "at": _now()})
+    report_close_detached(pdir, rec["id"])
+    return unused
+
+
+def report_show(pdir, repo, rec):
+    """Everything the report session works from, in one read."""
+    ctx = ProjCtx(pdir, repo)
+    print(f"{rec['id']} on {rec['task']} ({rec.get('node')}), {rec['state']}"
+          + (f"; it holds the task's {'present' if rec['gate'] == 'present' else 'sign-off'}"
+             if rec.get("gate") and rec["state"] in REPORT_OPEN else ""))
+    print(f"asked for by {rec.get('requested_by')} at {(rec.get('requested_at') or '')[:16]}:")
+    print(f"  {rec.get('what')}")
+    _, b = load_brief(ctx, rec["task"])
+    if b:
+        print(f"\nthe brief ({rec['task']}, for {b.get('node')}):")
+        print("  " + (b.get("text") or "").strip().replace("\n", "\n  "))
+    m = _read_json(ctx.state_file("marks", rec["task"], ".json")) or {}
+    if m:
+        print(f"\nthe task: {task_state(ctx, rec['task'])}"
+              + (f", presented at {m['_presented_sha'][:8]}" if m.get("_presented_sha") else "")
+              + (f": {m['_note']}" if m.get("_note") else ""))
+    print("\nparts:")
+    for c in rec.get("contributors") or []:
+        print(f"  {c.get('n')}. {c['node']} ({c.get('asked_by')}): {c.get('state')} — "
+              f"{c.get('what')}")
+        if c.get("state") == "submitted" and c.get("part"):
+            try:
+                t = (report_dir(pdir, rec["id"]) / c["part"]).read_text()
+            except OSError:
+                t = "(missing)"
+            print("     " + t.strip().replace("\n", "\n     "))
+            for x in c.get("assets") or []:
+                print(f"     figure: {report_dir(pdir, rec['id']) / 'parts' / x['file']}")
+        if c.get("why"):
+            print(f"     why: {c['why']}")
+    if not rec.get("contributors"):
+        print("  (none asked yet)")
+    for n in rec.get("notes") or []:
+        print(f"note {n.get('at', '')[:16]}: {n.get('text')}")
+    if rec["state"] in REPORT_OPEN:
+        sc = report_scratch(pdir, rec["id"])
+        print(f"\nwrite: {sc}/report.html (and figures beside it)\n"
+              f"ask:   harness report {rec['id']} --ask NODE --what \"...\"\n"
+              f"publish: harness report {rec['id']} --publish {sc}/report.html "
+              f"[--asset {sc}/fig1.svg ...]")
+    elif rec.get("published"):
+        print(f"\npublished at {rec['published']['at'][:16]}: "
+              f"{report_dir(pdir, rec['id']) / 'pub' / 'index.html'}")
+
+
+def report_line(r):
+    cs = r.get("contributors") or []
+    got = sum(1 for c in cs if c.get("state") in ("submitted", "declined"))
+    return (f"{r['id']:<7} {r.get('state'):<10} {r.get('task')} ({r.get('node')})  parts "
+            f"{got}/{len(cs)}  {human_age(max(0, time.time() - (_epoch(r.get('requested_at')) or time.time())))}"
+            f"  {clip(r.get('what') or '', 70)}")
+
+
+# ── report sessions: one per report, as an item session is one per ask ──────
+
+def report_profile():
+    import inspect
+    try:
+        src = inspect.getsource(report_cmd)
+    except (OSError, TypeError):
+        src = ""
+    return hashlib.sha1(repr((src, ITEM_TOOLS, INTERMEDIARY_GIT)).encode()).hexdigest()[:10]
+
+
+def report_name(repo, rid):
+    return f"{REPORTER}-{Path(repo).name}-{rid}"
+
+
+def report_home(pdir, rid):
+    return Path(pdir) / "reporter" / rid
+
+
+def report_scratch(pdir, rid):
+    """Where a report session writes, and nowhere else: outside ~/.claude (see
+    item_scratch)."""
+    return REPORT_SCRATCH / Path(pdir).name / rid
+
+
+def report_inbox(pdir, rid, why=None, take=False):
+    f = report_home(pdir, rid) / "inbox.jsonl"
+    if why:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        with open(f, "a") as fh:
+            fh.write(json.dumps({"at": _now(), "why": why}) + "\n")
+        return []
+    if not take:
+        return []
+    try:
+        lines = f.read_text().splitlines()
+        f.unlink()
+    except OSError:
+        return []
+    out = []
+    for l in lines:
+        try:
+            out.append(json.loads(l)["why"])
+        except Exception:
+            pass
+    return out
+
+
+def report_sessions(repo, rows):
+    """{report id: (live row or None, newest session id)}."""
+    pre = f"{REPORTER}-{Path(repo).name}-"
+    live = {r.get("sessionId") for r in live_rows(rows)}
+    when = lambda r: r.get("startedAt") if isinstance(r.get("startedAt"), (int, float)) else 0
+    out = {}
+    for r in sorted(rows, key=when):
+        n = r.get("name") or ""
+        if not n.startswith(pre) or not r.get("sessionId"):
+            continue
+        k = n[len(pre):]
+        lr = out.get(k, (None, None))[0]
+        out[k] = (r if r["sessionId"] in live else lr, r["sessionId"])
+    return out
+
+
+def report_prompt(pdir, repo=None):
+    """Its system prompt: the reporter skill, the owner's Voice section, the scope."""
+    home = Path.home() / ".claude"
+    parts = [(home / "skills" / REPORTER / "SKILL.md").read_text()]
+    try:
+        g = (home / "CLAUDE.md").read_text()
+        m = re.search(r"^## Voice\n(.*?)(?=^## |\Z)", g, re.S | re.M)
+        if m:
+            parts.append("# The owner's voice (from their CLAUDE.md)\n" + m.group(1).strip())
+    except Exception:
+        pass
+    try:
+        repo = repo or json.loads((Path(pdir) / "binding.json").read_text()).get("repo")
+        if repo:
+            parts.append(scope_block(ProjCtx(pdir, repo)))
+    except Exception:
+        pass
+    out = Path(pdir) / "reporter" / "prompt.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n\n".join(parts) + "\n")
+    return out
+
+
+def report_cmd(pdir, repo, rid, model=None, effort=None, start=None):
+    """A report session's `claude` line: read the project, write its scratch
+    folder only, run `harness report` and read-only git. No SendMessage: it
+    talks through `harness report`, which records and rings."""
+    pdir = Path(pdir)
+    dirs, repos = [str(pdir)], []
+    cand = [repo]
+    try:
+        idx = json.loads((pdir / "index.json").read_text())
+        cand += [sp.get("worktree") for sp in (idx.get("nodes") or {}).values()]
+    except Exception:
+        pass
+    for d in cand:
+        if d and d not in dirs and Path(d).is_dir():
+            dirs.append(d); repos.append(d)
+    for sk in REPORT_WRITING:
+        d = str(Path.home() / ".claude" / "skills" / sk)
+        if Path(d).is_dir() and d not in dirs:
+            dirs.append(d)
+    sc = report_scratch(pdir, rid)
+    sc.mkdir(parents=True, exist_ok=True)
+    dirs.append(str(sc))
+    allow = ["Bash(harness report *)", f"Edit(/{sc}/**)"]
+    for d in repos:
+        for q in ('"', "'") + (("",) if " " not in d else ()):
+            allow += [f"Bash(git -C {q}{d}{q} {g} *)" for g in INTERMEDIARY_GIT]
+    env = {"HARNESS_REPORTER": "1", "HARNESS_PROJECT": pdir.name, "HARNESS_REPORT": rid}
+    cmd = ["claude", "--bg", "-n", report_name(repo, rid), "--restricted", "--strict-mcp-config",
+           "--settings", json.dumps({"env": env}),
+           "--add-dir", *dirs,
+           "--tools", *ITEM_TOOLS, "Write", "Edit",
+           "--allowedTools", *allow,
+           "--permission-mode", "dontAsk",
+           "--append-system-prompt-file", str(report_prompt(pdir, repo)),
+           "--model", model or REPORT_MODEL[0], "--effort", effort or REPORT_MODEL[1]]
+    return cmd + [start or report_start_prompt(pdir, repo, {"id": rid, "task": "?"})]
+
+
+def report_start_prompt(pdir, repo, rec):
+    sc = report_scratch(pdir, rec["id"])
+    return (f"You are the harness reporter for report {rec['id']} on task {rec.get('task')} in "
+            f"{Path(repo).name}, and for that report only; your instructions are in your "
+            f"system prompt. Write the report and its figures in {sc} with the Write tool. "
+            f"Ask nodes for parts with `harness report {rec['id']} --ask NODE --what \"...\"`, "
+            f"publish with `harness report {rec['id']} --publish {sc}/report.html --asset ...`, "
+            f"and end every wake with `harness report --idle`. "
+            f"Start: `harness report {rec['id']} --show`.")
+
+
+def _open_report(pdir, rid):
+    r = _read_json(report_path(pdir, rid))
+    return r if isinstance(r, dict) and r.get("state") in REPORT_OPEN else None
+
+
+def report_wake(pdir, repo, rid, why=None):
+    """Put `why` in front of the report's session: resume, start, or queue it
+    when REPORT_CAP are running. (ok, message). As item_wake."""
+    pdir = Path(pdir)
+    rec = _open_report(pdir, rid)
+    if rec is None:
+        return False, f"{rid} is not open"
+    home = report_home(pdir, rid)
+    home.mkdir(parents=True, exist_ok=True)
+    name = report_name(repo, rid)
+    lock = home / "waking"
+    try:
+        if time.time() - lock.stat().st_mtime < 60:
+            report_inbox(pdir, rid, why)
+            return True, "it is being woken already; queued for it"
+    except OSError:
+        pass
+    try:
+        rows = roster_all()
+    except Exception as e:
+        report_inbox(pdir, rid, why)
+        return False, f"cannot read the session list ({e}); queued for it"
+    live, sid = report_sessions(repo, rows).get(rid, (None, None))
+    if live and (live.get("status") == "busy" or live.get("kind") not in (None, "background")):
+        report_inbox(pdir, rid, why)
+        return True, f"{name} is busy; queued for its next stop"
+    running = sum(1 for k, (lr, _) in report_sessions(repo, live_rows(rows)).items()
+                  if lr and k != rid)
+    if not live and running >= REPORT_CAP:
+        report_inbox(pdir, rid, why)
+        return True, f"queued: {running} report sessions are running (cap {REPORT_CAP})"
+    lock.write_text(_now())
+    try:
+        whys = report_inbox(pdir, rid, take=True) + ([why] if why else [])
+        prompt = ("\n\n".join(whys) or "Read your report and carry it on.") + \
+                 "\n\nWhen this is handled, run `harness report --idle`."
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("CLAUDE_CODE_SESSION_ID", "HARNESS_PROJECT") + REPORT_ENV}
+        if live:
+            subprocess.run(["claude", "stop", live["sessionId"][:8]], capture_output=True)
+        stamp = home / "profile"
+        stale = bool(sid) and (stamp.read_text().strip() if stamp.exists() else "") != report_profile()
+        if stale:
+            prompt = (f"Your earlier session for this report ran under older permissions and "
+                      f"was replaced; `harness report {rid} --show` has everything.\n\n" + prompt)
+        if sid and not stale:
+            r = subprocess.run(["claude", "--bg", "--resume", sid, prompt], cwd=str(home),
+                               env=env, capture_output=True, text=True)
+            if not r.returncode:
+                return True, f"woke {name}{_attach_hint(r.stdout, sid)}"
+        start = report_start_prompt(pdir, repo, rec) + "\n\n" + prompt
+        r = subprocess.run(report_cmd(pdir, repo, rid, start=start),
+                           cwd=str(home), env=env, capture_output=True, text=True)
+        if r.returncode:
+            for w in whys:
+                report_inbox(pdir, rid, w)
+            return False, f"{name} did not start: {(r.stderr or r.stdout).strip()[:200]}"
+        stamp.write_text(report_profile() + "\n")
+        return True, f"started {name}" + _attach_hint(r.stdout)
+    finally:
+        lock.unlink(missing_ok=True)
+
+
+def report_wake_detached(pdir, rid, why):
+    _intermediary_bg(pdir, [rid, "--wake", why], sub="report")
+
+
+def report_close_detached(pdir, rid):
+    """The report is published or withdrawn: remove its session once the
+    current turn has ended (the closing verb may be its own)."""
+    _intermediary_bg(pdir, [rid, "--close-session"], delay=20, sub="report")
+
+
+def report_close(pdir, repo, rid):
+    """Stop and remove a report's sessions, home and scratch; the record and
+    its pub/ stay. Then start a queued report."""
+    try:
+        rows = roster_all()
+    except Exception as e:
+        print(f"roster unreadable: {e}"); return
+    name = report_name(repo, rid)
+    live = {r.get("sessionId") for r in live_rows(rows)}
+    for r in rows:
+        if r.get("name") == name and r.get("sessionId"):
+            if r["sessionId"] in live:
+                subprocess.run(["claude", "stop", r["sessionId"][:8]], capture_output=True)
+            claude_rm(r["sessionId"])
+    shutil.rmtree(report_home(pdir, rid), ignore_errors=True)
+    shutil.rmtree(report_scratch(pdir, rid), ignore_errors=True)
+    print(f"closed {name}")
+    reports_next(pdir, repo)
+
+
+def reports_next(pdir, repo):
+    """Start queued reports while fewer than REPORT_CAP sessions run."""
+    d = Path(pdir) / "reporter"
+    for f in sorted(d.glob("*/inbox.jsonl"), key=lambda p: p.stat().st_mtime) if d.is_dir() else []:
+        ok, msg = report_wake(pdir, repo, f.parent.name)
+        print(msg)
+        if msg.startswith("queued"):
+            break
+
+
+def report_idle(pdir, rid):
+    whys = report_inbox(pdir, rid, take=True)
+    if whys:
+        print("Before you stop — this came in while you worked:\n")
+        for w in whys:
+            print(f"- {w}")
+        print("\nHandle it, then run `harness report --idle` again.")
+        return
+    _intermediary_bg(pdir, [rid, "--settle"], delay=INTERMEDIARY_SETTLE, sub="report")
+    print(f"done for now. This session sleeps after {INTERMEDIARY_QUIET // 60} quiet minutes "
+          f"and is woken when a part for {rid} arrives; end your turn.")
+
+
+def report_settle(pdir, repo, rid):
+    """After `report --idle`'s delay: wake it for anything that arrived, else
+    stop it once quiet INTERMEDIARY_QUIET, then start a queued report."""
+    whys = report_inbox(pdir, rid, take=True)
+    if whys:
+        for w in whys[:-1]:
+            report_inbox(pdir, rid, w)
+        print(report_wake(pdir, repo, rid, whys[-1])[1]); return
+    try:
+        live, _ = report_sessions(repo, live_rows(roster_all())).get(rid, (None, None))
+    except Exception as e:
+        print(f"roster unreadable: {e}"); return
+    if not live or live.get("status") == "busy" or live.get("kind") not in (None, "background"):
+        return
+    quiet, _ = last_turn(live["sessionId"])
+    if quiet is not None and quiet < INTERMEDIARY_QUIET:
+        time.sleep(INTERMEDIARY_QUIET - quiet + 5)
+        return report_settle(pdir, repo, rid)
+    subprocess.run(["claude", "stop", live["sessionId"][:8]], capture_output=True)
+    print(f"{report_name(repo, rid)} sleeps; a part for {rid} wakes it")
+    reports_next(pdir, repo)
+
+
+def cmd_report(a):
+    """T20: a report asked for on one named step, built by its own session."""
+    mine = os.environ.get("HARNESS_REPORT") if os.environ.get("HARNESS_REPORTER") == "1" else None
+    verbs = [v for v in ("request", "show", "part", "decline", "ask", "drop_part", "note",
+                         "publish", "withdraw", "from_", "wake", "settle", "close_session",
+                         "print_cmd")
+             if getattr(a, v, None) not in (None, False, [])]
+    if a.from_ and "request" in verbs:
+        verbs.remove("from_")
+    if len(verbs) > 1:
+        die(REFUSED, "one verb at a time: " + ", ".join("--" + v.rstrip("_").replace("_", "-")
+                                                       for v in verbs))
+    if a.idle:
+        if not mine:
+            die(REFUSED, "--idle is a report session's (HARNESS_REPORT unset)")
+        b = ask_bound()
+        if not b:
+            die(REFUSED, "--idle needs HARNESS_PROJECT: the report session's own project")
+        report_idle(b[0], mine); return
+    if a.next:
+        pdir, repo = intermediary_project(a.project)
+        reports_next(pdir, repo); return
+    if not verbs and not a.target or a.list:
+        bound = ask_bound()
+        if bound:
+            projs = [bound]
+        else:
+            try:
+                ctx = Ctx(); ctx.require_enrolled()
+                projs = [(Path(ctx.state), str(ctx.repo))]
+            except SystemExit:
+                projs = ask_projects()
+        rows = [dict(r, project=Path(repo).name) for pdir, repo in projs
+                for r in reports_all(pdir) if a.all or r.get("state") in REPORT_OPEN
+                or (r.get("state") == "published" and time.time() - (_epoch(
+                    (r.get("published") or {}).get("at")) or 0) < 7 * 86400)]
+        if a.json:
+            print(json.dumps(rows, indent=2)); return
+        if not rows:
+            print("no reports" + ("" if a.all else " open or published this week")); return
+        for r in rows:
+            print(report_line(r))
+        return
+    if not verbs:
+        die(REFUSED, f"harness report <task> --request \"what it covers\" [--from NODE:WHAT], "
+                     f"or harness report <id> --show")
+    v = verbs[0]
+    if v == "request":
+        ctx = Ctx(); ctx.require_enrolled()
+        rec = report_create(ctx, a.target, a.request, a.from_ or (),
+                            origin="gui" if a.origin == "gui" else "request")
+        print(f"asked for {rec['id']} on {rec['task']} ("
+              + ", ".join(f"{c['node']}" for c in rec["contributors"]) + " to contribute)")
+        if rec["gate"] == "present":
+            print(f"  {rec['node']} presents {rec['task']} once it is published. Its session "
+                  f"starts when {rec['node']} first tries to present, so the parts describe "
+                  f"finished work.")
+        else:
+            report_begin(ctx.state, ctx.repo, rec, f"asked for by {rec['requested_by']}")
+            print(f"  Its session ({report_name(ctx.repo, rec['id'])}) is being started."
+                  + (f" {rec['task']}'s sign-off waits until it is published."
+                     if rec["gate"] == "signoff" else ""))
+        return
+    if REPORT_ID_RE.match(a.target or ""):
+        pdir, repo, path, rec = report_find(a.target, a.project)
+    else:
+        die(REFUSED, f"'{a.target}' is not a report id (rep-<n>); harness report --list")
+    if v in ("ask", "drop_part", "note", "publish") and mine != rec["id"]:
+        die(REFUSED, f"--{v.replace('_', '-')} is the report session's"
+                     + (f"; you serve {mine}" if mine else " (HARNESS_REPORT is unset)"))
+    if v == "show":
+        report_show(pdir, repo, rec); return
+    if v == "wake":
+        ok, msg = report_wake(pdir, repo, rec["id"], a.wake)
+        print(msg); sys.exit(0 if ok else 1)
+    if v == "settle":
+        report_settle(pdir, repo, rec["id"]); return
+    if v == "close_session":
+        report_close(pdir, repo, rec["id"]); return
+    if v == "print_cmd":
+        print(shlex.join(report_cmd(pdir, repo, rec["id"], a.model, a.effort,
+                                    report_start_prompt(pdir, repo, rec)))); return
+    if v == "ask":
+        ctx = ProjCtx(pdir, repo)
+        refuse_if_halted(ctx, "a new part request")
+        if rec["state"] not in REPORT_OPEN:
+            die(REFUSED, f"{rec['id']} is {rec['state']}")
+        nodes = _tree_nodes(repo)
+        what = report_text(a.what or "", cap=REPORT_WHAT_CAP * 4).strip()
+        if not what:
+            die(REFUSED, '--ask NODE --what "what you need from it, and in what form"')
+        if a.ask not in nodes:
+            die(REFUSED, f"'{a.ask}' is not a node in this tree")
+        c = report_contributor(a.ask, what[:REPORT_WHAT_CAP], "reporter")
+        c["n"] = max([x.get("n") or 0 for x in rec["contributors"]], default=0) + 1
+        rec["contributors"].append(c)
+        if rec["state"] == "composing":
+            rec["state"] = "gathering"
+        _report_log(rec, "reporter", f"asked {a.ask} for part {c['n']}")
+        _save(path, rec)
+        report_ring_part(pdir, rec, c)
+        print(f"asked {a.ask} for part {c['n']}; it is rung, and owes it until it answers")
+        return
+    if v == "drop_part":
+        c = next((x for x in rec["contributors"] if x.get("n") == a.drop_part), None)
+        if c is None or c.get("state") != "asked":
+            die(REFUSED, f"no open part {a.drop_part} in {rec['id']}")
+        c.update(state="dropped", why=(a.why or "").strip() or "dropped by the reporter")
+        if not any(x.get("state") == "asked" for x in rec["contributors"]) and \
+                rec["state"] == "gathering":
+            rec["state"] = "composing"
+        _report_log(rec, "reporter", f"dropped part {c['n']}")
+        _save(path, rec)
+        print(f"dropped part {c['n']} ({c['node']})"); return
+    if v == "note":
+        rec.setdefault("notes", []).append({"at": _now(), "text": a.note.strip()[:2000]})
+        _save(path, rec)
+        print("noted"); return
+    if v == "publish":
+        unused = report_publish(pdir, repo, path, rec, a.publish, a.asset or [])
+        print(f"published {rec['id']}; the owner reads it in the viewer's Reports tab, and "
+              f"{rec.get('node')} and its lead are rung."
+              + (f" Listed but never used: {', '.join(unused)}." if unused else "")
+              + " Your session is removed shortly: end your turn.")
+        return
+    # Verbs from a node, or the owner: the node comes from where the command runs.
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    me, by = "owner", "owner"
+    if mine:
+        me, by = "reporter", f"reporter ({mine})"
+    elif sid:
+        ctx = Ctx(); ctx.require_enrolled()
+        if Path(ctx.state) != Path(pdir):
+            die(REFUSED, f"{rec['id']} is another project's report")
+        me, _ = ctx.node()
+        by = f"{me} (session {sid[:8]})"
+    if v in ("part", "decline"):
+        if me in ("owner", "reporter"):
+            die(REFUSED, f"--{v} is a contributor node's, from its own worktree")
+        if v == "part":
+            text = report_text(a.part, pdir, rec["id"])
+            c, left = report_part(pdir, path, rec, me, text, a.asset or [], a.n)
+            print(f"sent part {c['n']} of {rec['id']}" + (
+                "; every part is in, and the report is being composed" if not left else "")
+                + ". You are rung when it is published; carry on, or end your turn.")
+        else:
+            c = report_decline(pdir, path, rec, me, a.decline, a.n)
+            print(f"declined part {c['n']} of {rec['id']}; its reporter is told")
+        return
+    if v == "withdraw":
+        if me not in ("owner", "reporter"):
+            ctx = Ctx()
+            ok = (me == rec.get("requester_node") or ctx.rank(me) == 0
+                  or me in ancestors(ctx, rec.get("node") or ""))
+            if not ok:
+                die(REFUSED, f"{rec['id']} is {rec.get('requester_node')}'s request: it, a lead "
+                             f"above {rec.get('node')}, rank 0 or the owner withdraws it")
+        report_withdraw(pdir, path, rec, by, a.withdraw)
+        print(f"withdrew {rec['id']}; nothing waits on it now, and its session closes shortly")
+        return
+    if v == "from_":
+        if me == "reporter":
+            die(REFUSED, "the reporter asks with --ask NODE --what")
+        if me != "owner":
+            ctx = Ctx()
+            if not (me == rec.get("requester_node") or ctx.rank(me) == 0
+                    or me in ancestors(ctx, rec.get("node") or "")):
+                die(REFUSED, f"{rec['id']} is {rec.get('requester_node')}'s request")
+        if rec["state"] not in REPORT_OPEN:
+            die(REFUSED, f"{rec['id']} is {rec['state']}")
+        nodes = _tree_nodes(repo)
+        added = []
+        for f in a.from_:
+            c = report_contributor(*report_parse_from(f, nodes, rec["what"]), "requester")
+            c["n"] = max([x.get("n") or 0 for x in rec["contributors"]], default=0) + 1
+            rec["contributors"].append(c)
+            added.append(c)
+        if rec["state"] == "composing":
+            rec["state"] = "gathering"
+        _report_log(rec, by, "asked " + ", ".join(c["node"] for c in added))
+        _save(path, rec)
+        if rec["state"] != "requested":
+            for c in added:
+                report_ring_part(pdir, rec, c)
+            report_wake_detached(pdir, rec["id"], f"{by} added "
+                                 + ", ".join(f"{c['node']} ({c['what']})" for c in added))
+        print(f"{rec['id']} asks {', '.join(c['node'] for c in added)} too")
+        return
 
 
 def read_dash_from_stdin(a):
@@ -22503,6 +23556,11 @@ def main():
                     help="the brief handed to you that this one splits")
     br.add_argument("--from-block", dest="from_block", metavar="NEED",
                     help="the answered block this task carries down")
+    br.add_argument("--report", metavar="WHAT",
+                    help="with --write: this task carries an HTML report covering WHAT (T20); "
+                         "it presents once the report is published. none withdraws it")
+    br.add_argument("--report-from", dest="report_from", action="append",
+                    metavar="NODE[:WHAT]", help="with --report: a node to give a part (repeat)")
     br.add_argument("--uses", action="append", metavar="SKILL[,SKILL]",
                     help="skills this task applies (log 172): printed when it opens; its "
                          "presentation says --applied or --not-applied. none clears them")
@@ -22735,6 +23793,44 @@ def main():
     ak.add_argument("--json", action="store_true")
     ak.add_argument("--project", metavar="NAME",
                     help="the repo directory name, when an id is in two projects")
+    rp = add("report", cmd_report)
+    rp.add_argument("target", nargs="?", metavar="TASK|ID",
+                    help="a task, to ask for a report; a report id (rep-<n>) for every other verb")
+    rp.add_argument("--request", metavar="WHAT",
+                    help="rank 0, a lead above the task, the brief's writer, or the owner: ask "
+                         "for a report on TASK covering WHAT")
+    rp.add_argument("--from", dest="from_", action="append", metavar="NODE[:WHAT]",
+                    help="a node to give a part (repeat); default the task's node")
+    rp.add_argument("--show", action="store_true",
+                    help="the request, the brief, the task and every part")
+    rp.add_argument("--part", metavar="FILE",
+                    help="contributor: your part, from a file or '-' for stdin")
+    rp.add_argument("--asset", action="append", metavar="FILE",
+                    help="with --part or --publish: a figure (png, jpg, gif, webp, svg); repeat")
+    rp.add_argument("--n", type=int, metavar="K", help="with --part/--decline: which ask of you")
+    rp.add_argument("--decline", metavar="WHY", help="contributor: you can't give this part")
+    rp.add_argument("--withdraw", metavar="WHY",
+                    help="the requester, a lead above the task, rank 0, the owner or the "
+                         "report session: take it back")
+    rp.add_argument("--ask", metavar="NODE", help="report session: ask NODE for a part")
+    rp.add_argument("--what", metavar="TEXT", help="with --ask: what you need, and in what form")
+    rp.add_argument("--drop-part", dest="drop_part", type=int, metavar="K",
+                    help="report session: stop waiting for part K (--why)")
+    rp.add_argument("--why", metavar="TEXT", help="with --drop-part")
+    rp.add_argument("--note", metavar="TEXT", help="report session: a note on the record")
+    rp.add_argument("--publish", metavar="FILE",
+                    help="report session: the finished HTML, with its --asset figures")
+    rp.add_argument("--idle", action="store_true", help="report session: its last step")
+    rp.add_argument("--list", action="store_true",
+                    help="open reports, and those published this week")
+    rp.add_argument("--all", action="store_true", help="with --list: every report")
+    rp.add_argument("--json", action="store_true")
+    rp.add_argument("--project", metavar="NAME", help=argparse.SUPPRESS)
+    rp.add_argument("--origin", help=argparse.SUPPRESS)
+    for f in ("--wake", "--model", "--effort"):
+        rp.add_argument(f, help=argparse.SUPPRESS)
+    for f in ("--settle", "--close-session", "--next", "--print-cmd"):
+        rp.add_argument(f, action="store_true", help=argparse.SUPPRESS)
     im = add("intermediary", cmd_intermediary)
     im.add_argument("--project", metavar="NAME",
                     help="the repo directory name or state slug; default: the enrolled "

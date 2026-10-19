@@ -23145,7 +23145,7 @@ def cmd_research(a):
                                          or r.get("requested_at")) or 0) < 7 * 86400]
         if a.json:
             print(json.dumps(rows, indent=2)); return
-        jobs = research_queue()
+        jobs = research_jobs()              # a read: it creates no lock or folder
         if jobs:
             print(f"queue ({len(jobs)}): " + ", ".join(f"{j['id']} {j['kind']}" for j in jobs)
                   + ("" if research_runner_alive() else "  — no runner is up"))

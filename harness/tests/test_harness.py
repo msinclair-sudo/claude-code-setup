@@ -9416,6 +9416,14 @@ class ResearchFlow(Log185to190):
         with redirect_stdout(io.StringIO()):
             return hz.research_loop(self.home / "research", once=True, runner=fake or self.fake)
 
+    def test_listing_creates_nothing(self):
+        # Installed, `research --list` on a project with no research made the
+        # machine's runner folder and its lock (2026-10-20).
+        shutil.rmtree(self.home / "research")
+        code, out = self.run_as("dev", "research", "--list", **self.op)
+        self.assertIn("no research", out)
+        self.assertFalse((self.home / "research").exists())
+
     def test_no_runner_is_started_here(self):
         with mock.patch.object(hz.subprocess, "Popen") as po:
             hz.research_ensure_runner()

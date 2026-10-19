@@ -170,6 +170,22 @@ Rank 0 may brief any node. When it briefs one of yours, or a node below one of y
 - **Then carry it up:** once the task below is signed off, `harness mark <task>.up-<you>`, then `harness mark <task>.up-<you> --done`. That presents the work to your own lead.
 - You may still rewrite the brief if the work must change; rank 0 is told, and the earlier text stays in `harness brief <task> --history`.
 
+## Reports (`T20`)
+
+When a step needs a written account for someone who will act on it (the owner, or you at sign-off), ask for a report. Never use one for routine status: I9 still holds.
+
+```bash
+harness brief <task> --for <child> --write - --report "what it should cover" [--report-from dev_1:"the timings"]
+harness report <task> --request "what it should cover" [--from NODE:WHAT]   # later, on a task below you
+harness report rep-3 --show           # the request, every part, the page once published
+harness report rep-3 --withdraw "why"
+```
+
+A report session gathers the parts (the task's node by default), asks anyone else it needs, and publishes one static HTML page the owner reads in the viewer's Reports tab.
+- **Not yet presented:** the child can't present until the report is published, and its first try starts the report.
+- **Already presented:** your sign-off waits for it. Nothing rings you for that sign-off meanwhile, `--close` refuses, and `--force` signs off without the report.
+- **Published:** you are rung.
+
 ## Signing off
 
 ```bash

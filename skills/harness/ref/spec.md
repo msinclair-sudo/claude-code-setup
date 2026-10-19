@@ -478,6 +478,33 @@ A brief exists **before** its mark: the lead writes it, then the member accepts.
 
 **Enforcement** Three layers, none resting on the session's good behaviour. Permissions: it runs `--restricted` in `manual` mode, so the machine's own allow rules do not apply; it is allowed `Edit` under its worktree only, read-only git (`log`, `show`, `diff`, `status`) on the other worktrees, ordinary git in its own, and `harness`; anything else asks the owner. The CLI: with `HARNESS_DESIGN` set (through `--settings`, as a background session does not inherit the launcher's environment), `design_gate` allows a list of read verbs and their reading arguments, which answer as rank 0 would see them, and refuses the rest, a verb added later included; the session hooks say nothing, so it never takes rank 0's mail. The guards: `design/<topic>` is not a node, so the document guard passes over it and its documents commit freely; merging it into rank 0 is an ordinary merge, since the integration gate fires only for a child node's tip. Measured 2026-10-10 in a scratch project with the guards live: a document committed on the design branch and merged into the document node, while the same document authored on a code node was refused; in print mode with the session's flags, a write and an edit in other worktrees, a commit there and `git push` were refused, and a write and commit in its own worktree went through. Rank 0's orientation names each design and its commits ahead; the tree's reconcile (run by `harness trim`) labels its branch and worktree instead of calling them strays. A halt does not stop it: it starts nothing of the tree's. Claude Code starts a background session only in a repository it trusts, which every enrolled project with running nodes already is.
 
+### T20 — A report is a deliverable someone asked for, on one named task
+
+**Direction** sideways, outside the tree, to the owner. The parts come from nodes; the page goes to the viewer.
+**Rule** A report is never written unasked (owner, 2026-10-19: "these aren't done automatically. they'll be requested for certain steps"). It is asked for on one briefed task by:
+- the brief's writer, with `harness brief T --write - --report "what it covers" [--report-from NODE:WHAT]`;
+- a lead above the task's node, or rank 0, later, with `harness report T --request "…" [--from NODE[:WHAT]]`;
+- the owner, from the task's sheet in the viewer, or from a shell.
+
+A lane can't ask for one on its own work, and neither can an intermediary, documenter or design session.
+
+The record is `reports/rep-<n>.json` (ids never reused, `report-seq.json`). Its contributors are the nodes the requester named, or the task's node by default. A request on a task not yet presented waits, and the node's first `mark T --done` starts it, so the parts describe finished work. A request on a presented or closed task starts at once.
+
+Starting it rings each contributor with what is asked of it. Each answers with `harness report <id> --part FILE|- [--asset FIG]` or `--decline "why"`, and owes its part until then: a `report-part` wait, and an owed-by-you ring after five quiet minutes. One background session per report (`harness-reporter-<repo>-<id>`, at most two running, the rest queued; Opus, high effort) gathers the parts. It reads the brief, the presented commit and the diff itself. It asks any other node with `--ask NODE --what "…"`, writes one static HTML page and its figures in its own scratch folder, and publishes with `--publish`. Publishing rings the task's node, its lead and the requester. The session is removed afterwards, and the record and page stay.
+
+**The task waits for it.** An open report refuses the task's present, or its sign-off when it was asked for after the present. `waits` reads node → `report:<id>` → each contributor still asked. A held sign-off is owed by nobody. `mark --close --force` signs off without the report. Only publishing or `--withdraw "why"` (the requester, a lead above the task, rank 0, the owner, or the report session itself) lifts a held present. `harness report` lists open reports and those published this week; `--show` prints one with every part.
+
+**What a report may hold.** One static page: inline `<style>`, tables, and figures that are SVG or PNG files listed with `--asset`, or `data:image` URIs. `--publish` refuses, naming the line:
+- anything that would run: `<script>`, `on…=` handlers, `javascript:` URLs, including entity-encoded ones;
+- anything that would load from elsewhere: external images, styles or fonts, `<link>`, `<base>`, `@import`, iframes, objects;
+- anything that would submit: forms.
+
+An `<a href>` may go to an anchor, a figure, or an http(s) page. SVG figures pass the same check.
+
+**Why this shape.** I9 refuses progress reporting: it costs the member effort and returns summaries that conceal problems, sent to a lead who can't act on them. A report here is the opposite case. Someone asks for it by name, on one step, and means to read it and act. It holds the step so it can't be skipped, and it is written by a session of its own so composing it spends neither the lane's context nor its lead's. The parts come from the nodes that did the work, attributed, beside the report session's own reading of the code.
+
+**Enforcement** `--ask`, `--publish`, `--note` and `--idle` need `HARNESS_REPORTER` and the session's own `HARNESS_REPORT`, set through `--settings`. The session runs `--restricted` with read tools: `Bash` is allowed only for `harness report` and read-only git, and `Edit` only in its scratch folder under `~/.cache/harness/reports/`; it has no `SendMessage`. `--publish` takes files only from that folder or the contributors' parts. The viewer serves `/report/<slug>/<id>/[file]` only for a published record, only its page and the figures its record lists, and only from that report's `pub/`. It serves them under `default-src 'none'; … sandbox`, with images from that report alone, so even markup the check missed can't run, load or submit. The Reports tab shows the page in a sandboxed frame, with what was asked and each part's state; a node card carries a chip for each report in progress or unread.
+
 ## Invariants
 
 ### I1 — One session per branch
@@ -778,7 +805,7 @@ This bounds a lead's knowledge to *k* interfaces rather than *k* implementations
 
 Understanding gained here also travels upward. A lead that reviewed its children's approaches can answer for its subtree at the rank above, which is what makes a [[#T8 — Deep conflict]] resolvable from a ledger read instead of a fetch down the tree.
 
-**Not adopted, deliberately.** Progress reporting: it costs the member real effort and returns fluent summaries that conceal problems, and a lead that cannot act on a report should not receive one. Diff review at integration: it scales with code volume rather than with interfaces, and a lead that writes no code is a poor reviewer of code. T4 stays mechanical.
+**Not adopted, deliberately.** Progress reporting: it costs the member real effort and returns fluent summaries that conceal problems, and a lead that cannot act on a report should not receive one. Diff review at integration: it scales with code volume rather than with interfaces, and a lead that writes no code is a poor reviewer of code. T4 stays mechanical. A report someone asks for on one named task, and acts on, is a different thing, and is [[#T20 — A report is a deliverable someone asked for, on one named task]].
 
 ### I8 — Tasks are short
 

@@ -152,6 +152,22 @@ The `Stop` hook blocks your turn once if an open mark has work in it and was nev
 
 **Spend** is in tokens: report up, down and NEW (up + down, what a band means), never the raw total or resent. `spend` needs the `harness mark` you ran on accepting; without it, report the session total with its coverage stated, never an inferred share. Say in your report when you missed the band. If you think the band is wrong on opening, `harness mark <task> --band S|M|L` records your figure beside your lead's.
 
+## A report on your task (`T20`)
+
+Someone may ask for an HTML report on a task of yours: its brief says so ("carries report rep-N"), or your lead, rank 0 or the owner asks later. A report session writes it from parts the nodes send. While it is open, `--done` is refused, and your first try is what starts it, so you describe finished work. Its sign-off waits on it too when it was asked for after you presented.
+
+- **Your part,** when it is asked of you (the refusal, your doorbell and orientation say what): write it from what you did, with evidence (`file:line`, short shas, the numbers), and send it.
+
+  ```bash
+  harness report rep-3 --part - --asset counts.png <<'EOF'
+  ...
+  EOF
+  ```
+
+- **If you can't help:** `harness report rep-3 --decline "why"`.
+- **Then end your turn,** or carry on with other work. You are rung when the report is published; present then.
+- **A part is owed.** After five quiet minutes the ringer reminds you once.
+
 ## Documents (`T5`)
 
 You never commit a document. Submit the change as data, a JSON list of `{file, old, new, why}` on stdin: `harness pairs submit - --task <task> <<'EOF' … EOF`. Each `old` must occur exactly once on the document branch, byte-exact, so send whole paragraphs; a refusal shows the nearest line. Rank 0 applies the batch whole or not at all.

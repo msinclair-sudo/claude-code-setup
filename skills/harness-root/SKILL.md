@@ -80,6 +80,10 @@ harness ask owner --kind action --question "Install the pinned x before the impo
 
 Each open item gets its own intermediary session, and the commands show in the owner's Issues tab at once. Carry on, or end your turn: when the owner clicks **Done** your doorbell rings with their note and each command's state: its exit status when the owner ran it through the harness (`--exec`, what their Copy button gives), or that there is no record of it running. "NOT every command is recorded as run cleanly" means check what it changed before you rely on it; each run's output is kept under `owner/runs/<id>/` in the project's state. If the intermediary needs something from you it rings your doorbell too (orientation also says so): answer with `harness ask <id> --msg "..."`, never `SendMessage`, because the item's session may be asleep. The same `--msg` adds anything to an open item later; a command you learn later goes on it with `harness ask <id> --run "cmd"`, not into the thread as text.
 
+## Reports (`T20`)
+
+You may ask for a report on any task in the tree: `harness report <task> --request "what it should cover" [--from NODE:WHAT]`, or `--report` on a brief you write. The owner asks from a task's sheet in the viewer. Each report has its own session, holds the task's present (or its sign-off) until it is published, and lands in the viewer's Reports tab. Ask only when someone will act on what it says (I9); `--withdraw "why"` takes it back. The commands and rules are in `harness-downward`.
+
 ## Blocks: comments and closing them
 
 Operator comments on any block come to you, not the lane. `whoami` reports unread ones.

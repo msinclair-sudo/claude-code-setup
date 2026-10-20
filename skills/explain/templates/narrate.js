@@ -20,10 +20,12 @@
     cap.textContent = e ? e.text : '';
     if (e && auto) { audio.src = e.src; audio.play().catch(function () {}); }
   }
+  // after a clip, wait its pause (longer before a new slide: a paragraph break), then advance
   audio.addEventListener('ended', function () {
     if (!auto) return;
     if (Reveal.isLastSlide() && !Reveal.availableFragments().next) return;
-    setTimeout(function () { Reveal.next(); }, 700);
+    var e = map[key()];
+    setTimeout(function () { Reveal.next(); }, 1000 * (e && e.pause !== undefined ? e.pause : 0.7));
   });
   if (overlay) {
     overlay.querySelector('button').addEventListener('click', function () {

@@ -6,6 +6,11 @@ tier: {{TIER}}
 tier_reason: ""           # why the tier below would not carry the message (required above tier 0)
 voice: {{VOICE}}          # tier 2: narrate the deck with Kokoro
 numbers_ok: []            # incidental numbers that need no claim (figure numbers, citation years)
+pacing:                   # seconds of silence (narrated tiers); a segment may set its own pause_after
+  segment: 0.6            # after each segment
+  chapter: 1.6            # after a chapter's last segment (tier 4) or before a new slide (tier 2): a paragraph break
+  sentence: 0.5           # between sentences inside one narration
+  clause: 0.15            # at commas and semicolons
 # tier 3 only:
 # default_view: "what the page shows before anyone touches it, and why that alone carries the message"
 # controls: 1             # sliders + buttons on the page; at most 2

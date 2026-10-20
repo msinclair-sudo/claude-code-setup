@@ -53,6 +53,13 @@ def lint(r) -> list:
     segs = r.segments
     if t >= 2 and not segs:
         err("storyboard: segments are required from tier 2 up")
+    for k, v in (s.get("pacing") or {}).items():
+        if k not in ("segment", "chapter", "sentence", "clause") or not isinstance(v, (int, float)) or not 0 <= v <= 5:
+            err(f"storyboard: pacing.{k} = {v}; keys are segment, chapter, sentence, clause, in seconds (0 to 5)")
+    for g in segs:
+        v = g.get("pause_after")
+        if v is not None and (not isinstance(v, (int, float)) or not 0 <= v <= 5):
+            err(f"segment {g.get('id')}: pause_after is seconds, 0 to 5")
     roles = [g.get("role") for g in segs]
     for g in segs:
         if g.get("role") and g["role"] not in ROLES:

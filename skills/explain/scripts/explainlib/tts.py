@@ -36,30 +36,43 @@ def lang_for(voice: str) -> str:
     return "en-gb" if voice[:1] == "b" else "en-us"
 
 
+# Pauses inside a clip. Kokoro's own defaults (0.25 s after a sentence, 0.1 s after a clause) run
+# sentences together; a listener needs a beat to take in what was just said. Per report:
+# storyboard `pacing: {sentence: 0.5, clause: 0.15}`; machine default: REPORT_TTS_SENTENCE_PAUSE.
+SENTENCE_PAUSE = float(os.environ.get("REPORT_TTS_SENTENCE_PAUSE", "0.5"))
+CLAUSE_PAUSE = float(os.environ.get("REPORT_TTS_CLAUSE_PAUSE", "0.15"))
+
+
 def settings(voice=None, speed=None):
     return (voice or os.environ.get("REPORT_VOICE", "bf_emma"),
             float(speed or os.environ.get("REPORT_TTS_SPEED", "1.0")))
 
 
-def key(text, voice, speed) -> str:
+def pauses(pacing: dict | None = None):
+    p = pacing or {}
+    return float(p.get("sentence", SENTENCE_PAUSE)), float(p.get("clause", CLAUSE_PAUSE))
+
+
+def key(text, voice, speed, pacing=None) -> str:
     model = Path(os.environ["REPORT_TTS_MODEL"]).name
-    return hashlib.sha256(json.dumps([text, voice, speed, model]).encode()).hexdigest()[:16]
+    return hashlib.sha256(json.dumps([text, voice, speed, model, pauses(pacing)]).encode()).hexdigest()[:16]
 
 
-def synth(text: str, voice=None, speed=None):
+def synth(text: str, voice=None, speed=None, pacing=None):
     voice, speed = settings(voice, speed)
-    return kokoro().create(text, voice=voice, speed=speed, lang=lang_for(voice))
+    sp, cp = pauses(pacing)
+    return kokoro().create(text, voice=voice, speed=speed, lang=lang_for(voice), sentence_pause=sp, clause_pause=cp)
 
 
-def clip(text: str, out_dir, name: str | None = None, voice=None, speed=None):
+def clip(text: str, out_dir, name: str | None = None, voice=None, speed=None, pacing=None):
     voice, speed = settings(voice, speed)
     out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
-    k = key(text, voice, speed)
+    k = key(text, voice, speed, pacing)
     m4a = out_dir / f"{name or k}.m4a"
     meta = m4a.with_suffix(".json")
     if m4a.exists() and meta.exists() and json.loads(meta.read_text()).get("key") == k:
         return m4a, json.loads(meta.read_text())["seconds"]
-    samples, rate = synth(text, voice, speed)
+    samples, rate = synth(text, voice, speed, pacing)
     wav = m4a.with_suffix(".wav")
     sf.write(wav, samples, rate)
     subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(wav),

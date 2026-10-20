@@ -20,10 +20,12 @@ from manim_voiceover.services.base import PathLike, SpeechService, initialize_sp
 
 
 class KokoroService(SpeechService):
-    def __init__(self, voice: str | None = None, speed: float | None = None, **kwargs: object) -> None:
+    def __init__(self, voice: str | None = None, speed: float | None = None, pacing: dict | None = None,
+                 **kwargs: object) -> None:
         initialize_speech_service(self, kwargs)
         self.voice = voice or os.environ.get("REPORT_VOICE", "bf_emma")
         self.speed = float(speed or os.environ.get("REPORT_TTS_SPEED", "1.0"))
+        self.pacing = pacing or {}
 
     def generate_from_text(self, text: str, cache_dir: PathLike | None = None,
                            path: PathLike | None = None, **kwargs: object) -> VoiceoverData:
@@ -31,12 +33,12 @@ class KokoroService(SpeechService):
             cache_dir = self.cache_dir
         input_text = remove_bookmarks(text)
         input_data = {"input_text": input_text, "service": "kokoro",
-                      "voice": self.voice, "speed": self.speed,
+                      "voice": self.voice, "speed": self.speed, "pauses": list(tts.pauses(self.pacing)),
                       "model": Path(os.environ["REPORT_TTS_MODEL"]).name}
         cached = self.get_cached_result(input_data, cache_dir)
         if cached is not None:
             return cached
         audio_path = path_to_string(path) if path else self.get_audio_basename(input_data) + ".wav"
-        samples, rate = tts.synth(input_text, self.voice, self.speed)
+        samples, rate = tts.synth(input_text, self.voice, self.speed, self.pacing)
         sf.write(str(Path(cache_dir) / audio_path), samples, rate)
         return {"input_text": text, "input_data": input_data, "original_audio": audio_path}

@@ -22,7 +22,7 @@ Why the ladder: animation beats static pictures only for change, only when syste
 
 Run everything through `x` (`~/.claude/skills/explain/scripts/x`). Check the machine first: `bash ~/.claude/skills/explain/scripts/check.sh --tier N`.
 
-1. **Brief.** `x new <dir> --tier N --title "…" [--voice]`, then fill `brief.md`: audience, the one-sentence message, delivery (`read` or `presented`), sources.
+1. **Brief.** `x new <dir> --tier N --title "…" [--voice]`, then fill `brief.md`: audience, the one-sentence message, delivery (`read` or `presented`), sources. **Sources come first, not memory:** when the explanation is not built from the user's own data or documents, run `/research-brief` on the subject and write the storyboard from its result note. A fact-check only tests the claims you wrote down; it cannot find the steps you left out.
 2. **Storyboard, before any code.** Fill `storyboard.yaml` (schema and an example: `references/storyboard.md`). Do the token pass now: edit `tokens.json` (4-6 colours, one accent, the typefaces, a one-line layout concept); for anything beyond the defaults, read the frontend-design skill first. `x lint <dir>` must pass.
 3. **Claims before rendering.** Every number and factual statement goes in `claims.yaml` with its source and kind. Then run the blind fact-check in `references/accuracy.md`: a fresh subagent sees only the claims and the sources, never the render.
 4. **Build.** Write `src/` for the tier (starters are already there), using that tier's guide. Read `/dataviz` before any chart code. `x build <dir> [--draft]`.

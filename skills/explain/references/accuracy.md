@@ -2,6 +2,9 @@
 
 A polished explanation makes a wrong one look right: viewers of a flawed explanation were as confident as viewers of a correct one, and a model judging accuracy agreed with people at r = 0.14. So accuracy is checked against the sources, before anything is rendered, by a reader that never sees the render.
 
+## Where the content comes from
+From the user's own data and documents, or from a research result; never from memory alone. When the subject is general knowledge (a method, a mechanism), run `/research-brief` first and build the storyboard from its result note. The blind fact-check below verifies what was written; only research shows what was left out. (The rarefaction exemplar was first written from memory: its citations checked out, but it skipped every step between sequencing and taxonomic assignment.)
+
 ## claims.yaml
 One entry per number or factual statement the reader sees or hears:
 - `id`, `text` (exactly as shown or spoken), `source` (file:line, DOI, or the query that produced it), `kind`, `value`, `unit`.

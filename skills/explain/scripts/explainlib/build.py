@@ -75,17 +75,21 @@ def t2(r, out, draft):
     amap, cues, at = {}, [], 0.0
     voice = bool(r.story.get("voice"))
     from . import tts
-    for g in r.segments:
-        text = (g.get("narration") or "").strip()
-        if not text:
-            continue
+    from .anchors import PACING
+    pacing = {**PACING, **(r.story.get("pacing") or {})}
+    segs = [g for g in r.segments if (g.get("narration") or "").strip()]
+    for n, g in enumerate(segs):
+        text = g["narration"].strip()
+        nxt = segs[n + 1] if n + 1 < len(segs) else None
+        new_slide = nxt is None or nxt["step"].split(".")[0] != g["step"].split(".")[0]
+        pause = float(g.get("pause_after", pacing["chapter"] if new_slide else pacing["segment"]))
         if voice:
-            p, sec = tts.clip(text, out / "audio", name=g["id"])
-            amap[g["step"]] = {"src": f"audio/{p.name}", "text": text}
+            p, sec = tts.clip(text, out / "audio", name=g["id"], pacing=pacing)
+            amap[g["step"]] = {"src": f"audio/{p.name}", "text": text, "pause": pause}
         else:
             sec = len(text.split()) / 155 * 60
-            amap[g["step"]] = {"src": "", "text": text}
-        cues.append((at, at + sec, text)); at += sec + 0.7
+            amap[g["step"]] = {"src": "", "text": text, "pause": pause}
+        cues.append((at, at + sec, text)); at += sec + pause
     overlay = ('<div id="x-start"><div><button>Start</button>'
                '<p>Narrated. Captions stay on. P pauses; arrow keys step.</p></div></div>') if voice else ""
     for g in amap.values():  # unnarrated decks keep captions but play nothing

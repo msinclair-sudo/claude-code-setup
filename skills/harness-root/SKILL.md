@@ -35,8 +35,7 @@ show as a loop: read both nodes' notes and stop it if nothing is landing.
 **The owner can halt the tree** (`harness halt --why`, from a shell or an out-of-scope item):
 nothing new starts, every node writes down what it holds and waits, until `harness resume`. An
 out-of-scope item the owner drops marks the task where the chain left the charter as out of
-scope; close it, and don't brief it again. Halting is theirs, not yours. When the owner tells you
-to stop work, stop the sessions with `harness stop <node>... --why "<their words>"`: that records
+scope; close it, and don't brief it again. Halting is theirs, not yours. While the tree is halted your checks and tests still run, so clear the test backlog meanwhile: `harness check --for <node> [--sha <ref>]` checks a node's commit on its behalf (the report is the node's, and you are rung too), `harness test --rerun <id>` finishes a failed job's unfinished arms at the same commit, and joining a node's queued check with `--for` lets it run. A job a node queued waits for the resume (`harness test` marks it), and your other verbs stay halted (log 198). When the owner tells you to stop work, stop the sessions with `harness stop <node>... --why "<their words>"`: that records
 each node as stopped on purpose, so your stop hook doesn't ask you to respawn them, until one is
 spawned or recycled (log 115).
 

@@ -2371,8 +2371,12 @@ def halted(ctx):
         return None
 
 
-def refuse_if_halted(ctx, what):
+def refuse_if_halted(ctx, what, node=None):
+    """`node` given and rank 0: not refused. A halt stops the nodes; rank 0 works
+    through what they left behind, tests first (owner, 2026-10-20, log 198)."""
     h = halted(ctx)
+    if h and node and ctx.rank(node) == 0:
+        return
     if h:
         die(REFUSED, f"the owner halted the tree at {h.get('at', '')[11:16]}: {h.get('why')}.\n"
                      f"           {what} waits until they resume it (harness resume). Write what "
@@ -2434,7 +2438,10 @@ def cmd_halt(a):
     for n in nodes:
         ring_inbox(ctx.state, n, "owner", f"the owner HALTED the tree: {why}. Finish the command "
                    f"you are in, write what you hold into the records (harness note, brief "
-                   f"comments), then end your turn and wait. Nothing new starts until they resume.",
+                   f"comments), then end your turn and wait. Nothing new starts until they resume."
+                   + (" You are rank 0: checks and tests you queue still run (harness check, "
+                      "check --for NODE, test --rerun ID), so the test backlog can be cleared "
+                      "meanwhile." if ctx.rank(n) == 0 else ""),
                    kind="halt")
     print(f"halted: {why}\n  {len(nodes)} node(s) told. Nothing new starts; the running test "
           f"finishes. harness resume ends it.")
@@ -4986,7 +4993,10 @@ def cmd_hook_stop(a):
                 stop_block(f"The owner halted the tree: {h.get('why')}. Write anything you hold "
                            f"only in context into the records (harness note <task> --add -, brief "
                            f"comments), then end your turn and wait. Nothing new starts until "
-                           f"they resume.")
+                           f"they resume."
+                           + (" As rank 0 you can still queue checks and tests to clear the "
+                              "backlog (harness check, check --for NODE, test --rerun ID)."
+                              if ctx.rank(node) == 0 else ""))
                 return
         # The Stop right after a block carries stop_hook_active. It may launch a
         # pending reset (that is the quiet point the flush leads to) but it must
@@ -7261,6 +7271,9 @@ def print_check_report(rep, base):
                 print(f"        {clip(line)}")
     for line in check_summary(rep, base, len(rep.get("checks") or [])):
         print(line)
+    if rep.get("carried"):
+        print(f"  carried: {', '.join(rep['carried'])} finished in {rep.get('rerun_of')} before "
+              f"its runner died, and were not run again")
     if rep.get("partial"):
         print(f"  partial: only {', '.join(rep.get('arms') or [])} ran; this is not the full set")
     if rep.get("scoped"):
@@ -7288,6 +7301,31 @@ def check_exit(rep):
     return REFUSED if rep.get("failed") else 0
 
 
+def _str_arg(a, name):
+    """An optional string flag, or None (a test's Mock args answer any name)."""
+    v = getattr(a, name, None)
+    return v if isinstance(v, str) and v else None
+
+
+def check_for_target(ctx, me, target, ref):
+    """`check --for NODE [--sha REF]`: rank 0, or a lead above NODE, checks NODE's
+    commit on its behalf (log 198): NODE is the requester, its report is written
+    and it is rung; the one who asked is rung too. -> (node, sha, origin)."""
+    if target not in ctx.tree["nodes"]:
+        die(REFUSED, f"no node '{target}' in the role tree")
+    if target == me:
+        die(REFUSED, "that is you: harness check checks your own HEAD")
+    if ctx.rank(me) != 0 and target not in subtree(ctx, me):
+        die(REFUSED, f"'{target}' is not below '{me}': rank 0 or a lead above it checks for it")
+    ref = ref or ctx.tree["nodes"][target].get("branch") or target
+    rc, sha, _ = git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}", cwd=ctx.worktree)
+    if rc or not sha.strip():
+        die(REFUSED, f"no commit '{ref}' (--sha takes a sha or a ref; the default is "
+                     f"{target}'s branch tip)")
+    wt = ((load_index(ctx).get("nodes") or {}).get(target) or {}).get("worktree")
+    return target, sha.strip(), wt or str(ctx.worktree)
+
+
 def cmd_check(a):
     """I5: submit this commit's checks to the project's test queue.
 
@@ -7312,15 +7350,20 @@ def cmd_check(a):
     node, _ = ctx.node()
     if a.set_baseline:
         return set_baseline(ctx, node, a.why)
+    target = _str_arg(a, "for_node")
+    if _str_arg(a, "sha") and not target:
+        die(REFUSED, "--sha goes with --for NODE: your own check runs at your HEAD")
+    if target and not a.report:
+        target, sha, origin = check_for_target(ctx, node, target, _str_arg(a, "sha"))
     if not a.report:
-        refuse_if_halted(ctx, "a new check")
+        refuse_if_halted(ctx, "a new check", node)
     try:
         sys.stdout.reconfigure(line_buffering=True)
     except Exception:
         pass
     if a.report:
         rc, sha, _ = git("rev-parse", a.report, cwd=ctx.worktree)
-        rep = read_check_report(ctx, node, sha.strip()) or _read_json(shared_report_path(ctx, sha.strip()))
+        rep = read_check_report(ctx, target or node, sha.strip()) or _read_json(shared_report_path(ctx, sha.strip()))
         if not rep:
             die(REFUSED, f"no check report for {a.report}")
         print_check_report(rep, load_baseline(ctx)); sys.exit(check_exit(rep))
@@ -7334,21 +7377,23 @@ def cmd_check(a):
         if bad:
             die(REFUSED, f"no arm {', '.join(bad)} in the manifest (arms: {', '.join(names)})")
     queue = "priority" if a.priority else "normal" if a.normal else default_queue(ctx, node)
-    rc, dirt, _ = git("status", "--porcelain", "--untracked-files=no", cwd=ctx.worktree)
-    if dirt.strip():
-        die(REFUSED, f"{len(dirt.splitlines())} uncommitted change(s). The queue runs a copy of "
-                     f"the commit, so commit first (a WIP commit is fine), then harness check.")
-    # A check describes the lead's current tree (log 139): the parent is merged
-    # in first. Where it cannot be, the check still runs and its report says
-    # how far behind the commit was.
-    _st, _info = own_catchup(ctx, node)
-    stale = ({k: _info.get(k) for k in ("n", "parent", "since", "why")}
-             if _st in ("blocked", "conflict") else None)
-    sha = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip()
+    stale = scope = None
+    if not target:
+        rc, dirt, _ = git("status", "--porcelain", "--untracked-files=no", cwd=ctx.worktree)
+        if dirt.strip():
+            die(REFUSED, f"{len(dirt.splitlines())} uncommitted change(s). The queue runs a copy "
+                         f"of the commit, so commit first (a WIP commit is fine), then harness check.")
+        # A check describes the lead's current tree (log 139): the parent is merged
+        # in first. Where it cannot be, the check still runs and its report says
+        # how far behind the commit was.
+        _st, _info = own_catchup(ctx, node)
+        stale = ({k: _info.get(k) for k in ("n", "parent", "since", "why")}
+                 if _st in ("blocked", "conflict") else None)
+        sha, origin = git("rev-parse", "HEAD", cwd=ctx.worktree)[1].strip(), str(ctx.worktree)
     # One full run per change, at the lead (owner, 2026-10-08): a worker checks
     # only the arms its change touches, a lead runs the full set after merging.
-    scope = None
-    if not a.arms and (a.changed or (not a.all and is_lane(ctx, node))):
+    # A check for another node runs what was asked: its arms, else the full set.
+    if not target and not a.arms and (a.changed or (not a.all and is_lane(ctx, node))):
         sel, scope = changed_arms(ctx, node, checks)
         if sel == []:
             rep = make_check_report(node, sha, [], 0, None, arms=[], scoped=scope,
@@ -7398,14 +7443,20 @@ def cmd_check(a):
     tests = {n: test_spec(est[n], (spec.get(n) or {}).get("threads"),
                           (spec.get(n) or {}).get("exclusive")) for n in want}
     sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
-    job, how = testq_submit(ctx, "check", sha, node, sid, timeout=a.timeout, arms=arms,
-                            queue=queue, origin=str(ctx.worktree), scope=scope, tests=tests,
-                            behind=stale)
+    job, how = testq_submit(ctx, "check", sha, target or node, "" if target else sid,
+                            timeout=a.timeout, arms=arms, queue=queue, origin=origin,
+                            scope=scope, tests=tests, behind=stale, root=ctx.rank(node) == 0,
+                            by=node if target else None)
     print(f"{how} {job['id']} — {'check' if not arms else 'arms ' + ', '.join(arms)} of "
-          f"{sha[:8]}, {job['queue']} queue" + testq_wait_phrase(ctx, job))
+          f"{sha[:8]}" + (f" for {target}" if target else "") + f", {job['queue']} queue"
+          + testq_wait_phrase(ctx, job))
+    if halted(ctx):
+        print("  The tree is halted; the runner still opens it, because rank 0 asked.")
     if not a.wait:
-        print("  Your doorbell rings with the result; end your turn, or carry on with "
-              "something else.\n  `harness test` shows the queue; `--wait` would have blocked.")
+        print(("  Your doorbell rings with the result" if not target else
+               f"  {target}'s doorbell and yours ring with the result, and the report is "
+               f"{target}'s") + "; end your turn, or carry on with something else."
+              "\n  `harness test` shows the queue; `--wait` would have blocked.")
         return
     rep = testq_wait(ctx, job["id"])
     if rep is None:
@@ -7713,19 +7764,29 @@ def testq_describe(j):
 
 
 def testq_submit(ctx, kind, sha, node, sid, command=None, timeout=None, arms=None,
-                 queue="normal", origin=None, scope=None, tests=None, behind=None):
+                 queue="normal", origin=None, scope=None, tests=None, behind=None,
+                 root=False, by=None):
     """Queue a job, or join an identical one (same commit and arms) still queued
     or running: that is one run, not a guess about a result. A finished report is
     never reused; whether an old result still holds is the project's to say (obs
-    83: its tests read data git doesn't hold). Returns (job, "queued" | "joined")."""
+    83: its tests read data git doesn't hold). Returns (job, "queued" | "joined").
+
+    `root`: rank 0 asked, so the job runs under a halt (log 198); rank 0 joining
+    a node's queued job lets that one run too. `by`: who asked on `node`'s
+    behalf (`check --for`), rung with the result as well."""
     req = {"node": node, "session": sid, "at": _now()}
     if kind == "check":
         for j in testq_jobs(ctx, ("queued", "running")):
-            if j.get("kind") == "check" and j.get("sha") == sha and j.get("arms") == arms:
+            if (j.get("kind") == "check" and j.get("sha") == sha and j.get("arms") == arms
+                    and not j.get("rerun_of")):
                 if not any(r.get("node") == node for r in j["requested_by"]):
                     j["requested_by"].append(req)
                 if queue == "priority" and j.get("queue") != "priority" and j["state"] == "queued":
                     j["queue"] = "priority"            # a lead's integration check joins it
+                if root:
+                    j["root"] = True
+                if by and not j.get("by"):
+                    j["by"] = by
                 testq_save(ctx, j)
                 return j, "joined"
     # Unique even for two submits in one second from one process (a collision
@@ -7740,9 +7801,83 @@ def testq_submit(ctx, kind, sha, node, sid, command=None, timeout=None, arms=Non
         job["tests"] = tests
     if behind:
         job["behind"] = behind          # the commit could not be caught up first (log 139)
+    if root:
+        job["root"] = True
+    if by:
+        job["by"] = by
     testq_save(ctx, job)
     testq_ensure_runner(ctx)
     return job, "queued"
+
+
+def halt_runs(job):
+    """Whether the runner opens `job` while the tree is halted: rank 0 asked for
+    it (log 198). Everyone else's waits for the resume."""
+    return bool(job.get("root"))
+
+
+def testq_rerun(ctx, old, by, root):
+    """A failed or cancelled job again, for what it didn't finish: same commit,
+    same requesters (log 197). Finished arms are carried into the new report
+    from the rows kept as they ended. -> (job, carried names, lost names)."""
+    tests = job_tests(old) if old.get("kind") == "check" else (old.get("tests") or {})
+    if old.get("kind") == "check" and not tests:
+        tests = {n: test_spec(None) for n in job_arm_names(ctx, old.get("arms"))}
+    done = set(old.get("finished_arms") or []) | {n for n, t in tests.items()
+                                                  if t.get("state") == "done"}
+    if old.get("kind") != "check":
+        done = set()
+        tests = tests or {"cmd": test_spec(None)}
+    todo = [n for n in tests if n not in done]
+    if not todo:
+        die(REFUSED, f"every test of {old['id']} finished; nothing to rerun (harness check "
+                     f"runs it again in full)")
+    kept = _read_json(testq_rows_path(ctx, old["id"])) or {}
+    carried = {n: kept[n] for n in done if n in kept}
+    lost = sorted(done - set(carried))
+    fresh = {}
+    for n in todo:
+        t = {k: v for k, v in tests[n].items() if k not in ("started", "finished")}
+        t["state"] = "queued"
+        fresh[n] = t
+    arms = old.get("arms")
+    if lost:
+        # Without a finished arm's row the report can't be whole: it says so.
+        arms = job_arm_names(ctx, todo + list(carried))
+    job = {"id": f"{time.strftime('%Y%m%d-%H%M%S')}-{old['sha'][:8]}-{os.urandom(3).hex()}",
+           "kind": old["kind"], "sha": old["sha"], "command": old.get("command"),
+           "requested_by": [dict(r, at=_now()) for r in old.get("requested_by") or []],
+           "state": "queued", "at": _now(), "timeout": old.get("timeout"), "arms": arms,
+           "queue": old.get("queue") or "normal", "origin": old.get("origin"), "t": time.time(),
+           "tests": fresh, "rerun_of": old["id"], "by": old.get("by") or by}
+    for k in ("scope", "behind"):
+        if old.get(k):
+            job[k] = old[k]
+    if carried:
+        job["carried"] = carried
+    if root or old.get("root"):
+        job["root"] = True
+    testq_save(ctx, job)
+    testq_ensure_runner(ctx)
+    return job, sorted(carried), lost
+
+
+def testq_rows_path(ctx, jid):
+    """A job's finished check rows, kept as each arm ends, so a job whose runner
+    died can be rerun for its unfinished arms only (log 197). Not under
+    testq/*.json, which is the queue."""
+    return testq_dir(ctx) / "rows" / f"{jid}.json"
+
+
+def testq_keep_row(ctx, job, name, row, ok):
+    try:
+        f = testq_rows_path(ctx, job["id"])
+        f.parent.mkdir(parents=True, exist_ok=True)
+        rows = _read_json(f) or {}
+        rows[name] = {"row": row, "ok": bool(ok)}
+        _save(f, rows)
+    except OSError:
+        pass
 
 
 def testq_order(jobs):
@@ -8067,9 +8202,11 @@ def _testd_loop(ctx):
                 S["slot"].close()
             print(f"{_now()} runner restarts on the new harness")
             os.execv(sys.executable, [sys.executable, str(me), "testd", project_arg(ctx.state)])
-        if halted(ctx) and not (S["running"] or S["open"]):
-            # The owner halted the tree: what ran has finished; start no new
-            # one. `resume` starts a runner again (owner, 2026-10-06).
+        if (halted(ctx) and not (S["running"] or S["open"])
+                and not any(halt_runs(j) for j in testq_jobs(ctx, ("queued",)))):
+            # The owner halted the tree: what ran has finished, and nothing
+            # rank 0 asked for is waiting (log 198); start no other. `resume`
+            # starts a runner again (owner, 2026-10-06).
             if S["slot"] is not None:
                 S["slot"].close()
             print(f"{_now()} the tree is halted; runner exits"); return
@@ -8156,8 +8293,11 @@ def testd_tick(ctx, S):
                 t["state"] in ("done", "cancelled") for t in job_tests(o["job"]).values()):
             testd_close(ctx, S, jid)
     testd_ledger(ctx, S)
-    if halted(ctx):
-        return
+    # The owner halted the tree: a job already open runs out its arms (stopping
+    # them left it open for good, and the runner with it: log 197's two checks
+    # sat 7/9 and 6/8 until the machine rebooted), and of the rest only what
+    # rank 0 asked for opens (log 198).
+    held = bool(halted(ctx))
     # An update is waiting for the runner to restart: no new JOB opens, but a
     # job already open runs out its arms. "Start nothing" left an open job's
     # last arm unstarted for good, so the job never closed, the restart never
@@ -8172,14 +8312,19 @@ def testd_tick(ctx, S):
         return
     pool, cores = test_pool(ctx)
     times = arm_seconds(ctx)
-    order = []
+    order, waits = [], 0
     for j in sorted(testq_jobs(ctx, ("queued", "running")), key=testq_age_key):
         if j.get("cancel") or (draining and j["id"] not in S["open"]):
+            continue
+        if held and j["id"] not in S["open"] and not halt_runs(j):
+            waits += 1
             continue
         j = S["open"][j["id"]]["job"] if j["id"] in S["open"] else j
         if j.get("kind") == "check" and not j.get("tests") and not j.get("arms"):
             j["_names"] = job_arm_names(ctx, None)      # a full check queued before estimates
         order += [(j, n) for n, t in job_tests(j).items() if t.get("state") == "queued"]
+    if waits:
+        _say(S, f"the tree is halted: {waits} job(s) wait for the resume; only rank 0's open")
     now = time.time()
     while order:
         run = S["running"]
@@ -8316,12 +8461,14 @@ def testd_start(ctx, S, job, name, reserved, pool, used, cores):
             o["rows"][name] = {"name": name, "command": "", "blindSpot": "", "exit": None,
                                "held": "no longer in the manifest", "seconds": 0,
                                "timedOut": False, "failedFiles": None, "stdout": "", "stderr": ""}
+            testq_keep_row(ctx, job, name, o["rows"][name], True)
             testq_save(ctx, job); return
         c = dict(c, reads=check_reads(c, o["wt"], o["env"]))
         h = hold_catching(c, o["holds"])
         if h:
             row, line = held_row(c, h)
             o["rows"][name] = row
+            testq_keep_row(ctx, job, name, row, True)
             o["log"].write(line + "\n")
             t["state"] = "done"
             testq_save(ctx, job); return
@@ -8407,6 +8554,7 @@ def testd_finish(ctx, S, key):
                              f"{Path(kept[0]).parent}")
         o["rows"][name] = row
         o["failed"] += (not ok)
+        testq_keep_row(ctx, job, name, row, ok)
     else:
         code = res[0]
         o["code"] = 137 if meter.get("oom") else code
@@ -8468,7 +8616,13 @@ def testd_close(ctx, S, jid):
         log.write("cancelled: no report is written, so nothing reuses a partial run\n")
     elif job["kind"] == "check":
         sha, node = job["sha"], job["requested_by"][0].get("node") or "operator"
-        names = [n for n in o["checks"]] + [n for n in o["rows"] if n not in o["checks"]]
+        carried = {n: c for n, c in (job.get("carried") or {}).items() if n not in o["rows"]}
+        for n, c in carried.items():
+            # Finished before its first runner died: kept, not run again (log 197).
+            o["rows"][n] = dict(c.get("row") or {}, carried=job.get("rerun_of"))
+            o["failed"] += not c.get("ok")
+        order = job_arm_names(ctx, list(o["rows"]))
+        names = order + [n for n in o["rows"] if n not in order]
         rows = [o["rows"][n] for n in names if n in o["rows"]]
         base = o["base"]
         rep = make_check_report(node, sha, rows, o["failed"], base,
@@ -8477,7 +8631,9 @@ def testd_close(ctx, S, jid):
                                 partial=bool(job.get("arms")) and not job.get("scope"),
                                 **({"caps": S["caps"]} if S.get("caps") else {}),
                                 **({"behind": job["behind"]} if job.get("behind") else {}),
-                                **({"scoped": job["scope"]} if job.get("scope") else {}))
+                                **({"scoped": job["scope"]} if job.get("scope") else {}),
+                                **({"rerun_of": job["rerun_of"], "carried": sorted(carried)}
+                                   if job.get("rerun_of") else {}))
         shared = shared_report_path(ctx, sha)
         shared.parent.mkdir(parents=True, exist_ok=True)
         shared.write_text(json.dumps(rep, indent=2) + "\n")
@@ -8497,6 +8653,10 @@ def testd_close(ctx, S, jid):
     log.close()
     testq_save(ctx, job)
     testq_teardown(ctx, job)
+    if job.get("state") == "done":
+        for k in (jid, job.get("rerun_of")):                    # only a failed job is rerun
+            if k:
+                testq_rows_path(ctx, k).unlink(missing_ok=True)
     testq_ring(ctx, job, rep, o.get("code"))
 
 
@@ -8534,6 +8694,7 @@ def testq_recover(ctx):
             j.update(state="failed", finished=_now(), why="the runner died mid-job")
             testq_save(ctx, j)
             testq_teardown(ctx, j)
+            testq_ring(ctx, j, None, None)      # log 197: nobody was told
 
 
 def testq_teardown(ctx, job):
@@ -8555,7 +8716,9 @@ def testq_teardown(ctx, job):
 def testq_ring(ctx, job, rep, code):
     """Tell each requester the result, through its doorbell."""
     if job.get("state") != "done":
-        text = f"test job {job['id']} {job.get('state')}: {job.get('why') or ''} — harness test --log {job['id']}"
+        text = (f"test job {job['id']} {job.get('state')}: {job.get('why') or ''} — harness test "
+                f"--log {job['id']}" + (f"; harness test --rerun {job['id']} runs what it didn't "
+                                         f"finish" if job.get("state") == "failed" else ""))
     elif rep is not None:
         n = len(rep.get("checks") or [])
         text = ((partial_line(rep) + ". ") if partial_line(rep) else "") + (
@@ -8572,6 +8735,11 @@ def testq_ring(ctx, job, rep, code):
         if n and n not in ("operator", "owner") and n not in told:
             ring_inbox(ctx.state, n, "test queue", text)
             told.add(n)
+    by = job.get("by")
+    if by and by not in ("operator", "owner") and by not in told:
+        ring_inbox(ctx.state, by, "test queue", text + " (you asked for it on "
+                   + ", ".join(sorted(told) or ["its requester"]) + "'s behalf)")
+        told.add(by)
     # Log 171: a lane that presented this very commit has handed it up, and
     # its session may be gone; the check is now its lead's to read.
     if job.get("kind") == "check" and job.get("sha"):
@@ -8683,6 +8851,30 @@ def cmd_test(a):
         for j in hit:
             print(f"{j['id']}: {testq_cancel(ctx, j)}")
         return
+    if isinstance(getattr(a, "rerun", None), str):
+        hit = [j for j in testq_jobs(ctx, ("failed", "cancelled")) if j["id"].startswith(a.rerun)]
+        if len(hit) != 1:
+            die(REFUSED, f"{'no' if not hit else 'more than one'} failed or cancelled job "
+                         f"'{a.rerun}'. harness test lists the recent ones")
+        old = hit[0]
+        if not steer and not mine(old):
+            die(REFUSED, f"'{me}' is a lane: it reruns only jobs it asked for, and {old['id']} "
+                         f"is {(old.get('requested_by') or [{}])[0].get('node')}'s")
+        # The owner from a shell, or rank 0, may rerun under a halt (log 198).
+        root = me == "operator" or (me != "?" and ctx.rank(me) == 0)
+        if not root:
+            refuse_if_halted(ctx, "a rerun")
+        job, carried, lost = testq_rerun(ctx, old, me, root)
+        who = ", ".join(r.get("node") or "?" for r in job["requested_by"]) or "nobody"
+        print(f"queued {job['id']}: {old['id']} again at {old['sha'][:8]} for {who}, "
+              + (f"{', '.join(job_tests(job))} only" if old.get("kind") == "check" else
+                 f"`{(old.get('command') or '')[:50]}`") + testq_wait_phrase(ctx, job))
+        if carried:
+            print(f"  carried into its report: {', '.join(carried)} (finished before)")
+        if lost:
+            print(f"  not kept: {', '.join(lost)} finished, but their results were not kept, so "
+                  f"the report is partial; harness check --for NODE runs the full set")
+        return
     if a.log:
         hit = [j for j in testq_jobs(ctx) if j["id"].startswith(a.log)]
         if not hit:
@@ -8710,8 +8902,8 @@ def cmd_test(a):
                       + ("  KILLED" if r.get("killed") else ""))
         return
     if cmd:
-        refuse_if_halted(ctx, "a new test job")
         node, _ = ctx.node()
+        refuse_if_halted(ctx, "a new test job", node)
         key = f"cmd:{shlex.join(cmd) if len(cmd) > 1 else cmd[0]}"
         unknown = (a.memory or "").strip() == "?"
         est = None if unknown else (parse_mem(a.memory) if a.memory else None)
@@ -8728,7 +8920,8 @@ def cmd_test(a):
             die(REFUSED, "uncommitted changes: the queue runs a copy of the commit; commit first")
         job, _ = testq_submit(ctx, "cmd", sha, node, os.environ.get("CLAUDE_CODE_SESSION_ID", ""),
                               command=shlex.join(cmd) if len(cmd) > 1 else cmd[0],
-                              origin=str(ctx.worktree), tests={"cmd": test_spec(est)})
+                              origin=str(ctx.worktree), tests={"cmd": test_spec(est)},
+                              root=ctx.rank(node) == 0)
         print(f"queued {job['id']} (normal queue)" + testq_wait_phrase(ctx, job)
               + ". Your doorbell rings when it ends; its output is kept.")
         return
@@ -8755,9 +8948,17 @@ def cmd_test(a):
                                         if c.get("starts", 1) > 1 else "")
                  + f"; see {testq_dir(ctx) / 'runner.log'}" if c else
                  "; harness testd starts one"))
+    held = bool(halted(ctx))
+    if held and jobs:
+        print("HALTED: only jobs rank 0 asked for open; the rest wait for the resume "
+              "(rank 0 joins one with harness check --for NODE)")
     for k, j in enumerate(jobs):
         est = testq_wait_estimate(ctx, j)
         over = testq_overdue(ctx, j)
+        if held and j["state"] == "queued" and not halt_runs(j):
+            print(f"{k}  {j['id']}  {j.get('queue', 'normal'):<8} {testq_describe(j)}  "
+                  f"(asked {(j.get('at') or '')[11:16]}; waits for the resume)")
+            continue
         print(f"{'▶' if j['state'] == 'running' else k}  {j['id']}  {j.get('queue', 'normal'):<8} "
               f"{testq_describe(j)}  (asked {(j.get('at') or '')[11:16]}"
               + (f"; over its estimate by {human_age(over)}" if over else
@@ -26173,6 +26374,11 @@ def main():
     ck.add_argument("--normal", action="store_true",
                     help="the normal queue (the default for lanes)")
     ck.add_argument("--report", metavar="SHA", help="print a finished report for a commit")
+    ck.add_argument("--for", dest="for_node", metavar="NODE",
+                    help="rank 0, or a lead above NODE: check NODE's commit on its behalf (its "
+                         "branch tip, or --sha); NODE is the requester and both of you are rung. "
+                         "Runs --arms, else the full set. Rank 0's run under a halt")
+    ck.add_argument("--sha", metavar="REF", help="with --for: the commit to check")
     ck.add_argument("--memory", metavar="ARM=SIZE,...",
                     help="each arm's memory estimate, the least it may need (required; ARM=? for a never-run arm: alone, uncapped, measured)")
     tq = add("test", cmd_test)
@@ -26189,6 +26395,9 @@ def main():
                     help="rank 0 or a lead: move a queued job to the front (with --why)")
     tq.add_argument("--why", metavar="TEXT")
     tq.add_argument("--log", metavar="ID")
+    tq.add_argument("--rerun", metavar="ID",
+                    help="a failed or cancelled job again, for the tests it didn't finish: same "
+                         "commit, same requesters; finished arms are carried into the report")
     td = add("testd", cmd_testd)
     td.add_argument("--project", metavar="NAME")
     sl = add("slot", cmd_slot)

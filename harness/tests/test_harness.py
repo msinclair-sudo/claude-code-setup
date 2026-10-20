@@ -2496,13 +2496,28 @@ class Halt(unittest.TestCase):
                       (self.ctx.dir / "doorbell" / "dev_1" / "delivered.jsonl").read_text())
 
     def test_the_runner_starts_nothing_while_halted(self):
+        # Nothing a node queued; rank 0's own run (log 198, RankZeroUnderHalt).
         self.halt()
         c = hz.ProjCtx(self.ctx.dir, self.ctx.dir)
+        queued = {"id": "n", "kind": "check", "state": "queued", "at": "1",
+                  "requested_by": [{"node": "dev_1"}], "tests": {"a": hz.test_spec(None)}}
         with mock.patch.object(hz, "testq_recover"), \
-             mock.patch.object(hz, "testq_jobs", side_effect=AssertionError("picked a job")), \
+             mock.patch.object(hz, "testq_jobs", return_value=[queued]), \
+             mock.patch.object(hz, "testd_start", side_effect=AssertionError("picked a job")), \
              mock.patch("signal.signal"), redirect_stdout(io.StringIO()) as o:
             hz._testd_loop(c)
         self.assertIn("halted; runner exits", o.getvalue())
+
+    def test_rank_0_keeps_its_tests_under_a_halt_and_is_told_so(self):
+        # Owner, 2026-10-20 (log 198): "main should be able to run tests ect".
+        self.halt()
+        hz.refuse_if_halted(self.ctx, "a new check", "main")
+        with self.assertRaises(SystemExit):
+            hz.refuse_if_halted(self.ctx, "a new check", "dev")
+        text = lambda n: " ".join(json.loads(f.read_text())["text"] for f in
+                                  (self.ctx.dir / "doorbell" / n / "inbox").glob("*.json"))
+        self.assertIn("You are rank 0", text("main"))
+        self.assertNotIn("rank 0", text("dev"))
 
     def test_the_stop_hook_says_it_once_per_halt(self):
         self.halt()
@@ -6131,6 +6146,173 @@ class TestQueue(unittest.TestCase):
         held = hz.hold_catching(dict(c, reads=hz.check_reads(c, self.repo)),
                                 [{"path": "/data/live.db", "why": "rebuild", "by": "dev"}])
         self.assertIsNotNone(held)
+
+
+class RankZeroUnderHalt(unittest.TestCase):
+    """Log 198, owner 2026-10-20: rank 0 clears the test backlog while the tree is
+    halted. Log 197: a job whose runner died is told, and rerun for what it
+    didn't finish."""
+
+    setUp = TestQueue.setUp
+    run_queue = TestQueue.run_queue
+
+    def halt(self):
+        (self.state / "halt.json").write_text(json.dumps(
+            {"by": "owner", "why": "drifted", "at": "2026-10-20T17:00:00+1100"}))
+
+    def jobs(self):
+        return {j["id"]: j for j in hz.testq_jobs(self.ctx)}
+
+    def rung(self, node):
+        return [json.loads(f.read_text())["text"]
+                for f in sorted((self.state / "doorbell" / node / "inbox").glob("*.json"))]
+
+    def as_node(self, me, fn, **k):
+        tree = {"main": {"parent": None, "branch": "main"},
+                "dev": {"parent": "main", "branch": "dev"},
+                "dev_1": {"parent": "dev", "branch": "dev_1"},
+                "qa": {"parent": "main", "branch": "qa"}}
+        self.sp.run(["git", "-C", str(self.repo), "branch", "-f", "dev_1"], capture_output=True)
+        c = hz.ProjCtx(self.state, self.repo)
+        c.tree = {"nodes": tree}
+        c.require_enrolled = lambda: None
+        c.node = lambda: (me, tree[me])
+        c.rank = lambda n: 0 if n == "main" else 1 if n in ("dev", "qa") else 2
+        c.children = lambda n: sorted(x for x, sp in tree.items() if sp["parent"] == n)
+        base = dict(known=None, set_baseline=False, report=None, arms="good", memory="good=64M",
+                    priority=False, normal=False, changed=False, all=False, wait=False,
+                    timeout=900, for_node=None, sha=None, command=[], cancel=None, promote=None,
+                    why=None, rerun=None, log=None, usage=None, caps=False)
+        with mock.patch.object(hz, "Ctx", return_value=c), \
+             mock.patch.object(hz, "load_index",
+                               return_value={"nodes": {"dev_1": {"worktree": "/wt/dev_1"}}}), \
+             mock.patch.object(hz, "default_queue", return_value="priority"), \
+             mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "s" * 36}), \
+             mock.patch("sys.stderr", io.StringIO()) as err, redirect_stdout(io.StringIO()) as o:
+            try:
+                fn(mock.Mock(**dict(base, **k))); return 0, o.getvalue()
+            except SystemExit as e:
+                return e.code, o.getvalue() + err.getvalue()
+
+    def test_under_a_halt_the_runner_opens_rank_0s_jobs_and_no_one_elses(self):
+        self.halt()
+        theirs, _ = hz.testq_submit(self.ctx, "check", self.sha, "dev_1", "s", arms=["bad"])
+        mine, _ = hz.testq_submit(self.ctx, "check", self.sha, "main", "s", arms=["good"],
+                                  root=True)
+        with mock.patch("sys.stdout", io.StringIO()) as out, mock.patch("signal.signal"):
+            hz.testd(self.state, self.repo)
+        self.assertEqual(self.jobs()[mine["id"]]["state"], "done")
+        self.assertEqual(self.jobs()[theirs["id"]]["state"], "queued")
+        self.assertIn("1 job(s) wait for the resume", out.getvalue())
+        self.assertIn("halted; runner exits", out.getvalue())
+
+    def test_rank_0_joining_a_nodes_queued_check_lets_it_run(self):
+        j, _ = hz.testq_submit(self.ctx, "check", self.sha, "dev_1", "s", arms=["good"])
+        self.halt()
+        j2, how = hz.testq_submit(self.ctx, "check", self.sha, "main", "s", arms=["good"],
+                                  root=True)
+        self.assertEqual((how, j2["id"]), ("joined", j["id"]))
+        self.run_queue()
+        self.assertEqual(self.jobs()[j["id"]]["state"], "done")
+        for n in ("dev_1", "main"):
+            self.assertTrue(hz.check_report_path(self.ctx, n, self.sha).exists(), n)
+
+    def test_a_job_already_open_runs_out_its_arms_under_a_halt(self):
+        # Log 197: the halt stopped an open job's last arms, so it never closed
+        # and the runner never exited.
+        self.halt()
+        now = time.time()
+        jobs = [{"id": "o", "kind": "check", "t": now - 60, "requested_by": [{"node": "dev"}],
+                 "tests": {"a": dict(hz.test_spec(None), state="done"), "b": hz.test_spec(None)}},
+                {"id": "n", "kind": "check", "t": now - 90, "requested_by": [{"node": "dev_1"}],
+                 "tests": {"c": hz.test_spec(None)}}]
+        S = {"open": {"o": {"job": jobs[0]}}, "running": {}, "slot": object(), "said": ""}
+        started = []
+        with mock.patch.object(hz, "testq_jobs", return_value=jobs), \
+             mock.patch.object(hz, "arm_seconds", return_value={}), \
+             mock.patch.object(hz, "test_seconds", return_value=None), \
+             mock.patch.object(hz, "slot_tickets", return_value=[]), \
+             mock.patch.object(hz, "testd_ledger"), \
+             mock.patch.object(hz, "testd_start",
+                               side_effect=lambda c, S, j, n, *a: started.append(n)), \
+             mock.patch("sys.stdout", io.StringIO()):
+            hz.testd_tick(self.ctx, S)
+        self.assertEqual(started, ["b"])
+
+    def test_check_for_a_node_checks_its_tip_on_its_behalf_and_rings_both(self):
+        self.halt()
+        code, out = self.as_node("dev_1", hz.cmd_check)        # a node's own: refused
+        self.assertNotEqual(code, 0)
+        self.assertIn("halted the tree", out)
+        code, out = self.as_node("qa", hz.cmd_check, for_node="dev_1")
+        self.assertNotEqual(code, 0)
+        self.assertIn("not below", out)
+        code, out = self.as_node("main", hz.cmd_check, for_node="dev_1")
+        self.assertEqual(code, 0, out)
+        self.assertIn("for dev_1", out)
+        (j,) = hz.testq_jobs(self.ctx)
+        self.assertEqual(([r["node"] for r in j["requested_by"]], j["by"], j["root"], j["origin"],
+                          j["sha"]), (["dev_1"], "main", True, "/wt/dev_1", self.sha))
+        self.run_queue()
+        self.assertTrue(hz.check_report_path(self.ctx, "dev_1", self.sha).exists())
+        self.assertTrue(self.rung("dev_1"))
+        self.assertIn("on dev_1's behalf", self.rung("main")[0])
+
+    def test_rank_0_queues_a_test_command_under_a_halt(self):
+        self.halt()
+        code, out = self.as_node("dev", hz.cmd_test, command=["--", "true"], memory="64M")
+        self.assertNotEqual(code, 0)
+        code, out = self.as_node("main", hz.cmd_test, command=["--", "true"], memory="64M")
+        self.assertEqual(code, 0, out)
+        (j,) = hz.testq_jobs(self.ctx)
+        self.assertTrue(j["root"])
+
+    def dead_job(self, jid, keep_good):
+        hz.testq_save(self.ctx, {
+            "id": jid, "kind": "check", "sha": self.sha, "state": "running", "pid": 999999,
+            "arms": None, "at": "1", "queue": "normal", "finished_arms": ["good"],
+            "requested_by": [{"node": "dev_1", "session": "s", "at": "1"}],
+            "tests": {"good": dict(hz.test_spec(None), state="done"),
+                      "bad": dict(hz.test_spec(None), state="running")}})
+        if keep_good:
+            hz.testq_keep_row(self.ctx, {"id": jid}, "good", {
+                "name": "good", "command": "x", "blindSpot": "-", "exit": 0, "seconds": 1.0,
+                "timedOut": False, "failedFiles": None, "stdout": "", "stderr": ""}, True)
+
+    def test_a_dead_runners_job_is_told_and_rerun_for_what_it_didnt_finish(self):
+        # Log 197: a reboot left two checks two arms short, and nobody was told.
+        self.dead_job("old", keep_good=True)
+        hz.testq_recover(self.ctx)
+        self.assertEqual(self.jobs()["old"]["state"], "failed")
+        self.assertTrue(any("harness test --rerun old" in t for t in self.rung("dev_1")))
+        self.halt()
+        code, out = self.as_node("dev_1", hz.cmd_test, rerun="old")    # under a halt: no
+        self.assertNotEqual(code, 0)
+        code, out = self.as_node("main", hz.cmd_test, rerun="old")
+        self.assertEqual(code, 0, out)
+        self.assertIn("carried into its report: good", out)
+        (new,) = hz.testq_jobs(self.ctx, ("queued",))
+        self.assertEqual((list(new["tests"]), new["rerun_of"], new["arms"], new["root"],
+                          [r["node"] for r in new["requested_by"]]),
+                         (["bad"], "old", None, True, ["dev_1"]))
+        self.run_queue()
+        rep = json.loads(hz.check_report_path(self.ctx, "dev_1", self.sha).read_text())
+        self.assertEqual([r["name"] for r in rep["checks"]], ["good", "bad"])
+        self.assertEqual((rep["carried"], rep["partial"], rep["failed"], rep["rerun_of"]),
+                         (["good"], False, 1, "old"))
+        self.assertFalse(hz.testq_rows_path(self.ctx, "old").exists())
+        # A later full check of the commit is its own run, not a join onto the rerun.
+        self.assertEqual(hz.testq_submit(self.ctx, "check", self.sha, "qa", "s")[1], "queued")
+
+    def test_a_rerun_without_kept_rows_says_its_report_is_partial(self):
+        self.dead_job("old2", keep_good=False)
+        hz.testq_recover(self.ctx)
+        code, out = self.as_node("main", hz.cmd_test, rerun="old2")
+        self.assertEqual(code, 0, out)
+        self.assertIn("not kept: good", out)
+        (new,) = hz.testq_jobs(self.ctx, ("queued",))
+        self.assertEqual(new["arms"], ["bad"])
+        self.assertNotEqual(self.as_node("main", hz.cmd_test, rerun="nope")[0], 0)
 
 
 class StopKillsWork(unittest.TestCase):

@@ -107,56 +107,89 @@ segments:
   - id: s11
     role: mechanism
     scene: Amplify
-    visual: "chapter title; the gene drawn as a bar; two primer arrows fly in and land on the conserved stretches either side of a bright variable stretch, which is labelled the barcode"
-    onscreen: "primers mark the barcode"
-    narration: "Next comes PCR. Short primers stick to the gene on either side of a variable stretch. That stretch is our barcode."
+    visual: "step heading 'the 16S rRNA gene'; three copies of the gene, one per taxon, drawn as bars one under another; the conserved stretches are the same grey in all three and labelled conserved on them; the middle stretch is a different colour in each, labelled variable region"
+    onscreen: "conserved: much the same across bacteria; variable: differs"
+    narration: "Look along the 16S gene of three taxa. Some stretches are conserved: much the same across bacteria. Others are variable: they differ from taxon to taxon."
     claims: [m7]
+    verify: {inside_frame: all}
+  - id: s11b
+    role: mechanism
+    scene: Amplify
+    visual: "step heading 'PCR primers'; primer arrows land on the conserved stretches of all three genes at once; a brace over the variable region between them reads: barcode = a variable region of the 16S rRNA gene, here V4"
+    onscreen: "barcode: a variable region of the 16S gene"
+    narration: "Primers stick to two conserved stretches, so one pair fits most bacteria. Between them sits a variable region, such as V4. That region of the 16S gene is our barcode."
+    claims: [m7, m32]
     verify: {inside_frame: all}
   - id: s12
     role: mechanism
     scene: Amplify
-    visual: "the barcode is copied: 1, 2, 4, 8, 16 strands, each new strand copied out of an old one; a counter runs to cycle 35"
-    onscreen: "each cycle nearly doubles the barcode"
-    narration: "Each PCR cycle can nearly double the barcode. Two common protocols use 25 and 35 cycles; our simulation uses 35."
+    visual: "step heading 'PCR'; the barcode of one gene is copied out of it: 1, 2, 4, 8, 16 strands, each new strand copied from an old one, every strand coloured by its taxon; a counter runs to cycle 35"
+    onscreen: "PCR cycle 35"
+    narration: "PCR copies this barcode over and over. Each cycle can nearly double it. Two common protocols use 25 and 35 cycles; our simulation uses 35."
     claims: [m7, m8]
     verify: {inside_frame: all}
   - id: s13
     role: problem
     scene: Amplify
-    visual: "80 dots, one per taxon, drop onto a fold-bias axis from 1/16 to 16 (log scale); the dots beyond fourfold either way are ringed"
-    onscreen: "1 taxon in 5 more than fourfold off"
-    narration: "But barcodes don't all copy equally well. One study grew gut communities in the lab. After 35 cycles, about 1 taxon in 5 came out more than fourfold off. Our simulation is set to match."
-    claims: [m9, m10]
+    visual: "step heading 'PCR bias'; two taxa's barcodes copied side by side, one column filling faster than the other; a data card: one study, lab-grown gut communities, 35 cycles, about 1 taxon in 5 more than fourfold off"
+    onscreen: "one study: 1 taxon in 5 more than fourfold off"
+    narration: "But PCR doesn't copy every taxon equally well. In one study of lab-grown gut communities, about 1 taxon in 5 came out more than fourfold off after 35 cycles."
+    claims: [m9]
+    verify: {inside_frame: all}
+  - id: s13b
+    role: problem
+    scene: Amplify
+    visual: "the axis is drawn first, ticks 1/16, 1/4, 1, 4, 16, with 'copied too few' to the left and 'copied too many' to the right; then 80 dots, one per taxon, drop and stack; dashed lines at 1/4 and 4; the dots beyond them are ringed and counted"
+    onscreen: "each dot: one taxon; ringed: beyond fourfold"
+    narration: "Our simulation is set to match. The axis shows each taxon's bias: 1 is fair, 4 is four times too many, a quarter is four times too few. Each dot is one taxon."
+    claims: [m10]
     verify: {inside_frame: all}
   - id: s14
+    role: problem
+    scene: Amplify
+    visual: "the bar chart returns as share of gene copies and morphs into share of barcodes; taxon 1's and taxon 3's bars are marked"
+    onscreen: "share of barcodes after PCR"
+    narration: "Here is what that does to our soil's shares. Taxon 1 now makes up 46% of the barcodes. Taxon 3 has fallen from 7.5% of the cells to half a percent."
+    claims: [m11]
+    verify: {inside_frame: all}
+  - id: s14b
     role: distil
     scene: Amplify
-    visual: "the bar chart returns as share of gene copies and morphs into share of barcodes; taxon 1 and taxon 3 labelled"
-    onscreen: "taxon 3: 7.5% of cells, 0.5% of barcodes"
-    narration: "So after PCR, taxon 1 makes up 46% of the barcodes. Taxon 3 has fallen from 7.5% of the cells to half a percent."
-    claims: [m11]
+    visual: "taxon 1's and taxon 3's bars lift out of the chart into a two-bar chart of their own; the ratio between them is written between the bars: 3 to 1 in cells; the bars change to gene copies, 53 to 1, then barcodes, 85 to 1, the ratio counting up with them"
+    onscreen: "taxon 1 to taxon 3: 3, then 53, then 85 to 1"
+    narration: "So compare the two directly. In the cells, taxon 1 outnumbered taxon 3 about 3 to 1. In the gene copies, 53 to 1. In the barcodes, about 85 to 1."
+    claims: [m33]
+    pause_after: 3.5
     verify: {inside_frame: all}
   # chapter 4: sequencing
   - id: s15
     role: mechanism
     scene: Sequence
-    visual: "chapter title; three sample tubes, A, B and C; each barcode gets a short white index tag, one pattern per sample, written on"
-    onscreen: "an index tag names each sample"
-    narration: "Now we sequence many samples at once. Each sample's barcodes get a short tag, called an index, that names the sample."
+    visual: "step heading 'samples'; the soil icon, a cell, its DNA strand and the barcode copies pass in a quick chain (the pictures from chapters 1 to 3) and the copies drop into tube A; tubes B and C fill the same way; each tube labelled sample A, B, C, with 'barcode copies, coloured by taxon'"
+    onscreen: "each sample: its own barcode copies"
+    narration: "Every soil sample goes through these same steps. Its cells give up their DNA, and PCR copies the barcode. Here are three samples' barcode copies."
+    claims: []
+    verify: {inside_frame: all}
+  - id: s15b
+    role: mechanism
+    scene: Sequence
+    visual: "step heading 'indexing'; a short white tag, one pattern per sample, is added to the left end of every barcode copy, tube by tube"
+    onscreen: "index tag: names the sample"
+    narration: "Each sample's barcodes then get a short tag, called an index, that names the sample. That lets many samples share one sequencing run."
     claims: [m12]
     verify: {inside_frame: all}
   - id: s16
     role: mechanism
     scene: Sequence
-    visual: "the tagged barcodes pour from the tubes into one pool; reads leave the pool one at a time along a path into the sequencer"
-    onscreen: "the sequencer reads a random draw"
-    narration: "The samples are pooled together. The sequencer then reads a random draw of the barcodes in the pool."
-    claims: [m13]
+    visual: "step heading 'sequencing'; the tagged copies pour into one pool; reads leave the pool along curved paths into the sequencer, and as each arrives its sample's read meter grows a step; one read is shown leaving as a pair of arrows, read 1 and read 2, from the two ends"
+    onscreen: "read pair: one barcode read from both ends"
+    narration: "The samples are pooled, and the sequencer reads a random draw of the barcodes. It reads each one from both ends, giving a read pair."
+    claims: [m13, m35]
     verify: {inside_frame: all}
   - id: s17
     role: problem
     scene: Sequence
-    visual: "three read meters, one per sample, fill unevenly; sample C barely starts"
+    visual: "the three read meters hold; the label 'sequencing depth' is written over them; sample C's short meter is circled"
     onscreen: "sequencing depth: reads per sample"
     narration: "The number of reads a sample gets is its sequencing depth. Depths differ: in one study, the deepest sample had nearly 100 times the reads of the shallowest."
     claims: [m13, m14]
@@ -164,15 +197,15 @@ segments:
   - id: s18
     role: mechanism
     scene: Sequence
-    visual: "reads travel into three bins by their tag; one of sample A's reads lands in bin B and is circled"
-    onscreen: "demultiplexing: reads sorted by tag"
+    visual: "step heading 'demultiplexing'; reads travel into three bins by their tag; one of sample A's reads lands in bin B and is circled"
+    onscreen: "misassigned (exaggerated here)"
     narration: "Software then sorts the reads back to their samples by tag. A few land in the wrong sample: about 2% in one study, almost none in another."
     claims: [m15]
     verify: {inside_frame: all}
   - id: s19
     role: distil
     scene: Sequence
-    visual: "the three bins hold still; their fill levels are marked"
+    visual: "the three bins hold still; a pile beside each shows its size"
     onscreen: "each sample: its own pile of reads"
     narration: "So each sample now has its own pile of reads, and each pile is a different size."
     claims: []
@@ -181,10 +214,18 @@ segments:
   - id: s20
     role: mechanism
     scene: Reads
-    visual: "chapter title; a fragment read from both ends: two arrows grow toward each other and join into one merged read; below, a short read and a faint read fall away"
-    onscreen: "merge read pairs; drop short or poor reads"
-    narration: "Next we clean the reads. Each fragment was read from both ends, and the two reads are joined. Short or poor-quality reads are dropped."
-    claims: [m16]
+    visual: "step heading 'merging'; a read pair from chapter 4: the two arrows overlap in the middle of the barcode and join into one merged read"
+    onscreen: "read pair → merged read"
+    narration: "Next we clean the reads. The two reads of a pair overlap in the middle of the barcode, so they are joined into one merged read."
+    claims: [m16, m35]
+    verify: {inside_frame: all}
+  - id: s20b
+    role: mechanism
+    scene: Reads
+    visual: "step heading 'filtering'; a histogram of merged read lengths builds up, length along the bottom, number of reads up the side, labelled illustrative; a cut-off line is drawn; the bars left of it fade, labelled dropped; a note: reads of poor quality are dropped too"
+    onscreen: "shorter than the cut-off: dropped"
+    narration: "Then we filter the reads. Short reads, and poor-quality reads, are dropped. In this histogram, read length runs along the bottom and the number of reads up the side. Everything left of the cut-off goes."
+    claims: [m16, m34]
     verify: {inside_frame: all}
   - id: s21
     role: mechanism
@@ -280,24 +321,24 @@ segments:
   - id: s32
     role: limits
     scene: Rarefy
-    visual: "a short list builds line by line: the biases are in every read; missed taxa stay missed"
-    onscreen: "rarefying evens out depth, nothing else"
+    visual: "the barcode chart returns, an arrow at taxon 1: bias, still in every read; beside it the shallow sample's strip, its empty slots pulsing: missed taxa, still missed"
+    onscreen: "bias: still in every read; missed taxa: still missed"
     narration: "Rarefying evens out depth, and nothing else. The biases from extraction, copy number and PCR are in every read. Taxa the shallow sample missed stay missed."
     claims: [m26]
     verify: {inside_frame: all}
   - id: s33
     role: limits
     scene: Rarefy
-    visual: "two more lines: the bias can differ between samples; whether to rarefy is debated; shares cannot show load: spike-ins or cell counts can"
-    onscreen: "still debated; total cells need spike-ins or cell counts"
+    visual: "two soils, one crowded with cells and one sparse, each give the same share chart: same shares; label: total cells, measured by spike-ins or cell counts"
+    onscreen: "same shares; total cells: spike-ins or cell counts"
     narration: "That bias can differ between samples, too. Whether to rarefy at all is still argued. And shares can't show how many cells there were: that takes spike-ins or cell counts."
     claims: [m27, m28, m29]
     verify: {inside_frame: all}
   - id: s34
     role: distil
     scene: Rarefy
-    visual: "the list fades back; one line stays: rarefying makes richness comparable; it does not undo what came before"
-    onscreen: "comparable richness, not corrected counts"
+    visual: "side by side: the rarefaction histogram, labelled richness: now comparable; the barcode chart, labelled counts: still biased"
+    onscreen: "richness: now comparable; counts: still biased"
     narration: "So rarefying makes richness comparable between samples. It does not undo anything that happened before the sequencer."
     claims: []
     verify: {inside_frame: all}

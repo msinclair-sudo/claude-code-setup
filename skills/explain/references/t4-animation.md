@@ -25,6 +25,9 @@ The owner's review of the first metabarcoding render: "the visuals are good, the
 | this is no longer needed | `FadeOut` (fades are for exits, and for a new chapter's first frame) |
 
 - **Carry objects across segments** inside a scene; a chart that returns should be the same chart, transformed, not a new one faded in.
+- **Carry the subject across chapters**: when a new step works on what an earlier step made, show it arriving (DNA from the cells, through PCR, into the sample tubes), so the viewer knows what the new picture holds.
+- **Linked motions move together**: when one thing causes another (reads arriving at the sequencer, a sample's read count growing), animate them in the same beat, not one after the other.
+- **Text appears fast**: a label or heading `Write`s in about 0.5 s in its own `play`, then the slower motion starts; a long `Write` stretched over a whole segment reads as slow and odd.
 - **Change of chapter = visible event boundary:** clear the stage, then the next chapter's title, then the chapter pause.
 - **Hold still during distil lines and pauses;** nothing new appears while the idea settles.
 - `x check` warns when more than 40% of a scene file's animations are fades.

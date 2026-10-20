@@ -33,7 +33,7 @@ claims:
   kind: illustrative
   value: 7 1 3
 - id: m7
-  text: primers bind conserved stretches of the 16S rRNA gene either side of a variable region, and PCR copies that short stretch (the barcode); each cycle can nearly double it
+  text: along the 16S rRNA gene, conserved stretches are much the same across bacteria and variable regions differ between taxa; primers bind two conserved stretches, so one pair fits most bacteria (no pair fits all; the best broad pair matched about 86% of bacteria exactly, 94.5% with one mismatch), and PCR copies the variable region between them (the barcode); each cycle can nearly double it
   source: 'conserved and variable regions: Illumina, Inc. 16S Metagenomic Sequencing Library Preparation, Part 15044223 Rev. B ("nine variable regions interspersed between conserved regions"); primer coverage: Klindworth, A., Pruesse, E., Schweer, T., Peplies, J., Quast, C., Horn, M. and Glöckner, F. O. (2013) Evaluation of general 16S ribosomal RNA gene PCR primers for classical and next-generation sequencing-based diversity studies. Nucleic Acids Research 41(1): e1, doi:10.1093/nar/gks808; per-cycle amplification, each template multiplied by (1 + efficiency) each cycle, efficiency at most 1: Kelly, R. P., Shelton, A. O. and Gallego, R. (2019) Understanding PCR processes to draw meaningful conclusions from environmental DNA studies. Scientific Reports 9: 12133, doi:10.1038/s41598-019-48546-x (eDNA; the PCR model is general)'
   kind: quoted
 - id: m8
@@ -147,3 +147,22 @@ claims:
   source: 'Delgado-Baquerizo, M., Oliverio, A. M., Brewer, T. E., Benavent-Gonzalez, A., Eldridge, D. J., Bardgett, R. D., Maestre, F. T., Singh, B. K. and Fierer, N. (2018) A global atlas of the dominant bacteria found in soil. Science 359(6373): 320-325, doi:10.1126/science.aap9516'
   kind: quoted
   value: 2 41
+- id: m32
+  text: one widely used choice of variable region is V4, which the Earth Microbiome Project protocol amplifies (primers 515F and 806R); Illumina's 16S guide uses V3-V4
+  source: 'Earth Microbiome Project, 16S Illumina Amplicon Protocol, https://earthmicrobiome.org/protocols-and-standards/16s/ ; Caporaso, J. G. et al. (2011) Global patterns of 16S rRNA diversity at a depth of millions of sequences per sample. PNAS 108(Suppl 1): 4516-4522, doi:10.1073/pnas.1000080107 (V4)'
+  kind: quoted
+  value: 4
+- id: m33
+  text: in the simulation, taxon 1 outnumbers taxon 3 about 3 to 1 in cells, 53 to 1 in 16S gene copies and about 85 to 1 in barcodes
+  source: 'pipeline.py data(), seed 7: true 0.230 / 0.0748 = 3.08; templates 0.4946 / 0.00936 = 52.9; pool 0.4576 / 0.00540 = 84.8'
+  kind: derived
+  value: 1 3 53 85
+- id: m34
+  text: an illustrative histogram of merged read lengths, most near 250 bases with a tail of short reads, and a length cut-off at 200 bases
+  source: 'scene.py Reads s20b (illustrative values, labelled illustrative on screen)'
+  kind: illustrative
+  value: 150 200 250 300
+- id: m35
+  text: the sequencer reads each barcode from both ends, giving a read pair; for a short amplicon the two reads overlap in the middle and are joined into one merged read
+  source: 'Illumina, Inc. 16S Metagenomic Sequencing Library Preparation, Part 15044223 Rev. B (paired-end reads, 2 x 300, overlapping across the amplicon); Kozich, J. J., Westcott, S. L., Baxter, N. T., Highlander, S. K. and Schloss, P. D. (2013) Applied and Environmental Microbiology 79(17): 5112-5120, doi:10.1128/AEM.01043-13 (fully overlapping V4 read pairs)'
+  kind: quoted

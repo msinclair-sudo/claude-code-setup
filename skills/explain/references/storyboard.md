@@ -37,6 +37,22 @@ Order the chapters as causes and consequences, a problem and its answer, or a co
 - Order: the question, the thing that answers it, the consequence.
 - Each number in `onscreen` or `narration` has a claim id beside it.
 
+## On-screen text has a job
+Not everything said is shown, and not everything shown is said (owner review of the third exemplar, 2026-10-21: "text on screen has to have purpose... they're kinda just floating text"). A piece of text earns its place by doing one of these:
+- **labels a thing**, beside it or on it (a region of a gene, a bar, a bin); never off to the side;
+- **gives a number or a term** the viewer must keep (a key value, a word the next segment uses);
+- **names the step**: one short heading per step at the top left (signalling helped, design-rules NP).
+
+A caption that repeats the narration does none of these; leave it out. Text appears fast (about half a second), then the picture moves.
+
+## Explaining terms and charts
+- **New terms are defined in the subject's own terms**: "conserved" is *almost the same in every bacterium, so one primer fits them all*; "variable" is *different from taxon to taxon, so it tells them apart*. Use the field's names ("variable region", "V4", "read pair"), not paraphrases.
+- **A renamed thing keeps its old name in view**: when the 16S rRNA gene's variable region becomes "the barcode", say so and label it "barcode: a variable region of the 16S rRNA gene".
+- **Introduce before use**: a term the viewer needs later (read pairs) is introduced at the step where it arises (sequencing), not where it is first needed.
+- **A chart is explained in this order**: the finding first ("in one study, ..."), then how the picture shows it ("along the bottom is ..., up the side ..., each dot is one taxon").
+- **Use the field's usual plot** for a quantity (read lengths: a histogram, length along the bottom, number of reads up the side, with the cut-off drawn on it).
+- **Show a relative change directly**: when what matters is how two things changed against each other, take them out of the full chart and set them side by side, with the gap or ratio written between them, and let that value change as they change.
+
 ## Words that carry a field meaning
 A word the audience's field uses technically means that, and only that; a word the field uses in two senses gets replaced by one that has one. Check each before the fact-check (`references/accuracy.md`). The rarefaction exemplar called the taxa with most cells in one sample "common" and the rest "rare". The owner read those as how widely a taxon is found, and a taxon dominant in one soil can be scarce across soils. The field is split: in 181 rare-biosphere articles, 37% gave no clear definition, and most of the rest meant low relative abundance in a sample (often under 0.1%), while "core" and "prevalent" mean occupancy across samples (MB-02 review, vault `Topics/Biology/Research/Results`). So say "abundant", "dominant", "low-abundance" for counts in one sample, and "widespread", "found in few samples" for occupancy. Other traps: "significant" (statistics), "diversity" (richness or evenness?), "copies" (per genome or per cell?), "sample" (a soil core or a draw of reads?).
 

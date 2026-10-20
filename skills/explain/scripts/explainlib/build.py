@@ -75,14 +75,13 @@ def t2(r, out, draft):
     amap, cues, at = {}, [], 0.0
     voice = bool(r.story.get("voice"))
     from . import tts
-    from .anchors import PACING
-    pacing = {**PACING, **(r.story.get("pacing") or {})}
+    pacing = {**tts.PACING, **(r.story.get("pacing") or {})}
     segs = [g for g in r.segments if (g.get("narration") or "").strip()]
     for n, g in enumerate(segs):
         text = g["narration"].strip()
         nxt = segs[n + 1] if n + 1 < len(segs) else None
         new_slide = nxt is None or nxt["step"].split(".")[0] != g["step"].split(".")[0]
-        pause = float(g.get("pause_after", pacing["chapter"] if new_slide else pacing["segment"]))
+        pause = tts.pause_for(g, pacing, chapter_end=new_slide)
         if voice:
             p, sec = tts.clip(text, out / "audio", name=g["id"], pacing=pacing)
             amap[g["step"]] = {"src": f"audio/{p.name}", "text": text, "pause": pause}

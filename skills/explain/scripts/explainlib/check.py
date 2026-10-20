@@ -105,8 +105,9 @@ def run(r, rnd: int) -> dict:
         dur = frames.durations(v)
         if abs(dur.get("video", 0) - dur.get("audio", 0)) > 1.5:
             warns.append(f"video {dur.get('video', 0):.1f}s against audio {dur.get('audio', 0):.1f}s")
-        if dur.get("video", 0) > 6 * 60 + 5:
-            faults.append(f"video is {dur['video'] / 60:.1f} min; at most 6 (chapters)")
+        if dur.get("video", 0) > 10 * 60 + 5:
+            faults.append(f"video is {dur['video'] / 60:.1f} min; at most 10 (chapters)")
+        warns += motion_warnings(r.p("src/scene.py"))
         for log in r.p("checks").glob("scene-*.json"):
             j = json.loads(log.read_text())
             faults += [f"{j['scene']}: {f}" for f in j["failures"]]
@@ -120,3 +121,24 @@ def run(r, rnd: int) -> dict:
     r.p("checks").mkdir(exist_ok=True)
     r.p(f"checks/round-{rnd}.json").write_text(json.dumps(res, indent=1))
     return res
+
+FADES = ("FadeIn", "FadeOut")
+MOVES = ("Create", "Uncreate", "Write", "Unwrite", "DrawBorderThenFill", "Transform", "ReplacementTransform",
+         "TransformMatchingShapes", "TransformMatchingTex", "TransformFromCopy", "FadeTransform", "MoveToTarget",
+         "GrowFromCenter", "GrowFromEdge", "GrowFromPoint", "GrowArrow", "SpinInFromNothing", "Indicate",
+         "Circumscribe", "Flash", "FocusOn", "Wiggle", "ShowPassingFlash", "MoveAlongPath", "Rotate", "Restore")
+
+
+def motion_warnings(scene_py) -> list:
+    """Warn when fades are most of a scene file's animations (references/t4-animation.md, Motion)."""
+    try:
+        src = scene_py.read_text()
+    except OSError:
+        return []
+    fades = sum(len(re.findall(rf"\b{n}\(", src)) for n in FADES)
+    moves = sum(len(re.findall(rf"\b{n}\(", src)) for n in MOVES) + src.count(".animate.")
+    total = fades + moves
+    if total and fades / total > 0.4:
+        return [f"motion: {fades} of {total} animations are fades; carry objects through with Transform, "
+                f"draw with Create or Write, point with Indicate (references/t4-animation.md)"]
+    return []

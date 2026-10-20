@@ -27,6 +27,26 @@ From two literature reviews kept in the owner's vault (`Apps/Research/Results/`)
 | A chart title steers which message is read | misaligned titles biased recall | one group, abstracts (EX) |
 | Animated transitions between chart views: use sparingly; no staggering | transitions helped tracking except for stacked bars (24 adults); staggering negligible or negative | single studies (EX) |
 
+## Pacing, wording and motion (NP)
+From a third review (**NP**: pacing, wording, structure and motion in spoken and animated explanation; standard run, critiqued; vault `Apps/Research/Results/Pacing, wording, structure and motion ...`). The critic rated its answers partly supported; the rows use the critic's corrected readings.
+
+| Rule | Evidence | Strength |
+|---|---|---|
+| Break between segments, and break harder between chapters | 2 s pauses between narrated segments helped, alongside visual cues (each "in a different way"); segmenting helped when system-paced too (small to medium); breaks at event boundaries helped recall of films | one research group for the 2 s value; one meta-analysis (abstract); single film studies (NP) |
+| Inside a segment, keep the voice's natural pauses | silent pause length inside first-language narration was never varied in a study; pause particles in neural-TTS lectures did not help recall | none for duration; one study (NP) |
+| Keep the voice at its normal rate | young adults lost little up to 2× playback; MOOC engagement and speaking rate not monotonic, confounded | several studies; correlational (NP) |
+| Signal the structure (chapter titles, "first", "so") | signalling d ≈ 0.27-0.38 across meta-analyses; prior-knowledge moderation inconsistent | moderate (NP) |
+| A distil line after each idea is the owner's rule, not the literature's | no experiment on recaps in narrated video; presented summaries supported only by one 1996 reading study | none direct (NP) |
+| On screen: key terms or reworded labels, never the narration verbatim | text identical to narration impaired learning against slightly reworded text; spoken plus written beat spoken only, mostly for low prior knowledge and system pacing, driven by on-screen key terms | single studies and one meta-analysis, abstracts (NP) |
+| Talk to the viewer ("you", "we") | conversational style d = 0.30 retention, 0.54 transfer; not significant beyond 35 min; inverted for aversive content in one study | one meta-analysis, abstract (NP) |
+| Organise as cause and effect, problem and solution, or comparison, not a list | the same content recalled better in organised discourse types than as a collection | one study (1984) and an age extension (NP) |
+| A story frame may help; named templates are untested | narrative over expository g = 0.55; content-controlled g = 0.57 with a CI crossing zero; ABT, story spine, three-act: no outcome tests found | one meta-analysis, full text; templates asserted only (NP) |
+| Draw the picture up as you speak | watching a diagram drawn by hand helped (d = 0.35 hand only; 0.58 for low prior knowledge); computer-animated drawing did not reliably beat a static diagram (d = 0.33, ns) | one paper, five experiments (NP) |
+| Animate for change, system-paced, with narration | animation over static g = 0.23 overall; 0.31 system-paced, 0.32 with narration; about 0 for abstract representations | meta-analyses, full text (NP) |
+| Keep objects continuous; cut at event boundaries | object constancy helped tracking (visualisation tasks); cuts at event breakpoints helped recall (film) | other settings only; untested for narrated explanation (NP) |
+| Length: chapters, up to about 10 minutes for enrolled audiences | MOOC median engagement at 6 min or less; on-campus students and enrolled professionals watched 12-13 min sessions | two log studies, populations differ (NP) |
+| No storytelling agent skill to adopt | no evaluated agent skills or prompt frameworks found; explanation-video agents judged by models or small preference studies | search result (NP) |
+
 ## Voice
 | Rule | Evidence | Strength |
 |---|---|---|

@@ -48,6 +48,37 @@ class Lint(unittest.TestCase):
         self.assertIn("on-screen text is 13 words", e)
         self.assertIn("narration is 36 words", e)
 
+    def warnings(self, d):
+        return [m for l, m in lint.lint(report.load(d)) if l == "warn"]
+
+    def test_pacing_language_and_distil(self):
+        long = "This sentence keeps going on and on with clause after clause until it is far longer than any listener can hold in mind."
+        segs = [{"id": f"s{i}", "role": "setting" if i == 1 else "mechanism", "scene": "Ch", "visual": "v",
+                 "onscreen": "the true counts per taxon", "narration": long if i == 1 else "These are the true counts per taxon here.",
+                 "verify": {"inside_frame": "all"}} for i in (1, 2, 3)]
+        d = scaffold(self.tmp, 4, delivery="presented", segments=segs)
+        w = " ".join(self.warnings(d))
+        self.assertIn("-word sentence", w)
+        self.assertIn("word for word", w)
+        self.assertIn("no distil line", w)
+        segs[2]["role"] = "distil"
+        d2 = scaffold(self.tmp + "/b", 4, delivery="presented", segments=segs)
+        self.assertNotIn("no distil line", " ".join(self.warnings(d2)))
+
+    def test_pause_rule(self):
+        from explainlib.tts import PACING, pause_for
+        self.assertEqual(pause_for({"pause_after": 1.0}, PACING, chapter_end=True), 1.0)
+        self.assertEqual(pause_for({}, PACING, chapter_end=True), PACING["chapter"])
+        self.assertEqual(pause_for({"role": "distil"}, PACING, chapter_end=False), PACING["distil"])
+        self.assertEqual(pause_for({"role": "mechanism"}, PACING, chapter_end=False), PACING["segment"])
+
+    def test_motion_mostly_fades(self):
+        f = Path(self.tmp) / "scene.py"
+        f.write_text("self.play(FadeIn(a), FadeIn(b), FadeOut(c))\nself.play(Create(d))\n")
+        self.assertTrue(check.motion_warnings(f))
+        f.write_text("self.play(Transform(a, b), Create(d), Write(t))\nself.play(FadeOut(c))\n")
+        self.assertFalse(check.motion_warnings(f))
+
     def test_tier4_must_be_presented(self):
         d = scaffold(self.tmp, 4, delivery="read")
         self.assertTrue(any("system-paced" in m for m in self.errors(d)))

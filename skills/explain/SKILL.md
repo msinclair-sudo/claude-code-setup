@@ -14,7 +14,7 @@ Pick the lowest tier that carries the message. Most explanations are tier 0 or 1
 | 1 figure report | something has to be seen; the reader goes at their own pace | page + 1-5 figures |
 | 2 stepped slides | the explanation builds in order; add `--voice` when each step is mainly a picture | reveal deck, narration, captions |
 | 3 interactive page | the reader must explore one parameter, many series, or uncertainty, **and** the default view already carries the message | Plotly page |
-| 4 narrated animation | what must be understood is a **change** (a process, a transformation), watched narrated and system-paced, under 6 minutes | mp4, captions, player page |
+| 4 narrated animation | what must be understood is a **change** (a process, a transformation), watched narrated and system-paced, in chapters of up to about 10 minutes in all | mp4, captions, player page |
 
 Why the ladder: animation beats static pictures only for change, only when system-paced, and the gain vanishes when the reader controls the pace; few readers touch interactive controls; polish raises how well people *think* they understood, not how well they did. `references/design-rules.md` has the effects and their strength.
 

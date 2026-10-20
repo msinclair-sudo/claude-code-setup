@@ -18,16 +18,27 @@ Open with the **setting** before any problem: what the system is, what is really
 - `setting`: the thing being studied, and what an ideal measurement would show;
 - `mechanism`: how the measurement actually works, step by step;
 - `problem`: where and how the measurement departs from the truth;
+- `distil`: one plain sentence that restates what was just shown, said over a still picture, before the next idea;
 - `resolution`: what the method being explained does about it;
 - `limits`: what it does not fix, and what it costs.
 
-From tier 2 up, `x lint` warns when the first segment is not `setting`. (Owner review, 2026-10-20: the first exemplars "dive straight into it"; the rebuilt tier 4 starts from a droplet of soil.)
+From tier 2 up, `x lint` warns when the first segment is not `setting`, and when a chapter of three or more segments has no `distil`. (Owner reviews, 2026-10-20: the first exemplars "dive straight into it"; after a concept is taught "it needs to be distilled" before the next.) A distil line is the owner's rule: recaps in narrated video have not been tested (design-rules, NP).
+
+## Chapters
+Order the chapters as causes and consequences, a problem and its answer, or a comparison, not as a list of topics: the same content was recalled better in organised forms. Each chapter ends on a distil line and a visible boundary (the stage clears, the next title appears), then the chapter pause.
 
 ## Writing segments
 - One idea per segment. If the narration needs "and then", split it.
-- The narration says what the picture shows *while* it shows it; the on-screen text is a label, not a sentence the voice also reads in full.
+- Spoken sentences of about 20 words at most; plain words; talk to the viewer ("you", "we"). `x lint` warns past 22 words.
+- One new term per segment: say it, show it, use it again in the next segment.
+- Come back to the subject in every segment: the soil, this sample, the gene, by name.
+- Slow down on the facts the explanation rests on: give a key number its own segment, with what it means for the subject, rather than passing it in a clause.
+- The narration says what the picture shows *while* it shows it; the on-screen text is key words that reword the narration, never the narration itself (text identical to the narration impaired learning; `x lint` warns).
 - Order: the question, the thing that answers it, the consequence.
 - Each number in `onscreen` or `narration` has a claim id beside it.
+
+## Words that carry a field meaning
+A word the audience's field uses technically means that, and only that. Check each before the fact-check (`references/accuracy.md`). The rarefaction exemplar called the taxa with most cells in one sample "common" and the rest "rare"; to ecologists those words describe how widely a taxon is found, so a taxon dominant in one soil can be rare across soils. Say "abundant", "dominant", "low-abundance" for counts in one sample. Other traps: "significant" (statistics), "diversity" (richness or evenness?), "copies" (per genome or per cell?), "sample" (a soil core or a draw of reads?).
 
 ## Example (tier 4, one segment)
 ```yaml

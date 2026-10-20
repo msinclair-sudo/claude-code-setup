@@ -7,10 +7,11 @@ tier_reason: ""           # why the tier below would not carry the message (requ
 voice: {{VOICE}}          # tier 2: narrate the deck with Kokoro
 numbers_ok: []            # incidental numbers that need no claim (figure numbers, citation years)
 pacing:                   # seconds of silence (narrated tiers); a segment may set its own pause_after
-  segment: 0.6            # after each segment
-  chapter: 1.6            # after a chapter's last segment (tier 4) or before a new slide (tier 2): a paragraph break
-  sentence: 0.5           # between sentences inside one narration
-  clause: 0.15            # at commas and semicolons
+  segment: 2.0            # after each segment, while the picture holds
+  distil: 3.0             # after a distil line: the restated idea stays on screen, nothing new
+  chapter: 3.5            # after a chapter's last segment (tier 4) or before a new slide (tier 2): a section break
+  sentence: 0.7           # between sentences inside one narration
+  clause: 0.2             # at commas and semicolons
 # tier 3 only:
 # default_view: "what the page shows before anyone touches it, and why that alone carries the message"
 # controls: 1             # sliders + buttons on the page; at most 2
@@ -19,7 +20,7 @@ pacing:                   # seconds of silence (narrated tiers); a segment may s
 
 segments:                 # tier 0-1: optional (the page's sections); tier 2-4: required
   - id: s1
-    role: setting         # setting | mechanism | problem | resolution | limits; open with the setting
+    role: setting         # setting | mechanism | problem | distil | resolution | limits; open with the setting
     visual: "what is drawn"
     onscreen: "at most 12 words"
     narration: "at most 35 words, said while the visual is on screen"

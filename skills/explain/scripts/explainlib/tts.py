@@ -38,9 +38,22 @@ def lang_for(voice: str) -> str:
 
 # Pauses inside a clip. Kokoro's own defaults (0.25 s after a sentence, 0.1 s after a clause) run
 # sentences together; a listener needs a beat to take in what was just said. Per report:
-# storyboard `pacing: {sentence: 0.5, clause: 0.15}`; machine default: REPORT_TTS_SENTENCE_PAUSE.
-SENTENCE_PAUSE = float(os.environ.get("REPORT_TTS_SENTENCE_PAUSE", "0.5"))
-CLAUSE_PAUSE = float(os.environ.get("REPORT_TTS_CLAUSE_PAUSE", "0.15"))
+# storyboard `pacing: {sentence: 0.7, clause: 0.2}`; machine default: REPORT_TTS_SENTENCE_PAUSE.
+SENTENCE_PAUSE = float(os.environ.get("REPORT_TTS_SENTENCE_PAUSE", "0.7"))
+CLAUSE_PAUSE = float(os.environ.get("REPORT_TTS_CLAUSE_PAUSE", "0.2"))
+# Seconds of silence (references/narration.md, Pacing): inside a clip (sentence, clause), after a segment,
+# after a distil line, and at the end of a chapter (a scene in an animation, a slide in a deck).
+PACING = {"sentence": SENTENCE_PAUSE, "clause": CLAUSE_PAUSE, "segment": 2.0, "distil": 3.0, "chapter": 3.5}
+PACING_KEYS = tuple(PACING)
+
+
+def pause_for(g: dict, pacing: dict, chapter_end: bool) -> float:
+    """The silence after segment g: its own pause_after, else the chapter, distil or segment pause."""
+    if g.get("pause_after") is not None:
+        return float(g["pause_after"])
+    if chapter_end:
+        return float(pacing["chapter"])
+    return float(pacing["distil"] if g.get("role") == "distil" else pacing["segment"])
 
 
 def settings(voice=None, speed=None):

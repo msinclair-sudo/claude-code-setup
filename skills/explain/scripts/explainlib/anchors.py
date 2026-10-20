@@ -33,7 +33,7 @@ from manim_voiceover import VoiceoverScene  # noqa: E402
 
 COLS, ROWS, MARGIN = "ABCDEF", 4, 0.35
 # seconds of silence: after each segment, after a chapter's last segment, between sentences in a clip
-PACING = {"segment": 0.6, "chapter": 1.6, "sentence": 0.5, "clause": 0.15}
+from .tts import PACING, pause_for  # noqa: E402  (one pacing table for decks and animations)
 
 
 class VerifyError(AssertionError):
@@ -128,7 +128,7 @@ class ExplainScene(VoiceoverScene):
             yield t
         self._verify(g, start)
         # a beat after each segment, a longer one at the end of a chapter (a paragraph break)
-        pause = g.get("pause_after", self.pacing["chapter"] if sid == self._last else self.pacing["segment"])
+        pause = pause_for(g, self.pacing, chapter_end=sid == self._last)
         if pause:
             self.wait(float(pause))
 

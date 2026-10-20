@@ -2,18 +2,19 @@
 
 Caps are heuristics drawn from the evidence (references/design-rules.md):
 on-screen text <= 12 words (coherence, redundancy), narration <= 35 words per
-segment (long transient narration loses the modality gain), animation <= 6 min.
+segment and about 20 per sentence (long transient narration loses the modality gain),
+animation <= 10 min in chapters, pauses included (references/narration.md).
 """
 import re
 
 from .report import TIERS, words
 
 ONSCREEN_MAX, NARRATION_MAX = 12, 35
-ANIM_MINUTES_MAX, WPM = 6, 155
+ANIM_MINUTES_MAX, WPM, SENTENCE_MAX = 10, 155, 22
 CELL = re.compile(r"^[A-F][1-4]$")
 STEP = re.compile(r"^\d+\.\d+\.-?\d+$")
 KINDS = {"quoted", "derived", "illustrative"}
-ROLES = ("setting", "mechanism", "problem", "resolution", "limits")
+ROLES = ("setting", "mechanism", "problem", "distil", "resolution", "limits")
 
 
 def lint(r) -> list:
@@ -53,13 +54,15 @@ def lint(r) -> list:
     segs = r.segments
     if t >= 2 and not segs:
         err("storyboard: segments are required from tier 2 up")
+    from .tts import PACING, pause_for
     for k, v in (s.get("pacing") or {}).items():
-        if k not in ("segment", "chapter", "sentence", "clause") or not isinstance(v, (int, float)) or not 0 <= v <= 5:
-            err(f"storyboard: pacing.{k} = {v}; keys are segment, chapter, sentence, clause, in seconds (0 to 5)")
+        if k not in PACING or not isinstance(v, (int, float)) or not 0 <= v <= 6:
+            err(f"storyboard: pacing.{k} = {v}; keys are {', '.join(PACING)}, in seconds (0 to 6)")
+    pacing = {**PACING, **(s.get("pacing") or {})}
     for g in segs:
         v = g.get("pause_after")
-        if v is not None and (not isinstance(v, (int, float)) or not 0 <= v <= 5):
-            err(f"segment {g.get('id')}: pause_after is seconds, 0 to 5")
+        if v is not None and (not isinstance(v, (int, float)) or not 0 <= v <= 6):
+            err(f"segment {g.get('id')}: pause_after is seconds, 0 to 6")
     roles = [g.get("role") for g in segs]
     for g in segs:
         if g.get("role") and g["role"] not in ROLES:
@@ -81,6 +84,12 @@ def lint(r) -> list:
         narr_words += n
         if n > NARRATION_MAX:
             err(f"segment {sid}: narration is {n} words; at most {NARRATION_MAX} (split the segment)")
+        for sent in re.split(r"(?<=[.!?])\s+", (g.get("narration") or "").strip()):
+            if words(sent) > SENTENCE_MAX:
+                warn(f"segment {sid}: a {words(sent)}-word sentence; keep spoken sentences to about 20 words")
+        on = re.sub(r"[^a-z0-9 ]", "", str(g.get("onscreen") or "").lower()).strip()
+        if on and len(on.split()) >= 4 and on in re.sub(r"[^a-z0-9 ]", "", str(g.get("narration") or "").lower()):
+            warn(f"segment {sid}: on-screen text repeats the narration word for word; show key words, reworded")
         for cid in g.get("claims") or []:
             if cid not in claim_ids:
                 err(f"segment {sid}: claim '{cid}' is not in claims.yaml")
@@ -109,6 +118,15 @@ def lint(r) -> list:
             err(f"storyboard: {n} controls; at most 2 (few readers touch any)")
         if not s.get("default_view"):
             err("storyboard: tier 3 needs 'default_view': what the page shows before anyone touches it")
-    if t == 4 and narr_words / WPM > ANIM_MINUTES_MAX:
-        err(f"narration is about {narr_words / WPM:.1f} min; at most {ANIM_MINUTES_MAX} (split into chapters)")
+    if t == 4:
+        chapters = {}
+        for g in segs:
+            chapters.setdefault(g.get("scene"), []).append(g)
+        quiet = sum(pause_for(g, pacing, chapter_end=g is gs[-1]) for gs in chapters.values() for g in gs)
+        minutes = narr_words / WPM + quiet / 60
+        if minutes > ANIM_MINUTES_MAX:
+            err(f"narration and pauses come to about {minutes:.1f} min; at most {ANIM_MINUTES_MAX} (cut, or split the video)")
+        for sc, gs in chapters.items():
+            if len(gs) >= 3 and not any(g.get("role") == "distil" for g in gs):
+                warn(f"chapter {sc}: {len(gs)} segments and no distil line; restate the idea before moving on")
     return out

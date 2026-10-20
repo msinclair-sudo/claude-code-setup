@@ -1,7 +1,7 @@
 # Brief
 
-- **Audience:** researchers who compare taxon richness across sequenced samples; they know what a read and a taxon are, not necessarily why depth matters.
-- **Message:** a sample sequenced more deeply shows more taxa even from the same community; rarefying both samples to the same depth removes that difference.
-- **Delivery:** tier 0, 1 and 3 are read (self-paced); tier 2 and 4 are presented (narrated, system-paced).
-- **Sources:** one simulated community and two samples (../sim.py, seed 7; every count comes from it); Hurlbert 1971 and Gotelli and Colwell 2001 for what rarefaction estimates; McMurdie and Holmes 2014 for its cost.
-- **Not in scope:** alternatives to rarefying (extrapolation, coverage-based standardisation, Chao estimators), real datasets, how to choose the depth.
+- **Audience:** researchers starting with microbiome metabarcoding; they know what bacteria and PCR are, not how counts get from soil to reads.
+- **Message:** a shallower sample finds fewer taxa because sequencing reads only some barcodes; rarefying to equal depth makes richness comparable but leaves every earlier bias in place.
+- **Delivery:** presented (narrated, system-paced).
+- **Sources:** the MB-01 literature review (vault `Topics/Biology/Research/Results/From sample to count table in 16S rRNA gene amplicon sequencing ...`), read critic block first; every literature claim in `claims.yaml` names its paper. Counts come from one simulated community (`../pipeline.py`, seed 7), calibrated where a measurement exists (copy-number range, PCR bias spread, cycle number).
+- **Not in scope:** alternatives to rarefying beyond naming them (coverage-based standardisation, log-ratio methods, extrapolation), real datasets, how to choose the depth, contamination and low-biomass samples.

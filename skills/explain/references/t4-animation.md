@@ -6,7 +6,9 @@
 - **Narration drives time:** each segment is one `with self.say("sN") as t:` block, animations take `run_time=t.duration` (or split it). The voice names what moves while it moves.
 - **Place everything on the grid** (`self.place(obj, "B2", "name", span="2x1")`) so overlaps and frame exits are caught; `release()` what you remove so hold times are checked. Each new element holds at least 2 s.
 - **One new thing at a time.** Dim (not delete) what the viewer still needs; remove what they don't.
-- **Draw on the dark tokens**, real data where the storyboard says `data`; a corner label `illustrative` otherwise.
+- **Draw on the dark tokens.** A colour keeps one meaning for the whole video: if colours mark taxa, samples get labels and line styles, not colours.
+- **Every frame says what it is:** `self.tag("schematic")` on drawings, `self.tag("simulated")` or `"data"` on charts; it sits bottom right and changes with the frame.
+- **Show the spread, not one draw,** when the narration is about variability: repeat the draw and plot every repeat faintly.
 - **After a render error, check the API below before retrying**; do not guess at Manim names.
 
 ## Cheat sheet (verified on manim 0.22.0, manim-voiceover 0.4.0, 2026-10-20)

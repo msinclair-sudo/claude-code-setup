@@ -1,70 +1,87 @@
-# Shared by every tier of the rarefaction exemplar (copied into each tier folder by build_all.sh).
-# The community and samples are simulated (sim.py, seed 7): every count is illustrative of the idea,
-# derived from that simulation, not from any real dataset.
+# Metabarcoding exemplar (tier 4). Counts come from pipeline.py (seed 7), a simulation; the literature claims cite their sources.
 claims:
-  - id: c1
-    text: "a simulated community of 300 taxa"
-    source: "sim.py: N_TAXA = 300; lognormal abundances, sigma 1.8, seed 7"
-    kind: illustrative
-    value: 300
-    unit: taxa
-  - id: c2
-    text: "the deep sample has 20,000 reads"
-    source: "sim.py: DEEP = 20000"
-    kind: illustrative
-    value: 20000
-    unit: reads
-  - id: c3
-    text: "the shallow sample has 2,000 reads"
-    source: "sim.py: SHALLOW = 2000"
-    kind: illustrative
-    value: 2000
-    unit: reads
-  - id: c4
-    text: "ten times as many reads"
-    source: "derived: 20000 / 2000"
-    kind: derived
-    value: 10
-  - id: c5
-    text: "the deep sample shows 288 taxa"
-    source: "sim.py data()['obs_deep'] (run sim.py to print it)"
-    kind: derived
-    value: 288
-    unit: taxa
-  - id: c6
-    text: "the shallow sample shows 221 taxa"
-    source: "sim.py data()['obs_shallow']"
-    kind: derived
-    value: 221
-    unit: taxa
-  - id: c7
-    text: "a gap of 67 taxa"
-    source: "derived: 288 - 221"
-    kind: derived
-    value: 67
-    unit: taxa
-  - id: c8
-    text: "rarefied to 2,000 reads, the deep sample shows 218 taxa on average"
-    source: "sim.py data()['rare_mean'] = 218.2, over 200 subsamples"
-    kind: derived
-    value: 218
-    unit: taxa
-  - id: c9
-    text: "the middle 95% of 200 subsamples span 208 to 228 taxa"
-    source: "sim.py data(): DRAWS = 200, rare_lo = 208, rare_hi = 228 (2.5th and 97.5th percentiles)"
-    kind: derived
-    value: "95 200 208 228"
-  - id: c10
-    text: "Rarefaction estimates the number of taxa expected in a random subsample of a smaller, common size, so samples of unequal size can be compared (Hurlbert 1971; Gotelli and Colwell 2001)."
-    source: "Hurlbert, S. H. (1971) Ecology 52(4): 577-586, doi:10.2307/1934145; Gotelli, N. J. and Colwell, R. K. (2001) Ecology Letters 4: 379-391, doi:10.1046/j.1461-0248.2001.00230.x"
-    kind: quoted
-  - id: c11
-    text: "Rarefying throws reads away; McMurdie and Holmes (2014) showed in simulations that it loses statistical power when testing which taxa differ in abundance."
-    source: "McMurdie, P. J. and Holmes, S. (2014) Waste not, want not: why rarefying microbiome data is inadmissible. PLoS Computational Biology 10(4): e1003531, doi:10.1371/journal.pcbi.1003531"
-    kind: quoted
-  - id: c12
-    text: "rarefying the deep sample to 2,000 reads sets aside 18,000 of its 20,000 reads"
-    source: "derived: 20000 - 2000"
-    kind: derived
-    value: 18000
-    unit: reads
+- id: m1
+  text: a simulated community of 100,000 cells from 80 taxa
+  source: 'pipeline.py: N_TAXA = 80, CELLS = 100_000; lognormal abundances, sigma 2.0'
+  kind: illustrative
+  value: 100000 80
+- id: m2
+  text: a few taxa are common and most are rare (the commonest is 23% of cells)
+  source: 'pipeline.py data() (run pipeline.py to print it); seed 7: cells[0] = 23,000 of 100,000'
+  kind: derived
+  value: 23
+  unit: '%'
+- id: m3
+  text: the 16S ribosomal RNA gene is read as a marker for which bacteria are present; every bacterial genome in rrnDB carries one or more copies
+  source: 'Caporaso, J. G. et al. (2011) Global patterns of 16S rRNA diversity at a depth of millions of sequences per sample. PNAS 108(Suppl 1): 4516-4522, doi:10.1073/pnas.1000080107 (marker role); Stoddard et al. (2015), as m4 (one or more copies)'
+  kind: quoted
+- id: m4
+  text: bacterial genomes carry from one to about fifteen copies of the 16S rRNA gene
+  source: 'Stoddard, S. F., Smith, B. J., Hein, R., Roller, B. R. K. and Schmidt, T. M. (2015) rrnDB: improved tools for interpreting rRNA gene abundance in bacteria and archaea and a new foundation for future development. Nucleic Acids Research 43(D1): D593-D598, doi:10.1093/nar/gku1201'
+  kind: quoted
+  value: 1 15
+- id: m5
+  text: in the simulated community the commonest taxon carries 8 copies and taxon 3 carries 1
+  source: 'pipeline.py data() (run pipeline.py to print it); seed 7: copies[0] = 8, copies[2] = 1 (copies drawn from 1 to 10)'
+  kind: illustrative
+  value: 8 1 3 10
+- id: m6
+  text: PCR copies a short stretch of the gene, the barcode, nearly doubling it each cycle; in this model each taxon's template has its own efficiency (0.88 to 0.95); PCR is known to distort template ratios
+  source: 'model: pipeline.py eff = uniform(0.88, 0.95); distortion of template ratios: Suzuki, M. T. and Giovannoni, S. J. (1996) Applied and Environmental Microbiology 62(2): 625-630, doi:10.1128/aem.62.2.625-630.1996 (there, reannealing pulled ratios toward 1:1 with one primer pair)'
+  kind: illustrative
+- id: m7
+  text: after 25 cycles one template has become millions of copies
+  source: 'derived: (1 + 0.88)^25 = 7.1 million, (1 + 0.95)^25 = 17.8 million; CYCLES = 25'
+  kind: derived
+  value: 25
+- id: m8
+  text: copy number and uneven amplification reshape the counts; for a fixed protocol the bias acts as a consistent multiplier on each taxon's share
+  source: 'McLaren, M. R., Willis, A. D. and Callahan, B. J. (2019) Consistent and correctable bias in metagenomic sequencing experiments. eLife 8: e46923, doi:10.7554/eLife.46923'
+  kind: quoted
+- id: m9
+  text: the commonest taxon rises from 23% of cells to 49.5% of barcodes
+  source: 'pipeline.py data() (run pipeline.py to print it); seed 7: true[0] = 0.230, pool[0] = 0.495'
+  kind: derived
+  value: 23 49.5
+- id: m10
+  text: taxon 3 falls from 7.5% of cells to 1.0% of barcodes
+  source: 'pipeline.py data() (run pipeline.py to print it); seed 7: true[2] = 0.075, pool[2] = 0.010'
+  kind: derived
+  value: 3 7.5 1.0
+- id: m11
+  text: the sequencer reads a random sample of the barcodes, and each read is matched to a taxon by its sequence; the number of reads per sample is the sequencing depth
+  source: 'model: reads are a multinomial draw from the amplicon pool (pipeline.py sequence())'
+  kind: illustrative
+- id: m12
+  text: 79 of the 80 taxa are found at 50,000 reads, 68 at 5,000 and 47 at 500
+  source: 'pipeline.py data() (run pipeline.py to print it); seed 7: observed(runs[d]) for d in 500, 5,000, 50,000'
+  kind: derived
+  value: 79 80 68 47 500 5000 50000
+- id: m13
+  text: in 30 repeat sequencings at each depth, the top taxon's share stays near its 49.5% of the pool while a rare taxon's share scatters or drops to zero at low depth; depth changes the precision of a share, not its expected value
+  source: 'pipeline.py: pool shares; repeats drawn in scene.py Depth (binomial(depth, pool share) / depth, 30 per depth); a multinomial draw is unbiased for each pool share'
+  kind: derived
+  value: 30 49.5
+- id: m14
+  text: 'two samples from the same soil: 50,000 reads show 78 taxa, 2,000 reads show 64'
+  source: 'pipeline.py data() (run pipeline.py to print it); seed 7: obs_deep = 78 (DEEP = 50,000), obs_shallow = 64 (SHALLOW = 2,000)'
+  kind: derived
+  value: 50000 78 2000 64
+- id: m15
+  text: rarefied to 2,000 reads 200 times, the deep sample finds 63 taxa on average, the middle 95% between 59 and 68; the shallow sample's 64 sits inside
+  source: 'pipeline.py data(): rare_mean = 63.2, percentiles 58.975 and 68 rounded to 59 and 68, DRAWS = 200'
+  kind: derived
+  value: 2000 200 63 95 59 68 64
+- id: m16
+  text: rarefying the deep sample to 2,000 reads sets aside 48,000 of its 50,000 reads; it does not remove PCR or copy-number bias, and does not recover taxa a shallow sample missed
+  source: 'derived: 50000 - 2000; the subsample is drawn from reads that already carry the bias (pipeline.py rarefy())'
+  kind: derived
+  value: 48000
+- id: c10
+  text: Rarefaction estimates the number of taxa expected in a random subsample of a smaller, common size, so samples of unequal size can be compared (Hurlbert 1971; Gotelli and Colwell 2001).
+  source: 'Hurlbert, S. H. (1971) Ecology 52(4): 577-586, doi:10.2307/1934145; Gotelli, N. J. and Colwell, R. K. (2001) Ecology Letters 4: 379-391, doi:10.1046/j.1461-0248.2001.00230.x'
+  kind: quoted
+- id: c11
+  text: Rarefying throws reads away; McMurdie and Holmes (2014) showed in simulations that it loses statistical power when testing which taxa differ in abundance.
+  source: 'McMurdie, P. J. and Holmes, S. (2014) Waste not, want not: why rarefying microbiome data is inadmissible. PLoS Computational Biology 10(4): e1003531, doi:10.1371/journal.pcbi.1003531'
+  kind: quoted

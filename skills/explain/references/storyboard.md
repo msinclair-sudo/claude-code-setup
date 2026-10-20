@@ -6,12 +6,22 @@ The plan is written before any code, and `x lint` checks it. A plan that cannot 
 - `title`, `message` (one sentence the reader can repeat), `audience`, `delivery` (`read` or `presented`).
 - `tier`, `tier_reason` (why the tier below would not carry the message; required above 0).
 - `voice` (tier 2), `default_view` and `controls` (tier 3), `numbers_ok` (incidental numbers needing no claim).
-- `segments[]`: `id`, `visual` (what is drawn), `onscreen` (≤ 12 words), `narration` (≤ 35 words, about 13 s), `claims` (ids in `claims.yaml`), and:
+- `segments[]`: `id`, `role` (setting, mechanism, problem, resolution, limits), `visual` (what is drawn), `onscreen` (≤ 12 words), `narration` (≤ 35 words, about 13 s), `claims` (ids in `claims.yaml`), and:
   - tier 2: `step` = `"h.v.f"`, the slide and fragment where it plays (`f` = -1 before any fragment);
   - tier 4: `scene` (the Manim class), `anchors` (`{name: cell}`, cells A1-F4 on a 6×4 grid, A1 top left), `verify` (`inside_frame: all`, `no_overlap: all | [a, b]`, `order: [a, b]`, `hold_min_s: 2`).
 
 ## The token pass
 Before any code, edit `tokens.json`: 4-6 colours with one accent, the typefaces, and a one-line layout concept. Data carries the colour; chrome stays quiet. Defaults read as generic; a deliberate choice of accent and type, made for this material, does not.
+
+## The arc: setting first
+Open with the **setting** before any problem: what the system is, what is really there, and how it is measured. A reader dropped straight into "two samples differ" has nothing to hang it on. Give each segment a `role`, in roughly this order:
+- `setting`: the thing being studied, and what an ideal measurement would show;
+- `mechanism`: how the measurement actually works, step by step;
+- `problem`: where and how the measurement departs from the truth;
+- `resolution`: what the method being explained does about it;
+- `limits`: what it does not fix, and what it costs.
+
+From tier 2 up, `x lint` warns when the first segment is not `setting`. (Owner review, 2026-10-20: the first exemplars "dive straight into it"; the rebuilt tier 4 starts from a droplet of soil.)
 
 ## Writing segments
 - One idea per segment. If the narration needs "and then", split it.

@@ -42,7 +42,7 @@ def data():
     draws = [observed(rarefy(deep, SHALLOW, rng)) for _ in range(DRAWS)]
     return dict(p=p, deep=deep, shallow=shallow, obs_deep=observed(deep), obs_shallow=observed(shallow),
                 rare_draws=np.array(draws), rare_mean=float(np.mean(draws)),
-                rare_lo=int(np.percentile(draws, 2.5)), rare_hi=int(np.percentile(draws, 97.5)))
+                rare_lo=int(round(np.percentile(draws, 2.5))), rare_hi=int(round(np.percentile(draws, 97.5))))
 
 
 if __name__ == "__main__":

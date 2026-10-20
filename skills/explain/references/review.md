@@ -23,6 +23,6 @@ A round is build, check **and** review. Rebuilding to clear `x check` faults bef
 
 **Interactive:** the default view carries the message without touching anything; each control changes something the text names; it still reads at 390 px.
 
-**Animation:** every object stays in frame; nothing overlaps unless it means to; each new element holds long enough to read; the narration names what is moving while it moves; nothing changes in silence for long.
+**Animation:** a colour keeps one meaning from first frame to last (if blue is a taxon, it is never also a sample); every frame says whether it is schematic, simulated or data (`self.tag(...)`); every term the narration leans on appears on screen once; every object stays in frame; nothing overlaps unless it means to; each new element holds long enough to read; the narration names what is moving while it moves; nothing changes in silence for long.
 
 **Narration:** pronunciation of technical terms (check against the lexicon in `narration.md`); no number read differently from how it is shown; captions match the speech.

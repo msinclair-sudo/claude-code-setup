@@ -13,6 +13,7 @@ ANIM_MINUTES_MAX, WPM = 6, 155
 CELL = re.compile(r"^[A-F][1-4]$")
 STEP = re.compile(r"^\d+\.\d+\.-?\d+$")
 KINDS = {"quoted", "derived", "illustrative"}
+ROLES = ("setting", "mechanism", "problem", "resolution", "limits")
 
 
 def lint(r) -> list:
@@ -52,6 +53,13 @@ def lint(r) -> list:
     segs = r.segments
     if t >= 2 and not segs:
         err("storyboard: segments are required from tier 2 up")
+    roles = [g.get("role") for g in segs]
+    for g in segs:
+        if g.get("role") and g["role"] not in ROLES:
+            err(f"segment {g.get('id')}: role is one of {', '.join(ROLES)}")
+    if t >= 2 and segs and roles[0] != "setting":
+        warn("storyboard: the first segment should set the scene (role: setting): what the system is and "
+             "how it was measured, before the problem")
     ids, steps, narr_words = set(), set(), 0
     for i, g in enumerate(segs):
         sid = g.get("id") or f"#{i + 1}"

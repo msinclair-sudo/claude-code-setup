@@ -1,46 +1,111 @@
-title: "Rarefaction"
-message: "A sample sequenced more deeply shows more taxa even from the same community; rarefying both samples to the same depth removes that difference."
-audience: "researchers comparing richness across sequenced samples"
+title: "Rarefaction in a metabarcoding experiment"
+message: "A shallower sample finds fewer taxa because sequencing only samples the barcodes; rarefying to a common depth makes richness comparable but leaves PCR bias in place."
+audience: "researchers starting with microbiome metabarcoding; they know what bacteria and PCR are, not how counts get from soil to reads"
 delivery: presented
 tier: 4
-tier_reason: "the cause is a process: each read may reveal a taxon not yet seen, so the count climbs as reads accumulate; watching taxa light up as reads arrive shows why depth alone changes the count, which a static figure only asserts"
+tier_reason: "the explanation is a chain of transformations (cells, gene copies, PCR doubling, random draws of reads, subsampling), each a process that changes the counts; watching each step reshape the same bar chart shows where every distortion enters"
 voice: true
-numbers_ok: [1971, 2001, 2014]
+numbers_ok: [1, 2, 4, 8, 16, 41]
 segments:
+  # chapter 1: the setting (what is really there)
   - id: s1
-    scene: Reads
-    visual: "a 20 by 15 grid of dim dots, the community; dot size hints at abundance"
-    onscreen: "300 simulated taxa, most of them rare"
-    narration: "This grid is a simulated community of 300 taxa. Each dot is one taxon, and most of them are rare."
-    claims: [c1]
-    anchors: {grid: A1, counter: E2, caption: E1}
-    verify: {inside_frame: all, no_overlap: [grid, counter, caption], hold_min_s: 2}
+    role: setting
+    scene: Soil
+    visual: "a magnifying glass slides over a droplet of soil; inside, bacterial cells (rods and cocci) in several colours"
+    onscreen: "a droplet of soil, simulated"
+    narration: "A droplet of soil holds thousands of bacterial cells of many kinds. Ours is simulated: 100,000 cells from 80 taxa."
+    claims: [m1]
+    anchors: {glass: A1, label: A4}
+    verify: {inside_frame: all, no_overlap: [glass, label]}
   - id: s2
-    scene: Reads
-    visual: "reads arrive; each taxon lights blue the first time a read hits it; the counter climbs fast, then slowly, to 288 at 20,000 reads"
-    onscreen: "deep: 20,000 reads"
-    narration: "Sequence a sample deeply, to 20,000 reads. Each new read may reveal a taxon not yet seen. This sample shows 288."
-    claims: [c2, c5]
-    verify: {inside_frame: all, no_overlap: [grid, counter, caption]}
+    role: setting
+    scene: Soil
+    visual: "beside the droplet, a bar chart grows: cells per taxon, commonest first; the first bars wear the cells' colours, the long tail is grey"
+    onscreen: "the true counts"
+    narration: "Counted cell by cell, a few taxa are common and most are rare. These true counts are what an experiment sets out to measure."
+    claims: [m1, m2]
+    anchors: {chart: D1}
+    verify: {inside_frame: all, no_overlap: [glass, chart]}
+  # chapter 2: the measurement (how counts become barcodes)
   - id: s3
-    scene: Reads
-    visual: "the grid resets; the shallow sample's reads light dots orange; its counter stops at 221 after 2,000 reads"
-    onscreen: "shallow: 2,000 reads; 67 fewer"
-    narration: "Sequence the same community to only 2,000 reads, and it shows 221. That gap of 67 taxa comes from depth alone."
-    claims: [c3, c6, c7]
-    verify: {inside_frame: all, no_overlap: [grid, counter, caption]}
+    role: mechanism
+    scene: Barcode
+    visual: "one cell opens to its circular genome; an arc of it lights up and is labelled 16S rRNA gene"
+    onscreen: "the 16S rRNA gene"
+    narration: "We cannot count cells directly. Instead we read a gene that bacteria carry: the 16S ribosomal RNA gene, here on one cell's circular genome."
+    claims: [m3]
+    verify: {inside_frame: all}
   - id: s4
-    scene: Curve
-    visual: "axes of reads against taxa; the deep sample's curve draws left to right; the shallow sample's dot sits on it at 2,000"
-    onscreen: "taxa found, as reads are used"
-    narration: "Plot the taxa found against the reads used. The deep sample's count rises steeply, then slowly, and the shallow sample sits right on its curve."
-    claims: [c10]
-    anchors: {axes: A1, title: A1}
-    verify: {inside_frame: all, order: [axes, curve, dot]}
+    role: mechanism
+    scene: Barcode
+    visual: "two genomes side by side: taxon 1 with eight 16S arcs, taxon 3 with one"
+    onscreen: "copies per genome: 8 and 1"
+    narration: "Genomes carry from one to about fifteen copies of it. In our community the commonest taxon carries eight; taxon three carries one."
+    claims: [m4, m5]
+    verify: {inside_frame: all, no_overlap: [g1, g3]}
   - id: s5
-    scene: Curve
-    visual: "a dashed line at 2,000 reads; the deep curve's value there (218) beside the shallow sample (221)"
-    onscreen: "deep at 2,000, average: 218; shallow: 221"
-    narration: "Rarefaction compares both at the same depth. At 2,000 reads the deep sample shows 218 taxa on average, beside 221. The gap is gone."
-    claims: [c8, c6]
-    verify: {inside_frame: all, no_overlap: [deep_val, shallow_val]}
+    role: mechanism
+    scene: Barcode
+    visual: "a short stretch of the gene, the barcode, is copied cycle by cycle: 1, 2, 4, 8, 16 strands, then a counter to 25 cycles"
+    onscreen: "PCR: 25 cycles"
+    narration: "PCR copies one short stretch of it, the barcode, over and over. Each cycle nearly doubles it, so after 25 cycles one template has become millions."
+    claims: [m6, m7]
+    verify: {inside_frame: all}
+  - id: s6
+    role: problem
+    scene: Barcode
+    visual: "the bar chart returns; bars morph from share of cells to share of barcodes; taxon 1 grows from 23% to 49.5%, taxon 3 shrinks from 7.5% to 1.0%"
+    onscreen: "cells → barcodes: 23% → 49.5%, 7.5% → 1.0%"
+    narration: "Copy number and uneven amplification reshape the counts. The commonest taxon rises from 23% of cells to 49.5% of barcodes; taxon three falls from 7.5% to 1%."
+    claims: [m8, m9, m10]
+    verify: {inside_frame: all}
+  # chapter 3: sequencing is sampling
+  - id: s7
+    role: mechanism
+    scene: Depth
+    visual: "the barcode pool as a heap of coloured strands; a sequencer draws a few at random; a counter of reads"
+    onscreen: "sequencing depth = reads per sample"
+    narration: "The sequencer reads a random sample of those barcodes, and each read is matched to a taxon by its sequence. The number of reads per sample is the sequencing depth."
+    claims: [m11]
+    verify: {inside_frame: all}
+  - id: s8
+    role: problem
+    scene: Depth
+    visual: "three bar charts at 500, 5,000 and 50,000 reads; missing taxa shown as empty slots; counts 47, 68, 79 of 80"
+    onscreen: "taxa found: 47, 68, 79 of 80"
+    narration: "At 50,000 reads, 79 of the 80 taxa turn up. At 5,000, 68. At 500, only 47: the rare ones are never drawn."
+    claims: [m12]
+    verify: {inside_frame: all, no_overlap: all}
+  - id: s9
+    role: problem
+    scene: Depth
+    visual: "30 repeat sequencings at each depth, each a faint dot: taxon 1's shares cluster tightly on its 49.5% of the pool; a rare taxon's shares scatter widely or sit at zero at 500 reads, narrowing with depth"
+    onscreen: "common taxa: stable share; rare taxa: noisy or gone"
+    narration: "Common taxa keep their share at every depth, near half for the top one. Rare taxa jump around or vanish. Depth changes how precise a share is, not its expected value."
+    claims: [m13]
+    verify: {inside_frame: all}
+  # chapter 4: rarefaction
+  - id: s10
+    role: problem
+    scene: Rarefy
+    visual: "two samples from the same soil: deep (50,000 reads, 78 taxa) and shallow (2,000 reads, 64 taxa)"
+    onscreen: "same soil, two samples: 78 taxa and 64"
+    narration: "Now two samples from the same soil. Read to 50,000 reads, one shows 78 taxa; read to 2,000, the other shows 64. The gap is depth, not soil."
+    claims: [m14]
+    verify: {inside_frame: all, no_overlap: all}
+  - id: s11
+    role: resolution
+    scene: Rarefy
+    visual: "the deep sample's reads are subsampled down to 2,000, again and again; a histogram of 200 results builds up; the shallow sample's 64 lands inside its middle 95%"
+    onscreen: "rarefied to 2,000: 63 on average"
+    narration: "Rarefaction subsamples the deeper sample down to 2,000 reads. Repeated 200 times, it finds 63 taxa on average, the middle 95% between 59 and 68. The shallow sample's 64 sits inside."
+    claims: [m15, c10]
+    verify: {inside_frame: all, no_overlap: all}
+  - id: s12
+    role: limits
+    scene: Rarefy
+    visual: "a short list beside the histogram: PCR and copy-number bias remain; missed rare taxa stay missed; 48,000 reads set aside"
+    onscreen: "makes richness comparable; does not undo PCR bias; sets reads aside"
+    narration: "What it does not fix: the PCR and copy-number bias are in every read, and rare taxa the shallow sample missed stay missed. It also sets 48,000 reads aside."
+    claims: [m16, c11]
+    verify: {inside_frame: all}

@@ -14,6 +14,7 @@ numbers_ok: []            # incidental numbers that need no claim (figure number
 
 segments:                 # tier 0-1: optional (the page's sections); tier 2-4: required
   - id: s1
+    role: setting         # setting | mechanism | problem | resolution | limits; open with the setting
     visual: "what is drawn"
     onscreen: "at most 12 words"
     narration: "at most 35 words, said while the visual is on screen"

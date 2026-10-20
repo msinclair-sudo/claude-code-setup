@@ -84,6 +84,23 @@ class ExplainScene(VoiceoverScene):
             self._placed[name] = {"m": m, "t": self.renderer.time, "cell": f"{cell}/{span}"}
         return m
 
+    def tag(self, text: str, font: str = "Lato", color: str = "#9AA4AE", size: int = 22):
+        """A corner label (bottom right) saying what the frame is: 'schematic', 'simulated', 'data'.
+        Call again to change it; returns the animation to play (or None if unchanged)."""
+        from manim import FadeIn, Text, Transform
+        new = Text(text, font=font, font_size=size, color=color)
+        x0, y0, x1, y1 = cell_box("F4")
+        new.move_to([x1 - new.width / 2 - 0.15, y0 + new.height / 2 + 0.15, 0])
+        old = getattr(self, "_tag", None)
+        if old is not None and old.text == text:
+            return None
+        if old is None:
+            self._tag = new
+            return FadeIn(new)
+        anim = Transform(old, new)
+        old.text = text
+        return anim
+
     def track(self, m, name: str):
         """Record an object placed some other way (axes coordinates, next_to) for the verify checks."""
         self._placed[name] = {"m": m, "t": self.renderer.time, "cell": "tracked"}

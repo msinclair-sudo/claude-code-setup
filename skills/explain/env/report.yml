@@ -1,0 +1,26 @@
+# The `report` conda env for the explain skill. Built by scripts/install-env.sh;
+# the pip layer is env/requirements.txt. conda-forge supplies the native
+# libraries (ffmpeg, cairo, pango, graphviz) so nothing needs sudo.
+name: report
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12            # 3.13+ dropped audioop, which pydub (manim-voiceover) imports
+  - manim=0.22.0
+  - manimpango
+  - pycairo
+  - ffmpeg=9.0.2=gpl*      # the gpl build carries libx264
+  - cairo
+  - pango
+  - fontconfig
+  - fonts-conda-ecosystem
+  - graphviz
+  - python-graphviz
+  - numpy
+  - scipy
+  - pandas
+  - matplotlib
+  - pyyaml
+  - pysoundfile            # imported as soundfile
+  - pip

@@ -1,0 +1,6 @@
+# pip layer of the `report` env, installed after env/report.yml.
+manim-voiceover==0.4.0     # installed --no-deps if it would replace conda's manim (install-env.sh checks)
+kokoro-onnx==0.6.1
+plotly==7.1.0
+kaleido==1.5.0
+playwright==1.60.0         # same as the biblion env, so the cached chromium-1243 is reused

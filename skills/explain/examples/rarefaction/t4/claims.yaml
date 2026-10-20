@@ -7,7 +7,7 @@ claims:
   kind: illustrative
   value: 100000 80
 - id: m2
-  text: a few taxa are common and most are rare (the commonest is 23% of cells)
+  text: in the simulated soil a few taxa are abundant and hold most of the cells, and most taxa are present at low abundance (the most abundant is 23% of cells)
   source: 'pipeline.py data() (run pipeline.py to print it); seed 7: cells[0] = 23,000 of 100,000'
   kind: derived
   value: 23
@@ -23,8 +23,8 @@ claims:
   source: 'Caporaso, J. G. et al. (2011) Global patterns of 16S rRNA diversity at a depth of millions of sequences per sample. PNAS 108(Suppl 1): 4516-4522, doi:10.1073/pnas.1000080107'
   kind: quoted
 - id: m5
-  text: bacterial genomes carry from 1 to 15 copies of the 16S rRNA gene
-  source: 'Stoddard, S. F., Smith, B. J., Hein, R., Roller, B. R. K. and Schmidt, T. M. (2015) rrnDB: improved tools for interpreting rRNA gene abundance in bacteria and archaea and a new foundation for future development. Nucleic Acids Research 43(D1): D593-D598, doi:10.1093/nar/gku1201'
+  text: a genome carries from 1 to about 15 copies of the 16S rRNA gene, rarely more, depending on the taxon
+  source: 'Stoddard, S. F., Smith, B. J., Hein, R., Roller, B. R. K. and Schmidt, T. M. (2015) rrnDB: improved tools for interpreting rRNA gene abundance in bacteria and archaea and a new foundation for future development. Nucleic Acids Research 43(D1): D593-D598, doi:10.1093/nar/gku1201 (bacteria 1 to 15); Vetrovsky, T. and Baldrian, P. (2013) The variability of the 16S rRNA gene in bacterial genomes and its consequences for bacterial community analyses. PLoS ONE 8(2): e57923, doi:10.1371/journal.pone.0057923 (1,690 genomes, mean 4.2); rarely more: MB-02 review (vault Topics/Biology/Research/Results), rrnDB v5.6 and v5.10 release files list maxima of 21 and 22 (reviewer derivation, not checked against assembly quality)'
   kind: quoted
   value: 1 15
 - id: m6
@@ -52,10 +52,10 @@ claims:
   kind: derived
   value: 15 80 35
 - id: m11
-  text: in the simulation, extraction, copy number and PCR each reshape the shares; the commonest taxon rises from 23% of cells to 46% of barcodes and taxon 3 falls from 7.5% to 0.5%
+  text: in the simulation, extraction, copy number and PCR each reshape the shares; taxon 1 goes from 23% of cells to 49.5% of 16S gene copies and 46% of barcodes, and taxon 3 falls from 7.5% of cells to 0.5% (half a percent) of barcodes
   source: 'pipeline.py stages(); seed 7: taxon 1 true 0.230, dna 0.314, templates 0.495, pool 0.458; taxon 3 true 0.075, dna 0.042, templates 0.009, pool 0.005'
   kind: derived
-  value: 23 46 3 7.5 0.5
+  value: 23 49.5 46 1 3 7.5 0.5
 - id: m12
   text: each sample's amplicons get a short index sequence naming the sample, and many samples are pooled and sequenced together in one run
   source: 'Illumina, Inc. 16S Metagenomic Sequencing Library Preparation, Part 15044223 Rev. B (index PCR, then pooling); Kozich, J. J., Westcott, S. L., Baxter, N. T., Highlander, S. K. and Schloss, P. D. (2013) Development of a dual-index sequencing strategy and curation pipeline for analyzing amplicon sequence data on the MiSeq Illumina sequencing platform. Applied and Environmental Microbiology 79(17): 5112-5120, doi:10.1128/AEM.01043-13'
@@ -138,3 +138,12 @@ claims:
   text: shares (relative abundances) cannot show total microbial load; measuring it takes spike-ins or cell counts (flow cytometry)
   source: 'Vandeputte, D. et al. (2017) Quantitative microbiome profiling links gut community variation to microbial load. Nature 551(7681): 507-511, doi:10.1038/nature24460 (abstract only; load by flow cytometry cell counts); Tkacz, A., Hortala, M. and Poole, P. S. (2018) Absolute quantitation of microbiota abundance in environmental samples. Microbiome 6: 110, doi:10.1186/s40168-018-0491-7 (soil, spike-ins)'
   kind: quoted
+- id: m30
+  text: a cell can hold several copies of its genome; in lab cultures, from one to dozens or more, depending on the species and how fast it grows; in soil, genome copies per cell have barely been measured
+  source: 'Pecoraro, V., Zerulla, K., Lange, C. and Soppa, J. (2011) Quantification of ploidy in proteobacteria revealed the existence of monoploid, (mero-)oligoploid and polyploid species. PLoS ONE 6(1): e16392, doi:10.1371/journal.pone.0016392 (Caulobacter about 2.1 and Wolinella about 0.9 genome equivalents; E. coli 6.8 origins in fast growth; Pseudomonas putida about 20; Table 5: Azotobacter vinelandii about 40 in fast growth, from another laboratory; a methanogen with about 50 genome copies); soil: MB-02 review found indirect soil evidence only (DNA mass per cell), no taxon-level measurement'
+  kind: quoted
+- id: m31
+  text: in one global survey of soils, the dominant 2% of bacterial phylotypes (chosen for being both abundant and widespread) made up about 41% of the reads in an average sample
+  source: 'Delgado-Baquerizo, M., Oliverio, A. M., Brewer, T. E., Benavent-Gonzalez, A., Eldridge, D. J., Bardgett, R. D., Maestre, F. T., Singh, B. K. and Fierer, N. (2018) A global atlas of the dominant bacteria found in soil. Science 359(6373): 320-325, doi:10.1126/science.aap9516'
+  kind: quoted
+  value: 2 41

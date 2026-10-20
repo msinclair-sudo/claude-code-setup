@@ -24,7 +24,7 @@ def css(t: dict) -> str:
     """Variables plus a small base used by page.html and deck.html."""
     f, s = t["font"], t["size"]
     return (
-        f":root{{{_vars(t['color'])}--x-font:{f['body']};--x-mono:{f['mono']};"
+        f":root{{{_vars(t['color'])}--x-font:{f['body']};--x-mono:{f['mono']};--x-measure:{s['measure_ch']}ch;"
         f"--x-caption-bg:rgba(0,0,0,.72);--x-caption-fg:#fff;--x-caption-font:600 22px/1.35 {f['body']};}}"
         f"@media (prefers-color-scheme: dark){{:root{{{_vars(t['dark'])}}}}}"
         f"html,body{{background:var(--x-bg);color:var(--x-fg);font-family:var(--x-font);}}"

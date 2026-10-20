@@ -1,0 +1,10 @@
+# Every number and factual statement the reader sees or hears, with where it comes from.
+# kind: quoted (said by the source), derived (computed from the source; say how),
+#       illustrative (made up to show the idea; the page labels it so).
+claims:
+  - id: c1
+    text: "the sentence or label exactly as shown or spoken"
+    source: "path/to/file.py:120 | doi:10.xxxx/yyy | the query that produced it"
+    kind: quoted
+    value: 0
+    unit: ""

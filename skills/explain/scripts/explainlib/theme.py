@@ -38,6 +38,11 @@ def css(t: dict) -> str:
         f".reveal h2{{font-size:1.6em;}} .reveal .slides section{{text-align:left;}}"
         f".reveal .controls,.reveal .progress{{color:var(--x-accent);}}"
         f".reveal img,.reveal svg{{max-width:100%;max-height:520px;}}"
+        f".reveal .slides section{{height:100%;box-sizing:border-box;padding:48px 64px;}}"
+        f".reveal .x-visual{{display:flex;align-items:center;justify-content:center;height:520px;}}"
+        f".reveal .x-split{{display:grid;grid-template-columns:3fr 2fr;gap:48px;align-items:center;height:520px;}}"
+        f".reveal .x-split > :last-child{{font-size:.9em;color:var(--x-muted);}}"
+        f".reveal .x-big{{font-size:2.4em;font-weight:700;color:var(--x-accent);line-height:1.1;}}"
     )
 
 

@@ -1,5 +1,13 @@
 # Tier 2: stepped slides (reveal.js 6, optional narration)
 
+## Rules
+- **One idea per slide, a visual on every slide**, at most 12 words of text on it. A slide of bullets is a page; make it tier 1.
+- **Build in the order of the explanation:** a fragment appears when the narration reaches it (signalling, temporal contiguity). Each fragment is a storyboard segment with its `step`.
+- **Layouts:** `<div class="x-split">` puts the visual left (60%) and its label right; `<div class="x-visual">` gives one visual the slide. Vary the layout across the deck.
+- **No accent lines under titles, no decorative stripes or icons**; colour comes from the data and the one accent.
+- **Narration (`--voice`)** is for steps that are mainly pictures. Captions are always on. The reader can pause (P) and step by hand.
+- **Never leave overflow:** text that wraps or spills is the commonest slide fault; `x check` measures every step.
+
 ## Cheat sheet (verified on reveal.js 6.0.2, 2026-10-20)
 
 - **One self-contained file.** `templates/deck.html` inlines `dist/reveal.css` and `dist/reveal.js` from `$REPORT_HOME/vendor/reveal.js-6.0.2/`. Narration clips sit beside it in `audio/`.

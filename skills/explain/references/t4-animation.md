@@ -1,5 +1,14 @@
 # Tier 4: narrated animation (Manim CE 0.22 + Kokoro)
 
+## Rules
+- **Only for a change** the viewer must understand (a process, a transformation, a walk through a structure), watched narrated and system-paced. A result that is a static shape is a tier 1 figure.
+- **At most 6 minutes, in chapters:** one Manim scene per chapter, a few segments per scene.
+- **Narration drives time:** each segment is one `with self.say("sN") as t:` block, animations take `run_time=t.duration` (or split it). The voice names what moves while it moves.
+- **Place everything on the grid** (`self.place(obj, "B2", "name", span="2x1")`) so overlaps and frame exits are caught; `release()` what you remove so hold times are checked. Each new element holds at least 2 s.
+- **One new thing at a time.** Dim (not delete) what the viewer still needs; remove what they don't.
+- **Draw on the dark tokens**, real data where the storyboard says `data`; a corner label `illustrative` otherwise.
+- **After a render error, check the API below before retrying**; do not guess at Manim names.
+
 ## Cheat sheet (verified on manim 0.22.0, manim-voiceover 0.4.0, 2026-10-20)
 
 Run everything through `scripts/x run …` so `REPORT_*`, the env's PATH and `explainlib` are set.

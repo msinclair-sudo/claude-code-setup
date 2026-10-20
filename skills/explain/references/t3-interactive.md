@@ -1,5 +1,13 @@
 # Tier 3: interactive page (Plotly 7)
 
+## Rules
+- **The default view carries the message** with nothing touched: about 5% of readers move a slider. Write `default_view` in the storyboard first; if the default view needs the control to make sense, the page is not ready.
+- **At most two controls on the page**, each changing something the text names ("move the depth: richness keeps climbing").
+- **Uncertainty as outcomes:** a hypothetical-outcome plot (one draw per frame, Play to step) reads better than error bars alone.
+- **Optional predict-then-reveal:** ask the reader to guess before a step shows the answer.
+- **Nothing moves on load.** No autoplay; the check fails a page whose plots change by themselves.
+- **It must still read at 390 px wide.**
+
 ## Cheat sheet (verified on plotly 7.1.0, kaleido 1.5.0, 2026-10-20)
 
 - **Offline page:** first figure `pio.to_html(fig, include_plotlyjs=True, full_html=False, div_id="f1", auto_play=False)`, later figures `include_plotlyjs=False`. Plotly.js inline costs about 4.6 MB once per page. Never `'cdn'`.

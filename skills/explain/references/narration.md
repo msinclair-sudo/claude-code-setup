@@ -2,6 +2,7 @@
 
 ## Cheat sheet (measured 2026-10-20, CPU, kokoro-onnx 0.6.1, model v1.0)
 
+- **Voice:** the owner chose **bm_george** (British male, about 155 wpm at speed 1.0). Voice, speed and provider live in `~/.config/explain/config.env`; edit them there.
 - **Speed:** about 0.26× real time on CPU (a 10 s clip takes about 2.7 s). No GPU needed.
 - **Rate at speed 1.0** on a 28-word method sentence:
 

@@ -4,7 +4,8 @@
 #   2. its pip layer (env/requirements.txt), never letting pip replace conda's manim
 #   3. Kokoro model files into $REPORT_HOME/models
 #   4. reveal.js and axe-core into $REPORT_HOME/vendor (offline copies; no CDN at render time)
-# then print the REPORT_* block to append to ~/.env. Safe to re-run.
+# then write the settings file ~/.config/explain/config.env (paths and voice;
+# nothing secret, so not ~/.env). Safe to re-run.
 #
 #   install-env.sh [--base ~/miniforge3] [--home ~/.local/share/explain] [--name report]
 #
@@ -21,7 +22,7 @@ while [ $# -gt 0 ]; do
     --base) BASE="$2"; shift 2 ;;
     --home) RHOME="$2"; shift 2 ;;
     --name) NAME="$2"; shift 2 ;;
-    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -103,17 +104,33 @@ for pkg in $VENDOR_PKGS; do
   echo "  unpacked $dir"
 done
 
-say "5. append this block to ~/.env (then run scripts/check.sh)"
+CONF="${EXPLAIN_CONFIG:-$HOME/.config/explain/config.env}"
+say "5. settings file $CONF (not secret; edit voice and speed there)"
+keep() {  # existing value of a setting the owner may have changed, else the default
+  local v=""
+  [ -f "$CONF" ] && v=$(sed -n "s/^$1=//p" "$CONF" | tail -1)
+  printf '%s' "${v:-$2}"
+}
 CHROME=$(ls -d "$HOME"/.cache/ms-playwright/chromium-*/chrome-linux*/chrome 2>/dev/null | sort -V | tail -1 || true)
-cat <<EOF
-# explain skill (scripts/install-env.sh)
+VOICE=$(keep REPORT_VOICE bm_george); SPEED=$(keep REPORT_TTS_SPEED 1.0); PROVIDER=$(keep REPORT_TTS_PROVIDER cpu)
+mkdir -p "$(dirname "$CONF")"
+cat > "$CONF.tmp" <<EOF
+# explain skill settings. Nothing secret here.
+# Paths are rewritten by scripts/install-env.sh; voice, speed and provider are kept.
+
+# voice (any Kokoro voice id; b* voices speak British English, a* American)
+REPORT_VOICE=$VOICE
+REPORT_TTS_SPEED=$SPEED
+REPORT_TTS_PROVIDER=$PROVIDER
+
+# paths
 REPORT_PYTHON=$PY
 REPORT_BIN=$ENV/bin
 REPORT_HOME=$RHOME
 REPORT_TTS_MODEL=$RHOME/models/kokoro-v1.0.onnx
 REPORT_TTS_VOICES=$RHOME/models/voices-v1.0.bin
-REPORT_VOICE=bf_emma
-REPORT_TTS_SPEED=1.0
-REPORT_TTS_PROVIDER=cpu
-REPORT_CHROME=${CHROME:-<path to chrome>}
+REPORT_CHROME=${CHROME:-}
 EOF
+mv "$CONF.tmp" "$CONF"
+echo "  wrote $CONF (voice $VOICE, speed $SPEED, $PROVIDER)"
+echo "  next: bash $HERE/check.sh"

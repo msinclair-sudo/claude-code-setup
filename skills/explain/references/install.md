@@ -7,7 +7,7 @@
 - **`$REPORT_HOME/models`**: `kokoro-v1.0.onnx` (310 MB), `voices-v1.0.bin` (27 MB), from the kokoro-onnx `model-files-v1.0` release.
 - **`$REPORT_HOME/vendor`**: `reveal.js-6.0.2`, `axe-core-4.14.0`, unpacked from `npm pack`. Pages inline these; nothing loads from a CDN.
 - **Checksums**: `env/assets.sha256`. A mismatch deletes the file and stops the install.
-- **Keys**: the script prints a `REPORT_*` block; append it to `~/.env`. `config.sh` reads only `REPORT_*`.
+- **Settings**: `~/.config/explain/config.env` (or `$EXPLAIN_CONFIG`), written by the script. Nothing in it is secret, so it stays out of `~/.env`. Paths are rewritten on each run; `REPORT_VOICE`, `REPORT_TTS_SPEED` and `REPORT_TTS_PROVIDER` are kept, so change the voice there. `config.sh` reads only `REPORT_*` lines.
 
 ## Pitfalls met (2026-10-20)
 - conda-forge names the soundfile package `pysoundfile`.

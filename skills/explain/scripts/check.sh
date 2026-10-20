@@ -22,7 +22,7 @@ fail=0
 ok()  { printf '  PASS  %s\n' "$1"; }
 bad() { printf '  FAIL  %s\n' "$1"; fail=1; }
 need() { [ "$TIER" -ge "$1" ]; }
-key() { [ -n "${!1:-}" ] && ok "$1 set" || bad "$1 missing from ~/.env (scripts/install-env.sh prints it)"; }
+key() { [ -n "${!1:-}" ] && ok "$1 set" || bad "$1 missing from ~/.config/explain/config.env (run scripts/install-env.sh)"; }
 py() { "$REPORT_PYTHON" -c "import $1" >/dev/null 2>&1 && ok "python: $1" || bad "python: $1 not importable from REPORT_PYTHON"; }
 bin() { local b="$REPORT_BIN/$1"; [ -x "$b" ] || b=$(command -v "$1" 2>/dev/null || true)
         [ -n "$b" ] && [ -x "$b" ] && ok "bin: $1 ($b)" || bad "bin: $1 not found in REPORT_BIN or PATH"; }

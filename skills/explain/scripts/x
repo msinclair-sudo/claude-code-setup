@@ -6,7 +6,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 source "$HERE/../config.sh"
-: "${REPORT_PYTHON:?REPORT_PYTHON missing from ~/.env: run scripts/install-env.sh and append its block}"
+: "${REPORT_PYTHON:?REPORT_PYTHON not set: run scripts/install-env.sh (it writes ~/.config/explain/config.env)}"
 export PATH="$REPORT_BIN:$PATH"
 export PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}"
 export EXPLAIN_SKILL="$(dirname "$HERE")"

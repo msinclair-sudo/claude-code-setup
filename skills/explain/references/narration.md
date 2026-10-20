@@ -21,7 +21,7 @@
 
 ## Pacing
 Silence is part of the narration: without it, sentences run together and chapters blur. The owner's second review (2026-10-20) still found 0.6 s between segments "way too fast" and the move into a new chapter "very abrupt". The evidence (design-rules, NP rows): 2 s breaks between narrated segments helped in one research group's studies; breaks at event boundaries helped recall; silent pause length *inside* narration has never been tested, so inside a clip keep the voice's natural rhythm. Storyboard `pacing:` sets the pauses, in seconds:
-- `sentence` (0.7) and `clause` (0.2): inside a clip, passed to Kokoro (its own 0.25 and 0.1 run sentences together);
+- `sentence` (0.7) and `clause` (0.2): inside a clip. Kokoro (v1.0 model) reports no timings, so its own sentence pause was never applied (measured gaps 0.3-0.5 s); `tts` speaks one sentence at a time and inserts the pause itself, recording each sentence's start and end for the scene's `at()` cues;
 - `segment` (2.0): after each segment, while the picture holds;
 - `distil` (3.0): after a `distil` segment, the idea just restated stays on screen with nothing new;
 - `chapter` (3.5): after a chapter's last segment, with a visible boundary (clear the stage, the next chapter's title). Use it where a written text would start a new section.

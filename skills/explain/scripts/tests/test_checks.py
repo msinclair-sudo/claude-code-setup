@@ -228,6 +228,36 @@ class Animation(unittest.TestCase):
         finally:
             shutil.rmtree(tmp)
 
+    def test_sentence_cues(self):
+        """Sentence spans are recorded with the set pause between them; a late cue is a fault; no cue, a warning."""
+        tmp = tempfile.mkdtemp()
+        try:
+            d = scaffold(tmp, 4, delivery="presented", segments=[
+                {"id": "s1", "scene": "Scene1", "visual": "a box", "narration": "A box appears. Then it turns."},
+                {"id": "s2", "scene": "Scene1", "visual": "it stays", "narration": "It stays. It waits."}])
+            (d / "src/scene.py").write_text(textwrap.dedent("""\
+                from explainlib.anchors import ExplainScene
+                from manim import *
+
+                class Scene1(ExplainScene):
+                    def construct(self):
+                        a = Square()
+                        with self.say("s1") as t:
+                            self.play(FadeIn(a), run_time=t.spans[1][0] + 1.5)   # still busy when sentence 2 starts
+                            self.at(t, 1)
+                            self.play(Rotate(a), run_time=0.5)
+                        with self.say("s2") as t:
+                            self.wait(t.duration)
+                """))
+            subprocess.run([str(X), "build", str(d), "--draft"], check=True, capture_output=True)
+            log = json.loads((d / "checks/scene-Scene1.json").read_text())
+            self.assertIn("sentence 2 is spoken", " ".join(log["failures"]))
+            self.assertIn("s2: 2 sentences and no at() cue", " ".join(log["warnings"]))
+            (a0, a1), (b0, b1) = log["segments"][0]["sentences"]
+            self.assertAlmostEqual(b0 - a1, 0.7, delta=0.05)
+        finally:
+            shutil.rmtree(tmp)
+
 
 if __name__ == "__main__":
     unittest.main()

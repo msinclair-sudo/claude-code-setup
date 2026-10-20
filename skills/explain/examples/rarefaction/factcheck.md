@@ -110,3 +110,11 @@ Blind check of new and changed claims (m7, m32, m33, m34, m35). Verdicts as retu
 Housekeeping: claims.yaml has duplicate "kind:" keys in m2 and m8. Those claims were outside my scope and I did not check them.
 
 **Applied:** m7 "one pair fits nearly every bacterium" overstated (best broad pair about 86% exact, 94.5% with one mismatch): now "most bacteria", and "conserved" glossed as "much the same across bacteria" in claim, narration and legend; m32 "often" replaced by "one widely used choice", with Illumina's V3-V4 noted. The reported duplicate kind keys in m2 and m8 were not there (one each).
+
+## t4 fifth version (2026-10-21): read filtering, m36 to m38
+
+Blind checker, sources only (DADA2 Pipeline Tutorial 1.16; Bokulich et al. 2013; Kopylova et al. 2016). References correctly identified.
+- m36 supported: V4 tutorial data, distinct sequences 251 to 255 bases (most 253). They are ASVs, not reads; the narration now says "distinct sequences". "Taxa differ by a few bases" is an inference from the tutorial's "biological length variation", labelled so.
+- m37 overstated, fixed: the tutorial says off-length sequences "may be" from non-specific priming (narration: "can make"); quality falling at read ends is "common in Illumina sequencing" (narration: "on Illumina machines, quality tends to fall").
+- m38 supported except "every sample", which is shown in practice (one filterAndTrim call) but stated by no source: narration now "usually".
+

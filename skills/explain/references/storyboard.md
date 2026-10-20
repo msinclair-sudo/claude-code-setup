@@ -50,6 +50,7 @@ A caption that repeats the narration does none of these; leave it out. Text appe
 - **A renamed thing keeps its old name in view**: when the 16S rRNA gene's variable region becomes "the barcode", say so and label it "barcode: a variable region of the 16S rRNA gene".
 - **Introduce before use**: a term the viewer needs later (read pairs) is introduced at the step where it arises (sequencing), not where it is first needed.
 - **A chart is explained in this order**: the finding first ("in one study, ..."), then how the picture shows it ("along the bottom is ..., up the side ..., each dot is one taxon").
+- **A step is explained by its reason, not only named**: say what it is for, what goes wrong without it, how its setting is chosen, and what that choice costs. Owner review of the fourth exemplar: read filtering "should be stated why it's done, not just that it is done": the barcode has an expected length and taxa differ by a few bases; trimming low-quality ends and off-target copies make other lengths; the cut-offs are set by eye and judgement, the same for every sample, so there is always a trade-off.
 - **Use the field's usual plot** for a quantity (read lengths: a histogram, length along the bottom, number of reads up the side, with the cut-off drawn on it).
 - **Show a relative change directly**: when what matters is how two things changed against each other, take them out of the full chart and set them side by side, with the gap or ratio written between them, and let that value change as they change.
 

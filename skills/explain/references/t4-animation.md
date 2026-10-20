@@ -3,7 +3,7 @@
 ## Rules
 - **Only for a change** the viewer must understand (a process, a transformation, a walk through a structure), watched narrated and system-paced. A result that is a static shape is a tier 1 figure.
 - **At most about 10 minutes, in chapters** (pauses included; shorter for a general online audience): one Manim scene per chapter, a few segments per scene, each chapter ending on a distil line.
-- **Narration drives time:** each segment is one `with self.say("sN") as t:` block, animations take `run_time=t.duration` (or split it). The voice names what moves while it moves.
+- **Narration drives time, sentence by sentence:** each segment is one `with self.say("sN") as t:` block, and each move is timed to the sentence (or word) that names it: `self.at(t, k)` holds until sentence k starts, `self.at(t, k, "word")` until that word, and `run_time=self.left(t, k)` (or `self.left(t, k, "word")`) ends the move there. Fixed run_times bunch the motion at the start of a segment, so the voice names things seconds before or after they move (owner review of the fourth exemplar: "the narration is faster than the slides" from PCR on, and again at merging). A cue more than 1 s late is a fault in `x check`, and a segment of two or more sentences without a cue is a warning.
 - **Place everything on the grid** (`self.place(obj, "B2", "name", span="2x1")`) so overlaps and frame exits are caught; `release()` what you remove so hold times are checked. Each new element holds at least 2 s.
 - **One new thing at a time.** Dim (not delete) what the viewer still needs; remove what they don't.
 - **Draw on the dark tokens.** A colour keeps one meaning for the whole video: if colours mark taxa, samples get labels and line styles, not colours.

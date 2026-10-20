@@ -158,11 +158,24 @@ claims:
   kind: derived
   value: 1 3 53 85
 - id: m34
-  text: an illustrative histogram of merged read lengths, most near 250 bases with a tail of short reads, and a length cut-off at 200 bases
-  source: 'scene.py Reads s20b (illustrative values, labelled illustrative on screen)'
+  text: an illustrative histogram of merged read lengths, most near the expected length (about 253 bases) with a tail of short reads and a small off-target bump of longer ones; cut-off lines either side of the peak
+  source: 'scene.py Reads s20d-s20e (illustrative values, labelled illustrative on screen)'
   kind: illustrative
   value: 150 200 250 300
 - id: m35
   text: the sequencer reads each barcode from both ends, giving a read pair; for a short amplicon the two reads overlap in the middle and are joined into one merged read
   source: 'Illumina, Inc. 16S Metagenomic Sequencing Library Preparation, Part 15044223 Rev. B (paired-end reads, 2 x 300, overlapping across the amplicon); Kozich, J. J., Westcott, S. L., Baxter, N. T., Highlander, S. K. and Schloss, P. D. (2013) Applied and Environmental Microbiology 79(17): 5112-5120, doi:10.1128/AEM.01043-13 (fully overlapping V4 read pairs)'
   kind: quoted
+- id: m36
+  text: each barcode has an expected length and taxa differ by a few bases (inferred from the source's allowance for biological length variation); in one V4 dataset the distinct sequences (ASVs, not reads) ran from 251 to 255 bases (most 253)
+  source: 'Callahan, B. J. DADA2 Pipeline Tutorial (1.16), https://benjjneb.github.io/dada2/tutorial.html, accessed 2026-10-21: 2x250 MiSeq data of the V4 region (mothur MiSeq SOP data); table(nchar(getSequences(seqtab))) gives 251: 1, 252: 88, 253: 196, 254: 6, 255: 2 ASVs; "the lengths of our merged sequences all fall within the expected range for this V4 amplicon"; reads must overlap by "20 + biological.length.variation" nucleotides'
+  kind: quoted
+  value: 251 253 255
+- id: m37
+  text: on Illumina machines read quality tends to fall toward the end of a read, and per-read quality trimming cuts that end off, so some reads come out shorter; primers that bind in the wrong place (non-specific priming) can make sequences much shorter or longer than expected
+  source: 'DADA2 Pipeline Tutorial (as m36): "The reverse reads are of significantly worse quality, especially at the end, which is common in Illumina sequencing"; "truncate the reverse reads at position 160 where the quality distribution crashes"; "Sequences that are much longer or shorter than expected may be the result of non-specific priming". Bokulich et al. 2013 (as m16): reads truncated at runs of low-quality base calls, then dropped if less than a set fraction of their length remains'
+  kind: quoted
+- id: m38
+  text: where to set the length and quality cut-offs is a judgement made by inspecting quality and length plots; one set of cut-offs is usually applied to every sample in a study (shown in practice, not stated as a rule); too strict loses real reads, too loose keeps faulty ones, and the choice changes the diversity found
+  source: 'DADA2 Pipeline Tutorial (as m36): "The standard filtering parameters are starting points, not set in stone"; truncation positions chosen from the quality profiles; one filterAndTrim call with one truncLen for all samples (derived); removing non-target lengths "is analogous to cutting a band in-silico". Bokulich et al. 2013 (as m16): quality threshold and minimum read length strongly affected diversity and composition on mock communities; stringency disputed (Kopylova et al. 2016, mSystems 1(1): e00003-15, doi:10.1128/mSystems.00003-15)'
+  kind: derived

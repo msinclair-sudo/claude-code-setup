@@ -141,7 +141,7 @@ segments:
     scene: Amplify
     visual: "the axis is drawn first, ticks 1/16, 1/4, 1, 4, 16, with 'copied too few' to the left and 'copied too many' to the right; then 80 dots, one per taxon, drop and stack; dashed lines at 1/4 and 4; the dots beyond them are ringed and counted"
     onscreen: "each dot: one taxon; ringed: beyond fourfold"
-    narration: "Our simulation is set to match. The axis shows each taxon's bias: 1 is fair, 4 is four times too many, a quarter is four times too few. Each dot is one taxon."
+    narration: "Our simulation matches it. The axis shows bias: 1 is fair, 4 is four times too many, a quarter four times too few. Each dot is a taxon; ringed ones are over fourfold off."
     claims: [m10]
     verify: {inside_frame: all}
   - id: s14
@@ -222,10 +222,34 @@ segments:
   - id: s20b
     role: mechanism
     scene: Reads
-    visual: "step heading 'filtering'; a histogram of merged read lengths builds up, length along the bottom, number of reads up the side, labelled illustrative; a cut-off line is drawn; the bars left of it fade, labelled dropped; a note: reads of poor quality are dropped too"
-    onscreen: "shorter than the cut-off: dropped"
-    narration: "Then we filter the reads. Short reads, and poor-quality reads, are dropped. In this histogram, read length runs along the bottom and the number of reads up the side. Everything left of the cut-off goes."
-    claims: [m16, m34]
+    visual: "step heading 'filtering by length'; the three taxa's barcodes as bars, left-aligned, ending a few bases apart (ends exaggerated), lengths 251, 253, 255 at their ends; a band over the ends labelled 'expected length (V4)'"
+    onscreen: "expected length: distinct sequences 251 to 255 bases, one V4 dataset"
+    narration: "Then we filter the reads. One check is length: each barcode has an expected length, and taxa differ by a few bases. In one V4 dataset, distinct sequences ran 251 to 255 bases."
+    claims: [m36]
+    verify: {inside_frame: all}
+  - id: s20c
+    role: mechanism
+    scene: Reads
+    visual: "one read with a quality strip, bright at its start and fading toward its end; the faded end is cut off and the read is shorter (label 'trimmed: low quality'); then a gene with a primer landing in the wrong place makes a short off-colour copy, labelled 'off-target copy'"
+    onscreen: "trimmed: low quality; off-target copy"
+    narration: "Reads also come out shorter: on Illumina machines, quality tends to fall near a read's end, which is trimmed off. Primers that stick in the wrong place can make much shorter or longer copies."
+    claims: [m37]
+    verify: {inside_frame: all}
+  - id: s20d
+    role: mechanism
+    scene: Reads
+    visual: "a histogram of merged read lengths builds up (illustrative): a tall peak at the expected length, a tail of short reads to its left, a small off-target bump to its right; then the axis titles are written"
+    onscreen: "expected length; short tail; off-target"
+    narration: "So read lengths spread out. In this histogram, most reads sit near the expected length, with a tail of short ones. Length runs along the bottom, and the number of reads up the side."
+    claims: [m34]
+    verify: {inside_frame: all}
+  - id: s20e
+    role: problem
+    scene: Reads
+    visual: "two cut-off lines are drawn either side of the peak; the bars outside dim, labelled dropped; the histogram shrinks to the top and three small histograms, samples A, B and C, get the same two lines; then the lower line slides into the peak (real reads dim: 'too strict: real reads lost') and back out past the tail ('too loose: faulty reads kept'), and settles"
+    onscreen: "same cut-offs for every sample; too strict / too loose"
+    narration: "Where to cut is a judgement, made by looking at plots like this. The same cut-offs usually go for every sample. Too strict loses real reads; too loose keeps faulty ones."
+    claims: [m16, m38]
     verify: {inside_frame: all}
   - id: s21
     role: mechanism

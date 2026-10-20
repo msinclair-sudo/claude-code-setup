@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<style>{{REVEAL_CSS}}</style>
+<style>{{THEME_CSS}}</style>
+<style>
+  #x-caption { position: fixed; left: 50%; bottom: 3vh; transform: translateX(-50%);
+    max-width: 80vw; padding: .35em .8em; border-radius: .3em; z-index: 30;
+    background: var(--x-caption-bg); color: var(--x-caption-fg); font: var(--x-caption-font); }
+  #x-caption:empty { display: none; }
+  #x-start { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center;
+    background: var(--x-bg); }
+  #x-start button { font: inherit; font-size: 1.4rem; padding: .6em 1.4em; cursor: pointer;
+    background: var(--x-accent); color: var(--x-bg); border: 0; border-radius: .3em; }
+  #x-start p { color: var(--x-muted); margin-top: 1em; text-align: center; }
+  @media (prefers-reduced-motion: reduce) { .reveal * { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+{{START_OVERLAY}}
+<div class="reveal"><div class="slides">
+{{SLIDES}}
+</div></div>
+<div id="x-caption" aria-live="polite"></div>
+<script>{{REVEAL_JS}}</script>
+<script>
+  window.EXPLAIN_AUDIO = {{AUDIO_MAP}};
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  Reveal.initialize({ hash: true, controls: true, progress: true, center: false,
+    width: 1280, height: 720, margin: 0.04, transition: reduce ? 'none' : 'fade',
+    backgroundTransition: 'none', fragmentInURL: true });
+</script>
+<script>{{NARRATE_JS}}</script>
+</body>
+</html>

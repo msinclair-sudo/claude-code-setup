@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Entry point for the explain skill.
+#   x <subcommand> [args]   runs explain.py in the report env (new, lint, tts, build, stills, check, fallback)
+#   x run <cmd> [args]      runs any command with the report env on PATH (manim, ffmpeg, dot, python)
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+source "$HERE/../config.sh"
+: "${REPORT_PYTHON:?REPORT_PYTHON missing from ~/.env: run scripts/install-env.sh and append its block}"
+export PATH="$REPORT_BIN:$PATH"
+export PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}"
+export EXPLAIN_SKILL="$(dirname "$HERE")"
+if [ "${1:-}" = run ]; then
+  shift; exec "$@"
+fi
+exec "$REPORT_PYTHON" "$HERE/explain.py" "$@"

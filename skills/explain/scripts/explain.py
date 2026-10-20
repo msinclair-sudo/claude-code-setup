@@ -2,7 +2,7 @@
 
     x new <dir> --tier N --title "..." [--voice]   scaffold brief, storyboard, claims, tokens, src/
     x lint <dir>                                   check the plan before building
-    x build <dir> [--draft]                        render build/ (draft: 480p15 video)
+    x build <dir> [--draft]                        render build/ (draft: 480p15 video; final 1080p at REPORT_FPS, default 30)
     x stills <dir>                                 screenshots / frames + contact sheets in checks/
     x check <dir> --round N                        every automated check -> checks/round-N.json
     x fallback <dir>                               static/ that the harness can publish today
@@ -52,7 +52,7 @@ def cmd_lint(a):
 def cmd_build(a):
     from explainlib.build import build
     r = report.load(a.dir)
-    out = build(r, draft=a.draft)
+    out = build(r, draft=a.draft, only=[s for s in (a.only or "").split(",") if s] or None)
     print(f"built {out}: " + ", ".join(sorted(p.name for p in out.iterdir())))
 
 
@@ -96,7 +96,8 @@ def main():
     p.add_argument("--title", required=True); p.add_argument("--voice", action="store_true"); p.set_defaults(f=cmd_new)
     for name, f in (("lint", cmd_lint), ("stills", cmd_stills), ("fallback", cmd_fallback)):
         p = sp.add_parser(name); p.add_argument("dir"); p.set_defaults(f=f)
-    p = sp.add_parser("build"); p.add_argument("dir"); p.add_argument("--draft", action="store_true"); p.set_defaults(f=cmd_build)
+    p = sp.add_parser("build"); p.add_argument("dir"); p.add_argument("--draft", action="store_true")
+    p.add_argument("--only", help="tier 4: re-render these scenes (comma-separated), reuse the others"); p.set_defaults(f=cmd_build)
     p = sp.add_parser("check"); p.add_argument("dir"); p.add_argument("--round", type=int, default=1); p.set_defaults(f=cmd_check)
     p = sp.add_parser("all"); p.add_argument("dir"); p.add_argument("--round", type=int, default=1)
     p.add_argument("--draft", action="store_true"); p.set_defaults(f=cmd_all)

@@ -48,7 +48,7 @@ class Scene1(VoiceoverScene):
 - **One `with self.voiceover(...)` block per storyboard segment.** Its `t.duration` is the clip length; animations inside take `run_time=t.duration` (or split it: `run_time=t.duration * .6`, then the rest).
 - **Captions come free:** manim-voiceover writes `<Scene>.srt` beside the mp4, one cue per voiceover block, timed to the audio. Convert to VTT with `x captions`.
 - **No `<bookmark mark="..."/>`:** it needs whisper (torch). Split the segment instead.
-- **Render:** `x run manim -ql --media_dir build/media src/scene.py Scene1` for drafts (480p15); `-qh` for delivery (1080p60, about 2× real time on this machine: a 6 s scene took 12.6 s including TTS). `--disable_caching` when a re-render must pick up changed code.
+- **Render:** `x run manim -ql --media_dir build/media src/scene.py Scene1` for drafts (480p15); `x build` delivers 1080p at `REPORT_FPS` (default 30; owner's choice, 2026-10-21). Manim's Cairo renderer is CPU-only, one core per scene, so `x build` renders `REPORT_RENDER_JOBS` scenes at once (default 2); each scene keeps its own voiceover cache (`media/voiceovers/<Scene>/`) so parallel scenes never share one `cache.json`. `--disable_caching` when a re-render must pick up changed code.
 - **Output:** `build/media/videos/<file>/<quality>/<Scene>.mp4`, plus `.srt` and a `.wav` of the whole track. Audio is AAC in the mp4; video h264.
 - **Maths:** `MathTex(r"d(a,b) = \min_p |p|")` uses the system TeX Live; works.
 - **Text:** `Text("label", font="Lato", font_size=32)`. Pango and browsers share Lato, Noto Sans, Open Sans (check `x run fc-list : family`).

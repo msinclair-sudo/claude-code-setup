@@ -3,7 +3,7 @@
 Tools first, eyes second. `x check` measures what a model judges poorly (overflow, overlap, small type, orphan numbers, network, timing). The fresh reader then judges what tools cannot: does the message come through, is anything misleading.
 
 ## A round
-1. `x build <dir>` (only what changed rebuilds quickly: narration clips are cached).
+1. `x build <dir>` (narration clips are cached; for tier 4, `--only SceneA,SceneB` re-renders just those chapters and reuses the rest).
 2. `x stills <dir>`: contact sheets in `checks/contact-*.png`.
 3. `x check <dir> --round N`: faults block; warnings go to the reader.
 4. The fresh reader: start a subagent with the Agent tool; give it the contact sheets, the one-sentence message, this file's checklist for the tier, and the round's warnings. Not the code, not the storyboard. Prompt:

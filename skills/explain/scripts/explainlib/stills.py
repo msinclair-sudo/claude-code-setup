@@ -91,7 +91,7 @@ def _video(r, d):
         segs = json.loads(log.read_text())["segments"] if log.exists() else []
         for s in segs:
             p = d / f"{s['id']}.png"
-            frames.grab(v, at + s["end"] - 0.15, p); out.append(p)
+            frames.grab(v, at + s.get("settled", s["end"]) - 0.15, p); out.append(p)   # the held picture
         found = list(r.p("checks/media/videos/scene").glob(f"*/{sc}.mp4"))   # draft and final renders sit side by side
         media = max(found, key=lambda f: f.stat().st_mtime) if found else None
         at += frames.durations(media)["video"] if media else 0

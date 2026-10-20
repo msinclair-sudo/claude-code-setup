@@ -113,15 +113,20 @@ keep() {  # existing value of a setting the owner may have changed, else the def
 }
 CHROME=$(ls -d "$HOME"/.cache/ms-playwright/chromium-*/chrome-linux*/chrome 2>/dev/null | sort -V | tail -1 || true)
 VOICE=$(keep REPORT_VOICE bm_george); SPEED=$(keep REPORT_TTS_SPEED 1.0); PROVIDER=$(keep REPORT_TTS_PROVIDER cpu)
+FPS=$(keep REPORT_FPS 30); JOBS=$(keep REPORT_RENDER_JOBS 2)
 mkdir -p "$(dirname "$CONF")"
 cat > "$CONF.tmp" <<EOF
 # explain skill settings. Nothing secret here.
-# Paths are rewritten by scripts/install-env.sh; voice, speed and provider are kept.
+# Paths are rewritten by scripts/install-env.sh; voice, speed, provider and render settings are kept.
 
 # voice (any Kokoro voice id; b* voices speak British English, a* American)
 REPORT_VOICE=$VOICE
 REPORT_TTS_SPEED=$SPEED
 REPORT_TTS_PROVIDER=$PROVIDER
+
+# animation render: frames per second of the delivered video; scenes rendered at once (CPU cores)
+REPORT_FPS=$FPS
+REPORT_RENDER_JOBS=$JOBS
 
 # paths
 REPORT_PYTHON=$PY

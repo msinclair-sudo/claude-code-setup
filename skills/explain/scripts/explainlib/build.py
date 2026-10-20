@@ -49,8 +49,10 @@ def fresh(d: Path) -> Path:
     return d
 
 
-def build(r, draft=False) -> Path:
+def build(r, draft=False, only=None) -> Path:
     out = fresh(r.p("build"))
+    if r.tier == 4:
+        return t4(r, out, draft, only)
     return [t0, t1, t2, t3, t4][r.tier](r, out, draft)
 
 
@@ -150,16 +152,34 @@ def scenes(r) -> list:
     return seen
 
 
-def t4(r, out, draft):
-    q, sub = ("-ql", "480p15") if draft else ("-qh", "1080p60")
+def t4(r, out, draft, only=None):
+    # Cairo renders on the CPU, one core per scene: chapters render side by side (REPORT_RENDER_JOBS, default 2).
+    # Delivery is 1080p at REPORT_FPS (default 30); drafts are 480p15.
+    fps = int(os.environ.get("REPORT_FPS", "30"))
+    q, sub = (["-ql"], "480p15") if draft else (["-qh", "--frame_rate", str(fps)], f"1080p{fps}")
+    jobs = max(1, int(os.environ.get("REPORT_RENDER_JOBS", "2")))
     media = r.p("checks/media")
     env = dict(os.environ, EXPLAIN_REPORT=str(r.dir))
-    for f in r.p("checks").glob("scene-*.json"):
-        f.unlink()
+    todo = [sc for sc in scenes(r) if not only or sc in only]   # only: re-render these, reuse the rest
+    if only:
+        unknown = set(only) - set(scenes(r))
+        if unknown:
+            raise SystemExit(f"--only: no scene {', '.join(sorted(unknown))} in storyboard.yaml")
+        stale = [sc for sc in scenes(r) if sc not in only and not (media / "videos" / "scene" / sub / f"{sc}.mp4").exists()]
+        if stale:
+            raise SystemExit(f"--only: {', '.join(stale)} not yet rendered at {sub}; build without --only first")
+    for sc in todo:
+        r.p(f"checks/scene-{sc}.json").unlink(missing_ok=True)
+
+    def render(sc):
+        subprocess.run(["manim", *q, "--disable_caching", "--media_dir", str(media),
+                        str(r.p("src/scene.py")), sc], check=True, env=env, cwd=r.dir)
+
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        list(pool.map(render, todo))               # list() re-raises a failed render
     parts, cues, at = [], [], 0.0
     for sc in scenes(r):
-        subprocess.run(["manim", q, "--disable_caching", "--media_dir", str(media),
-                        str(r.p("src/scene.py")), sc], check=True, env=env, cwd=r.dir)
         mp4 = media / "videos" / "scene" / sub / f"{sc}.mp4"
         parts.append(mp4)
         srt = mp4.with_suffix(".srt")

@@ -67,7 +67,8 @@ class ExplainScene(VoiceoverScene):
         super().setup()
         self.report = _report.load(os.environ.get("EXPLAIN_REPORT", "."))
         self.pacing = {**PACING, **(self.report.story.get("pacing") or {})}
-        self.set_speech_service(KokoroService(pacing=self.pacing))
+        self.set_speech_service(KokoroService(pacing=self.pacing,
+                                              cache_dir=Path(config.media_dir) / "voiceovers" / type(self).__name__))
         self._seg = {g["id"]: g for g in self.report.segments}
         mine = [g["id"] for g in self.report.segments if g.get("scene") == type(self).__name__]
         self._last = mine[-1] if mine else None   # its pause is the chapter break
@@ -131,6 +132,8 @@ class ExplainScene(VoiceoverScene):
         pause = pause_for(g, self.pacing, chapter_end=sid == self._last)
         if pause:
             self.wait(float(pause))
+        if self._log["segments"] and self._log["segments"][-1]["id"] == sid:
+            self._log["segments"][-1]["settled"] = round(self.renderer.time, 3)   # end of the pause: stills
 
     # checks ---------------------------------------------------------------
     def _fail(self, msg):

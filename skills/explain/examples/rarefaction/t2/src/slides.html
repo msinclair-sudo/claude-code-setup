@@ -1,0 +1,91 @@
+<!-- Rarefaction, tier 2. Steps match storyboard.yaml (h.v.f). Bars: 1 taxon = 1 px of height in a 300 px plot. -->
+<section>
+  <h2>Two samples, one community</h2>
+  <div class="x-visual">
+    <svg viewBox="0 0 640 300" width="640" height="300" role="img" aria-label="Two sample tubes, deep in blue and shallow in orange">
+      <rect x="170" y="40" width="90" height="200" rx="18" style="fill:none;stroke:var(--x-accent);stroke-width:6"/>
+      <rect x="180" y="90" width="70" height="140" rx="12" style="fill:var(--x-accent);opacity:.85"/>
+      <text x="215" y="285" text-anchor="middle" style="fill:var(--x-accent);font-size:28px">deep</text>
+      <rect x="380" y="40" width="90" height="200" rx="18" style="fill:none;stroke:var(--x-accent2);stroke-width:6"/>
+      <rect x="390" y="200" width="70" height="30" rx="12" style="fill:var(--x-accent2);opacity:.85"/>
+      <text x="425" y="285" text-anchor="middle" style="fill:var(--x-accent2);font-size:28px">shallow</text>
+    </svg>
+  </div>
+  <p class="x-muted"><span class="x-label">illustrative</span>a simulated community of 300 taxa</p>
+</section>
+
+<section>
+  <p class="x-tag"><span class="x-label">simulated</span></p>
+  <h2>More reads, more taxa</h2>
+  <div class="x-split">
+    <svg viewBox="0 0 560 420" width="560" height="420" role="img" aria-label="Deep sample bar at 288 taxa; shallow sample bar at 221 taxa">
+      <line x1="40" y1="360" x2="540" y2="360" style="stroke:var(--x-muted);stroke-width:2"/>
+      <rect x="110" y="72" width="140" height="288" style="fill:var(--x-accent)"/>
+      <text x="180" y="58" text-anchor="middle" style="fill:var(--x-fg);font-size:30px;font-weight:700">288</text>
+      <text x="180" y="398" text-anchor="middle" style="fill:var(--x-accent);font-size:24px">20,000 reads</text>
+      <g class="fragment" data-fragment-index="0">
+        <rect x="320" y="139" width="140" height="221" style="fill:var(--x-accent2)"/>
+        <text x="390" y="125" text-anchor="middle" style="fill:var(--x-fg);font-size:30px;font-weight:700">221</text>
+        <text x="390" y="398" text-anchor="middle" style="fill:var(--x-accent2);font-size:24px">2,000 reads</text>
+        <line x1="268" y1="72" x2="268" y2="139" style="stroke:var(--x-fg);stroke-width:3"/>
+        <line x1="258" y1="72" x2="278" y2="72" style="stroke:var(--x-fg);stroke-width:3"/>
+        <line x1="258" y1="139" x2="278" y2="139" style="stroke:var(--x-fg);stroke-width:3"/>
+        <text x="286" y="114" style="fill:var(--x-fg);font-size:24px">67</text>
+      </g>
+    </svg>
+    <div>
+      <p>deep sample: <strong>288</strong> taxa</p>
+      <p class="fragment" data-fragment-index="0">shallow sample: <strong>221</strong> taxa<br>a gap of <strong>67</strong></p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <p class="x-tag"><span class="x-label">simulated</span></p>
+  <h2>Taxa rise steeply, then slowly, with depth</h2>
+  <div class="x-visual"><img src="assets/fig2.svg" alt="The deep sample's rarefaction curve climbing with reads; the shallow sample's point lies on it at 2,000 reads"></div>
+</section>
+
+<section>
+  <p class="x-tag"><span class="x-label">simulated</span></p>
+  <h2>Both at 2,000 reads</h2>
+  <div class="x-split">
+    <svg viewBox="0 0 560 420" width="560" height="420" role="img" aria-label="Deep sample rarefied to 2,000 reads at 218 taxa, range 208 to 228, beside the shallow sample at 221">
+      <line x1="40" y1="360" x2="540" y2="360" style="stroke:var(--x-muted);stroke-width:2"/>
+      <rect x="110" y="142" width="140" height="218" style="fill:var(--x-accent)"/>
+      <text x="180" y="398" text-anchor="middle" style="fill:var(--x-accent);font-size:24px">deep, rarefied</text>
+      <rect x="320" y="139" width="140" height="221" style="fill:var(--x-accent2)"/>
+      <text x="390" y="125" text-anchor="middle" style="fill:var(--x-fg);font-size:30px;font-weight:700">221</text>
+      <text x="390" y="398" text-anchor="middle" style="fill:var(--x-accent2);font-size:24px">shallow</text>
+      <text x="180" y="118" text-anchor="middle" style="fill:var(--x-fg);font-size:30px;font-weight:700">218</text>
+      <g class="fragment" data-fragment-index="0">
+        <line x1="180" y1="132" x2="180" y2="152" style="stroke:var(--x-fg);stroke-width:3"/>
+        <line x1="166" y1="132" x2="194" y2="132" style="stroke:var(--x-fg);stroke-width:3"/>
+        <line x1="166" y1="152" x2="194" y2="152" style="stroke:var(--x-fg);stroke-width:3"/>
+      </g>
+    </svg>
+    <div>
+      <p>deep, rarefied: <strong>218</strong> on average</p>
+      <p class="fragment" data-fragment-index="0">middle 95% of 200 subsamples:<br><strong>208</strong> to <strong>228</strong></p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <p class="x-tag"><span class="x-label">simulated</span></p>
+  <h2>The cost: reads set aside</h2>
+  <div class="x-split">
+    <svg viewBox="0 0 560 300" width="560" height="300" role="img" aria-label="The deep sample's 20,000 reads as a bar: 2,000 kept, 18,000 set aside">
+      <rect x="20" y="110" width="500" height="70" style="fill:var(--x-rule)"/>
+      <rect x="20" y="110" width="50" height="70" style="fill:var(--x-accent)"/>
+      <text x="20" y="90" style="fill:var(--x-accent);font-size:26px">2,000 kept</text>
+      <text x="520" y="90" text-anchor="end" style="fill:var(--x-muted);font-size:26px">18,000 set aside</text>
+      <text x="20" y="225" style="fill:var(--x-muted);font-size:22px">the deep sample's 20,000 reads</text>
+    </svg>
+    <div>
+      <p>Use rarefying to compare richness.</p>
+      <p>For testing which taxa differ in abundance, the reads set aside cost statistical power.</p>
+      <p class="x-muted">McMurdie and Holmes (2014), in simulations</p>
+    </div>
+  </div>
+</section>

@@ -1,0 +1,17 @@
+title: "Rarefaction"
+message: "A sample sequenced more deeply shows more taxa even from the same community; rarefying both samples to the same depth removes that difference."
+audience: "researchers comparing richness across sequenced samples"
+delivery: read
+tier: 1
+tier_reason: "the claim is a comparison that is seen faster than read: two bars that differ, then two that match, and a curve that keeps climbing"
+voice: false
+numbers_ok: [1971, 2001, 2014]
+segments:
+  - id: s1
+    visual: "two panels of two bars: as sequenced (288 vs 221), then at 2,000 reads (218 with its 95% range vs 221)"
+    onscreen: "Same community, different depth"
+    claims: [c2, c3, c5, c6, c8, c9]
+  - id: s2
+    visual: "the deep sample's rarefaction curve, still climbing at 20,000 reads; the shallow sample sits on it at 2,000"
+    onscreen: "Observed taxa keep rising with depth"
+    claims: [c5, c6, c8]

@@ -48,8 +48,13 @@ class _Text(HTMLParser):
     def _hidden(self, tag):
         return tag in self.HIDDEN or ":" in tag
 
+    VOID = {"br", "img", "hr", "meta", "input", "link", "wbr", "source", "track", "col", "area", "base", "embed"}
+
     def handle_starttag(self, tag, attrs):
-        if self._hidden(tag):
+        if self.skip and tag not in self.VOID:  # inside a hidden block: count nesting so its end is found
+            self.skip += 1
+            return
+        if self._hidden(tag) or "x-sources" in (dict(attrs).get("class") or ""):  # bibliography is not a claim
             self.skip += 1
             return
         for k, v in attrs:
@@ -57,8 +62,8 @@ class _Text(HTMLParser):
                 self.parts.append(v)
 
     def handle_endtag(self, tag):
-        if self._hidden(tag):
-            self.skip = max(0, self.skip - 1)
+        if self.skip and tag not in self.VOID:
+            self.skip -= 1
 
     def handle_data(self, d):
         if not self.skip:

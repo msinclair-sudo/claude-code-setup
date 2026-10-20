@@ -21,6 +21,12 @@ _JS = r"""
   if (!opts.scope && se.scrollWidth > se.clientWidth + 1) out.push('page scrolls sideways (' + se.scrollWidth + 'px wide in ' + se.clientWidth + ')');
   const vis = el => { const s = getComputedStyle(el); const r = el.getBoundingClientRect();
     return s.visibility !== 'hidden' && s.display !== 'none' && +s.opacity > 0.05 && r.width > 0 && r.height > 0; };
+  // the box of an element's own text (not its block box: a full-width heading's box is mostly empty)
+  const textBox = el => { let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
+    for (const n of el.childNodes) { if (n.nodeType !== 3 || !n.textContent.trim()) continue;
+      const g = document.createRange(); g.selectNodeContents(n);
+      for (const q of g.getClientRects()) { l = Math.min(l, q.left); t = Math.min(t, q.top); r = Math.max(r, q.right); b = Math.max(b, q.bottom); } }
+    return r > l ? {left: l, top: t, right: r, bottom: b, width: r - l, height: b - t} : el.getBoundingClientRect(); };
   const label = el => (el.id ? '#' + el.id : el.tagName.toLowerCase()) + ' "' + (el.textContent || '').trim().slice(0, 40) + '"';
   const texts = [];
   for (const el of scope.querySelectorAll('*')) {
@@ -28,7 +34,7 @@ _JS = r"""
     const own = [...el.childNodes].some(n => n.nodeType === 3 && n.textContent.trim());
     if (!own || !vis(el)) continue;
     if (el.closest('#x-start, .controls, .progress, .slide-number, .modebar')) continue;
-    const r = el.getBoundingClientRect();
+    const r = textBox(el);
     texts.push([el, r]);
     if (r.right > box.right + 1 || r.left < box.left - 1 || r.bottom > box.bottom + 1)
       out.push('outside ' + (opts.scope || 'viewport') + ': ' + label(el));
@@ -77,6 +83,40 @@ def open_page(b, path, size=(1280, 800), query=""):
 def page_faults(pg, scope=None, min_px=14, zoom=1.0) -> list:
     out = pg.evaluate(_JS, {"scope": scope, "minPx": min_px, "zoom": zoom})
     return sorted(set(out))
+
+
+_CAPTION_JS = r"""
+(scope) => {
+  const cap = document.getElementById('x-caption');
+  if (!cap || !cap.textContent.trim()) return [];
+  const c = cap.getBoundingClientRect(), out = [];
+  const textBox = el => { let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
+    for (const n of el.childNodes) { if (n.nodeType !== 3 || !n.textContent.trim()) continue;
+      const g = document.createRange(); g.selectNodeContents(n);
+      for (const q of g.getClientRects()) { l = Math.min(l, q.left); t = Math.min(t, q.top); r = Math.max(r, q.right); b = Math.max(b, q.bottom); } }
+    return r > l ? {left: l, top: t, right: r, bottom: b, width: r - l} : el.getBoundingClientRect(); };
+  for (const el of document.querySelector(scope).querySelectorAll('*')) {
+    const own = [...el.childNodes].some(n => n.nodeType === 3 && n.textContent.trim());
+    const s = getComputedStyle(el), r = textBox(el);
+    if (!own || s.visibility === 'hidden' || +s.opacity < 0.05 || !r.width) continue;
+    if (Math.min(r.right, c.right) - Math.max(r.left, c.left) > 2 && Math.min(r.bottom, c.bottom) - Math.max(r.top, c.top) > 2)
+      out.push('caption covers "' + el.textContent.trim().slice(0, 40) + '"');
+  }
+  return out;
+}
+"""
+
+
+def caption_faults(pg, scope) -> list:
+    """Narration captions sit over the slide; nothing readable may be under them."""
+    return pg.evaluate(_CAPTION_JS, scope)
+
+
+def shrink_faults(pg, ratio=0.6) -> list:
+    """Figures drawn below `ratio` of their natural width: their text shrinks with them."""
+    return pg.evaluate("""(ratio) => [...document.images].filter(i => i.naturalWidth && i.clientWidth &&
+        i.clientWidth < ratio * i.naturalWidth).map(i => 'figure ' + i.getAttribute('src') + ' drawn at ' +
+        Math.round(100 * i.clientWidth / i.naturalWidth) + '% of its size: its text shrinks with it')""", ratio)
 
 
 def load_faults(pg) -> list:

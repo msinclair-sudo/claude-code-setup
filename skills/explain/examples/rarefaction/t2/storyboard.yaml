@@ -1,0 +1,51 @@
+title: "Rarefaction"
+message: "A sample sequenced more deeply shows more taxa even from the same community; rarefying both samples to the same depth removes that difference."
+audience: "researchers comparing richness across sequenced samples"
+delivery: presented
+tier: 2
+tier_reason: "presented to a group: the argument builds in order (a gap appears, its cause, the fix), and each step is mainly a picture, so narrated steps beat one page read at the speaker's pace"
+voice: true
+numbers_ok: [1971, 2001, 2014]
+segments:
+  - id: s1
+    step: "0.0.-1"
+    visual: "title; two sample tubes in the two sample colours"
+    onscreen: "Two samples, one community"
+    narration: "Two samples, taken from the same simulated community of 300 taxa."
+    claims: [c1]
+  - id: s2
+    step: "1.0.-1"
+    visual: "one bar: deep sample, 288 taxa, labelled 20,000 reads"
+    onscreen: "deep: 20,000 reads, 288 taxa"
+    narration: "The deep sample was sequenced to 20,000 reads. It shows 288 taxa."
+    claims: [c2, c5]
+  - id: s3
+    step: "1.0.0"
+    visual: "the shallow bar appears beside it: 221 taxa, 2,000 reads; the gap is marked"
+    onscreen: "shallow: 2,000 reads, 221 taxa"
+    narration: "The shallow sample has 2,000 reads and shows 221. That is a gap of 67 taxa, from the same community."
+    claims: [c3, c6, c7]
+  - id: s4
+    step: "2.0.-1"
+    visual: "the deep sample's rarefaction curve, climbing; the shallow sample's point sits on it"
+    onscreen: "Taxa rise steeply, then slowly, with depth"
+    narration: "Subsample the deep sample's reads and count again. The count rises steeply, then slowly, and the shallow sample sits on the curve."
+    claims: [c10]
+  - id: s5
+    step: "3.0.-1"
+    visual: "two bars at a common depth: deep rarefied to 2,000 reads, 218; shallow, 221"
+    onscreen: "Both at 2,000 reads"
+    narration: "So compare at a common depth. Rarefied to 2,000 reads, the deep sample shows 218 taxa on average, beside the shallow sample's 221."
+    claims: [c8, c6]
+  - id: s6
+    step: "3.0.0"
+    visual: "the range of 200 subsamples, 208 to 228, appears on the deep bar"
+    onscreen: "middle 95% of subsamples: 208 to 228"
+    narration: "Across 200 subsamples, the middle 95% span 208 to 228. The gap is gone."
+    claims: [c9]
+  - id: s7
+    step: "4.0.-1"
+    visual: "the deep sample's 20,000 reads as one bar: 2,000 kept, 18,000 set aside"
+    onscreen: "The cost: reads set aside"
+    narration: "The cost: to reach 2,000 reads, the deep sample sets aside 18,000. Use rarefying to compare richness; for abundance tests, those reads cost power."
+    claims: [c11, c12]

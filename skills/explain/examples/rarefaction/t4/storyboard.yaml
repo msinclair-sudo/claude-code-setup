@@ -1,0 +1,46 @@
+title: "Rarefaction"
+message: "A sample sequenced more deeply shows more taxa even from the same community; rarefying both samples to the same depth removes that difference."
+audience: "researchers comparing richness across sequenced samples"
+delivery: presented
+tier: 4
+tier_reason: "the cause is a process: each read may reveal a taxon not yet seen, so the count climbs as reads accumulate; watching taxa light up as reads arrive shows why depth alone changes the count, which a static figure only asserts"
+voice: true
+numbers_ok: [1971, 2001, 2014]
+segments:
+  - id: s1
+    scene: Reads
+    visual: "a 20 by 15 grid of dim dots, the community; dot size hints at abundance"
+    onscreen: "300 simulated taxa, most of them rare"
+    narration: "This grid is a simulated community of 300 taxa. Each dot is one taxon, and most of them are rare."
+    claims: [c1]
+    anchors: {grid: A1, counter: E2, caption: E1}
+    verify: {inside_frame: all, no_overlap: [grid, counter, caption], hold_min_s: 2}
+  - id: s2
+    scene: Reads
+    visual: "reads arrive; each taxon lights blue the first time a read hits it; the counter climbs fast, then slowly, to 288 at 20,000 reads"
+    onscreen: "deep: 20,000 reads"
+    narration: "Sequence a sample deeply, to 20,000 reads. Each new read may reveal a taxon not yet seen. This sample shows 288."
+    claims: [c2, c5]
+    verify: {inside_frame: all, no_overlap: [grid, counter, caption]}
+  - id: s3
+    scene: Reads
+    visual: "the grid resets; the shallow sample's reads light dots orange; its counter stops at 221 after 2,000 reads"
+    onscreen: "shallow: 2,000 reads; 67 fewer"
+    narration: "Sequence the same community to only 2,000 reads, and it shows 221. That gap of 67 taxa comes from depth alone."
+    claims: [c3, c6, c7]
+    verify: {inside_frame: all, no_overlap: [grid, counter, caption]}
+  - id: s4
+    scene: Curve
+    visual: "axes of reads against taxa; the deep sample's curve draws left to right; the shallow sample's dot sits on it at 2,000"
+    onscreen: "taxa found, as reads are used"
+    narration: "Plot the taxa found against the reads used. The deep sample's count rises steeply, then slowly, and the shallow sample sits right on its curve."
+    claims: [c10]
+    anchors: {axes: A1, title: A1}
+    verify: {inside_frame: all, order: [axes, curve, dot]}
+  - id: s5
+    scene: Curve
+    visual: "a dashed line at 2,000 reads; the deep curve's value there (218) beside the shallow sample (221)"
+    onscreen: "deep at 2,000, average: 218; shallow: 221"
+    narration: "Rarefaction compares both at the same depth. At 2,000 reads the deep sample shows 218 taxa on average, beside 221. The gap is gone."
+    claims: [c8, c6]
+    verify: {inside_frame: all, no_overlap: [deep_val, shallow_val]}

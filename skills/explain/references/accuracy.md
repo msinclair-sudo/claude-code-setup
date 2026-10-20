@@ -15,6 +15,6 @@ Start a fresh subagent with the Agent tool. Give it only `claims.yaml` and read 
 Fix every overstated or unsupported claim in `claims.yaml` and wherever it is used, then rebuild. Record the verdicts in `checks/factcheck.md`.
 
 ## Depictions
-- A figure drawn from the real data or system carries `<span class="x-label">data</span>`; one made up to show the idea carries `illustrative`. In animation, say it in the narration or a corner label.
+- A figure drawn from the real data or system carries `<span class="x-label">data</span>`; one computed from a simulation carries `simulated`; one made up to show the idea carries `illustrative`. Label every view, not only the first: a reader arrives at any slide or frame. On slides, `<p class="x-tag"><span class="x-label">simulated</span></p>` sits top right. In animation, a corner label, and say it in the narration once.
 - A truncated axis gets a visible note on the figure; a scale bar beats a stated size.
 - Wording of uncertainty: give the range or the count, not only a word ("likely").

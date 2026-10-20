@@ -2,7 +2,8 @@
 
   0 note         src/note.md                      -> build/index.html (+ note.md)
   1 figures      src/figures.py, src/page.md      -> build/index.html + figure files
-  2 slides       src/slides.html (+ narration)    -> build/deck.html, audio/, captions.vtt, transcript.md
+  2 slides       src/slides.html (+ narration,    -> build/deck.html, audio/, assets/, captions.vtt, transcript.md
+                 optional src/figures.py make())
   3 interactive  src/figures.py, src/page.md      -> build/page.html, fallback/<id>.svg
   4 animation    src/scene.py                     -> build/video.mp4, captions.vtt, transcript.md, player.html
 
@@ -99,6 +100,9 @@ def t2(r, out, draft):
     src_assets = r.p("src/assets")
     if src_assets.exists():
         shutil.copytree(src_assets, out / "assets")
+    if r.p("src/figures.py").exists():  # same contract as tier 1: make(out, t), here into assets/
+        (out / "assets").mkdir(exist_ok=True)
+        runpy.run_path(str(r.p("src/figures.py")))["make"](out / "assets", r.tokens)
     (out / "captions.vtt").write_text(captions.vtt(cues))
     (out / "transcript.md").write_text(captions.transcript(r))
     return out

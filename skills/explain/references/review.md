@@ -12,7 +12,7 @@ Tools first, eyes second. `x check` measures what a model judges poorly (overflo
 
 5. Fix the blocking items. Re-render only what changed. Next round.
 
-**Stop** when `x check` passes and the reader reports nothing blocking, or after round 3. Most of the gain is in round one; later rounds layer fixes on fixes. Report what is left.
+A round is build, check **and** review. Rebuilding to clear `x check` faults before the reader sees anything is part of the same round; the count is of reviews. **Stop** when `x check` passes and the reader reports nothing blocking, or after round 3. Most of the gain is in round one; later rounds layer fixes on fixes. Report what is left.
 
 ## Checklists
 **Every tier:** the reader's one-sentence summary matches the message; one idea per view; nothing decorative stays on screen; labels sit next to what they label; data vs illustrative is labelled.

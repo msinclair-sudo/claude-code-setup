@@ -1,0 +1,70 @@
+# Shared by every tier of the rarefaction exemplar (copied into each tier folder by build_all.sh).
+# The community and samples are simulated (sim.py, seed 7): every count is illustrative of the idea,
+# derived from that simulation, not from any real dataset.
+claims:
+  - id: c1
+    text: "a simulated community of 300 taxa"
+    source: "sim.py: N_TAXA = 300; lognormal abundances, sigma 1.8, seed 7"
+    kind: illustrative
+    value: 300
+    unit: taxa
+  - id: c2
+    text: "the deep sample has 20,000 reads"
+    source: "sim.py: DEEP = 20000"
+    kind: illustrative
+    value: 20000
+    unit: reads
+  - id: c3
+    text: "the shallow sample has 2,000 reads"
+    source: "sim.py: SHALLOW = 2000"
+    kind: illustrative
+    value: 2000
+    unit: reads
+  - id: c4
+    text: "ten times as many reads"
+    source: "derived: 20000 / 2000"
+    kind: derived
+    value: 10
+  - id: c5
+    text: "the deep sample shows 288 taxa"
+    source: "sim.py data()['obs_deep'] (run sim.py to print it)"
+    kind: derived
+    value: 288
+    unit: taxa
+  - id: c6
+    text: "the shallow sample shows 221 taxa"
+    source: "sim.py data()['obs_shallow']"
+    kind: derived
+    value: 221
+    unit: taxa
+  - id: c7
+    text: "a gap of 67 taxa"
+    source: "derived: 288 - 221"
+    kind: derived
+    value: 67
+    unit: taxa
+  - id: c8
+    text: "rarefied to 2,000 reads, the deep sample shows 218 taxa on average"
+    source: "sim.py data()['rare_mean'] = 218.2, over 200 subsamples"
+    kind: derived
+    value: 218
+    unit: taxa
+  - id: c9
+    text: "the middle 95% of 200 subsamples span 208 to 228 taxa"
+    source: "sim.py data(): DRAWS = 200, rare_lo = 208, rare_hi = 228 (2.5th and 97.5th percentiles)"
+    kind: derived
+    value: "95 200 208 228"
+  - id: c10
+    text: "Rarefaction estimates the number of taxa expected in a random subsample of a smaller, common size, so samples of unequal size can be compared (Hurlbert 1971; Gotelli and Colwell 2001)."
+    source: "Hurlbert, S. H. (1971) Ecology 52(4): 577-586, doi:10.2307/1934145; Gotelli, N. J. and Colwell, R. K. (2001) Ecology Letters 4: 379-391, doi:10.1046/j.1461-0248.2001.00230.x"
+    kind: quoted
+  - id: c11
+    text: "Rarefying throws reads away; McMurdie and Holmes (2014) showed in simulations that it loses statistical power when testing which taxa differ in abundance."
+    source: "McMurdie, P. J. and Holmes, S. (2014) Waste not, want not: why rarefying microbiome data is inadmissible. PLoS Computational Biology 10(4): e1003531, doi:10.1371/journal.pcbi.1003531"
+    kind: quoted
+  - id: c12
+    text: "rarefying the deep sample to 2,000 reads sets aside 18,000 of its 20,000 reads"
+    source: "derived: 20000 - 2000"
+    kind: derived
+    value: 18000
+    unit: reads

@@ -1,0 +1,19 @@
+title: "Rarefaction"
+message: "A sample sequenced more deeply shows more taxa even from the same community; rarefying both samples to the same depth removes that difference."
+audience: "researchers comparing richness across sequenced samples"
+delivery: read
+tier: 3
+tier_reason: "the reader's own question is 'what if I compared at another depth?'; one depth slider answers it, and subsample-to-subsample variation is shown better as outcomes than as one error bar"
+default_view: "both samples' curves with the comparison marked at 2,000 reads, where they agree (218 and 221): the message without touching anything"
+controls: 2
+voice: false
+numbers_ok: [1971, 2001, 2014, 500, 1000, 5000, 10000]
+segments:
+  - id: s1
+    visual: "both rarefaction curves; a marker at the chosen depth on each; the deep curve keeps going past the shallow sample's 2,000 reads; slider of depth (500, 1,000, 2,000), default 2,000"
+    onscreen: "Compare at a depth both samples reach"
+    claims: [c5, c6, c8]
+  - id: s2
+    visual: "hypothetical outcomes: one bar per subsample of the deep sample at 2,000 reads beside the shallow sample's 221; Play steps through 20 subsamples"
+    onscreen: "Each frame is one subsample"
+    claims: [c8, c9]

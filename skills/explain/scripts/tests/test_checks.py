@@ -118,6 +118,27 @@ class Page(unittest.TestCase):
         self.assertIn("999 is not in claims.yaml", self.faults)
 
 
+class Deck(unittest.TestCase):
+    """A narrated deck whose text runs under the caption, with an unplanned fragment step."""
+    def test_caption_and_silent_step(self):
+        tmp = tempfile.mkdtemp()
+        try:
+            d = scaffold(tmp, 2, voice=False, segments=[
+                {"id": "s1", "step": "0.0.-1", "visual": "v", "narration": "A caption on this step."}])
+            (d / "src/slides.html").write_text(
+                '<section><h2>Title</h2><p style="position:absolute;bottom:0;left:30%;margin:0">'
+                'text under the caption bar</p><p class="fragment">an unplanned step</p></section>')
+            import yaml
+            sb = d / "storyboard.yaml"; s = yaml.safe_load(sb.read_text()); s["voice"] = True
+            sb.write_text(yaml.safe_dump(s, sort_keys=False))
+            subprocess.run([str(X), "build", str(d)], check=True, capture_output=True)
+            f = " | ".join(check.run(report.load(d), 1)["faults"])
+            self.assertIn("caption covers", f)
+            self.assertIn("step 0.0.0 is not in the storyboard", f)
+        finally:
+            shutil.rmtree(tmp)
+
+
 class Static(unittest.TestCase):
     def test_refuses_script_media_and_imports(self):
         tmp = Path(tempfile.mkdtemp())

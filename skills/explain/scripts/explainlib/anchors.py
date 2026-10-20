@@ -84,6 +84,11 @@ class ExplainScene(VoiceoverScene):
             self._placed[name] = {"m": m, "t": self.renderer.time, "cell": f"{cell}/{span}"}
         return m
 
+    def track(self, m, name: str):
+        """Record an object placed some other way (axes coordinates, next_to) for the verify checks."""
+        self._placed[name] = {"m": m, "t": self.renderer.time, "cell": "tracked"}
+        return m
+
     def release(self, *names):
         for n in names:
             rec = self._placed.pop(n, None)

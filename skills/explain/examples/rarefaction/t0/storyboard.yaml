@@ -1,0 +1,8 @@
+title: "Rarefaction"
+message: "A sample sequenced more deeply shows more taxa even from the same community; rarefying both samples to the same depth removes that difference."
+audience: "researchers comparing richness across sequenced samples"
+delivery: read
+tier: 0
+voice: false
+numbers_ok: [1971, 2001, 2014]
+segments: []

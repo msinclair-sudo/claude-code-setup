@@ -1,0 +1,5 @@
+# Rendered output is rebuilt with `x all <dir>`; only plans, sources, notes and the contact sheet are kept.
+*/*/build/
+*/*/static/
+*/*/checks/*
+!*/*/checks/contact-1.png

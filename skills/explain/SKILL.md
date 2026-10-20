@@ -40,7 +40,7 @@ Run everything through `x` (`~/.claude/skills/explain/scripts/x`). Check the mac
 - **Every number shown or spoken is in `claims.yaml`.** `x check` fails on orphans. Illustrative numbers are labelled illustrative on the page.
 - **Captions always on** for narration; the transcript ships with it. Never speed narration above the voice's normal rate.
 - **No decoration that stays on screen.** Every visual element carries information or goes.
-- **Say whether a depiction is the actual data or an illustration**, with a visible label (`<span class="x-label">data</span>` or `illustrative`). A truncated axis carries a visible note.
+- **Say whether a depiction is the actual data, a simulation or an illustration**, with a visible label on every view (`<span class="x-label">data</span>`, `simulated`, `illustrative`). A truncated axis carries a visible note.
 - **One idea per slide or segment**; at most 12 words on screen and 35 words of narration per segment.
 - **Visible prose goes through humanizer** before the last round.
 - **PPTX only when asked:** build it from the same storyboard with the pptx skill.

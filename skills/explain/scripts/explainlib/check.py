@@ -12,7 +12,8 @@ from . import frames, geometry, numbers, static_check
 from .lint import lint
 
 
-DRAWN = {"Text", "MathTex", "Tex", "MarkupText", "Paragraph", "Title", "BulletedList", "Integer", "DecimalNumber"}
+# Integer/DecimalNumber are left out: their literal is a counter's start value, not what the viewer reads.
+DRAWN = {"Text", "MathTex", "Tex", "MarkupText", "Paragraph", "Title", "BulletedList"}
 
 
 def _scene_strings(path) -> str:
@@ -43,7 +44,7 @@ def run(r, rnd: int) -> dict:
         with geometry.browser() as br:
             for size in ((1280, 800), (390, 844)):
                 pg = geometry.open_page(br, page, size)
-                faults += [f"{size[0]}px: {f}" for f in geometry.page_faults(pg)]
+                faults += [f"{size[0]}px: {f}" for f in geometry.page_faults(pg) + geometry.shrink_faults(pg)]
                 if size[0] == 1280:
                     faults += geometry.load_faults(pg) + geometry.axe_faults(pg)
         for svg in b.glob("*.svg"):
@@ -58,12 +59,16 @@ def run(r, rnd: int) -> dict:
             pg = geometry.open_page(br, deck, (1280, 720))
             if pg.query_selector("#x-start"):
                 pg.evaluate("document.getElementById('x-start').remove()")
-            n = 0
+            n, planned, seen = 0, {g.get("step") for g in r.segments if g.get("narration")}, []
             for key in deck_steps(pg):
-                n += 1
+                n += 1; seen.append(key)
                 zoom = pg.evaluate("Reveal.getScale()")
                 faults += [f"step {key}: {f}" for f in
                            geometry.page_faults(pg, scope=".reveal .slides > section.present", min_px=20, zoom=zoom)]
+                faults += [f"step {key}: {f}" for f in geometry.caption_faults(pg, ".reveal .slides > section.present")]
+                if r.story.get("voice") and key not in planned:
+                    faults.append(f"step {key} is not in the storyboard: it plays in silence "
+                                  "(fragments meant to appear together need the same data-fragment-index)")
             faults += geometry.load_faults(pg) + geometry.axe_faults(pg)
             slides_text = numbers.html_text(r.p("src/slides.html").read_text())
         faults += [f"numbers: {f}" for f in numbers.orphans(r, {"slides": slides_text, "narration": spoken})]

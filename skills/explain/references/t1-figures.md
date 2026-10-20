@@ -7,6 +7,7 @@
 - **The caption says what to see**; the label says `data` or `illustrative`.
 - **Prose is short:** the message as the opening line, a paragraph per figure, sources at the foot. If deleting a third of the words improves the page, keep deleting.
 - **Words beside their picture:** put the sentence that explains a figure directly above or below it, not two sections away.
+- **Phones:** a figure narrower than 640 px keeps its size and scrolls inside its frame (`x check` fails one drawn below 60% of its size, since its text shrinks with it). Side-by-side panels hide the second panel off screen, so give them a stacked twin: `<img class="x-wide-only" src="fig1.svg"><img class="x-narrow-only" src="fig1-narrow.svg">` (no `<picture>`: the publish check refuses `<source>`).
 
 ## Cheat sheet (verified 2026-10-20)
 

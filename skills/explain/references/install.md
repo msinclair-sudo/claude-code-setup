@@ -11,7 +11,7 @@
 
 ## Pitfalls met (2026-10-20)
 - conda-forge names the soundfile package `pysoundfile`.
-- conda-forge `sox` (14.4.2) pins `xz=5.0` and cannot coexist with ffmpeg 9; it is left out. manim-voiceover then logs "SoX could not be found!" on import. Only its recorder and some services use SoX; the Kokoro path does not.
+- conda-forge `sox` (14.4.2) pins `xz=5.0` and cannot coexist with ffmpeg 9; it is left out. manim-voiceover then logs "SoX could not be found!" on import. Only its recorder and some services use SoX; the Kokoro path does not. `explainlib.tts` silences the log warning; a leftover `/bin/sh: sox: Permission denied` on render comes from the wrapper's `sox -h` probe meeting an unreadable (Windows) directory on WSL's PATH, and is harmless.
 - manim-voiceover is installed `--no-deps`, then its requirements minus manim, so pip never swaps out conda's manim.
 - Python 3.13+ removed `audioop`, which pydub needs; keep the env at 3.12.
 - Playwright is pinned to the biblion env's version so the cached `chromium-1243` is reused; `REPORT_CHROME` points at it for kaleido and stills.

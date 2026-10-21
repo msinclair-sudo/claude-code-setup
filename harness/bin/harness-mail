@@ -53,15 +53,29 @@ def _pid_alive(pid):
     try:
         os.kill(int(pid), 0)
         return True
+    except PermissionError:
+        return True                     # alive, just not ours to signal
     except (OSError, ValueError):
         return False
+
+
+CLAIM_FRESH = 30        # seconds a claim is left alone, whatever its pid reads as
+
+
+def claim_name(f):
+    """A claim's file: the claiming process and when it claimed (log 202)."""
+    return f.with_name(f"{f.stem}.taken-{os.getpid()}-{int(time.time())}")
 
 
 def _restore_stale(d):
     """A claim whose process died before it showed the message (a hook killed at
     its timeout, log 120) goes back to the inbox, to be shown again."""
     for c in d.glob("*.taken-*"):
-        pid = c.name.rsplit("-", 1)[-1]
+        pid, _, at = c.name.split(".taken-")[-1].partition("-")
+        # A claim being shown right now is never put back (log 202): a pid that
+        # read as dead put a live claim back, and it was shown again at Stop.
+        if at.isdigit() and time.time() - int(at) < CLAIM_FRESH:
+            continue
         if not _pid_alive(pid):
             try:
                 os.rename(c, c.with_name(c.name.split(".taken-")[0] + ".json"))
@@ -126,7 +140,7 @@ def claim(state, node, only=None):
                     continue
             except Exception:
                 continue
-        c = f.with_name(f"{f.stem}.taken-{os.getpid()}")
+        c = claim_name(f)
         try:
             os.rename(f, c)
         except OSError:
@@ -140,6 +154,9 @@ def claim(state, node, only=None):
 
 def commit(state, node, claimed, how):
     """The claimed messages were shown: log them as delivered, drop the claims."""
+    # A claim that was put back meanwhile is the inbox's again: logging it too
+    # would record it delivered while it waits to be shown a second time.
+    claimed = [(c, m) for c, m in claimed if Path(c).exists()]
     if not claimed:
         return []
     at = time.strftime("%Y-%m-%dT%H:%M:%S%z")

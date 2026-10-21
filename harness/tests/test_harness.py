@@ -544,6 +544,31 @@ class OwedWake(unittest.TestCase):
             self.assertEqual(len(self.inbox("dev")), 2)
         self.assertIsNone(hz.owed_ring(self.ctx, "dev", "", now))           # no session at all
 
+    def test_a_pass_that_failed_to_read_rings_nothing_again(self):
+        # Log 202: owed_now swallowed a failed read, so the next pass found the
+        # wait "new" and rang the same text again, which blocked a Stop.
+        wait = [{"on": "dev", "stale": None, "via": "waiting", "frm": "dev_1", "since": OLD,
+                 "what": "asked about the fixture"}]
+        now = time.time()
+        with mock.patch.object(hz, "turn_end_at", return_value=now - hz.OWED_IDLE - 1):
+            with mock.patch.object(hz, "waits", return_value=wait):
+                self.assertIn("asked about the fixture", hz.owed_ring(self.ctx, "dev", "s", now))
+            with mock.patch.object(hz, "waits", side_effect=RuntimeError("index busy")):
+                self.assertIsNone(hz.owed_ring(self.ctx, "dev", "s", now))
+            with mock.patch.object(hz, "waits", return_value=wait):
+                self.assertIsNone(hz.owed_ring(self.ctx, "dev", "s", now))     # not again
+        self.assertEqual(len(self.inbox("dev")), 1)
+
+    def test_an_inferred_wait_is_keyed_by_its_turn(self):
+        wait = lambda at: [{"on": "dev", "stale": None, "via": "turn", "frm": "dev_1",
+                            "since": None, "turn_at": at, "what": "finished its turn"}]
+        with mock.patch.object(hz, "waits", return_value=wait(100.0)):
+            (k1,) = [k for k in hz.owed_now(self.ctx, "dev") if k.startswith("waiting:")]
+        with mock.patch.object(hz, "waits", return_value=wait(200.0)):
+            (k2,) = [k for k in hz.owed_now(self.ctx, "dev") if k.startswith("waiting:")]
+        self.assertNotEqual(k1, k2)
+        self.assertNotIn(":turn", k1)
+
 
 class CloseAfter(unittest.TestCase):
     """obs 67: a segment's close waits on a task, structurally."""
@@ -1646,6 +1671,22 @@ class MailShownThenLogged(unittest.TestCase):
         c.rename(c.with_name(c.name.split(".taken-")[0] + ".taken-999999"))  # its process died
         self.assertEqual(hz.MAIL().pending(self.state, "dev"), 1)        # back in the inbox
         self.assertFalse((self.state / "doorbell" / "dev" / "delivered.jsonl").exists())
+
+    def test_a_claim_being_shown_is_never_put_back(self):
+        # Log 202: a live claim read as dead went back to the inbox and was shown
+        # again at Stop, after it had been logged as delivered.
+        got = hz.MAIL().claim(self.state, "dev")
+        c = got[0][0]
+        c.rename(c.with_name(c.name.split(".taken-")[0] + f".taken-999999-{int(time.time())}"))
+        self.assertEqual(hz.MAIL().pending(self.state, "dev"), 0)        # fresh: left alone
+
+    def test_a_claim_put_back_meanwhile_is_not_logged_as_delivered(self):
+        got = hz.MAIL().claim(self.state, "dev")
+        c = got[0][0]
+        c.rename(c.with_name(c.name.split(".taken-")[0] + ".json"))      # back in the inbox
+        self.assertEqual(hz.MAIL().commit(self.state, "dev", got, "prompt"), [])
+        self.assertFalse((self.state / "doorbell" / "dev" / "delivered.jsonl").exists())
+        self.assertEqual(hz.MAIL().pending(self.state, "dev"), 1)
 
     def test_commit_logs_it_and_again_shows_it(self):
         got = hz.MAIL().claim(self.state, "dev")

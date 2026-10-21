@@ -4277,11 +4277,13 @@ def rank0_line(kind, ident, label, age):
 OWED_IDLE = 300            # quiet this long with an action owed: the node is rung
 
 
-def owed_now(ctx, node):
+def owed_now(ctx, node, failed=None):
     """The acts only this node can do, as {id: line}: its children's
     presentations to sign off, their questions to answer, and for rank 0 the
     batches, approvals and answered blocks it owes. Read from records alone,
-    so the ringer can ask it every minute."""
+    so the ringer can ask it every minute. A part that fails to read is named
+    in `failed`, so a caller never takes a short answer for a whole one."""
+    failed = [] if failed is None else failed
     out = {}
     kids = set(ctx.children(node))
     held = reports_holding(ctx)
@@ -4299,7 +4301,7 @@ def owed_now(ctx, node):
         try:
             u = unanswered(ctx, node, k)
         except Exception:
-            u = None
+            u, _ = None, failed.append("unanswered")
         if u:
             out[f"unanswered:{k}:{u[1][:40]}"] = owed_line("unanswered", k, u[1], u[0])
     # Waits on this node, recorded or read off a finished turn: the nudge that
@@ -4311,10 +4313,13 @@ def owed_now(ctx, node):
             then = _epoch(e["since"]) if e.get("since") else None
             if then and time.time() - then < OWED_IDLE:
                 continue
-            out[f"waiting:{e['frm']}:{e.get('since') or 'turn'}"] = owed_line(
+            # An inferred wait is keyed by the turn it was read off (log 202:
+            # "waiting:<node>:turn" stood for every turn, so one that dropped
+            # out and came back rang again as new).
+            out[f"waiting:{e['frm']}:{e.get('since') or e.get('turn_at') or 'turn'}"] = owed_line(
                 "waiting", e["frm"], e["what"], time.time() - then if then else 0)
     except Exception:
-        pass
+        failed.append("waits")
     for rp, c in report_parts_of(ctx, node):
         then = _epoch(c.get("asked_at"))
         if then and time.time() - then >= OWED_IDLE:
@@ -4334,13 +4339,13 @@ def owed_now(ctx, node):
                 out[f"{kind.replace(' ', '-')}:{r['id']}"] = owed_line(
                     kind, r["id"], r.get("title") or "", time.time() - then)
     except Exception:
-        pass
+        failed.append("research")
     try:
         for kind, ident, label, age in rank0_owes(ctx, node):
             if kind in ("review", "approve", "task"):
                 out[f"{kind}:{ident}"] = rank0_line(kind, ident, label, age)
     except Exception:
-        pass
+        failed.append("rank0")
     return out
 
 
@@ -4371,14 +4376,18 @@ def owed_ring(ctx, node, sid, now=None):
     ended = turn_end_at(sid) if sid else None
     if not ended or now - ended < OWED_IDLE:
         return None
-    items = owed_now(ctx, node)
+    failed = []
+    items = owed_now(ctx, node, failed)
     tf = bell_dir(ctx, node) / "owed.json"
     told = set(_read_json(tf) or [])
     new = [k for k in items if k not in told]
-    # What is no longer owed leaves the record, so it rings again if it comes back.
-    if set(told) != (told & set(items)) | set(new):
+    # What is no longer owed leaves the record, so it rings again if it comes
+    # back. Only a whole pass can say so: one that failed to read a part dropped
+    # its items, and the next pass rang them all again (log 202).
+    keep = (told & set(items)) | set(new) if not failed else told | set(new)
+    if told != keep:
         tf.parent.mkdir(parents=True, exist_ok=True)
-        tf.write_text(json.dumps(sorted((told & set(items)) | set(new))))
+        tf.write_text(json.dumps(sorted(keep)))
     if not new:
         return None
     text = (f"owed by you, and nothing else will ask (log 173):\n"
@@ -15589,7 +15598,8 @@ def inferred_waits(ctx, rows=None, stops=None):
             continue
         on = next((bw.get(x.get("cwd", "")) for x in rows if x.get("name") == w), None)
         out.append({"frm": child, "on": on or ("owner" if w in ("", "you") else w),
-                    "said": (st or {}).get("said") or "", "idle": r.get("idle")})
+                    "said": (st or {}).get("said") or "", "idle": r.get("idle"),
+                    "turn_at": turn_end_at(r.get("sessionId") or "")})
     return out
 
 
@@ -15692,7 +15702,7 @@ def waits(ctx, rows=None, infer="cache", stops=None, about=None, rings=True):
             inf = c.get("waits") or []
     for w in inf:
         add("answer", "turn", w["frm"], w["on"], what=w.get("said") or "finished its turn",
-            src="inferred", act=f"reply to {w['frm']}")
+            src="inferred", act=f"reply to {w['frm']}", turn_at=w.get("turn_at"))
     for lead in ([] if not rings else [about] if about else list(nodes)):
         for k in ctx.children(lead) if lead in nodes else []:
             try:
@@ -25749,7 +25759,7 @@ def withdraw_rings(state, node, pick, how):
         m = _read_json(f)
         if not m or not pick(m):
             continue
-        c = f.with_name(f"{f.stem}.taken-{os.getpid()}")
+        c = MAIL().claim_name(f)
         try:
             os.rename(f, c)                 # a reader that got there first keeps it
         except OSError:

@@ -107,7 +107,7 @@ def run(r, rnd: int) -> dict:
             warns.append(f"video {dur.get('video', 0):.1f}s against audio {dur.get('audio', 0):.1f}s")
         if dur.get("video", 0) > 10 * 60 + 5:
             faults.append(f"video is {dur['video'] / 60:.1f} min; at most 10 (chapters)")
-        warns += motion_warnings(r.p("src/scene.py"))
+        warns += motion_warnings(r.p("src/scene.py")) + text_warnings(r.p("src/scene.py"))
         for log in r.p("checks").glob("scene-*.json"):
             j = json.loads(log.read_text())
             faults += [f"{j['scene']}: {f}" for f in j["failures"]]
@@ -126,7 +126,8 @@ FADES = ("FadeIn", "FadeOut")
 MOVES = ("Create", "Uncreate", "Write", "Unwrite", "DrawBorderThenFill", "Transform", "ReplacementTransform",
          "TransformMatchingShapes", "TransformMatchingTex", "TransformFromCopy", "FadeTransform", "MoveToTarget",
          "GrowFromCenter", "GrowFromEdge", "GrowFromPoint", "GrowArrow", "SpinInFromNothing", "Indicate",
-         "Circumscribe", "Flash", "FocusOn", "Wiggle", "ShowPassingFlash", "MoveAlongPath", "Rotate", "Restore")
+         "Circumscribe", "Flash", "FocusOn", "Wiggle", "ShowPassingFlash", "MoveAlongPath", "Rotate", "Restore",
+         "Appear", "Retext")
 
 
 def motion_warnings(scene_py) -> list:
@@ -140,5 +141,27 @@ def motion_warnings(scene_py) -> list:
     total = fades + moves
     if total and fades / total > 0.4:
         return [f"motion: {fades} of {total} animations are fades; carry objects through with Transform, "
-                f"draw with Create or Write, point with Indicate (references/t4-animation.md)"]
+                f"draw with Create, bring text in with Appear, point with Indicate (references/t4-animation.md)"]
     return []
+
+
+LABEL_WORDS = 4
+
+
+def text_warnings(scene_py) -> list:
+    """Text on screen names things; it does not write itself in or read out the narration (owner review of the
+    fifth exemplar: the slow Write of every label "so distracting", and frames that read like slides)."""
+    try:
+        src = scene_py.read_text()
+    except OSError:
+        return []
+    out = []
+    n = len(re.findall(r"\bWrite\(", src))
+    if n:
+        out.append(f"text: {n} Write( calls draw text letter by letter; use Appear (explainlib.motion), Retext to change it")
+    for m in re.finditer(r"""\b(?:label|Text)\(f?(["'])(.*?)\1""", src):
+        text = re.sub(r"\{[^}]*\}", "0", m.group(2))
+        nw = sum(1 for w in text.split() if re.search(r"[A-Za-z]", w))
+        if nw > LABEL_WORDS:
+            out.append(f"text: '{m.group(2)}' is {nw} words on screen; a label names a thing, the voice says the rest")
+    return out

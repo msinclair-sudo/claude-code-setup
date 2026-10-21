@@ -80,10 +80,10 @@ claims:
   source: 'Bokulich, N. A., Subramanian, S., Faith, J. J., Gevers, D., Gordon, J. I., Knight, R., Mills, D. A. and Caporaso, J. G. (2013) Quality-filtering vastly improves diversity estimates from Illumina amplicon sequencing. Nature Methods 10(1): 57-59, doi:10.1038/nmeth.2276; paired-end reads: Illumina 16S guide, as m8'
   kind: quoted
 - id: m17
-  text: sequencing errors make near-copies of each real sequence; denoising folds them into exact sequence variants (ASVs), while older pipelines cluster at 97% similarity into OTUs; in one soil dataset, pipelines found 8,270 to 16,609 ASVs
+  text: sequencing errors make near-copies of each real sequence; denoising folds them into exact sequence variants (ASVs), while older pipelines cluster at 97% similarity into OTUs; in one soil dataset, pipelines found 8,270 (Deblur), 11,613 (UNOISE3) and 16,609 (DADA2) ASVs
   source: 'Nearing, J. T., Douglas, G. M., Comeau, A. M. and Langille, M. G. I. (2018) Denoising the Denoisers: an independent evaluation of microbiome sequence error-correction approaches. PeerJ 6: e5364, doi:10.7717/peerj.5364 (one soil dataset, blueberry fields: Deblur 8,270, UNOISE3 11,613, DADA2 16,609 ASVs; open-reference 21,297 OTUs); Callahan, B. J., McMurdie, P. J., Rosen, M. J., Han, A. W., Johnson, A. J. A. and Holmes, S. P. (2016) DADA2: High-resolution sample inference from Illumina amplicon data. Nature Methods 13(7): 581-583, doi:10.1038/nmeth.3869 (97% OTUs)'
   kind: quoted
-  value: 97 8270 16609
+  value: 97 8270 11613 16609
 - id: m18
   text: PCR joins pieces of two templates into chimeras; in one test at 30 cycles, 0.9% to 18.2% of reads were chimeric depending on the polymerase, and detection caught many but not all
   source: 'Sze, M. A. and Schloss, P. D. (2019) The impact of DNA polymerase and number of rounds of amplification in PCR on 16S rRNA gene sequence data. mSphere 4(3): e00163-19, doi:10.1128/mSphere.00163-19 (UCHIME sensitivity 50 to 87% at 25 or more cycles)'
@@ -146,7 +146,7 @@ claims:
   text: in one global survey of soils, the dominant 2% of bacterial phylotypes (chosen for being both abundant and widespread) made up about 41% of the reads in an average sample
   source: 'Delgado-Baquerizo, M., Oliverio, A. M., Brewer, T. E., Benavent-Gonzalez, A., Eldridge, D. J., Bardgett, R. D., Maestre, F. T., Singh, B. K. and Fierer, N. (2018) A global atlas of the dominant bacteria found in soil. Science 359(6373): 320-325, doi:10.1126/science.aap9516'
   kind: quoted
-  value: 2 41
+  value: 2 41 98
 - id: m32
   text: one widely used choice of variable region is V4, which the Earth Microbiome Project protocol amplifies (primers 515F and 806R); Illumina's 16S guide uses V3-V4
   source: 'Earth Microbiome Project, 16S Illumina Amplicon Protocol, https://earthmicrobiome.org/protocols-and-standards/16s/ ; Caporaso, J. G. et al. (2011) Global patterns of 16S rRNA diversity at a depth of millions of sequences per sample. PNAS 108(Suppl 1): 4516-4522, doi:10.1073/pnas.1000080107 (V4)'

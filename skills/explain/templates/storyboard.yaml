@@ -22,7 +22,7 @@ segments:                 # tier 0-1: optional (the page's sections); tier 2-4: 
   - id: s1
     role: setting         # setting | mechanism | problem | distil | resolution | limits; open with the setting
     visual: "what is drawn"
-    onscreen: "at most 12 words"
+    onscreen: "labels; separated by semicolons; each at most 4 words"
     narration: "at most 35 words, said while the visual is on screen"
     claims: [c1]
     # tier 2:  step: "0.0.-1"      (slide h, vertical v, fragment f; -1 before the first fragment)

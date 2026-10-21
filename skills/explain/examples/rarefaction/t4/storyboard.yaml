@@ -18,7 +18,7 @@ segments:
     role: setting
     scene: Soil
     visual: "chapter title; a droplet of soil; the camera pushes in through a magnifying glass until bacterial cells (rods and cocci, several colours) fill the frame"
-    onscreen: "soil, up close"
+    onscreen: ""
     narration: "Take a droplet of soil. Look closer, and you find bacteria: a great many cells, of many different kinds."
     claims: []
     verify: {inside_frame: all}
@@ -26,7 +26,7 @@ segments:
     role: setting
     scene: Soil
     visual: "the camera pulls back; the cells gather into a labelled sample: 100,000 cells, 80 taxa"
-    onscreen: "simulated: 100,000 cells, 80 taxa"
+    onscreen: "100,000 cells; 80 taxa"
     narration: "Ours is a simulated soil, small enough to draw. It holds 100,000 cells from 80 taxa, that is, 80 kinds of bacteria."
     claims: [m1]
     verify: {inside_frame: all}
@@ -34,7 +34,7 @@ segments:
     role: setting
     scene: Soil
     visual: "the cells sort themselves into bars, one per taxon, tallest first: a few tall coloured bars, a long low grey tail; the tall bars are labelled abundant, the tail low-abundance"
-    onscreen: "a few abundant taxa, many low-abundance taxa"
+    onscreen: "cells per taxon; abundant; low-abundance"
     narration: "Count the cells of each taxon. A few taxa are abundant and hold most of the cells. Most taxa are present at low abundance."
     claims: [m1, m2]
     verify: {inside_frame: all}
@@ -42,7 +42,7 @@ segments:
     role: setting
     scene: Soil
     visual: "beside the chart, a card is written in, labelled data: one global survey of soils, the dominant 2% of bacterial taxa, about 41% of an average sample's reads"
-    onscreen: "real soils, sequenced: 2% of taxa, 41% of reads"
+    onscreen: "reads, real soils; 2% of taxa; 98% of taxa; 41%"
     narration: "Sequencing surveys of real soils show the same long tail. In one global survey, just 2% of soil bacterial taxa made up about 41% of an average sample's reads."
     claims: [m31]
     verify: {inside_frame: all}
@@ -50,7 +50,7 @@ segments:
     role: distil
     scene: Soil
     visual: "the chart holds; its title becomes 'the truth: cells per taxon'"
-    onscreen: "the truth: cells per taxon"
+    onscreen: "the truth"
     narration: "So this is the truth an experiment sets out to measure: how many cells of each taxon are in the soil."
     claims: []
     verify: {inside_frame: all}
@@ -59,7 +59,7 @@ segments:
     role: mechanism
     scene: Genes
     visual: "chapter title; cells and grey beads in a tube; the tube shakes; most cells split and spill wavy DNA strands"
-    onscreen: "DNA extraction: beads break the cells open"
+    onscreen: "DNA extraction"
     narration: "First, we pull the DNA out of the cells. Usually we shake the soil with tiny beads, which break the cells open."
     claims: [m3]
     verify: {inside_frame: all}
@@ -67,7 +67,7 @@ segments:
     role: problem
     scene: Genes
     visual: "three thick-walled cells stay shut while the rest have opened; each is circled in turn"
-    onscreen: "tougher cells give up less DNA"
+    onscreen: "Gram-positive DNA; gentle; harder; +400%"
     narration: "But tougher cells break less often, so they give up less DNA. In one study, harder shaking released up to 400% more DNA from Gram-positive bacteria."
     claims: [m3]
     verify: {inside_frame: all}
@@ -75,7 +75,7 @@ segments:
     role: mechanism
     scene: Genes
     visual: "one opened cell's DNA straightens into a ring, its genome; an arc of the ring is drawn in, labelled 16S rRNA gene"
-    onscreen: "the 16S rRNA gene"
+    onscreen: "16S rRNA gene; genome"
     narration: "From all that DNA, we read just one gene, the 16S ribosomal RNA gene. Its sequence tells us which kind of bacterium it came from."
     claims: [m4]
     verify: {inside_frame: all}
@@ -83,7 +83,7 @@ segments:
     role: mechanism
     scene: Genes
     visual: "the ring moves left and gains arcs one by one, seven in all (taxon 1); a second ring appears on the right with a single arc (taxon 3); a note below: 1 to about 15 copies, rarely more"
-    onscreen: "copies per genome: 7 and 1"
+    onscreen: "copies per genome; 1; 15; taxon 1: 7 copies; taxon 3: 1 copy"
     narration: "A genome can carry several copies of this gene: from 1 to about 15, rarely more, depending on the taxon. In our soil, taxon 1 carries 7. Taxon 3 carries just 1."
     claims: [m5, m6]
     verify: {inside_frame: all, no_overlap: [g1, g3]}
@@ -91,7 +91,7 @@ segments:
     role: problem
     scene: Genes
     visual: "taxon 1's ring duplicates into two rings inside one cell outline, doubling its arcs; label: a growing cell, two genomes"
-    onscreen: "a cell can hold several genome copies"
+    onscreen: "one cell; 1 to dozens; ?"
     narration: "A cell can also hold several copies of its genome. In lab cultures, it ranges from one to dozens or more, depending on species and growth rate. In soil, it has barely been measured."
     claims: [m30]
     verify: {inside_frame: all}
@@ -99,7 +99,7 @@ segments:
     role: distil
     scene: Genes
     visual: "the bar chart from chapter 1 returns and morphs twice: share of cells, then share of DNA, then share of 16S gene copies; taxon 1's bar is labelled before and after"
-    onscreen: "taxon 1: 23% of cells, 49.5% of gene copies"
+    onscreen: "share of 16S copies; taxon 1: 23%; taxon 1: 49.5%"
     narration: "So before any PCR, the counts have already shifted. Taxon 1 has gone from 23% of the cells to 49.5% of the gene copies."
     claims: [m11]
     verify: {inside_frame: all}
@@ -108,7 +108,7 @@ segments:
     role: mechanism
     scene: Amplify
     visual: "step heading 'the 16S rRNA gene'; three copies of the gene, one per taxon, drawn as bars one under another; the conserved stretches are the same grey in all three and labelled conserved on them; the middle stretch is a different colour in each, labelled variable region"
-    onscreen: "conserved: much the same across bacteria; variable: differs"
+    onscreen: "16S rRNA gene; conserved; variable region"
     narration: "Look along the 16S gene of three taxa. Some stretches are conserved: much the same across bacteria. Others are variable: they differ from taxon to taxon."
     claims: [m7]
     verify: {inside_frame: all}
@@ -116,7 +116,7 @@ segments:
     role: mechanism
     scene: Amplify
     visual: "step heading 'PCR primers'; primer arrows land on the conserved stretches of all three genes at once; a brace over the variable region between them reads: barcode = a variable region of the 16S rRNA gene, here V4"
-    onscreen: "barcode: a variable region of the 16S gene"
+    onscreen: "primers; barcode; V4"
     narration: "Primers stick to two conserved stretches, so one pair fits most bacteria. Between them sits a variable region, such as V4. That region of the 16S gene is our barcode."
     claims: [m7, m32]
     verify: {inside_frame: all}
@@ -124,7 +124,7 @@ segments:
     role: mechanism
     scene: Amplify
     visual: "step heading 'PCR'; the barcode of one gene is copied out of it: 1, 2, 4, 8, 16 strands, each new strand copied from an old one, every strand coloured by its taxon; a counter runs to cycle 35"
-    onscreen: "PCR cycle 35"
+    onscreen: "barcode; cycle 35"
     narration: "PCR copies this barcode over and over. Each cycle can nearly double it. Two common protocols use 25 and 35 cycles; our simulation uses 35."
     claims: [m7, m8]
     verify: {inside_frame: all}
@@ -132,7 +132,7 @@ segments:
     role: problem
     scene: Amplify
     visual: "step heading 'PCR bias'; two taxa's barcodes copied side by side, one column filling faster than the other; a data card: one study, lab-grown gut communities, 35 cycles, about 1 taxon in 5 more than fourfold off"
-    onscreen: "one study: 1 taxon in 5 more than fourfold off"
+    onscreen: "PCR bias; 1 taxon in 5; over 4× off"
     narration: "But PCR doesn't copy every taxon equally well. In one study of lab-grown gut communities, about 1 taxon in 5 came out more than fourfold off after 35 cycles."
     claims: [m9]
     verify: {inside_frame: all}
@@ -140,7 +140,7 @@ segments:
     role: problem
     scene: Amplify
     visual: "the axis is drawn first, ticks 1/16, 1/4, 1, 4, 16, with 'copied too few' to the left and 'copied too many' to the right; then 80 dots, one per taxon, drop and stack; dashed lines at 1/4 and 4; the dots beyond them are ringed and counted"
-    onscreen: "each dot: one taxon; ringed: beyond fourfold"
+    onscreen: "PCR bias per taxon; fair; too many; too few; ringed: 15 of 80"
     narration: "Our simulation matches it. The axis shows bias: 1 is fair, 4 is four times too many, a quarter four times too few. Each dot is a taxon; ringed ones are over fourfold off."
     claims: [m10]
     verify: {inside_frame: all}
@@ -148,7 +148,7 @@ segments:
     role: problem
     scene: Amplify
     visual: "the bar chart returns as share of gene copies and morphs into share of barcodes; taxon 1's and taxon 3's bars are marked"
-    onscreen: "share of barcodes after PCR"
+    onscreen: "share of barcodes; taxon 1: 46%; taxon 3: 7.5% → 0.5%"
     narration: "Here is what that does to our soil's shares. Taxon 1 now makes up 46% of the barcodes. Taxon 3 has fallen from 7.5% of the cells to half a percent."
     claims: [m11]
     verify: {inside_frame: all}
@@ -156,7 +156,7 @@ segments:
     role: distil
     scene: Amplify
     visual: "taxon 1's and taxon 3's bars lift out of the chart into a two-bar chart of their own; the ratio between them is written between the bars: 3 to 1 in cells; the bars change to gene copies, 53 to 1, then barcodes, 85 to 1, the ratio counting up with them"
-    onscreen: "taxon 1 to taxon 3: 3, then 53, then 85 to 1"
+    onscreen: "in cells; in barcodes; 3 to 1; 53 to 1; 85 to 1"
     narration: "So compare the two directly. In the cells, taxon 1 outnumbered taxon 3 about 3 to 1. In the gene copies, 53 to 1. In the barcodes, about 85 to 1."
     claims: [m33]
     pause_after: 3.5
@@ -166,7 +166,7 @@ segments:
     role: mechanism
     scene: Sequence
     visual: "step heading 'samples'; the soil icon, a cell, its DNA strand and the barcode copies pass in a quick chain (the pictures from chapters 1 to 3) and the copies drop into tube A; tubes B and C fill the same way; each tube labelled sample A, B, C, with 'barcode copies, coloured by taxon'"
-    onscreen: "each sample: its own barcode copies"
+    onscreen: "soil; cell; DNA; barcode copies; sample A"
     narration: "Every soil sample goes through these same steps. Its cells give up their DNA, and PCR copies the barcode. Here are three samples' barcode copies."
     claims: []
     verify: {inside_frame: all}
@@ -174,7 +174,7 @@ segments:
     role: mechanism
     scene: Sequence
     visual: "step heading 'indexing'; a short white tag, one pattern per sample, is added to the left end of every barcode copy, tube by tube"
-    onscreen: "index tag: names the sample"
+    onscreen: "indexing; index"
     narration: "Each sample's barcodes then get a short tag, called an index, that names the sample. That lets many samples share one sequencing run."
     claims: [m12]
     verify: {inside_frame: all}
@@ -182,7 +182,7 @@ segments:
     role: mechanism
     scene: Sequence
     visual: "step heading 'sequencing'; the tagged copies pour into one pool; reads leave the pool along curved paths into the sequencer, and as each arrives its sample's read meter grows a step; one read is shown leaving as a pair of arrows, read 1 and read 2, from the two ends"
-    onscreen: "read pair: one barcode read from both ends"
+    onscreen: "sequencer; pool; reads per sample; read pair"
     narration: "The samples are pooled, and the sequencer reads a random draw of the barcodes. It reads each one from both ends, giving a read pair."
     claims: [m13, m35]
     verify: {inside_frame: all}
@@ -190,7 +190,7 @@ segments:
     role: problem
     scene: Sequence
     visual: "the three read meters hold; the label 'sequencing depth' is written over them; sample C's short meter is circled"
-    onscreen: "sequencing depth: reads per sample"
+    onscreen: "sequencing depth"
     narration: "The number of reads a sample gets is its sequencing depth. Depths differ: in one study, the deepest sample had nearly 100 times the reads of the shallowest."
     claims: [m13, m14]
     verify: {inside_frame: all}
@@ -198,7 +198,7 @@ segments:
     role: mechanism
     scene: Sequence
     visual: "step heading 'demultiplexing'; reads travel into three bins by their tag; one of sample A's reads lands in bin B and is circled"
-    onscreen: "misassigned (exaggerated here)"
+    onscreen: "misassigned (exaggerated)"
     narration: "Software then sorts the reads back to their samples by tag. A few land in the wrong sample: about 2% in one study, almost none in another."
     claims: [m15]
     verify: {inside_frame: all}
@@ -206,7 +206,7 @@ segments:
     role: distil
     scene: Sequence
     visual: "the three bins hold still; a pile beside each shows its size"
-    onscreen: "each sample: its own pile of reads"
+    onscreen: "reads"
     narration: "So each sample now has its own pile of reads, and each pile is a different size."
     claims: []
     verify: {inside_frame: all}
@@ -215,7 +215,7 @@ segments:
     role: mechanism
     scene: Reads
     visual: "step heading 'merging'; a read pair from chapter 4: the two arrows overlap in the middle of the barcode and join into one merged read"
-    onscreen: "read pair → merged read"
+    onscreen: "barcode copy; read 1; read 2; overlap; merged read"
     narration: "Next we clean the reads. The two reads of a pair overlap in the middle of the barcode, so they are joined into one merged read."
     claims: [m16, m35]
     verify: {inside_frame: all}
@@ -223,7 +223,7 @@ segments:
     role: mechanism
     scene: Reads
     visual: "step heading 'filtering by length'; the three taxa's barcodes as bars, left-aligned, ending a few bases apart (ends exaggerated), lengths 251, 253, 255 at their ends; a band over the ends labelled 'expected length (V4)'"
-    onscreen: "expected length: distinct sequences 251 to 255 bases, one V4 dataset"
+    onscreen: "expected length; 251 bases; 253 bases; 255 bases"
     narration: "Then we filter the reads. One check is length: each barcode has an expected length, and taxa differ by a few bases. In one V4 dataset, distinct sequences ran 251 to 255 bases."
     claims: [m36]
     verify: {inside_frame: all}
@@ -231,7 +231,7 @@ segments:
     role: mechanism
     scene: Reads
     visual: "one read with a quality strip, bright at its start and fading toward its end; the faded end is cut off and the read is shorter (label 'trimmed: low quality'); then a gene with a primer landing in the wrong place makes a short off-colour copy, labelled 'off-target copy'"
-    onscreen: "trimmed: low quality; off-target copy"
+    onscreen: "high quality; low; trimmed; other DNA; primer; off-target copies"
     narration: "Reads also come out shorter: on Illumina machines, quality tends to fall near a read's end, which is trimmed off. Primers that stick in the wrong place can make much shorter or longer copies."
     claims: [m37]
     verify: {inside_frame: all}
@@ -239,7 +239,7 @@ segments:
     role: mechanism
     scene: Reads
     visual: "a histogram of merged read lengths builds up (illustrative): a tall peak at the expected length, a tail of short reads to its left, a small off-target bump to its right; then the axis titles are written"
-    onscreen: "expected length; short tail; off-target"
+    onscreen: "expected length; short tail; off-target; read length (bases); number of reads"
     narration: "So read lengths spread out. In this histogram, most reads sit near the expected length, with a tail of short ones. Length runs along the bottom, and the number of reads up the side."
     claims: [m34]
     verify: {inside_frame: all}
@@ -247,7 +247,7 @@ segments:
     role: problem
     scene: Reads
     visual: "two cut-off lines are drawn either side of the peak; the bars outside dim, labelled dropped; the histogram shrinks to the top and three small histograms, samples A, B and C, get the same two lines; then the lower line slides into the peak (real reads dim: 'too strict: real reads lost') and back out past the tail ('too loose: faulty reads kept'), and settles"
-    onscreen: "same cut-offs for every sample; too strict / too loose"
+    onscreen: "cut-offs; dropped; sample A; too strict; too loose"
     narration: "Where to cut is a judgement, made by looking at plots like this. The same cut-offs usually go for every sample. Too strict loses real reads; too loose keeps faulty ones."
     claims: [m16, m38]
     verify: {inside_frame: all}
@@ -255,7 +255,7 @@ segments:
     role: mechanism
     scene: Reads
     visual: "seven near-identical sequences, error letters underlined, fold into one exact sequence labelled ASV"
-    onscreen: "denoising: near-copies fold into ASVs"
+    onscreen: "reads; ASV; ASVs, one soil dataset; Deblur 8,270; UNOISE3 11,613; DADA2 16,609"
     narration: "Sequencing makes small errors. Denoising folds the near-copies back into exact sequences, called ASVs. In one soil dataset, pipelines found 8,270 to 16,609 ASVs."
     claims: [m17]
     verify: {inside_frame: all}
@@ -263,7 +263,7 @@ segments:
     role: problem
     scene: Reads
     visual: "a copy starts along a blue template and finishes along an orange one: a half-and-half chimera; a detector row crosses out some chimeras and misses others"
-    onscreen: "chimera: half one template, half another"
+    onscreen: "chimera; detector"
     narration: "PCR can also join two templates into one false sequence, a chimera. In one test, 0.9% to 18.2% of reads were chimeras. Detectors catch many, not all."
     claims: [m18]
     verify: {inside_frame: all}
@@ -271,7 +271,7 @@ segments:
     role: mechanism
     scene: Reads
     visual: "an ASV travels to a reference shelf, its best match lights up and names it; the reads are tallied into a table of taxa by samples, columns scaled to each sample's depth"
-    onscreen: "named by a reference database, then counted"
+    onscreen: "reference database; best match; count table"
     narration: "Each ASV is named by matching it to a reference database. Then the reads are counted into a table: taxa by samples."
     claims: [m19]
     verify: {inside_frame: all}
@@ -279,7 +279,7 @@ segments:
     role: distil
     scene: Reads
     visual: "the table holds; its column heads read 'reads', not 'cells'"
-    onscreen: "reads per taxon, not cells"
+    onscreen: "reads, not cells"
     narration: "So the table counts reads, not cells. Our simulation leaves out the false taxa these steps can add."
     claims: [m20]
     verify: {inside_frame: all}
@@ -288,7 +288,7 @@ segments:
     role: problem
     scene: Depth
     visual: "chapter title; three detection strips for the simulated soil at 50,000, 5,000 and 500 reads, drawn in turn from the deepest; empty slots for taxa never drawn"
-    onscreen: "taxa found: 78, 64, 42 of 80"
+    onscreen: "50,000 reads; 78 taxa; 64 taxa; 42 taxa; found; missed"
     narration: "Back to our soil, read at three depths. At 50,000 reads, 78 of the 80 taxa turn up. At 5,000, 64. At 500, only 42."
     claims: [m21]
     verify: {inside_frame: all, no_overlap: all}
@@ -296,7 +296,7 @@ segments:
     role: problem
     scene: Depth
     visual: "the empty slots in the 500-read strip are circled; their bars in the barcode chart are tiny"
-    onscreen: "missed: the low-abundance taxa"
+    onscreen: "missed"
     narration: "The taxa we miss are the low-abundance ones. Their barcodes are so few that a small draw never picks them."
     claims: [m21]
     verify: {inside_frame: all}
@@ -304,7 +304,7 @@ segments:
     role: problem
     scene: Depth
     visual: "30 repeat sequencings at each depth, each a dot: taxon 1's dots sit tight on its 46%; a low-abundance taxon's dots scatter or sit at zero at 500 reads, narrowing with depth"
-    onscreen: "more reads: a tighter spread, the same centre"
+    onscreen: "taxon 1, abundant; taxon 41, low-abundance; dashed: pool share"
     narration: "Sequence each depth 30 times. Taxon 1 stays near 46% every time. A low-abundance taxon jumps around, or vanishes. In this model, more reads make a share more precise."
     claims: [m22]
     verify: {inside_frame: all}
@@ -312,7 +312,7 @@ segments:
     role: distil
     scene: Depth
     visual: "the three strips return side by side; the counts 78, 64, 42 hold"
-    onscreen: "fewer reads, fewer taxa found"
+    onscreen: "taxa found; reads; 42; 64; 78"
     narration: "So a shallower sample finds fewer taxa, even from the same soil."
     claims: []
     verify: {inside_frame: all}
@@ -321,7 +321,7 @@ segments:
     role: problem
     scene: Rarefy
     visual: "chapter title; two samples from the same soil, deep and shallow, white strips with their counts"
-    onscreen: "same soil: 78 taxa and 56"
+    onscreen: "richness = taxa found; 78 taxa; 56 taxa"
     narration: "Two samples from the same soil. One got 50,000 reads and shows 78 taxa. The other got 2,000 reads and shows 56."
     claims: [m23]
     verify: {inside_frame: all, no_overlap: all}
@@ -329,7 +329,7 @@ segments:
     role: resolution
     scene: Rarefy
     visual: "the deep sample's strip thins: reads are drawn out at random down to 2,000, and the rest slide away"
-    onscreen: "rarefying: draw the deep sample down to 2,000 reads"
+    onscreen: "deep, rarefied: 2,000 reads; 48,000 reads set aside"
     narration: "Rarefying draws the deeper sample down to 2,000 reads, at random, and sets the other 48,000 aside. Now both samples have the same depth."
     claims: [m24, m26]
     verify: {inside_frame: all}
@@ -337,7 +337,7 @@ segments:
     role: resolution
     scene: Rarefy
     visual: "the draw repeats; each result drops into a histogram of 200; the band of the middle 95% and the shallow sample's 56 are marked"
-    onscreen: "rarefied 200 times: 57 taxa on average"
+    onscreen: "200 draws; average 57; middle 95%: 52 to 61; shallow sample: 56"
     narration: "One draw is noisy, so rarefaction repeats it, here 200 times. On average it finds 57 taxa, and the middle 95% fall from 52 to 61. The shallow sample's 56 sits inside."
     claims: [m24, m25]
     pause_after: 2.5
@@ -346,7 +346,7 @@ segments:
     role: limits
     scene: Rarefy
     visual: "the barcode chart returns, an arrow at taxon 1: bias, still in every read; beside it the shallow sample's strip, its empty slots pulsing: missed taxa, still missed"
-    onscreen: "bias: still in every read; missed taxa: still missed"
+    onscreen: "still biased; still missed"
     narration: "Rarefying evens out depth, and nothing else. The biases from extraction, copy number and PCR are in every read. Taxa the shallow sample missed stay missed."
     claims: [m26]
     verify: {inside_frame: all}
@@ -354,7 +354,7 @@ segments:
     role: limits
     scene: Rarefy
     visual: "two soils, one crowded with cells and one sparse, each give the same share chart: same shares; label: total cells, measured by spike-ins or cell counts"
-    onscreen: "same shares; total cells: spike-ins or cell counts"
+    onscreen: "many cells; few cells; same shares"
     narration: "That bias can differ between samples, too. Whether to rarefy at all is still argued. And shares can't show how many cells there were: that takes spike-ins or cell counts."
     claims: [m27, m28, m29]
     verify: {inside_frame: all}

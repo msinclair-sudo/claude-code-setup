@@ -43,9 +43,9 @@ class Lint(unittest.TestCase):
 
     def test_long_narration_and_onscreen(self):
         d = scaffold(self.tmp, 2, segments=[{"id": "s1", "step": "0.0.-1", "visual": "v", "claims": ["c1"],
-                                             "onscreen": " ".join(["w"] * 13), "narration": " ".join(["w"] * 36)}])
+                                             "onscreen": " ".join(["w"] * 17), "narration": " ".join(["w"] * 36)}])
         e = " ".join(self.errors(d))
-        self.assertIn("on-screen text is 13 words", e)
+        self.assertIn("on-screen text is 17 words", e)
         self.assertIn("narration is 36 words", e)
 
     def warnings(self, d):
@@ -78,6 +78,15 @@ class Lint(unittest.TestCase):
         self.assertTrue(check.motion_warnings(f))
         f.write_text("self.play(Transform(a, b), Create(d), Write(t))\nself.play(FadeOut(c))\n")
         self.assertFalse(check.motion_warnings(f))
+
+    def test_text_writes_and_sentences(self):
+        f = Path(self.tmp) / "scene.py"
+        f.write_text('self.play(Write(label("a cell can hold several genome copies")))\n')
+        w = " ".join(check.text_warnings(f))
+        self.assertIn("Write(", w)
+        self.assertIn("7 words on screen", w)
+        f.write_text('self.play(Appear(label("taxon 1: 46%")), Retext(t, label("cycle 35")))\n')
+        self.assertFalse(check.text_warnings(f))
 
     def test_tier4_must_be_presented(self):
         d = scaffold(self.tmp, 4, delivery="read")

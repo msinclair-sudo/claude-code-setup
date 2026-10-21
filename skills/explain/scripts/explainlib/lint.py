@@ -9,7 +9,7 @@ import re
 
 from .report import TIERS, words
 
-ONSCREEN_MAX, NARRATION_MAX = 12, 35
+ONSCREEN_MAX, LABEL_MAX, NARRATION_MAX = 16, 4, 35   # onscreen: labels separated by ';'
 ANIM_MINUTES_MAX, WPM, SENTENCE_MAX = 10, 155, 22
 CELL = re.compile(r"^[A-F][1-4]$")
 STEP = re.compile(r"^\d+\.\d+\.-?\d+$")
@@ -80,6 +80,11 @@ def lint(r) -> list:
             err(f"segment {sid}: 'visual' says what is drawn")
         if words(g.get("onscreen")) > ONSCREEN_MAX:
             err(f"segment {sid}: on-screen text is {words(g.get('onscreen'))} words; at most {ONSCREEN_MAX}")
+        for lab in str(g.get("onscreen") or "").split(";"):
+            nw = sum(1 for w in lab.split() if re.search(r"[A-Za-z]", w))   # numbers and arrows are not words to read
+            if nw > LABEL_MAX:   # a sentence on screen is the narration read off a slide
+                (err if t == 4 else warn)(f"segment {sid}: on-screen label '{lab.strip()}' is {nw} words; "
+                                          f"labels name things in at most {LABEL_MAX} words, the voice says the rest")
         n = words(g.get("narration"))
         narr_words += n
         if n > NARRATION_MAX:

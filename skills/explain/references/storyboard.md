@@ -6,7 +6,7 @@ The plan is written before any code, and `x lint` checks it. A plan that cannot 
 - `title`, `message` (one sentence the reader can repeat), `audience`, `delivery` (`read` or `presented`).
 - `tier`, `tier_reason` (why the tier below would not carry the message; required above 0).
 - `voice` (tier 2), `default_view` and `controls` (tier 3), `numbers_ok` (incidental numbers needing no claim).
-- `segments[]`: `id`, `role` (setting, mechanism, problem, resolution, limits), `visual` (what is drawn), `onscreen` (≤ 12 words), `narration` (≤ 35 words, about 13 s), `claims` (ids in `claims.yaml`), and:
+- `segments[]`: `id`, `role` (setting, mechanism, problem, resolution, limits), `visual` (what is drawn), `onscreen` (the frame's labels, separated by `;`, each at most 4 words), `narration` (≤ 35 words, about 13 s), `claims` (ids in `claims.yaml`), and:
   - tier 2: `step` = `"h.v.f"`, the slide and fragment where it plays (`f` = -1 before any fragment);
   - tier 4: `scene` (the Manim class), `anchors` (`{name: cell}`, cells A1-F4 on a 6×4 grid, A1 top left), `verify` (`inside_frame: all`, `no_overlap: all | [a, b]`, `order: [a, b]`, `hold_min_s: 2`).
 
@@ -33,17 +33,17 @@ Order the chapters as causes and consequences, a problem and its answer, or a co
 - One new term per segment: say it, show it, use it again in the next segment.
 - Come back to the subject in every segment: the soil, this sample, the gene, by name.
 - Slow down on the facts the explanation rests on: give a key number its own segment, with what it means for the subject, rather than passing it in a clause.
-- The narration says what the picture shows *while* it shows it; the on-screen text is key words that reword the narration, never the narration itself (text identical to the narration impaired learning; `x lint` warns).
+- The narration says what the picture shows *while* it shows it; the on-screen text names the things in the picture, never the narration itself, reworded or not (text identical to the narration impaired learning; `x lint` warns).
 - Order: the question, the thing that answers it, the consequence.
 - Each number in `onscreen` or `narration` has a claim id beside it.
 
 ## On-screen text has a job
-Not everything said is shown, and not everything shown is said (owner review of the third exemplar, 2026-10-21: "text on screen has to have purpose... they're kinda just floating text"). A piece of text earns its place by doing one of these:
+Not everything said is shown, and not everything shown is said (owner review of the third exemplar, 2026-10-21: "text on screen has to have purpose... they're kinda just floating text"). The aim is a 3Blue1Brown video, not a narrated slide deck: the picture carries the idea, the voice explains it, and text only names what is drawn. Owner review of the fifth exemplar: "we're doing the classic bad thing in presentations, and reading from the slides. Slides should complement the narration, not be the same." A piece of text earns its place by doing one of these, in at most 4 words (`x lint` and `x check` enforce it):
 - **labels a thing**, beside it or on it (a region of a gene, a bar, a bin); never off to the side;
 - **gives a number or a term** the viewer must keep (a key value, a word the next segment uses);
 - **names the step**: one short heading per step at the top left (signalling helped, design-rules NP).
 
-A caption that repeats the narration does none of these; leave it out. Text appears fast (about half a second), then the picture moves.
+A caption, legend or source card that says in a sentence what the voice says does none of these; leave it out. When a frame needs a fact from the literature, draw it: "harder shaking gave up to 400% more Gram-positive DNA" is two bars and "+400%"; "2% of taxa hold 41% of reads" is one bar split at 41%; three pipelines' ASV counts are three bars. Mark it `data` in the corner tag, not in a sentence. Text pops in (0.3 s, `Appear`) when the voice reaches it and holds still; it is never written letter by letter.
 
 ## Explaining terms and charts
 - **New terms are defined in the subject's own terms**: "conserved" is *almost the same in every bacterium, so one primer fits them all*; "variable" is *different from taxon to taxon, so it tells them apart*. Use the field's names ("variable region", "V4", "read pair"), not paraphrases.

@@ -1,5 +1,11 @@
 # Tier 4 narrated animation: what the loop did
 
+**Sixth version (2026-10-21), after the owner's review of the fifth:** the sync was fine (the browser had cached v4); the slow left-to-right Write of the text was "so distracting", and the frames read out the narration like slides: "slides should complement the narration, not be the same". The aim is 3Blue1Brown: the picture carries the idea, the voice explains, text names what is drawn.
+
+- **Text motion:** every Write (87) replaced by `explainlib.motion.Appear` (a 0.3 s fade squeezed into the start of its play); text changes in place with `Retext` (0.3 s crossfade). `x check` now warns on any `Write(` and on any label over 4 words; `x lint` errors on a tier 4 label over 4 words.
+- **Text cut to labels:** legends, captions and source cards removed (about 30 sentences). Facts that were sentences are drawn: the global survey as one bar split at 41% ("2% of taxa"); the bead-beating study as two bars and "+400%"; copy number on a 1 to 15 number line with taxon 1 and taxon 3 on it; genome copies per cell as "1 to dozens" and the soil with a question mark; the PCR study as five taxa, one ringed ("1 taxon in 5"); the three pipelines' ASV counts as three bars; the depth summary as a three-bar chart. Data sources moved into the corner tag ("bars: data, one study").
+- **Checks:** no faults but the length (10 min 31 s, owner's decision, still open); one bug found by eye and fixed (a "barcode" label left behind from s12 to s14b after Retext).
+
 **Fifth version (2026-10-21), after the owner's review of the fourth:** "the narration speed is faster than the slides and animations once we get to the PCR section"; back in sync by indexing, out again in merging. Read filtering "should be stated why it's done, not just that it is done".
 
 - **Cause of the drift:** segment boundaries matched the audio within 0.6 s; the drift was inside segments. Fixed run_times (0.5 to 2 s) bunched each segment's motion at its start, so the voice named things seconds before or after they moved (s20 merged the reads at 3 s, while "joined into one merged read" was spoken at 7 s). And the 0.7 s sentence pause had never been applied: kokoro-onnx places it only where the model reports timings, and v1.0 reports none (measured gaps 0.3 to 0.5 s).

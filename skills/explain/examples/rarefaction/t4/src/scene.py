@@ -11,6 +11,7 @@ Each chapter opens on its title and ends on a distil line over a still picture.
 """
 from explainlib.anchors import ExplainScene   # first: quiets sox/phonemizer warnings
 from explainlib import theme
+from explainlib.motion import Appear, Retext
 from manim import *
 
 import importlib.util
@@ -71,7 +72,7 @@ def chart(shares, title, w=5.6, h=3.0, ymax=0.5, xlab="taxa, most abundant first
 
 def draw_chart(ch, run_time=2.0):
     """Build a chart up: axes drawn, bars grown, words written."""
-    return AnimationGroup(Create(ch[0]), Create(ch[1]), Write(ch[3]), Write(ch[4]),
+    return AnimationGroup(Create(ch[0]), Create(ch[1]), Appear(ch[3]), Appear(ch[4]),
                           LaggedStart(*[GrowFromEdge(r, DOWN) for r in ch[2]], lag_ratio=0.02), run_time=run_time)
 
 
@@ -139,8 +140,8 @@ class Chaptered(ExplainScene):
 
     def chapter(self):
         t = VGroup(label(f"{self.NUMBER}", 64, C["muted"]), label(self.TITLE, 48)).arrange(RIGHT, buff=0.5)
-        self.play(Write(t), run_time=1.2)
-        self.wait(1.2)
+        self.play(Appear(t), run_time=0.6)
+        self.wait(1.8)
         self.play(FadeOut(t, shift=UP * 0.3), run_time=0.6)
 
     def tags(self, text):
@@ -148,15 +149,15 @@ class Chaptered(ExplainScene):
         return [a] if a else []
 
     def heading(self, text):
-        """The step's name, small, top left in the margin above the grid (signalling): written the first time,
-        transformed after. Play it on its own, about half a second."""
+        """The step's name, small, top left in the margin above the grid (signalling): it appears the first
+        time and is swapped in place after (Appear / Retext, 0.3 s)."""
         new = label(text, 24, C["muted"])
         new.move_to([-config.frame_width / 2 + 0.35 + new.width / 2, config.frame_height / 2 - 0.2, 0])
         old = getattr(self, "_heading", None)
         if old is None:
             self._heading = new
-            return Write(new)
-        return Transform(old, new)
+            return Appear(new)
+        return Retext(old, new)
 
 
 class Soil(Chaptered, MovingCameraScene):
@@ -181,10 +182,9 @@ class Soil(Chaptered, MovingCameraScene):
         ring = Circle(radius=lens_r).set_stroke(C["fg"], width=9).set_fill(C["fg"], opacity=0.06)
         handle = Line(ORIGIN, [1.4, -1.4, 0], stroke_width=16, color=C["fg"]).shift(ring.point_at_angle(-PI / 4))
         glass = VGroup(ring, handle).move_to(world.get_center() + np.array([4.2, 1.6, 0]))
-        cap = self.place(label("soil, up close", 30), "E3", "label", span="2x1")
         with self.say("s1") as t:
             self.play(DrawBorderThenFill(drop), LaggedStart(*[GrowFromCenter(g) for g in grains], lag_ratio=0.02),
-                      Write(cap), *self.tags("schematic drawing"), run_time=self.left(t, 0))
+                      *self.tags("schematic drawing"), run_time=self.left(t, 0))
             self.at(t, 1)
             self.play(glass.animate(path_arc=-PI / 3).shift(world.get_center() - ring.get_center()), run_time=self.left(t, 1, "bacteria"))
             self.track(glass, "glass")
@@ -196,17 +196,16 @@ class Soil(Chaptered, MovingCameraScene):
         icon = VGroup(drop, grains)
         crowd = cells.copy().arrange_in_grid(rows=7, cols=10, buff=0.2).scale(1.4)
         self.place(crowd, "A2", "crowd", span="2x2")
-        info = self.place(VGroup(label("simulated", 26, C["muted"]), label(f"{P.CELLS:,} cells", 32),
-                                 label(f"{N} taxa", 32)).arrange(DOWN, aligned_edge=LEFT, buff=0.15),
+        info = self.place(VGroup(label(f"{P.CELLS:,} cells", 32), label(f"{N} taxa", 32)).arrange(DOWN, aligned_edge=LEFT, buff=0.15),
                           "D2", "info", span="3x2")
         with self.say("s2") as t:
-            self.play(Restore(self.camera.frame), FadeOut(glass), FadeOut(cap), run_time=1.6)
-            self.release("glass", "label", "droplet")
+            self.play(Restore(self.camera.frame), FadeOut(glass), run_time=1.6)
+            self.release("glass", "droplet")
             self.play(icon.animate.scale(0.3).to_corner(UL, buff=0.3), Transform(cells, crowd),
                       *self.tags("schematic drawing; simulated counts"), run_time=self.left(t, 0))
             self.track(icon, "icon")
             self.at(t, 1)
-            self.play(Write(info), run_time=self.left(t, 1))
+            self.play(Appear(info), run_time=self.left(t, 1))
 
         # s3: each cell flies to its taxon's bar; the bars grow; braces name the two groups
         ch = self.place(chart(D["true"], "cells per taxon", xlab="taxa, most abundant first", **CHART),
@@ -214,32 +213,42 @@ class Soil(Chaptered, MovingCameraScene):
         b = ch[2]
         top = Brace(VGroup(*b[:6]), UP, color=C["fg"], buff=0.35)
         tail = Brace(VGroup(*b[12:]), UP, color=C["muted"], buff=0.35)
-        tl = label("a few abundant taxa", 24).next_to(top, UP, buff=0.1)
-        ll = label("many low-abundance taxa", 24, C["muted"]).next_to(tail, UP, buff=0.1)
+        tl = label("abundant", 24).next_to(top, UP, buff=0.1)
+        ll = label("low-abundance", 24, C["muted"]).next_to(tail, UP, buff=0.1)
         with self.say("s3") as t:
             self.release("crowd", "info")
-            self.play(ReplacementTransform(info, ch[3]), Create(ch[0]), Create(ch[1]), Write(ch[4]), run_time=0.8)
+            self.play(FadeOut(info), Appear(ch[3]), Create(ch[0]), Create(ch[1]), Appear(ch[4]), run_time=0.8)
             self.play(LaggedStart(*[c.animate.scale(0.6).move_to(b[pick[k]].get_bottom() + UP * 0.05)
                                     for k, c in enumerate(cells)], lag_ratio=0.02), run_time=self.left(t, 0))
             self.play(LaggedStart(*[GrowFromEdge(r, DOWN) for r in b], lag_ratio=0.02), FadeOut(cells), run_time=1.2)
             self.at(t, 1, "abundant")
-            self.play(Create(top), Write(tl), run_time=self.left(t, 1))
+            self.play(Create(top), Appear(tl), run_time=self.left(t, 1))
             self.at(t, 2)
-            self.play(Create(tail), Write(ll), run_time=self.left(t, 2))
+            self.play(Create(tail), Appear(ll), run_time=self.left(t, 2))
 
         # s3b: real soils have the same shape (data, one global survey)
-        card = self.place(VGroup(label("real soils, sequenced: one global survey (data)", 22, C["muted"]),
-                                 label("2% of bacterial taxa: about 41% of an average sample's reads", 28))
-                          .arrange(DOWN, buff=0.12), "A4", "card", span="4x1")
+        RW = 7.0                                              # one global survey: 2% of taxa, about 41% of reads
+        top41 = Rectangle(width=RW * 0.41, height=0.4, stroke_width=0, fill_color=C["fg"], fill_opacity=0.9)
+        rest59 = Rectangle(width=RW * 0.59, height=0.4, stroke_width=0, fill_color=C["muted"], fill_opacity=0.5)
+        rbar = VGroup(top41, rest59).arrange(RIGHT, buff=0)
+        rl1 = label("2% of taxa", 22).next_to(top41, UP, buff=0.1)
+        rl2 = label("98% of taxa", 22, C["muted"]).next_to(rest59, UP, buff=0.1)
+        rl3 = label("41%", 26, weight=BOLD).move_to(top41).set_color(C["bg"])
+        rname = label("reads, real soils", 22, C["muted"]).next_to(rbar, LEFT, buff=0.3)
+        card = self.place(VGroup(rname, rbar, rl1, rl2, rl3), "A4", "card", span="6x1")
         with self.say("s3b") as t:
-            self.play(Write(card[0]), Indicate(VGroup(*b[12:]), color=C["fg"], scale_factor=1.02), run_time=self.left(t, 0))
+            self.play(GrowFromEdge(rbar, LEFT), Appear(rname), *self.tags("chart: simulated; bar: data, one survey"),
+                      run_time=self.left(t, 0, cap=1.2))
             self.at(t, 1, "just 2%")
-            self.play(Write(card[1]), Indicate(VGroup(*b[:6]), color=C["fg"], scale_factor=1.05), run_time=self.left(t, 1))
+            self.play(Appear(rl1), Appear(rl2), Indicate(top41, color=C["fg"]), run_time=0.8)
+            self.at(t, 1, "about 41%")
+            self.play(Appear(rl3), run_time=0.5)
 
         # s4 (distil): the chart holds; its title says what it is
-        truth = label("the truth: cells per taxon", 24).move_to(ch[3])
+        truth = label("the truth", 26).move_to(ch[3])
         with self.say("s4") as t:
-            self.play(Transform(ch[3], truth), run_time=1.0)
+            self.play(FadeOut(card), Retext(ch[3], truth), *self.tags("simulated"), run_time=0.6)
+            self.release("card")
             self.play(Indicate(b, scale_factor=1.04, color=C["fg"]), run_time=1.2)
 
 
@@ -264,14 +273,13 @@ class Genes(Chaptered, MovingCameraScene):
                          .move_to(np.array([rng.uniform(-3.4, 3.4), rng.uniform(-1.6, 1.6), 0])) for _ in range(22)])
         tube = RoundedRectangle(width=8.2, height=4.2, corner_radius=0.5).set_stroke(C["muted"], width=2)
         stage = self.place(VGroup(tube, cells, beads), "A1", "tube", span="6x3")
-        key = self.place(VGroup(label("grey dots: beads", 22, C["muted"])), "A4", "key", span="6x1")
         strands = VGroup(*[dna(COL[i]).move_to(cells[k]) for k, i in enumerate(who)])
         opened = [k for k in range(len(who)) if k not in tough]
         with self.say("s5") as t:
             self.play(self.heading("DNA extraction"), *self.tags("schematic"), run_time=0.5)
             self.play(Create(tube), LaggedStart(*[GrowFromCenter(c) for c in cells], lag_ratio=0.05), run_time=self.left(t, 0))
             self.at(t, 1)
-            self.play(LaggedStart(*[GrowFromCenter(b_) for b_ in beads], lag_ratio=0.03), Write(key[0]), run_time=0.9)
+            self.play(LaggedStart(*[GrowFromCenter(b_) for b_ in beads], lag_ratio=0.03), run_time=0.9)
             shake = self.left(t, 1, "which break") / 3
             for _ in range(3):
                 self.play(*[b_.animate.shift(np.array([rng.uniform(-0.5, 0.5), rng.uniform(-0.4, 0.4), 0])) for b_ in beads],
@@ -280,15 +288,24 @@ class Genes(Chaptered, MovingCameraScene):
             self.play(*[ReplacementTransform(cells[k], strands[k]) for k in opened], run_time=self.left(t, 1))
 
         # s6: the tough cells stay shut, circled one by one
-        key2 = VGroup(label("thick outline: a tougher cell, still shut", 22, C["muted"]),
-                      label("one study: harder shaking gave up to 400% more Gram-positive DNA", 24)
-                      ).arrange(DOWN, buff=0.12).move_to(key)
+        gentle = Rectangle(width=0.7, height=0.3, stroke_width=0, fill_color=C["muted"], fill_opacity=0.8)
+        hard = Rectangle(width=3.5, height=0.3, stroke_width=0, fill_color=C["fg"], fill_opacity=0.9)
+        gl = label("gentle", 22, C["muted"]); hl = label("harder", 22, C["muted"])
+        rows_ = VGroup(VGroup(gl, gentle).arrange(RIGHT, buff=0.25), VGroup(hl, hard).arrange(RIGHT, buff=0.25)) \
+            .arrange(DOWN, buff=0.15, aligned_edge=LEFT)
+        gentle.align_to(hard, LEFT)
+        plus = label("+400%", 26, weight=BOLD).next_to(hard, RIGHT, buff=0.2)
+        gp = label("Gram-positive DNA", 22, C["muted"]).next_to(rows_, LEFT, buff=0.5)
+        key2 = self.place(VGroup(gp, rows_, plus), "A4", "key2", span="6x1")
         with self.say("s6") as t:
             self.play(Succession(*[Circumscribe(cells[k], color=C["fg"], run_time=1.0) for k in tough]),
-                      run_time=self.left(t, 0, "so they"))
-            self.play(ReplacementTransform(key, key2[0]), run_time=self.left(t, 0))
+                      run_time=self.left(t, 0))
             self.at(t, 1)
-            self.play(Write(key2[1]), run_time=self.left(t, 1, "from Gram"))
+            self.play(Appear(gp), Appear(gl), GrowFromEdge(gentle, LEFT), *self.tags("schematic; bars: data, one study"), run_time=0.6)
+            self.at(t, 1, "harder")
+            self.play(Appear(hl), GrowFromEdge(hard, LEFT), run_time=self.left(t, 1, "up to", cap=1.2))
+            self.at(t, 1, "400%")
+            self.play(Appear(plus), run_time=0.5)
 
         # s7: one strand straightens into a ring, its genome; the 16S gene is drawn on
         lead = strands[0]
@@ -296,15 +313,15 @@ class Genes(Chaptered, MovingCameraScene):
         big = Circle(radius=2.0).set_stroke(C["fg"], width=5).move_to(centre)
         gene = Arc(radius=2.0, start_angle=PI / 3, angle=0.32, stroke_width=16, color=COL[0]).shift(centre)
         glab = label("16S rRNA gene", 30).next_to(gene, UP + RIGHT, buff=0.04)
-        gnl = label("one genome, a ring of DNA", 26, C["muted"]).next_to(big, DOWN, buff=0.25)
+        gnl = label("genome", 26, C["muted"]).next_to(big, DOWN, buff=0.25)
         rest = VGroup(tube, beads, *[strands[k] for k in opened if k != 0], *[cells[k] for k in tough], key2)
         with self.say("s7") as t:
-            self.play(self.heading("the 16S rRNA gene"), run_time=0.5)
+            self.play(self.heading("the 16S rRNA gene"), *self.tags("schematic"), run_time=0.5)
             self.play(FadeOut(rest), run_time=0.8)
-            self.release("tube", "key")
-            self.play(Transform(lead, big), Write(gnl), run_time=self.left(t, 0, "one gene"))
+            self.release("tube", "key2")
+            self.play(Transform(lead, big), Appear(gnl), run_time=self.left(t, 0, "one gene", cap=1.5))
             self.at(t, 0, "one gene")
-            self.play(Create(gene), Write(glab), run_time=self.left(t, 0))
+            self.play(Create(gene), Appear(glab), run_time=self.left(t, 0))
             self.at(t, 1)
             self.play(Indicate(gene, color=C["fg"]), Indicate(glab, color=COL[0]), run_time=self.left(t, 1, "which kind"))
 
@@ -314,18 +331,24 @@ class Genes(Chaptered, MovingCameraScene):
         g1, g3 = genome_ring(c1, COL[0], left), genome_ring(c3, COL[2], right)
         l1 = label(f"taxon 1: {c1} cop{'y' if c1 == 1 else 'ies'}", 28, COL[0]).next_to(g1, DOWN, buff=0.3)
         l3 = label(f"taxon 3: {c3} cop{'y' if c3 == 1 else 'ies'}", 28, COL[2]).next_to(g3, DOWN, buff=0.3)
-        span = label("a genome carries 1 to about 15 copies, rarely more", 24, C["muted"]).next_to(VGroup(l1, l3), DOWN, buff=0.35)
+        nl = NumberLine(x_range=[1, 15, 1], length=7.0, color=C["muted"], include_numbers=False, tick_size=0.06)
+        nl_ends = VGroup(label("1", 22, C["muted"]).next_to(nl.n2p(1), DOWN, buff=0.15),
+                         label("15", 22, C["muted"]).next_to(nl.n2p(15), DOWN, buff=0.15))
+        nl_t = label("copies per genome", 22, C["muted"]).next_to(nl, LEFT, buff=0.3)
+        span = VGroup(nl, nl_ends, nl_t).next_to(VGroup(l1, l3), DOWN, buff=0.45)
+        dot1 = Dot(nl.n2p(c1), radius=0.1, color=COL[0]); dot3 = Dot(nl.n2p(c3), radius=0.1, color=COL[2])
         with self.say("s8") as t:
             self.play(self.heading("copies per genome"), run_time=0.5)
             self.play(FadeOut(glab), FadeOut(gnl), Transform(lead, g1[0]), Transform(gene, g1[1][0]), run_time=self.left(t, 0, "from 1"))
             self.at(t, 0, "from 1")
-            self.play(Write(span), run_time=self.left(t, 0))
+            self.play(Create(nl), Appear(nl_ends), Appear(nl_t), run_time=self.left(t, 0, cap=1.2))
             self.at(t, 1)
-            self.play(LaggedStart(*[Create(a) for a in g1[1][1:]], lag_ratio=0.3), Write(l1), run_time=self.left(t, 1))
+            self.play(LaggedStart(*[Create(a) for a in g1[1][1:]], lag_ratio=0.3), Appear(l1), GrowFromCenter(dot1),
+                      run_time=self.left(t, 1, cap=1.5))
             self.track(VGroup(lead, gene, g1[1], l1), "g1")
             self.at(t, 2)
             self.play(Create(g3[0]), run_time=0.6)
-            self.play(Create(g3[1]), Write(l3), run_time=self.left(t, 2))
+            self.play(Create(g3[1]), Appear(l3), GrowFromCenter(dot3), run_time=self.left(t, 2, cap=1.0))
             self.track(VGroup(g3, l3), "g3")
         self.add(g1[1])
 
@@ -333,43 +356,51 @@ class Genes(Chaptered, MovingCameraScene):
         twin = VGroup(lead, gene, g1[1]).copy()
         with self.say("s9") as t:
             self.play(self.heading("copies per cell"), run_time=0.5)
-            self.play(FadeOut(VGroup(g3, l3, span)), run_time=0.8)
+            self.play(FadeOut(VGroup(g3, l3, span, dot1, dot3)), run_time=0.8)
             self.release("g3")
             self.play(VGroup(lead, gene, g1[1], l1).animate.shift(RIGHT * 1.0), run_time=0.8)
             twin.move_to(VGroup(lead).get_center() + RIGHT * 3.2)
             outline = RoundedRectangle(width=7.4, height=3.6, corner_radius=1.6).set_stroke(COL[0], width=3) \
                 .move_to(VGroup(lead, twin).get_center())
-            note = label("a cell can hold several genome copies (here two); in soil, barely measured", 26).next_to(outline, DOWN, buff=0.3)
-            self.play(TransformFromCopy(VGroup(lead, gene, g1[1]), twin), run_time=self.left(t, 0))
-            self.at(t, 1)
-            self.play(Create(outline), FadeOut(l1), run_time=self.left(t, 1))
+            cl_ = label("one cell", 22, COL[0]).next_to(outline, UP, buff=0.1)
+            ranges = label("1 to dozens", 26).next_to(outline, DOWN, buff=0.3)
+            q_soil = soil_icon().scale(1.6).next_to(outline, RIGHT, buff=0.5)
+            qm = label("?", 48, weight=BOLD).move_to(q_soil)
+            note = VGroup(cl_, ranges, q_soil, qm)
+            self.play(TransformFromCopy(VGroup(lead, gene, g1[1]), twin), FadeOut(l1), run_time=self.left(t, 0, cap=1.5))
+            self.play(Create(outline), Appear(cl_), run_time=0.6)
+            self.at(t, 1, "from one")
+            self.play(Appear(ranges), run_time=0.5)
             self.at(t, 2)
-            self.play(Write(note), run_time=self.left(t, 2))
+            self.play(DrawBorderThenFill(q_soil), run_time=0.6)
+            self.play(Appear(qm), run_time=0.4)
             self.track(VGroup(outline, note), "twin")
 
         # s10 (distil): the chart from chapter 1 returns and is reshaped twice
         names = ["cells", "DNA", "16S copies"]
         keys = ["true", "dna", "templates"]
-        titles = ["share of cells per taxon", "share of extracted DNA", "share of 16S gene copies: already shifted"]
+        titles = ["share of cells", "share of DNA", "share of 16S copies"]
         ch = self.place(chart(D["true"], titles[0], xlab="taxa, in the order of the cell counts", **CHART),
                         "A1", "chart", span="6x3")
         b = ch[2]
-        before = label(f"taxon 1: {pct(D['true'][0])} of cells", 28, COL[0])
-        after = label(f"{D['templates'][0]:.1%} of gene copies", 28, COL[0])   # as spoken: 49.5%
-        notes = self.place(VGroup(before, label("→", 28, COL[0]), after).arrange(RIGHT, buff=0.3, aligned_edge=DOWN), "A4", "notes", span="6x1")
+        before = label(f"taxon 1: {pct(D['true'][0])}", 26, COL[0])
+        after = label(f"taxon 1: {D['templates'][0]:.1%}", 26, COL[0])          # as spoken: 49.5%
         with self.say("s10") as t:
             self.play(self.heading("the shares so far"), run_time=0.5)
             self.play(FadeOut(VGroup(lead, gene, g1[1], twin, outline, note)), run_time=0.6)
             self.release("g1", "twin")
             self.play(draw_chart(ch, 1.2), *self.tags("simulated"), run_time=1.2)
-            step = self.left(t, 0) / 2
+            step = self.left(t, 0, cap=None) / 2
             for k in (1, 2):
                 new = bars(D[keys[k]], **CHART).match_width(b).move_to(b, aligned_edge=DL)
-                self.play(Transform(b, new), Transform(ch[3], label(titles[k], 24).move_to(ch[3])), run_time=step)
+                self.play(Transform(b, new), Retext(ch[3], label(titles[k], 24).move_to(ch[3])), run_time=step)
             self.at(t, 1)
-            self.play(Write(before), run_time=self.left(t, 1, "to 49.5"))
+            before.next_to(b[0], RIGHT, buff=0.15).align_to(b[0], UP)
+            self.play(Appear(before), Indicate(b[0], color=C["fg"]), run_time=0.8)
             self.at(t, 1, "to 49.5")
-            self.play(Write(notes[1]), Write(after), Indicate(b[0], color=C["fg"]), run_time=self.left(t, 1))
+            after.move_to(before, aligned_edge=LEFT)
+            self.play(Retext(before, after), run_time=0.5)
+            self.track(before, "notes")
 
 
 class Amplify(Chaptered):
@@ -394,19 +425,16 @@ class Amplify(Chaptered):
                       label("conserved", 22, C["muted"]).next_to(rights[2], DOWN, buff=0.15))
         vlab = label("variable region", 22).next_to(varis[2], DOWN, buff=0.15)
         stage = self.place(VGroup(gtitle, genes, cons, vlab), "A1", "genes", span="6x3")
-        legend = self.place(VGroup(label("conserved: much the same across bacteria", 24, C["muted"]),
-                                   label("variable: differs from taxon to taxon", 24, C["muted"])).arrange(DOWN, buff=0.08),
-                            "A4", "legend", span="6x1")
         with self.say("s11") as t:
             self.play(self.heading("the 16S rRNA gene"), *self.tags("schematic"), run_time=0.5)
-            self.play(Write(gtitle), run_time=0.5)
-            self.play(LaggedStart(*[AnimationGroup(GrowFromEdge(g[0], LEFT), Write(g[1])) for g in genes], lag_ratio=0.3),
+            self.play(Appear(gtitle), run_time=0.5)
+            self.play(LaggedStart(*[AnimationGroup(GrowFromEdge(g[0], LEFT), Appear(g[1])) for g in genes], lag_ratio=0.3),
                       run_time=self.left(t, 0))
             self.at(t, 1, "conserved")
-            self.play(Write(cons), Write(legend[0]), *[Indicate(VGroup(lefts[k], rights[k]), color=C["fg"], scale_factor=1.03)
-                                                       for k in range(3)], run_time=self.left(t, 1))
+            self.play(Appear(cons), *[Indicate(VGroup(lefts[k], rights[k]), color=C["fg"], scale_factor=1.03)
+                                      for k in range(3)], run_time=self.left(t, 1, cap=1.2))
             self.at(t, 2, "variable")
-            self.play(Write(vlab), Write(legend[1]), *[Indicate(v_, color=C["fg"]) for v_ in varis], run_time=self.left(t, 2))
+            self.play(Appear(vlab), *[Indicate(v_, color=C["fg"]) for v_ in varis], run_time=self.left(t, 2, cap=1.2))
 
         # s11b: primers land on the conserved stretches of all three; the variable region between them is the barcode
         prim = VGroup()
@@ -419,7 +447,7 @@ class Amplify(Chaptered):
         plab = label("primers", 22, C["muted"]).next_to(prim[0], LEFT, buff=0.15)
         brace = Brace(varis[2], DOWN, color=C["fg"], buff=0.55)
         blab = VGroup(label("barcode", 26, weight=BOLD),
-                      label("a variable region (V4) of the 16S rRNA gene", 22)).arrange(DOWN, buff=0.06).next_to(brace, DOWN, buff=0.1)
+                      label("V4", 22, C["muted"])).arrange(DOWN, buff=0.06).next_to(brace, DOWN, buff=0.1)
         stage.add(prim, plab, brace, blab)
         for a_ in prim:
             a_.shift(UP * 1.5)
@@ -430,23 +458,23 @@ class Amplify(Chaptered):
             self.play(*[Indicate(VGroup(lefts[k], rights[k]), color=C["fg"], scale_factor=1.03) for k in range(3)],
                       run_time=self.left(t, 0))
             self.at(t, 1)
-            self.play(FadeOut(legend), Create(brace), *[Indicate(v_, color=C["fg"]) for v_ in varis], run_time=self.left(t, 1))
-            self.release("legend")
+            self.play(Create(brace), *[Indicate(v_, color=C["fg"]) for v_ in varis], run_time=self.left(t, 1, "such as", cap=1.2))
+            self.at(t, 1, "V4")
+            self.play(Appear(blab[1]), run_time=0.5)
             self.at(t, 2)
-            self.play(Write(blab[1]), run_time=self.left(t, 2, "our barcode"))
             self.at(t, 2, "barcode")
-            self.play(ReplacementTransform(vlab, blab[0]), run_time=self.left(t, 2))
+            self.play(Retext(vlab, blab[0]), run_time=0.5)
 
         # s12: PCR copies taxon 1's barcode, each new strand out of an old one
         top_var = varis[0]
         keep = VGroup(genes[0], gtitle)
-        out_ = VGroup(genes[1], genes[2], cons, brace, blab, *prim, plab)
-        bc_lab = label("barcode (16S, V4)", 22).next_to(top_var, UP, buff=0.12)
+        out_ = VGroup(genes[1], genes[2], cons, brace, vlab, blab[1], *prim, plab)   # vlab now reads 'barcode' (Retext)
+        bc_lab = label("barcode", 22).next_to(top_var, UP, buff=0.12)
 
         def strands(n, area_c):
             g = VGroup(*[Line(LEFT * 0.45, RIGHT * 0.45, stroke_width=8, color=COL[0]) for _ in range(n)])
             return g.arrange_in_grid(rows=max(1, n // 4), cols=min(n, 4), buff=(0.35, 0.3)).move_to(area_c)
-        counter = label("PCR cycle 0: 1 copy", 30)
+        counter = label("cycle 0", 30)
         with self.say("s12") as t:
             self.play(self.heading("PCR"), FadeOut(out_), run_time=0.6)
             self.release("genes")
@@ -454,7 +482,7 @@ class Amplify(Chaptered):
             bc_lab.next_to(top_var, UP, buff=0.12)
             area_c = keep.get_bottom() + DOWN * 2.0
             counter.move_to(area_c + DOWN * 1.8)
-            self.play(Write(bc_lab), Write(counter), run_time=0.5)
+            self.play(Appear(bc_lab), Appear(counter), run_time=0.5)
             now = strands(1, area_c)
             self.play(TransformFromCopy(top_var, now[0]), run_time=self.left(t, 0))
             self.at(t, 1)
@@ -462,10 +490,10 @@ class Amplify(Chaptered):
             for k in range(1, 5):
                 nxt = strands(2 ** k, area_c)
                 self.play(TransformFromCopy(now, nxt[len(now):]), Transform(now, nxt[:len(now)]),
-                          Transform(counter, label(f"PCR cycle {k}: {2 ** k} copies", 30).move_to(counter)), run_time=step)
+                          Retext(counter, label(f"cycle {k}", 30).move_to(counter)), run_time=step)
                 self.remove(now); now = nxt; self.add(now)
             self.at(t, 2, "our simulation")
-            self.play(Transform(counter, label(f"PCR cycle {P.CYCLES}: many copies", 30).move_to(counter)), run_time=self.left(t, 2))
+            self.play(Retext(counter, label(f"cycle {P.CYCLES}", 30).move_to(counter)), run_time=0.5)
             self.track(VGroup(keep, bc_lab, now, counter), "pcr")
 
         # s13: PCR bias: taxon 1's copies outrun taxon 3's (schematic), and one study's figure
@@ -474,20 +502,24 @@ class Amplify(Chaptered):
         cols = VGroup(col1, col3).arrange(RIGHT, buff=1.2, aligned_edge=DOWN)
         clabs = VGroup(label("taxon 1", 22, COL[0]).next_to(col1, DOWN, buff=0.2), label("taxon 3", 22, COL[2]).next_to(col3, DOWN, buff=0.2))
         race = self.place(VGroup(cols, clabs), "A1", "race", span="3x3")
-        card = self.place(VGroup(label("one study (data)", 22, C["muted"]),
-                                 label("lab-grown gut communities", 26),
-                                 label(f"after {P.CYCLES} cycles: about 1 taxon in 5", 26),
-                                 label("more than fourfold off", 26)).arrange(DOWN, aligned_edge=LEFT, buff=0.12),
-                          "D1", "card", span="3x3")
+        five = VGroup(*[Dot(radius=0.2, color=C["muted"], fill_opacity=0.8) for _ in range(5)]).arrange(RIGHT, buff=0.4)
+        five[2].set_fill(C["fg"], opacity=1)
+        ring5 = Circle(radius=0.32).set_stroke(C["fg"], width=3).move_to(five[2])
+        f1 = label("1 taxon in 5", 26).next_to(five, UP, buff=0.35)
+        f2 = label("over 4× off", 24, C["muted"]).next_to(five, DOWN, buff=0.35)
+        card = self.place(VGroup(five, ring5, f1, f2), "D1", "card", span="3x3")
         with self.say("s13") as t:
             self.play(self.heading("PCR bias"), FadeOut(VGroup(keep, bc_lab, counter)), run_time=0.6)
             self.release("pcr")
-            self.play(ReplacementTransform(now, col1), Write(clabs[0]), run_time=1.0)
-            self.play(LaggedStart(*[GrowFromEdge(x, LEFT) for x in col3], lag_ratio=0.5), Write(clabs[1]), run_time=self.left(t, 0))
+            self.play(ReplacementTransform(now, col1), Appear(clabs[0]), run_time=1.0)
+            self.play(LaggedStart(*[GrowFromEdge(x, LEFT) for x in col3], lag_ratio=0.5), Appear(clabs[1]), run_time=self.left(t, 0))
             self.at(t, 1)
-            self.play(Write(card[:2]), run_time=self.left(t, 1, "about 1"))
+            self.play(LaggedStart(*[GrowFromCenter(d_) for d_ in five], lag_ratio=0.15), *self.tags("schematic; right: data, one study"),
+                      run_time=self.left(t, 1, "about 1", cap=1.2))
             self.at(t, 1, "about 1")
-            self.play(Write(card[2:]), run_time=self.left(t, 1))
+            self.play(Create(ring5), Appear(f1), run_time=0.6)
+            self.at(t, 1, "more than")
+            self.play(Appear(f2), run_time=0.5)
 
         # s13b: the simulation: the axis first, then one dot per taxon
         lb = np.log2(D["bias"])
@@ -497,9 +529,9 @@ class Amplify(Chaptered):
         ticks = VGroup(*[VGroup(Line([x(v), -0.08, 0], [x(v), 0.08, 0], color=C["muted"], stroke_width=2),
                                 label(s_, 22, C["muted"]).next_to([x(v), 0, 0], DOWN, buff=0.18))
                          for v, s_ in ((-4, "1/16"), (-2, "1/4"), (0, "1"), (2, "4"), (4, "16"))])
-        ends = VGroup(label("← copied too few", 22, C["muted"]).next_to([x(-4.6), 0, 0], DOWN, buff=0.7).align_to([x(-5), 0, 0], LEFT),
-                      label("copied too many →", 22, C["muted"]).next_to([x(4.6), 0, 0], DOWN, buff=0.7).align_to([x(5), 0, 0], RIGHT),
-                      label("1 = fair", 22, C["muted"]).next_to([x(0), 0, 0], DOWN, buff=0.7))
+        ends = VGroup(label("← too few", 22, C["muted"]).next_to([x(-4.6), 0, 0], DOWN, buff=0.7).align_to([x(-5), 0, 0], LEFT),
+                      label("too many →", 22, C["muted"]).next_to([x(4.6), 0, 0], DOWN, buff=0.7).align_to([x(5), 0, 0], RIGHT),
+                      label("fair", 22, C["muted"]).next_to([x(0), 0, 0], DOWN, buff=0.7))
         far = np.abs(lb) > 2
         bins_ = np.floor(lb / 0.25)
         order = np.argsort(lb)
@@ -522,27 +554,27 @@ class Amplify(Chaptered):
         n3t = label("taxon 3", 20, COL[2]).move_to([d3_.get_x() - 1.3, top_y, 0])
         n1 = VGroup(n1t, Arrow(n1t.get_bottom(), d1_.get_center(), buff=0.1, color=COL[0], stroke_width=3))
         n3 = VGroup(n3t, Arrow(n3t.get_bottom(), d3_.get_center(), buff=0.1, color=COL[2], stroke_width=3))
-        ttl = label(f"each taxon's PCR bias after {P.CYCLES} cycles (simulated)", 24).next_to(axis, UP, buff=2.9)
-        dlab = label("each dot: one taxon", 22, C["muted"]).next_to(ttl, DOWN, buff=0.15)
-        count = label(f"ringed: beyond fourfold, {int(far.sum())} of {N} taxa", 24).next_to(ends, DOWN, buff=0.3)
+        ttl = label("PCR bias per taxon", 24).next_to(axis, UP, buff=2.9)
+        dlab = VMobject()
+        count = label(f"ringed: {int(far.sum())} of {N}", 24).next_to(ends, DOWN, buff=0.3)
         plot = self.place(VGroup(axis, ticks, ends, dots, rings, lines, ttl, dlab, count, n1, n3), "A1", "bias", span="6x4")
         with self.say("s13b") as t:
             self.play(FadeOut(VGroup(race, card)), run_time=0.5)
             self.release("race", "card")
-            self.play(Write(ttl), *self.tags("simulated"), run_time=self.left(t, 0))
+            self.play(Appear(ttl), *self.tags("simulated"), run_time=self.left(t, 0))
             self.at(t, 1)
-            self.play(Create(axis), Write(ticks), run_time=self.left(t, 1, "1 is fair"))
+            self.play(Create(axis), Appear(ticks), run_time=self.left(t, 1, "1 is fair"))
             self.at(t, 1, "1 is fair")
-            self.play(Write(ends[2]), Indicate(ticks[2], color=C["fg"]), run_time=self.left(t, 1, "4 is"))
+            self.play(Appear(ends[2]), Indicate(ticks[2], color=C["fg"]), run_time=self.left(t, 1, "4 is"))
             self.at(t, 1, "4 is")
-            self.play(Write(ends[1]), Indicate(ticks[3], color=C["fg"]), run_time=self.left(t, 1, "a quarter"))
+            self.play(Appear(ends[1]), Indicate(ticks[3], color=C["fg"]), run_time=self.left(t, 1, "a quarter"))
             self.at(t, 1, "a quarter")
-            self.play(Write(ends[0]), Indicate(ticks[1], color=C["fg"]), run_time=self.left(t, 1))
+            self.play(Appear(ends[0]), Indicate(ticks[1], color=C["fg"]), run_time=self.left(t, 1))
             self.at(t, 2)
-            self.play(Write(dlab), LaggedStart(*[d_.animate(rate_func=rush_into).shift(DOWN * 2.4) for d_ in dots.shift(UP * 2.4)],
+            self.play(LaggedStart(*[d_.animate(rate_func=rush_into).shift(DOWN * 2.4) for d_ in dots.shift(UP * 2.4)],
                                                lag_ratio=0.02), run_time=self.left(t, 2, "ringed"))
             self.at(t, 2, "ringed")
-            self.play(Create(lines), LaggedStart(*[Create(r) for r in rings], lag_ratio=0.1), Write(count), Write(n1), Write(n3),
+            self.play(Create(lines), LaggedStart(*[Create(r) for r in rings], lag_ratio=0.1), Appear(count), Appear(n1), Appear(n3),
                       run_time=self.left(t, 2))
         self.play(FadeOut(plot), run_time=0.6)
         self.release("bias")
@@ -555,14 +587,14 @@ class Amplify(Chaptered):
             self.play(self.heading("share of barcodes"), run_time=0.5)
             self.play(draw_chart(ch, 1.0), run_time=1.0)
             new = bars(D["pool"], **CHART).match_width(b).move_to(b, aligned_edge=DL)
-            self.play(Transform(b, new), Transform(ch[3], label("share of barcodes after PCR", 24).move_to(ch[3])), run_time=self.left(t, 0))
+            self.play(Transform(b, new), Retext(ch[3], label("share of barcodes", 24).move_to(ch[3])), run_time=self.left(t, 0, cap=1.5))
             m1 = label(f"taxon 1: {pct(D['pool'][0])}", 24, COL[0]).next_to(b[0], RIGHT, buff=0.15).align_to(b[0], UP)
             a3 = Arrow(b[2].get_top() + UP * 0.9 + RIGHT * 0.5, b[2].get_top() + UP * 0.05, buff=0, color=COL[2], stroke_width=4)
-            m3 = label(f"taxon 3: {pct(D['true'][2])} of cells → {pct(D['pool'][2])}", 24, COL[2]).next_to(a3.get_start(), UP + RIGHT, buff=0.05)
+            m3 = label(f"taxon 3: {pct(D['true'][2])} → {pct(D['pool'][2])}", 24, COL[2]).next_to(a3.get_start(), UP + RIGHT, buff=0.05)
             self.at(t, 1)
-            self.play(Write(m1), Indicate(b[0], color=C["fg"]), run_time=self.left(t, 1))
+            self.play(Appear(m1), Indicate(b[0], color=C["fg"]), run_time=self.left(t, 1, cap=1.0))
             self.at(t, 2)
-            self.play(GrowArrow(a3), Write(m3), run_time=self.left(t, 2))
+            self.play(GrowArrow(a3), Appear(m3), run_time=self.left(t, 2, cap=1.0))
             self.track(VGroup(m1, a3, m3), "marks")
 
         # s14b (distil): taxon 1 and taxon 3 side by side; the ratio between them counts up with each step
@@ -589,20 +621,20 @@ class Amplify(Chaptered):
             self.play(FadeOut(VGroup(ch[0], ch[1], ch[3], ch[4], *[b[i] for i in range(N) if i not in (0, 2)], *self.mobjects_of("marks"))),
                       run_time=0.6)
             self.release("chart", "marks")
-            self.play(ReplacementTransform(b[0], p0[0]), ReplacementTransform(b[2], p0[1]), Create(base), Write(names), Write(stg),
+            self.play(ReplacementTransform(b[0], p0[0]), ReplacementTransform(b[2], p0[1]), Create(base), Appear(names), Appear(stg),
                       self.heading("taxon 1 against taxon 3"), run_time=self.left(t, 0))
             self.at(t, 1)
-            self.play(Write(p0[2]), Write(p0[3]), run_time=self.left(t, 1, "about 3"))
+            self.play(Appear(p0[2]), Appear(p0[3]), run_time=self.left(t, 1, "about 3"))
             self.at(t, 1, "about 3")
-            self.play(Write(rgrp), run_time=self.left(t, 1))
+            self.play(Appear(rgrp), run_time=self.left(t, 1))
             log_ = VGroup(*[label(f"{nm}: {D[k_][0] / D[k_][2]:.0f} to 1", 22, C['muted']) for nm, k_ in stages]
                           ).arrange(DOWN, aligned_edge=LEFT, buff=0.12).next_to(rgrp, DOWN, buff=0.5)
             for j, (name_, key) in enumerate(stages[1:], start=2):
                 self.at(t, j)
                 nxt = pair(key).move_to(p0, aligned_edge=DOWN)
-                self.play(Transform(p0, nxt), Transform(stg, label(name_, 28, C["muted"]).move_to(stg)),
-                          Transform(rgrp, ratio_text(key).move_to(rgrp)), Write(log_[j - 2]), run_time=max(self.left(t, j) - (0.6 if j == 3 else 0), 0.5))
-            self.play(Write(log_[2]), run_time=0.6)
+                self.play(Transform(p0, nxt), Retext(stg, label(name_, 28, C["muted"]).move_to(stg)),
+                          Retext(rgrp, ratio_text(key).move_to(rgrp)), Appear(log_[j - 2]), run_time=self.left(t, j, cap=1.5))
+            self.play(Appear(log_[2]), run_time=0.5)
 
     def mobjects_of(self, name):
         rec = self._placed.get(name)
@@ -626,7 +658,6 @@ class Sequence(Chaptered):
             tubes.add(VGroup(box, name, amps)); kids.append(amps)
         tubes.arrange(RIGHT, buff=0.9)
         self.place(tubes, "A2", "tubes", span="6x2")
-        legend = self.place(label("lines: barcode copies, coloured by taxon", 22, C["muted"]), "A4", "legend", span="6x1")
         icon = soil_icon().scale(1.6).move_to([-5.6, 2.7, 0])
         cell0 = Circle(radius=0.2).set_stroke(width=0).set_fill(COL[0], 0.95).move_to([-3.6, 2.7, 0])
         strand0 = dna(COL[0]).move_to([-1.6, 2.7, 0])
@@ -637,22 +668,22 @@ class Sequence(Chaptered):
         steps = VGroup(label("soil", 20, C["muted"]).next_to(icon, DOWN, buff=0.1),
                        label("cell", 20, C["muted"]).next_to(cell0, DOWN, buff=0.25),
                        label("DNA", 20, C["muted"]).next_to(strand0, DOWN, buff=0.25),
-                       label("PCR: barcode copies", 20, C["muted"]).next_to(copies0, DOWN, buff=0.2))
+                       label("barcode copies", 20, C["muted"]).next_to(copies0, DOWN, buff=0.2))
         with self.say("s15") as t:
             self.play(self.heading("samples"), *self.tags("schematic"), run_time=0.5)
-            self.play(DrawBorderThenFill(icon), Write(steps[0]), run_time=self.left(t, 0))
+            self.play(DrawBorderThenFill(icon), Appear(steps[0]), run_time=self.left(t, 0))
             self.at(t, 1)
-            self.play(GrowArrow(arrows[0]), TransformFromCopy(icon, cell0), Write(steps[1]), run_time=self.left(t, 1, "give up"))
-            self.play(GrowArrow(arrows[1]), TransformFromCopy(cell0, strand0), Write(steps[2]), run_time=self.left(t, 1, "and PCR"))
+            self.play(GrowArrow(arrows[0]), TransformFromCopy(icon, cell0), Appear(steps[1]), run_time=self.left(t, 1, "give up"))
+            self.play(GrowArrow(arrows[1]), TransformFromCopy(cell0, strand0), Appear(steps[2]), run_time=self.left(t, 1, "and PCR"))
             self.at(t, 1, "PCR copies")
-            self.play(GrowArrow(arrows[2]), TransformFromCopy(strand0, copies0), Write(steps[3]), run_time=self.left(t, 1))
+            self.play(GrowArrow(arrows[2]), TransformFromCopy(strand0, copies0), Appear(steps[3]), run_time=self.left(t, 1))
             self.at(t, 2)
-            self.play(Create(tubes[0][0]), Write(tubes[0][1]), run_time=0.5)
+            self.play(Create(tubes[0][0]), Appear(tubes[0][1]), run_time=0.5)
             self.play(*[c.animate(path_arc=-PI / 3).move_to(kids[0][j]) for j, c in enumerate(copies0)],
                       LaggedStart(*[GrowFromCenter(a) for a in kids[0][3:]], lag_ratio=0.2), run_time=1.0)
             self.remove(copies0); self.add(kids[0][:3])
-            self.play(*[AnimationGroup(Create(tb[0]), Write(tb[1]), LaggedStart(*[GrowFromCenter(a) for a in tb[2]], lag_ratio=0.1))
-                        for tb in tubes[1:]], Write(legend), run_time=self.left(t, 2))
+            self.play(*[AnimationGroup(Create(tb[0]), Appear(tb[1]), LaggedStart(*[GrowFromCenter(a) for a in tb[2]], lag_ratio=0.1))
+                        for tb in tubes[1:]], run_time=self.left(t, 2, cap=1.5))
         self.play(FadeOut(VGroup(icon, cell0, strand0, arrows, steps)), run_time=0.5)
 
         # s15b: each sample's barcodes get its index tag
@@ -661,19 +692,24 @@ class Sequence(Chaptered):
             for a in amps:
                 tg = index_tag(k).next_to(a, LEFT, buff=0.05)
                 tagged_amps.append(VGroup(tg, a)); tags_.append((k, tg))
-        legend2 = label("white squares: the index tag, one pattern per sample", 22, C["muted"]).move_to(legend)
         with self.say("s15b") as t:
-            self.play(self.heading("indexing"), Transform(legend, legend2), run_time=0.5)
-            step = self.left(t, 0) / 3
+            self.play(self.heading("indexing"), run_time=0.5)
+            step = self.left(t, 0, "called an index", cap=None) / 3
             for k in range(3):
                 self.play(LaggedStart(*[GrowFromEdge(tg, RIGHT) for kk, tg in tags_ if kk == k], lag_ratio=0.1),
                           Indicate(tubes[k][1], color=C["fg"]), run_time=step)
+            first = tags_[0][1]
+            idx_l = label("index", 24).next_to(tubes[0][0], DOWN, buff=0.45).align_to(tubes[0][0], LEFT)
+            idx_a = Arrow(idx_l.get_top(), first.get_bottom(), buff=0.08, color=C["fg"], stroke_width=3)
+            idx_g = VGroup(idx_l, idx_a)
+            self.at(t, 0, "an index")
+            self.play(Appear(idx_l), GrowArrow(idx_a), run_time=0.6)
             self.at(t, 1)
             self.play(*[Indicate(tb[0], color=C["fg"], scale_factor=1.03) for tb in tubes], run_time=self.left(t, 1))
 
         # s16: pooled; reads drawn at random into the sequencer, each sample's meter growing as its reads arrive
         pool_box = RoundedRectangle(width=4.2, height=1.5, corner_radius=0.25).set_stroke(C["muted"], width=2)
-        pool = self.place(VGroup(pool_box, label("one pooled run", 22, C["muted"]).next_to(pool_box, DOWN, buff=0.1)),
+        pool = self.place(VGroup(pool_box, label("pool", 22, C["muted"]).next_to(pool_box, DOWN, buff=0.1)),
                           "B3", "pool", span="4x1")
         order = rng.permutation(len(tagged_amps))
         spots = [None] * len(tagged_amps)
@@ -708,17 +744,17 @@ class Sequence(Chaptered):
         rp_bar = Rectangle(width=1.4, height=0.14, stroke_width=0, fill_color=COL[0], fill_opacity=1)
         rp = VGroup(rp_r1.next_to(rp_bar, UP, buff=0.06).align_to(rp_bar, LEFT), rp_bar,
                     rp_r2.next_to(rp_bar, DOWN, buff=0.06).align_to(rp_bar, RIGHT))
-        rpl = label("read pair: read 1 and read 2", 22, C["muted"])
+        rpl = label("read pair", 22, C["muted"])
         pair_g = self.place(VGroup(rp, rpl).arrange(DOWN, buff=0.15), "A2", "pair", span="2x1")
         with self.say("s16") as t:
-            self.play(self.heading("sequencing"), Create(pool_box), Write(pool[1]), run_time=0.6)
+            self.play(self.heading("sequencing"), Create(pool_box), Appear(pool[1]), run_time=0.6)
             self.play(*[g.animate(path_arc=-PI / 3).scale(0.8).move_to(p) for g, p in zip(tagged_amps, spots)],
-                      *[Uncreate(tb[0]) for tb in tubes], *[FadeOut(tb[1]) for tb in tubes], FadeOut(legend),
+                      *[Uncreate(tb[0]) for tb in tubes], *[FadeOut(tb[1]) for tb in tubes], FadeOut(idx_g),
                       run_time=self.left(t, 0, "and the sequencer"))
-            self.release("tubes", "legend")
+            self.release("tubes")
             self.at(t, 0, "the sequencer")
-            self.play(Create(seq), Write(seqg[1]), Write(mtitle), *[Create(r_[2]) for r_ in rows],
-                      *[Write(r_[0]) for r_ in rows], *[GrowFromCenter(r_[1]) for r_ in rows], run_time=0.8)
+            self.play(Create(seq), Appear(seqg[1]), Appear(mtitle), *[Create(r_[2]) for r_ in rows],
+                      *[Appear(r_[0]) for r_ in rows], *[GrowFromCenter(r_[1]) for r_ in rows], run_time=0.8)
             self.add(*fills)
             seen = []
 
@@ -735,13 +771,15 @@ class Sequence(Chaptered):
             self.at(t, 1)
             self.play(Create(rp[1]), GrowArrow(rp[0]), GrowArrow(rp[2]), run_time=self.left(t, 1, "giving"))
             self.at(t, 1, "a read pair")
-            self.play(Write(rpl), run_time=0.6)
+            self.play(Appear(rpl), run_time=0.6)
             draw(plan[8:], self.left(t, 1) + 1.2)            # the last reads run on into the pause
 
         # s17: the meters hold; their name is the sequencing depth
-        mt2 = label("sequencing depth: reads per sample", 24).move_to(mtitle, aligned_edge=LEFT)
+        mt2 = label("sequencing depth", 24).move_to(mtitle, aligned_edge=LEFT)
         with self.say("s17") as t:
-            self.play(self.heading("sequencing depth"), Transform(mtitle, mt2), run_time=self.left(t, 0))
+            self.play(self.heading("sequencing depth"), Retext(mtitle, mt2), run_time=self.left(t, 0, "is its", cap=1.0))
+            self.at(t, 0, "sequencing depth")
+            self.play(Indicate(mtitle, color=C["fg"]), run_time=0.8)
             self.at(t, 1, "the deepest")
             self.play(Circumscribe(rows[0], color=C["fg"]), run_time=self.left(t, 1, "the shallowest"))
             self.at(t, 1, "the shallowest")
@@ -764,9 +802,9 @@ class Sequence(Chaptered):
             slots.append(bins_[dest][0].get_top() + DOWN * (0.3 + 0.36 * fill_n[dest]))
             fill_n[dest] += 1
         wrong = reads[-1]
-        flag = label("misassigned (exaggerated here)", 22, C["muted"])
+        flag = label("misassigned (exaggerated)", 22, C["muted"])
         with self.say("s18") as t:
-            self.play(self.heading("demultiplexing"), LaggedStart(*[AnimationGroup(Create(b_[0]), Write(b_[1])) for b_ in bins_],
+            self.play(self.heading("demultiplexing"), LaggedStart(*[AnimationGroup(Create(b_[0]), Appear(b_[1])) for b_ in bins_],
                                                                   lag_ratio=0.2), run_time=0.8)
             self.play(LaggedStart(*[MoveAlongPath(r, ArcBetweenPoints(r.get_center(), s, angle=PI / 4))
                                     for r, s in zip(reads[:-1], slots[:-1])], lag_ratio=0.25), run_time=self.left(t, 0))
@@ -775,7 +813,7 @@ class Sequence(Chaptered):
                       run_time=self.left(t, 1, "about 2%"))
             flag.next_to(bins_[1][0], DOWN, buff=0.15)
             self.at(t, 1, "about 2%")
-            self.play(Circumscribe(wrong, color=C["fg"]), Write(flag), run_time=self.left(t, 1))
+            self.play(Circumscribe(wrong, color=C["fg"]), Appear(flag), run_time=self.left(t, 1))
 
         # s19 (distil): the three piles hold; a pile beside each bin shows its size
         piles = VGroup(*[Rectangle(width=0.4, height=max(1.6 * SKETCH_DEPTH[k], 0.03), stroke_width=0,
@@ -785,7 +823,7 @@ class Sequence(Chaptered):
         with self.say("s19") as t:
             self.play(FadeOut(flag), FadeOut(seqg), run_time=0.5)
             self.release("seq")
-            self.play(*[GrowFromEdge(p_, DOWN) for p_ in piles], Write(plabs), run_time=1.4)
+            self.play(*[GrowFromEdge(p_, DOWN) for p_ in piles], Appear(plabs), run_time=1.4)
 
 
 class Reads(Chaptered):
@@ -809,12 +847,12 @@ class Reads(Chaptered):
         ml = label("merged read", 24).next_to(merged, DOWN, buff=0.3)
         with self.say("s20") as t:
             self.play(self.heading("merging"), *self.tags("schematic"), run_time=0.5)
-            self.play(Create(frag), Write(fl), run_time=self.left(t, 0))
+            self.play(Create(frag), Appear(fl), run_time=self.left(t, 0))
             self.at(t, 1)
-            self.play(GrowArrow(r1), GrowArrow(r2), Write(rl), run_time=self.left(t, 1, "overlap"))
-            self.play(FadeIn(ov), Write(ovl), run_time=self.left(t, 1, "so they"))
+            self.play(GrowArrow(r1), GrowArrow(r2), Appear(rl), run_time=self.left(t, 1, "overlap"))
+            self.play(FadeIn(ov), Appear(ovl), run_time=self.left(t, 1, "so they"))
             self.at(t, 1, "joined")
-            self.play(ReplacementTransform(VGroup(r1, r2), merged), FadeOut(VGroup(rl, ov, ovl)), Write(ml),
+            self.play(ReplacementTransform(VGroup(r1, r2), merged), FadeOut(VGroup(rl, ov, ovl)), Appear(ml),
                       run_time=self.left(t, 1))
         self.play(FadeOut(VGroup(fl, frag, merged, ml)), run_time=0.5)
         self.release("pair")
@@ -828,32 +866,30 @@ class Reads(Chaptered):
         band = Rectangle(width=x1 - x0, height=codes.height + 0.5, stroke_width=0, fill_color=C["fg"], fill_opacity=0.12) \
             .move_to([(x0 + x1) / 2, codes.get_center()[1], 0])
         bandl = label("expected length", 24).next_to(band, UP, buff=0.12)
-        src = label("one V4 dataset (data): distinct sequences 251 to 255 bases", 22, C["muted"])
-        note = label("ends exaggerated", 20, C["muted"])
         lens = self.place(VGroup(codes, ends, band, bandl), "A1", "lengths", span="6x3")
-        self.place(VGroup(src, note).arrange(DOWN, buff=0.1), "A4", "lensrc", span="6x1")
         with self.say("s20b") as t:
-            self.play(self.heading("filtering by length"), run_time=0.5)
+            self.play(self.heading("filtering by length"), *self.tags("schematic, ends exaggerated; lengths: data"), run_time=0.5)
             self.play(LaggedStart(*[GrowFromEdge(c, LEFT) for c in codes], lag_ratio=0.25), run_time=self.left(t, 0))
             self.at(t, 1)
-            self.play(FadeIn(band), Write(bandl), run_time=self.left(t, 1, "and taxa"))
-            self.play(*[Indicate(VGroup(c, ), color=C["fg"], scale_factor=1.02) for c in codes], Write(note),
-                      run_time=self.left(t, 1))
-            self.at(t, 2)
-            self.play(LaggedStart(*[Write(e) for e in ends], lag_ratio=0.3), Write(src), run_time=self.left(t, 2))
-        self.play(FadeOut(VGroup(lens, src, note)), run_time=0.5)
-        self.release("lengths", "lensrc")
+            self.play(FadeIn(band), Appear(bandl), run_time=self.left(t, 1, "and taxa"))
+            self.at(t, 1, "differ")
+            self.play(*[Indicate(VGroup(c, ), color=C["fg"], scale_factor=1.02) for c in codes], run_time=self.left(t, 1, cap=1.0))
+            self.at(t, 2, "251")
+            self.play(LaggedStart(*[Appear(e) for e in ends], lag_ratio=0.3), run_time=self.left(t, 2, cap=1.2))
+        self.play(FadeOut(lens), run_time=0.5)
+        self.release("lengths")
 
         # s20c: quality fades toward a read's end, which is trimmed; off-target copies are much shorter or longer
         NSEG = 30
         qread = VGroup(*[Rectangle(width=7.2 / NSEG, height=0.3, stroke_width=0, fill_color=C["fg"],
                                    fill_opacity=1.0 if j < 18 else max(1.0 - (j - 17) * 0.075, 0.12))
                          for j in range(NSEG)]).arrange(RIGHT, buff=0)
-        ql = label("one read, coloured by quality", 22, C["muted"]).next_to(qread, UP, buff=0.15).align_to(qread, LEFT)
+        ql = VGroup(label("high quality", 22, C["muted"]).next_to(qread, UP, buff=0.15).align_to(qread, LEFT),
+                    label("low", 22, C["muted"]).next_to(qread[26], UP, buff=0.15))
         cut_at = qread[22].get_left()[0]
         snip = DashedLine([cut_at, qread.get_bottom()[1] - 0.25, 0], [cut_at, qread.get_top()[1] + 0.25, 0],
                           color=C["fg"], dash_length=0.08, stroke_width=3)
-        tl_ = label("trimmed: low quality", 22).next_to(snip, RIGHT, buff=0.2).shift(DOWN * 0.55)
+        tl_ = label("trimmed", 22).next_to(snip, RIGHT, buff=0.2).shift(DOWN * 0.55)
         top = self.place(VGroup(ql, qread, snip, tl_), "A1", "quality", span="6x2")
         ref = Rectangle(width=4.0, height=0.22, stroke_width=0, fill_color=COL[0], fill_opacity=1)
         refl = label("barcode", 22, C["muted"]).next_to(ref, LEFT, buff=0.2)
@@ -871,15 +907,15 @@ class Reads(Chaptered):
         primel = label("primer", 20, C["muted"]).next_to(prim, RIGHT, buff=0.1)
         self.place(VGroup(lower, offl, prim, primel), "A3", "offtarget", span="6x2")
         with self.say("s20c") as t:
-            self.play(Write(ql), LaggedStart(*[GrowFromEdge(q_, LEFT) for q_ in qread], lag_ratio=0.05),
+            self.play(Appear(ql), *self.tags("schematic"), LaggedStart(*[GrowFromEdge(q_, LEFT) for q_ in qread], lag_ratio=0.05),
                       run_time=self.left(t, 0, "quality tends"))
             self.play(Indicate(VGroup(*qread[18:]), color=C["muted"], scale_factor=1.0), run_time=self.left(t, 0, "which is"))
             self.play(Create(snip), run_time=0.5)
-            self.play(VGroup(*qread[22:]).animate.shift(RIGHT * 0.6).set_opacity(0.05), Write(tl_), run_time=self.left(t, 0))
+            self.play(VGroup(*qread[22:]).animate.shift(RIGHT * 0.6).set_opacity(0.05), Appear(tl_), run_time=self.left(t, 0))
             self.at(t, 1)
-            self.play(GrowFromEdge(ref, LEFT), Write(refl), GrowFromEdge(other, LEFT), Write(otl), run_time=1.0)
-            self.play(GrowArrow(prim), Write(primel), run_time=self.left(t, 1, "can make"))
-            self.play(LaggedStart(*[GrowFromEdge(o, LEFT) for o in offs], lag_ratio=0.4), Write(offl), run_time=self.left(t, 1))
+            self.play(GrowFromEdge(ref, LEFT), Appear(refl), GrowFromEdge(other, LEFT), Appear(otl), run_time=1.0)
+            self.play(GrowArrow(prim), Appear(primel), run_time=self.left(t, 1, "can make"))
+            self.play(LaggedStart(*[GrowFromEdge(o, LEFT) for o in offs], lag_ratio=0.4), Appear(offl), run_time=self.left(t, 1))
         self.play(FadeOut(VGroup(top, lower, offl, prim, primel)), run_time=0.5)
         self.release("quality", "offtarget")
 
@@ -906,13 +942,13 @@ class Reads(Chaptered):
             self.play(Create(ax.x_axis), *self.tags("illustrative"), run_time=0.6)
             self.play(LaggedStart(*[GrowFromEdge(r, DOWN) for r in hb], lag_ratio=0.03), run_time=self.left(t, 1, "most reads"))
             self.at(t, 1, "expected")
-            self.play(Write(peak_l), Indicate(VGroup(*[r for r, e in zip(hb, edges[:-1]) if is_peak(e)]), color=C["fg"]),
+            self.play(Appear(peak_l), Indicate(VGroup(*[r for r, e in zip(hb, edges[:-1]) if is_peak(e)]), color=C["fg"]),
                       run_time=self.left(t, 1, "with a tail"))
             self.at(t, 1, "tail")
-            self.play(Write(tail_l), Write(bump_l), run_time=self.left(t, 1))
+            self.play(Appear(tail_l), Appear(bump_l), run_time=self.left(t, 1))
             self.at(t, 2)
-            self.play(Write(xt), Write(xtt), run_time=self.left(t, 2, "and the number"))
-            self.play(Create(ax.y_axis), Write(ytt), run_time=self.left(t, 2))
+            self.play(Appear(xt), Appear(xtt), run_time=self.left(t, 2, "and the number"))
+            self.play(Create(ax.y_axis), Appear(ytt), run_time=self.left(t, 2))
 
         # s20e: two cut-offs, a judgement; the same for every sample; too strict or too loose
         def vline(x_, h_=YM):
@@ -922,14 +958,14 @@ class Reads(Chaptered):
         cutl = label("cut-offs", 22).next_to(VGroup(lo, hi), UP, buff=0.1)
         outside = lambda e, a=LO, b=HI: e + BW <= a or e >= b
         dropl = label("dropped", 22, C["muted"]).next_to(ax.c2p(170, YM * 0.32), UP, buff=0)
-        judge = label("set by eye, with judgement", 22, C["muted"]).next_to(cutl, RIGHT, buff=0.6)
+
         with self.say("s20e") as t:
-            self.play(Create(lo), Create(hi), Write(cutl), run_time=1.0)
+            self.play(Create(lo), Create(hi), Appear(cutl), run_time=1.0)
             self.play(*[r.animate.set_opacity(0.15) for r, e in zip(hb, edges[:-1]) if outside(e)],
-                      FadeOut(VGroup(tail_l, bump_l)), Write(dropl), Write(judge), run_time=self.left(t, 0))
+                      FadeOut(VGroup(tail_l, bump_l)), Appear(dropl), run_time=self.left(t, 0, cap=1.2))
             # every sample gets the same two lines
             self.at(t, 1)
-            big = VGroup(ax, hb, xt, xtt, ytt, peak_l, lo, hi, cutl, dropl, judge)
+            big = VGroup(ax, hb, xt, xtt, ytt, peak_l, lo, hi, cutl, dropl)
             minis = VGroup()
             for k, (ntail, npk) in enumerate(((500, 1500), (300, 1100), (700, 900))):
                 Lk = np.r_[rng.normal(253, 2.0, npk), rng.uniform(150, 246, ntail), rng.normal(300, 4, 60)]
@@ -956,15 +992,15 @@ class Reads(Chaptered):
                                   lag_ratio=0.25), run_time=self.left(t, 1))
             # too strict, then too loose, on the big histogram
             self.at(t, 2)
-            strict = label("too strict: real reads lost", 22).move_to(judge, aligned_edge=LEFT)
-            loose = label("too loose: faulty reads kept", 22).move_to(judge, aligned_edge=LEFT)
+            strict = label("too strict", 24).next_to(cutl, RIGHT, buff=0.6)
+            loose = label("too loose", 24).move_to(strict, aligned_edge=LEFT)
             hb_e = list(zip(hb, edges[:-1]))
-            self.play(lo.animate.move_to(ax.c2p(252, YM / 2)), FadeTransform(judge, strict), FadeOut(dropl),
+            self.play(lo.animate.move_to(ax.c2p(252, YM / 2)), Appear(strict), FadeOut(dropl),
                       *[r.animate.set_opacity(0.15) for r, e in hb_e if 240 <= e < 252], run_time=self.left(t, 2, "too loose"))
             self.at(t, 2, "too loose")
-            self.play(lo.animate.move_to(ax.c2p(160, YM / 2)), FadeTransform(strict, loose),
+            self.play(lo.animate.move_to(ax.c2p(160, YM / 2)), Retext(strict, loose),
                       *[r.animate.set_opacity(0.8) for r, e in hb_e if 160 <= e < 252], run_time=self.left(t, 2))
-        self.play(lo.animate.move_to(ax.c2p(LO, YM / 2)), FadeOut(loose),
+        self.play(lo.animate.move_to(ax.c2p(LO, YM / 2)), FadeOut(strict),
                   *[r.animate.set_opacity(0.15) for r, e in hb_e if 160 <= e < LO], run_time=0.8)
         self.play(FadeOut(VGroup(*[m_ for m_ in big if m_ is not dropl], minis, lines_)), run_time=0.5)
         self.release("hist", "minis")
@@ -987,30 +1023,35 @@ class Reads(Chaptered):
                     g[j].add(Underline(g[j], color=C["fg"], buff=0.02))
             return g
         cloud = VGroup(*[seq_text(v, COL[0]) for v in variants]).arrange(DOWN, buff=0.12)
-        ctitle = label("reads of one real sequence", 22, C["muted"]).next_to(cloud, UP, buff=0.2)
+        ctitle = label("reads", 22, C["muted"]).next_to(cloud, UP, buff=0.2)
         asv = seq_text(list(true_seq), COL[0])
         self.place(VGroup(ctitle, cloud), "A1", "cloud", span="3x3")
-        asv_l = label("ASV: amplicon sequence variant", 28, weight=BOLD)
-        legend = label("white, underlined: sequencing errors", 26, C["muted"])
-        legend2 = label("one exact sequence: the ASV", 26, C["muted"])
-        side = VGroup(legend,
-                      VGroup(label("one soil dataset:", 26, C["muted"]),
-                             label("8,270 to 16,609 ASVs, by pipeline", 26, C["muted"])).arrange(DOWN, aligned_edge=LEFT, buff=0.08)
-                      ).arrange(DOWN, aligned_edge=LEFT, buff=0.4)
-        self.place(side, "D1", "side", span="3x3")
-        legend2.move_to(legend, aligned_edge=LEFT)
+        asv_l = VGroup(label("ASV", 32, weight=BOLD), label("amplicon sequence variant", 20, C["muted"])).arrange(DOWN, buff=0.06)
+        PIPES = (("Deblur", 8270), ("UNOISE3", 11613), ("DADA2", 16609))   # one soil dataset (Nearing 2018)
+        pbars = VGroup()
+        for nm, v in PIPES:
+            r = Rectangle(width=3.2 * v / 16609, height=0.32, stroke_width=0, fill_color=COL[0], fill_opacity=0.85)
+            pbars.add(VGroup(label(nm, 22, C["muted"]), r, label(f"{v:,}", 22)).arrange(RIGHT, buff=0.2))
+        pbars.arrange(DOWN, buff=0.3, aligned_edge=LEFT)
+        for g in pbars:
+            g[1].align_to(pbars[1][1], LEFT); g[2].next_to(g[1], RIGHT, buff=0.15)
+        ptitle = label("ASVs, one soil dataset", 22, C["muted"]).next_to(pbars, UP, buff=0.25).align_to(pbars, LEFT)
+        side = VGroup(VMobject(), VGroup(ptitle, pbars))
+        self.place(side[1], "D1", "side", span="3x3")
         with self.say("s21") as t:
             self.play(self.heading("denoising"), *self.tags("schematic"), run_time=0.5)
-            self.play(Write(ctitle), LaggedStart(*[Write(v) for v in cloud], lag_ratio=0.15), Write(legend), run_time=self.left(t, 0))
+            self.play(Appear(ctitle), LaggedStart(*[Appear(v) for v in cloud], lag_ratio=0.15), run_time=self.left(t, 0, cap=1.5))
             self.at(t, 1)
             asv.move_to(cloud)
-            self.play(ReplacementTransform(cloud, asv), FadeOut(ctitle), TransformMatchingShapes(legend, legend2),
-                      run_time=self.left(t, 1, "called"))
+            self.play(ReplacementTransform(cloud, asv), FadeOut(ctitle), run_time=self.left(t, 1, "called", cap=1.5))
             asv_l.next_to(asv, UP, buff=0.25)
-            self.play(Write(asv_l), run_time=self.left(t, 1))
+            self.at(t, 1, "ASVs")
+            self.play(Appear(asv_l), run_time=0.5)
             self.at(t, 2)
-            self.play(Write(side[1]), run_time=self.left(t, 2))
-        self.play(FadeOut(VGroup(asv, asv_l, legend2, side[1])), run_time=0.6)
+            self.play(Appear(ptitle), *self.tags("schematic; bars: data"), run_time=0.5)
+            self.play(LaggedStart(*[AnimationGroup(Appear(g[0]), GrowFromEdge(g[1], LEFT), Appear(g[2])) for g in pbars], lag_ratio=0.3),
+                      run_time=self.left(t, 2, cap=1.8))
+        self.play(FadeOut(VGroup(asv, asv_l, side[1])), *self.tags("schematic"), run_time=0.6)
         self.release("cloud", "side")
 
         # s22: a chimera: a copy starts on one template and finishes on another; a detector catches some
@@ -1031,20 +1072,20 @@ class Reads(Chaptered):
         many = VGroup(*[chim.copy().scale(0.35) for _ in range(5)]).arrange(RIGHT, buff=0.3)
         caught = [0, 1, 3]
         dl = label("detector:", 24, C["muted"]).next_to(many, LEFT, buff=0.3)
-        dk = label("crossed: caught;  plain: missed", 22, C["muted"]).next_to(many, RIGHT, buff=0.4)
+        dk = VMobject().next_to(many, RIGHT, buff=0.4)
         self.place(VGroup(dl, many, dk), "A3", "detector", span="6x1")
         with self.say("s22") as t:
             self.play(self.heading("chimeras"), run_time=0.5)
-            self.play(GrowFromEdge(ta, LEFT), GrowFromEdge(tb, LEFT), Write(tl), run_time=0.8)
+            self.play(GrowFromEdge(ta, LEFT), GrowFromEdge(tb, LEFT), Appear(tl), run_time=0.8)
             self.play(GrowFromEdge(h1, LEFT), run_time=self.left(t, 0, "into one"))
             self.play(h1.animate(path_arc=PI / 4).next_to(h2, LEFT, buff=0), GrowFromEdge(h2, LEFT), run_time=self.left(t, 0, "a chimera"))
             self.at(t, 0, "a chimera")
-            self.play(ReplacementTransform(VGroup(h1, h2), chim), Write(cl), run_time=self.left(t, 0))
+            self.play(ReplacementTransform(VGroup(h1, h2), chim), Appear(cl), run_time=self.left(t, 0))
             self.at(t, 1)
-            self.play(Write(dl), LaggedStart(*[TransformFromCopy(chim, m) for m in many], lag_ratio=0.15), run_time=self.left(t, 1))
+            self.play(Appear(dl), LaggedStart(*[TransformFromCopy(chim, m) for m in many], lag_ratio=0.15), run_time=self.left(t, 1))
             self.at(t, 2)
             self.play(*[Create(Cross(Square(side_length=0.45).move_to(many[j]), stroke_color=C["fg"], stroke_width=4))
-                        for j in caught], Write(dk), run_time=self.left(t, 2))
+                        for j in caught], run_time=self.left(t, 2, cap=1.2))
         self.play(*[FadeOut(m) for m in self.mobjects if m is not getattr(self, "_tag", None)], run_time=0.6)
         self.release("temps", "chimera", "detector")
 
@@ -1073,33 +1114,29 @@ class Reads(Chaptered):
                 cells_[i * 3 + k].move_to([0.35 + k * 1.5, -i * 0.42, 0], aligned_edge=LEFT)
         more = label("…", 28, C["muted"]).move_to([0, -6 * 0.42, 0])
         table = VGroup(cols_, rows_, cells_, more)
-        tt = label("count table: taxa by samples", 24, C["muted"]).next_to(table, UP, buff=0.25)
+        tt = label("count table", 24, C["muted"]).next_to(table, UP, buff=0.25)
         self.place(VGroup(table, tt), "D1", "table", span="3x3")
         with self.say("s23") as t:
             self.play(self.heading("naming and counting"), run_time=0.5)
-            self.play(Write(VGroup(q, ql)), Write(shl), LaggedStart(*[GrowFromEdge(r, LEFT) for r in shelf], lag_ratio=0.08),
+            self.play(Appear(VGroup(q, ql)), Appear(shl), LaggedStart(*[GrowFromEdge(r, LEFT) for r in shelf], lag_ratio=0.08),
                       run_time=self.left(t, 0, "matching"))
             arr = Arrow(q.get_right(), shelf.get_left(), buff=0.1, color=C["muted"], stroke_width=3)
-            cls = label("classifier: best match", 20, C["muted"]).next_to(q, DOWN, buff=0.15)
+            cls = label("best match", 20, C["muted"]).next_to(q, DOWN, buff=0.15)
             self.at(t, 0, "matching")
-            self.play(GrowArrow(arr), Write(cls), run_time=0.8)
+            self.play(GrowArrow(arr), Appear(cls), run_time=0.8)
             self.track(VGroup(arr, cls), "classifier")
-            self.play(Indicate(shelf[2], color=C["fg"], scale_factor=1.1), Write(named), run_time=self.left(t, 0))
+            self.play(Indicate(shelf[2], color=C["fg"], scale_factor=1.1), Appear(named), run_time=self.left(t, 0))
             self.track(named, "named")
             self.at(t, 1)
-            self.play(Write(tt), Write(cols_), LaggedStart(*[GrowFromCenter(r) for r in rows_], lag_ratio=0.1), run_time=0.8)
-            self.play(LaggedStart(*[GrowFromEdge(c, LEFT) for c in cells_], lag_ratio=0.05), Write(more), run_time=self.left(t, 1))
+            self.play(Appear(tt), Appear(cols_), LaggedStart(*[GrowFromCenter(r) for r in rows_], lag_ratio=0.1), run_time=0.8)
+            self.play(LaggedStart(*[GrowFromEdge(c, LEFT) for c in cells_], lag_ratio=0.05), Appear(more), run_time=self.left(t, 1))
 
         # s24 (distil): the table holds; its title says what it counts
-        tt2 = label("count table: reads per taxon, not cells", 24).move_to(tt)
-        key5 = VGroup(VMobject(), label("our simulation leaves out the false taxa these steps can add", 24, C["muted"]))
-        self.place(key5, "A4", "key5", span="6x1")
+        tt2 = label("reads, not cells", 26).move_to(tt)
         with self.say("s24") as t:
             self.play(self.heading("the count table"), run_time=0.5)
-            self.play(Transform(tt, tt2), Indicate(cells_, color=C["fg"], scale_factor=1.03), run_time=self.left(t, 0))
-            self.at(t, 1)
-            self.play(Write(key5[1]), run_time=0.6)
-            self.track(key5[1], "sim")
+            self.at(t, 0, "reads")
+            self.play(Retext(tt, tt2), Indicate(cells_, color=C["fg"], scale_factor=1.03), run_time=self.left(t, 0, cap=1.2))
 
 
 class Depth(Chaptered):
@@ -1112,30 +1149,37 @@ class Depth(Chaptered):
         # s25: which taxa turn up at three depths, drawn from the deepest down
         deps = sorted(P.DEPTHS, reverse=True)
         icon = soil_icon()
-        texts = VGroup(*[label(f"{dep:,} reads: {int((D['runs'][dep] > 0).sum())} of {N} taxa", 28) for dep in deps])
+        texts = VGroup(*[label(f"{dep:,} reads", 28) for dep in deps])
+        found_n = [int((D['runs'][dep] > 0).sum()) for dep in deps]
         strips = VGroup(*[strip(D["runs"][dep] > 0) for dep in deps])
         for k in range(3):
             texts[k].move_to([0, -k * 1.2, 0], aligned_edge=RIGHT)
             strips[k].move_to([0.5, -k * 1.2, 0], aligned_edge=LEFT)
-        grid = self.place(VGroup(texts, strips), "A1", "rows", span="6x3")
-        key = self.place(VGroup(label("filled: found    dim outline: missed", 24, C["muted"]),
-                                label("taxa in the order of their cell counts", 20, C["muted"])).arrange(DOWN, buff=0.08),
-                         "A4", "key", span="6x1")
+        counts_ = VGroup(*[label(f"{n_} taxa", 28, weight=BOLD).next_to(strips[k], RIGHT, buff=0.4) for k, n_ in enumerate(found_n)])
+        grid = self.place(VGroup(texts, strips, counts_), "A1", "rows", span="6x3")
+        sq_f = Square(side_length=0.18, stroke_width=0, fill_color=C["fg"], fill_opacity=1)
+        sq_m = Square(side_length=0.18, stroke_width=1.5, stroke_color=C["rule"], fill_opacity=0)
+        key = self.place(VGroup(sq_f, label("found", 22, C["muted"]), sq_m, label("missed", 22, C["muted"]))
+                         .arrange(RIGHT, buff=0.2), "A4", "key", span="6x1")
+        key[2].shift(RIGHT * 0.4); key[3].shift(RIGHT * 0.4)
         with self.say("s25") as t:
             self.play(self.heading("three depths"), run_time=0.5)
-            self.play(DrawBorderThenFill(icon), Write(key), *self.tags("simulated"), run_time=self.left(t, 0))
+            self.play(DrawBorderThenFill(icon), Appear(key), *self.tags("simulated"), run_time=self.left(t, 0, cap=1.2))
             self.track(icon, "icon")
             for k in range(3):
                 self.at(t, k + 1)
-                self.play(Write(texts[k]), LaggedStart(*[Create(sq) for sq in strips[k]], lag_ratio=0.01), run_time=self.left(t, k + 1))
+                self.play(Appear(texts[k]), LaggedStart(*[Create(sq) for sq in strips[k]], lag_ratio=0.01),
+                          run_time=self.left(t, k + 1, str(found_n[k])))
+                self.at(t, k + 1, str(found_n[k]))
+                self.play(Appear(counts_[k]), run_time=0.5)
 
         # s26: the empty slots at 500 reads are the low-abundance taxa
         shallow = strips[2]
         missed = [i for i in range(N) if D["runs"][min(P.DEPTHS)][i] == 0]
-        note = label("missed at 500 reads: low-abundance taxa, too few barcodes to be picked", 24).move_to(key)
+
         with self.say("s26") as t:
             self.play(self.heading("missed taxa"), run_time=0.5)
-            self.play(Transform(key, note), run_time=self.left(t, 0))
+            self.play(Indicate(VGroup(key[2], key[3]), color=C["fg"]), run_time=self.left(t, 0, cap=1.0))
             self.at(t, 1)
             self.play(LaggedStart(*[Indicate(shallow[i], color=C["fg"], scale_factor=1.8) for i in missed[:24]],
                                   lag_ratio=0.05), run_time=self.left(t, 1))
@@ -1163,36 +1207,41 @@ class Depth(Chaptered):
         low = 40
         p1, d1 = panel(0, 0.6, "taxon 1, abundant", COL[0], lambda v: f"{v:.0%}")
         ymax2 = float(np.ceil(max(x.max() for x in draws[low]) * 1.1 * 1000) / 1000)   # covers every draw
-        p2, d2 = panel(low, ymax2, f"taxon {low + 1}, low-abundance (note the smaller scale)", C["muted"], lambda v: f"{v:.1%}")
+        p2, d2 = panel(low, ymax2, f"taxon {low + 1}, low-abundance", C["muted"], lambda v: f"{v:.1%}")
         self.place(VGroup(p1, d1), "A1", "p1", span="3x3")
         self.place(VGroup(p2, d2), "D1", "p2", span="3x3")
-        key2 = self.place(VGroup(label("more reads: a tighter spread, the same centre", 26),
-                                 label(f"each dot: one of {REP} repeat sequencings;  dashed: share of the barcode pool", 22, C["muted"]))
-                          .arrange(DOWN, buff=0.12), "A4", "key2", span="6x1")
+        key2 = VGroup(label("dashed: pool share", 20, C["muted"]).next_to(p1[0], DOWN, buff=0.75), VMobject())
+        self.track(key2[0], "key2")
         with self.say("s27") as t:
             self.play(self.heading("repeat sequencing"), run_time=0.5)
-            self.play(Create(p1[0]), Create(p2[0]), Create(p1[1]), Create(p2[1]), Write(VGroup(*p1[2:], *p2[2:])),
-                      Write(key2[1]), run_time=self.left(t, 0))
+            self.play(Create(p1[0]), Create(p2[0]), Create(p1[1]), Create(p2[1]), Appear(VGroup(*p1[2:], *p2[2:])),
+                      Appear(key2[0]), run_time=self.left(t, 0, cap=1.5))
             self.at(t, 1)
             self.play(LaggedStart(*[GrowFromCenter(x) for x in d1], lag_ratio=0.01), run_time=self.left(t, 1))
             self.at(t, 2)
             self.play(LaggedStart(*[GrowFromCenter(x) for x in d2], lag_ratio=0.01), run_time=self.left(t, 2))
-            self.at(t, 3)
-            self.play(Write(key2[0]), run_time=self.left(t, 3))
+            self.at(t, 3, "more reads")
+            self.play(Indicate(VGroup(*d1[2 * REP:]), color=C["fg"]), Indicate(VGroup(*d2[2 * REP:]), color=C["fg"]),
+                      run_time=self.left(t, 3, cap=1.2))
 
         # s28 (distil): the three counts, deepest to shallowest
-        summary = VGroup(*[label(f"{dep:,} reads → {int((D['runs'][dep] > 0).sum())} taxa", 34) for dep in deps]
-                         ).arrange(DOWN, aligned_edge=LEFT, buff=0.35)
-        head = label("fewer reads, fewer taxa found", 30, weight=BOLD)
+        sb_ = VGroup()
+        for dep in sorted(P.DEPTHS):
+            n_ = int((D['runs'][dep] > 0).sum())
+            r = Rectangle(width=1.0, height=3.0 * n_ / N, stroke_width=0, fill_color=SAMPLE, fill_opacity=0.85)
+            sb_.add(VGroup(r, label(str(n_), 26).next_to(r, UP, buff=0.1), label(f"{dep:,}", 22, C["muted"]).next_to(r, DOWN, buff=0.15)))
+        sb_.arrange(RIGHT, buff=0.9, aligned_edge=DOWN)
+        sbase = Line(sb_.get_corner(DL) + LEFT * 0.3 + UP * 0.45, sb_.get_corner(DR) + RIGHT * 0.3 + UP * 0.45, color=C["muted"], stroke_width=2)
+        sxl = label("reads", 22, C["muted"]).next_to(sb_, DOWN, buff=0.15)
+        syl = label("taxa found", 22, C["muted"]).next_to(sb_, LEFT, buff=0.4)
         with self.say("s28") as t:
             self.play(self.heading("fewer reads, fewer taxa"), run_time=0.5)
-            self.play(FadeOut(VGroup(p1, d1, p2, d2, key2)), run_time=0.6)
+            self.play(FadeOut(VGroup(p1, d1, p2, d2, key2[0])), run_time=0.6)
             self.release("p1", "p2", "key2")
-            self.place(VGroup(head, summary).arrange(DOWN, aligned_edge=LEFT, buff=0.5), "B1", "summary", span="4x3")
-            self.play(Write(head), run_time=0.5)
-            for x_ in summary:
-                self.play(Write(x_), run_time=0.5)
-                self.wait(max((t.duration - 2.6) / 3 - 0.5, 0.2))
+            self.place(VGroup(sb_, sbase, sxl, syl), "B1", "summary", span="4x3")
+            self.play(Create(sbase), Appear(sxl), Appear(syl), run_time=0.5)
+            self.play(LaggedStart(*[AnimationGroup(GrowFromEdge(g[0], DOWN), Appear(g[1]), Appear(g[2])) for g in sb_], lag_ratio=0.3),
+                      run_time=self.left(t, 0, cap=2.0))
 
 
 class Rarefy(Chaptered):
@@ -1205,14 +1254,12 @@ class Rarefy(Chaptered):
         # s29: two samples from the same soil (white: a sample is not a taxon)
         def card(name, counts):
             head = label(f"{name} sample: {int(counts.sum()):,} reads", 28)
-            n = label(f"{int((counts > 0).sum())} taxa found", 34, weight=BOLD)
+            n = label(f"{int((counts > 0).sum())} taxa", 34, weight=BOLD)
             VGroup(head, n).arrange(DOWN, aligned_edge=LEFT, buff=0.2)
             st = strip(counts > 0, colour=SAMPLE).next_to(VGroup(head, n), RIGHT, buff=0.7)
             return VGroup(head, st, n)
         icon = soil_icon()
-        title = self.place(VGroup(label("same soil, two samples, each its own draw", 30, C["muted"]),
-                                  label("richness = number of taxa found;  filled: found, dim outline: missed", 22, C["muted"]))
-                           .arrange(DOWN, buff=0.12), "A1", "title", span="6x1")
+        title = self.place(label("richness = taxa found", 26, C["muted"]), "A1", "title", span="6x1")
         deep_c, shal_c = card("deep", D["deep"]), card("shallow", D["shallow"])
         deep = self.place(deep_c, "A2", "deep", span="6x1")
         shal = self.place(shal_c, "A3", "shallow", span="6x1")
@@ -1220,13 +1267,13 @@ class Rarefy(Chaptered):
         VGroup(shal_c[0], shal_c[2]).align_to(deep_c[0], LEFT)
         with self.say("s29") as t:
             self.play(self.heading("two samples"), run_time=0.5)
-            self.play(Write(title), DrawBorderThenFill(icon), *self.tags("simulated"), run_time=self.left(t, 0))
+            self.play(Appear(title), DrawBorderThenFill(icon), *self.tags("simulated"), run_time=self.left(t, 0))
             self.track(icon, "icon")
             for k, c in enumerate((deep_c, shal_c), start=1):
                 self.at(t, k)
-                self.play(Write(c[0]), LaggedStart(*[Create(sq) for sq in c[1]], lag_ratio=0.01), run_time=self.left(t, k, "and shows"))
+                self.play(Appear(c[0]), LaggedStart(*[Create(sq) for sq in c[1]], lag_ratio=0.01), run_time=self.left(t, k, "and shows"))
                 self.at(t, k, "and shows")
-                self.play(Write(c[2]), run_time=self.left(t, k))
+                self.play(Appear(c[2]), run_time=self.left(t, k))
 
         # s30: rarefying: the deep sample drawn down to 2,000 reads at random; the rest set aside
         one = P.rarefy(D["deep"], P.SHALLOW, rng) > 0
@@ -1235,10 +1282,10 @@ class Rarefy(Chaptered):
         aside = label(f"{P.DEEP - P.SHALLOW:,} reads set aside", 24, C["muted"]).move_to(deep_c[2], aligned_edge=LEFT)
         with self.say("s30") as t:
             self.play(self.heading("rarefying"), run_time=0.5)
-            self.play(Transform(deep_c[0], head2), run_time=self.left(t, 0, "and sets"))
+            self.play(Retext(deep_c[0], head2), run_time=self.left(t, 0, "and sets"))
             self.at(t, 0, "and sets")
             self.play(*[deep_c[1][i].animate.set_fill(opacity=0).set_stroke(C["rule"]) for i in lost],
-                      FadeOut(deep_c[2], shift=DOWN * 0.2), Write(aside), run_time=self.left(t, 0))
+                      FadeOut(deep_c[2], shift=DOWN * 0.2), Appear(aside), run_time=self.left(t, 0))
             self.track(aside, "aside")
             self.at(t, 1)
             self.play(Indicate(deep_c[0], color=C["fg"]), Indicate(shal_c[0], color=C["fg"]), run_time=self.left(t, 1))
@@ -1262,48 +1309,47 @@ class Rarefy(Chaptered):
         mean = Triangle(fill_color=SAMPLE, fill_opacity=1, stroke_width=0).scale(0.1) \
             .move_to([ax.c2p(D["rare_mean"], 0)[0], xt.get_bottom()[1] - 0.3, 0])
         mean_l = label(f"average {round(D['rare_mean'])}", 20).next_to(mean, RIGHT, buff=0.1)
-        xtitle = label("taxa found in each subsample", 22, C["muted"]).next_to(mean, DOWN, buff=0.15).set_x(ax.get_center()[0])
+        xtitle = label("taxa found per draw", 22, C["muted"]).next_to(mean, DOWN, buff=0.15).set_x(ax.get_center()[0])
         ylab = label("subsamples", 20, C["muted"]).rotate(PI / 2).next_to(ax, LEFT, buff=0.2)
         hgroup = self.place(VGroup(band, blab, ax, hist, mark, mlab, mean, mean_l, xt, xtitle, ylab), "A2", "hist", span="6x3")
-        htxt = self.place(label(f"rarefaction: the draw repeated {P.DRAWS} times, {round(D['rare_mean'])} taxa on average", 28),
-                          "A1", "htxt", span="6x1")
+        htxt = self.place(label(f"{P.DRAWS} draws", 28), "A1", "htxt", span="6x1")
         with self.say("s31") as t:
             self.play(self.heading("rarefaction"), run_time=0.5)
             self.play(FadeOut(VGroup(deep, shal, title, aside)), run_time=0.6)
             self.release("deep", "shallow", "title", "aside")
-            self.play(Write(htxt), Create(ax), Write(xt), Write(xtitle), Write(ylab), run_time=1.0)
+            self.play(Appear(htxt), Create(ax), Appear(xt), Appear(xtitle), Appear(ylab), run_time=1.0)
             self.play(LaggedStart(*[GrowFromEdge(r, DOWN) for r in hist], lag_ratio=0.08), run_time=self.left(t, 0))
             self.at(t, 1)
-            self.play(GrowFromCenter(mean), Write(mean_l), run_time=self.left(t, 1, "and the middle"))
+            self.play(GrowFromCenter(mean), Appear(mean_l), run_time=self.left(t, 1, "and the middle"))
             self.at(t, 1, "the middle")
-            self.play(GrowFromEdge(band, DOWN), Write(blab), run_time=self.left(t, 1))
+            self.play(GrowFromEdge(band, DOWN), Appear(blab), run_time=self.left(t, 1))
             self.at(t, 2)
-            self.play(Create(mark), Write(mlab), run_time=self.left(t, 2))
+            self.play(Create(mark), Appear(mlab), run_time=self.left(t, 2))
 
         # s32: what rarefying does not fix, shown on the pictures it is about
         bc = chart(D["pool"], "share of barcodes", xlab="taxa", **CHART)
         bias_g = self.place(bc, "A1", "biaschart", span="3x2")
         ab = Arrow(bc[2][0].get_top() + RIGHT * 1.6 + DOWN * 0.5, bc[2][0].get_top() + RIGHT * 0.1, buff=0, color=C["fg"], stroke_width=4)
-        abl = label("bias: still in every read", 24).next_to(ab.get_start(), RIGHT, buff=0.1)
+        abl = label("still biased", 24).next_to(ab.get_start(), RIGHT, buff=0.1)
         sh_t = label("shallow sample", 24, C["muted"])
         sh_s = strip(D["shallow"] > 0, colour=SAMPLE)
         sh = self.place(VGroup(sh_t, sh_s).arrange(DOWN, aligned_edge=LEFT, buff=0.2), "D1", "shallowstrip", span="3x2")
         missed = [i for i in range(N) if D["shallow"][i] == 0]
-        ml_ = label("missed taxa: still missed", 24).next_to(sh, DOWN, buff=0.3)
+        ml_ = label("still missed", 24).next_to(sh, DOWN, buff=0.3)
         with self.say("s32") as t:
             self.play(self.heading("what rarefying does not fix"), FadeOut(VGroup(hgroup, htxt)), *self.tags("summary"), run_time=0.6)
             self.release("hist", "htxt")
             self.play(draw_chart(bc, 1.2), run_time=self.left(t, 0))
             self.at(t, 1)
-            self.play(GrowArrow(ab), Write(abl), run_time=self.left(t, 1, "are in every"))
+            self.play(GrowArrow(ab), Appear(abl), run_time=self.left(t, 1, "are in every"))
             self.at(t, 1, "every read")
             self.play(Indicate(bc[2], color=C["fg"], scale_factor=1.03), run_time=self.left(t, 1))
             self.track(VGroup(ab, abl), "biasl")
             self.at(t, 2)
-            self.play(Write(sh_t), LaggedStart(*[Create(sq) for sq in sh_s], lag_ratio=0.01), run_time=self.left(t, 2, "stay missed"))
+            self.play(Appear(sh_t), LaggedStart(*[Create(sq) for sq in sh_s], lag_ratio=0.01), run_time=self.left(t, 2, "stay missed"))
             self.at(t, 2, "stay missed")
             self.play(LaggedStart(*[Indicate(sh_s[i], color=C["fg"], scale_factor=1.8) for i in missed], lag_ratio=0.05),
-                      Write(ml_), run_time=self.left(t, 2))
+                      Appear(ml_), run_time=self.left(t, 2))
             self.track(ml_, "missedl")
 
         # s33: shares cannot show total cells: a crowded soil and a sparse one give the same shares
@@ -1315,8 +1361,8 @@ class Rarefy(Chaptered):
                                                 np.array([np.cos(a), np.sin(a), 0])) for i, a in zip(pick, rng.uniform(0, TAU, n))])
             return VGroup(drop, cs)
         rich, poor = soil_with(90), soil_with(9)
-        rl = label("soil 1: many cells", 22, C["muted"]).next_to(rich, DOWN, buff=0.1)
-        pl = label("soil 2: few cells", 22, C["muted"]).next_to(poor, DOWN, buff=0.1)
+        rl = label("many cells", 22, C["muted"]).next_to(rich, DOWN, buff=0.1)
+        pl = label("few cells", 22, C["muted"]).next_to(poor, DOWN, buff=0.1)
         soils = VGroup(VGroup(rich, rl), VGroup(poor, pl)).arrange(DOWN, buff=0.4)
         c1 = chart(D["true"], "shares", xlab="", **CHART).scale(0.45)
         c2 = chart(D["true"], "shares", xlab="", **CHART).scale(0.45)
@@ -1326,7 +1372,7 @@ class Rarefy(Chaptered):
         arrs = VGroup(*[Arrow(s_.get_right(), c_.get_left(), buff=0.3, color=C["muted"], stroke_width=3)
                         for s_, c_ in ((rich, c1), (poor, c2))])
         same = label("same shares", 26, weight=BOLD).next_to(charts_, RIGHT, buff=0.3)
-        tot = self.place(label("total cells: measured by spike-ins or cell counts", 26), "A4", "total", span="6x1")
+        tot = VMobject()
         with self.say("s33") as t:
             self.play(Indicate(VGroup(ab, abl), color=C["fg"]), run_time=self.left(t, 0))
             self.at(t, 1)
@@ -1334,13 +1380,12 @@ class Rarefy(Chaptered):
             self.release("biaschart", "biasl", "shallowstrip", "missedl")
             self.at(t, 2)
             self.play(self.heading("total cells"), *self.tags("schematic"), DrawBorderThenFill(rich[0]), DrawBorderThenFill(poor[0]),
-                      Write(rl), Write(pl), run_time=0.8)
+                      Appear(rl), Appear(pl), run_time=0.8)
             self.play(LaggedStart(*[GrowFromCenter(c) for c in rich[1]], lag_ratio=0.01),
                       LaggedStart(*[GrowFromCenter(c) for c in poor[1]], lag_ratio=0.1), run_time=1.0)
-            self.play(GrowArrow(arrs[0]), GrowArrow(arrs[1]), draw_chart(c1, 1.0), draw_chart(c2, 1.0), Write(same),
+            self.play(GrowArrow(arrs[0]), GrowArrow(arrs[1]), draw_chart(c1, 1.0), draw_chart(c2, 1.0), Appear(same),
                       run_time=self.left(t, 2, "that takes"))
-            self.at(t, 2, "that takes")
-            self.play(Write(tot), run_time=self.left(t, 2))
+
             self.track(VGroup(arrs, same), "same")
 
         # s34 (distil): the two results side by side: richness made comparable, counts still biased
@@ -1355,10 +1400,10 @@ class Rarefy(Chaptered):
         both = self.place(VGroup(left, right).arrange(RIGHT, buff=2.0, aligned_edge=DOWN), "A1", "both", span="6x3")
         with self.say("s34") as t:
             self.play(FadeOut(VGroup(row, arrs, same, tot)), self.heading("what rarefying does"), *self.tags("summary"), run_time=0.6)
-            self.release("twosoils", "same", "total")
+            self.release("twosoils", "same")
             self.play(Create(hbase), LaggedStart(*[GrowFromEdge(r, DOWN) for r in hbars], lag_ratio=0.05), run_time=1.0)
-            self.play(Write(left[2]), run_time=self.left(t, 0))
+            self.play(Appear(left[2]), run_time=self.left(t, 0))
             self.at(t, 1)
             self.play(draw_chart(bc2, 1.0), run_time=1.0)
-            self.play(Write(right[1]), run_time=self.left(t, 1))
+            self.play(Appear(right[1]), run_time=self.left(t, 1))
         self.wait(0.8)

@@ -176,11 +176,15 @@ class ExplainScene(VoiceoverScene):
         elif due > now:
             self.wait(due - now)
 
-    def left(self, t, k: int | None = None, word: str | None = None, floor: float = 0.3) -> float:
-        """Seconds from now to the end of sentence k (default: the last), or to `word` in it: a run_time."""
+    def left(self, t, k: int | None = None, word: str | None = None, floor: float = 0.3,
+             cap: float | None = None) -> float:
+        """Seconds from now to the end of sentence k (default: the last), or to `word` in it: a run_time.
+        `cap` keeps a move short (it then holds still until the next cue); leave it off for a process
+        that should run the whole sentence (reads flowing, bars growing one by one)."""
         k = len(t.spans) - 1 if k is None else k
         end = self.mark(t, k, word) if word else t.start_t + t.spans[k][1]
-        return max(end - self.renderer.time, floor)
+        d = max(end - self.renderer.time, floor)
+        return min(d, cap) if cap else d
 
     # checks ---------------------------------------------------------------
     def _fail(self, msg):

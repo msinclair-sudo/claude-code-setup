@@ -18,7 +18,8 @@ The owner's review of the first metabarcoding render: "the visuals are good, the
 |---|---|
 | this thing *becomes* that (cells → DNA, a bar chart → the next stage) | `Transform` / `ReplacementTransform` the same object; `TransformMatchingShapes` for text; `MoveToTarget` after `obj.generate_target()` |
 | look closer (droplet → cell → genome) | camera: `class S(ExplainScene, MovingCameraScene)`, `self.camera.frame.animate.scale(0.3).move_to(obj)` |
-| this is being built, step by step | `Create` for lines and shapes, `Write` for text and formulae, `DrawBorderThenFill` for filled shapes, `GrowFromEdge` for bars, `GrowArrow` |
+| this is being built, step by step | `Create` for lines and shapes, `DrawBorderThenFill` for filled shapes, `GrowFromEdge` for bars, `GrowArrow` |
+| a label, number or heading | `Appear` (0.3 s, however long the play), and `Retext(old, new)` to change it in place; never `Write`, which draws text letter by letter |
 | look here | `Indicate`, `Circumscribe`, `Flash`, `FocusOn`, `Wiggle` |
 | this moves along a route (a read into the sequencer) | `MoveAlongPath(obj, path)`, `.animate.move_to()` |
 | copies are made | `TransformFromCopy` |
@@ -27,7 +28,8 @@ The owner's review of the first metabarcoding render: "the visuals are good, the
 - **Carry objects across segments** inside a scene; a chart that returns should be the same chart, transformed, not a new one faded in.
 - **Carry the subject across chapters**: when a new step works on what an earlier step made, show it arriving (DNA from the cells, through PCR, into the sample tubes), so the viewer knows what the new picture holds.
 - **Linked motions move together**: when one thing causes another (reads arriving at the sequencer, a sample's read count growing), animate them in the same beat, not one after the other.
-- **Text appears fast**: a label or heading `Write`s in about 0.5 s in its own `play`, then the slower motion starts; a long `Write` stretched over a whole segment reads as slow and odd.
+- **Text pops in, then holds**: `from explainlib.motion import Appear, Retext`. Owner review of the fifth exemplar: the slow left-to-right `Write` of every label was "so distracting". `Appear` squeezes a 0.3 s fade into the start of whatever play it is in, so a label lands on its cue and the eye goes back to the picture; `x check` warns on any `Write(` and on any label over 4 words.
+- **Moves are short unless they show a process**: `run_time=self.left(t, k, cap=1.2)` ends a move early and holds until the next cue; leave `cap` off only for a process the voice describes while it runs (reads flowing, copies doubling, bars filling).
 - **Change of chapter = visible event boundary:** clear the stage, then the next chapter's title, then the chapter pause.
 - **Hold still during distil lines and pauses;** nothing new appears while the idea settles.
 - `x check` warns when more than 40% of a scene file's animations are fades.

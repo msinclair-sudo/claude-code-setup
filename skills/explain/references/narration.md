@@ -33,7 +33,7 @@ A segment can set `pause_after` (for example after a number the viewer should ta
 - **Talk to the viewer**: "you", "we", "here". Conversational style helped (d ≈ 0.3-0.5).
 - **One new term per segment**, said, shown, and used again in the next segment.
 - **Come back to the subject** in every segment: name the soil, the sample, the gene, not "it" or "the data".
-- **On screen, key words, not the sentence**: a label that rewords the narration, never the narration itself.
+- **On screen, names, not sentences**: a label on the thing it names (at most 4 words), a number, a term; never the narration, reworded or not.
 
 ## Lexicon (write the narration in the right-hand form)
 | on screen | narrate as |

@@ -1534,14 +1534,11 @@ def _whoami(a):
         if waiting:
             print(f"sign off {len(waiting)} presented task(s) waiting on you: "
                   f"{', '.join(waiting)}")
-            # Named as a first act, not as advice. A lead learns this at
-            # orientation and then holds a long exchange with its own lead, and
-            # the debt is gone from its head long before it is gone from the
-            # ledger -- observed on a live tree. Its todo list is the only thing
-            # in the session that survives that conversation.
+            # Named as a first act, with its command. The harness keeps the
+            # record and says it again while it is owed; a copy in the session's
+            # todo list only drifted from it (log 201: 25 entries, 19 finished).
             for w in waiting:
-                print(f"         TaskCreate: \"sign off {w}\"  →  harness mark "
-                      f"{w} --close")
+                print(f"         sign off {w}  →  harness mark {w} --close")
     except Exception:
         pass
     try:
@@ -4608,7 +4605,9 @@ def queue_items(ctx, node):
         pass
     try:
         for kind, ident, label, age in rank0_owes(ctx, node):
-            out[f"{kind}:{ident}"] = rank0_line(kind, ident, label, age)
+            # A sweep's count is news when it moves, and not otherwise (log 202).
+            key = f"{kind}:{ident}:{label.split()[0]}" if kind == "sweep" else f"{kind}:{ident}"
+            out[key] = rank0_line(kind, ident, label, age)
     except Exception:
         pass
     try:
@@ -4701,7 +4700,7 @@ def queue_items(ctx, node):
 # a debt costs one line every DEBT_RENAG, not one line every turn.
 DEBT_RENAG = 10 * 60
 DEBT_KINDS = ("sign off:", "start:", "down:", "orphan:", "stuck:", "heavy:", "approve:", "task:", "asked:", "handed:",
-              "sweep:", "hold old:", "untraced:", "lingering:", "stale:", "report-part:",
+              "hold old:", "untraced:", "lingering:", "stale:", "report-part:",
               "research-accept:", "research-read:")
 HOLD_OLD = 30 * 60      # a hold this old is asked about (log 92: one stood three hours over nothing)
 
@@ -4714,13 +4713,30 @@ def seen_path(ctx, sid):
     return ctx.state_file("seen", sid or "no-session", ".json")
 
 
-def delta(ctx, node, sid, update=True):
+def delta(ctx, node, sid, update=True, renag=None):
     """New items since this session was last told, and only new ones.
 
     Keyed on the SESSION, not the node: a recycled session has been told
     nothing, which is exactly right — it starts cold by design and its
-    orientation is where it learns the lot.
+    orientation is where it learns the lot. `renag`, a list, gets the ids
+    said again because they are still owed.
     """
+    now, new, keep, again = delta_plan(ctx, node, sid)
+    if update:
+        delta_commit(ctx, sid, keep, new)
+    if renag is not None:
+        renag.extend(again)
+    # The ids as well as the lines, so a caller can tell whether what it just
+    # printed was a debt without recomputing the queue and getting a different
+    # answer than the one it showed.
+    return [now[k] for k in new], new
+
+
+def delta_plan(ctx, node, sid):
+    """What `delta` would say, computed and not recorded: (items, new ids,
+    told-record to keep, ids said again). The prompt hook computes this under
+    its budget and records only what it then prints (log 202: a cut-off after
+    the record was written left items marked told that were never shown)."""
     now = queue_items(ctx, node)
     p = seen_path(ctx, sid)
     told = {}
@@ -4733,32 +4749,35 @@ def delta(ctx, node, sid, update=True):
         told = {}
     stamp = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     nowsec = time.time()
-    new, keep = [], {}
+    new, keep, again = [], {}, []
     for k in now:
         last = told.get(k)
         if last is None:
             new.append(k); keep[k] = stamp
         elif is_debt(k) and (nowsec - (_epoch(last) or 0)) > DEBT_RENAG:
             new.append(k); keep[k] = stamp          # still owed, say so again
+            again.append(k)
         else:
             keep[k] = last                          # told, and not yet due again
-    if update:
-        try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(json.dumps({"told": keep, "at": stamp}) + "\n")
-        except Exception:
-            pass
-        # Told is the moment a rejected or returned stub has done its job. Here
-        # rather than in queue_items, which status and the GUI read without telling.
-        ask_consume(ctx, new)
-        docs_consume(ctx, new)
-    # The ids as well as the lines, so a caller can tell whether what it just
-    # printed was a debt without recomputing the queue and getting a different
-    # answer than the one it showed.
-    return [now[k] for k in new], new
+    return now, new, keep, again
 
 
-def print_delta(ctx=None, node=None, prefix="new"):
+def delta_commit(ctx, sid, keep, new):
+    """Record what `delta_plan` said as told."""
+    p = seen_path(ctx, sid)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({"told": keep, "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")})
+                     + "\n")
+    except Exception:
+        pass
+    # Told is the moment a rejected or returned stub has done its job. Here
+    # rather than in queue_items, which status and the GUI read without telling.
+    ask_consume(ctx, new)
+    docs_consume(ctx, new)
+
+
+def print_delta(ctx=None, node=None, prefix="new", plan=None):
     """Silent unless something changed, and silent on every failure.
 
     It runs on the interactive path — after any harness command, and from the
@@ -4777,20 +4796,14 @@ def print_delta(ctx=None, node=None, prefix="new"):
                          if s.get("branch") == ctx.branch), None)
             if node is None:
                 return
-        rows, ids = delta(ctx, node, os.environ.get("CLAUDE_CODE_SESSION_ID", ""))
-        for r in rows:
-            print(f"{prefix:<8} {r}")
-        # The harness cannot hold a thought for a session; the session's own todo
-        # list can, and it is the only structure that survives a long exchange
-        # with somebody else. So the reminder names the tool rather than hoping.
-        # It prints only when something is actually owed, so a quiet lane pays
-        # nothing.
-        # Gated on what was just PRINTED, not on what exists. Keyed on the
-        # latter it fired on every quiet turn with nothing above it -- three
-        # lines of standing advice in every transcript forever, which is the
-        # per-turn tax the whole edge-triggered design exists to avoid.
-        if any(is_debt(k) for k in ids):
-            print("         ^ owed below you — put them on your todo list (TaskCreate)")
+        sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+        now, new, keep, again = plan or delta_plan(ctx, node, sid)
+        # A debt said again is "still", not "new" (log 202: the same counts read
+        # "new" all day). No todo-list line: the harness keeps the record and
+        # says it again while it is owed (log 201).
+        for k in new:
+            print(f"{'still' if k in again else prefix:<8} {now[k]}")
+        delta_commit(ctx, sid, keep, new)
     except SystemExit:
         return
     except Exception:
@@ -4852,11 +4865,15 @@ def cmd_hook_orient(a):
     global READ_MEMO
     READ_MEMO = {}
     try:
-        if valid and not within_budget(HOOK_BUDGET, lambda: print_delta(ctx, node)):
-            print(f"harness: what changed was not worked out within {HOOK_BUDGET:g}s and is "
-                  f"skipped this prompt (harness whoami --delta shows it). Mail, if any, "
-                  f"follows.", flush=True)
+        # Only the reading is budgeted; what was read is printed and recorded
+        # whole. Over budget, the session hears nothing about it: a line about
+        # the hook's own timing was nothing it could act on (log 202).
+        plan = []
+        if valid and not within_budget(HOOK_BUDGET, lambda: plan.append(delta_plan(
+                ctx, node, os.environ.get("CLAUDE_CODE_SESSION_ID", "")))):
             hook_slow(ctx, node)
+        elif plan:
+            print_delta(ctx, node, plan=plan[0])
     except (Exception, SystemExit):
         pass
     READ_MEMO = None

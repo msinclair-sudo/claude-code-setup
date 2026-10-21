@@ -4702,6 +4702,47 @@ class Doorbell(unittest.TestCase):
             self.assertIsNone(hz.turn_end_at("s"))                       # a turn is running
 
 
+class SaidOnce(unittest.TestCase):
+    """Logs 201 and 202: the prompt hook says a thing once, a count again only
+    when it moves, and names no todo list."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev"})
+
+    def test_a_count_is_said_once_and_a_debt_said_again_is_still_not_new(self):
+        # Log 202: "new 53 complete unit(s) ... harness sweep" every ten minutes
+        # all day, each time with the TaskCreate line under it (log 201).
+        items = {"sweep:units:53": "53 complete unit(s) await a cleanup decision — harness sweep",
+                 "sign off:dev_1:t": "dev_1 presented 't', unsigned — harness mark t --close"}
+        old = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() - 11 * 60))
+        seen = hz.seen_path(self.ctx, "sess-x")
+        seen.parent.mkdir(parents=True, exist_ok=True)
+        seen.write_text(json.dumps({"told": {k: old for k in items}}))
+        with mock.patch.object(hz, "queue_items", return_value=items), \
+             mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "sess-x"}), \
+             redirect_stdout(io.StringIO()) as o:
+            hz.print_delta(self.ctx, "main")
+        out = o.getvalue()
+        self.assertNotIn("complete unit(s)", out)               # told: a count is news once
+        self.assertIn("still    dev_1 presented 't'", out)       # still owed: said as "still"
+        self.assertNotIn("new ", out)
+        self.assertNotIn("TaskCreate", out)
+        moved = dict(items, **{"sweep:units:54": items["sweep:units:53"].replace("53", "54")})
+        del moved["sweep:units:53"]
+        with mock.patch.object(hz, "queue_items", return_value=moved), \
+             mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "sess-x"}), \
+             redirect_stdout(io.StringIO()) as o:
+            hz.print_delta(self.ctx, "main")
+        self.assertIn("new      54 complete unit(s)", o.getvalue())   # the count moved
+
+    def test_a_sweep_row_is_keyed_by_its_count(self):
+        rows = [("sweep", "units", "53 complete unit(s)", 0), ("sweep", "stale", "61 stale record(s)", 0)]
+        with mock.patch.object(hz, "rank0_owes", return_value=rows):
+            keys = [k for k in hz.queue_items(self.ctx, "main") if k.startswith("sweep:")]
+        self.assertEqual(sorted(keys), ["sweep:stale:61", "sweep:units:53"])
+        self.assertFalse(hz.is_debt("sweep:units:53"))
+
+
 class DoorbellHooks(unittest.TestCase):
     """Mail reaches the node's own session through hooks, with no arming: after
     a tool call, at a turn end, at a prompt. The Stop hook's blocks are
@@ -4796,13 +4837,17 @@ class DoorbellHooks(unittest.TestCase):
         hz.ring_inbox(self.ctx.state, "main", "owner", "re-file the delete")
         self.addCleanup(setattr, hz, "QUIET", hz.QUIET)
         o, t0 = io.StringIO(), time.time()
-        with mock.patch.object(hz, "print_delta", side_effect=lambda *a: time.sleep(5)), \
+        with mock.patch.object(hz, "delta_plan", side_effect=lambda *a: time.sleep(5)), \
              mock.patch.object(hz, "HOOK_BUDGET", 0.3), \
              mock.patch("sys.stdin", io.StringIO(json.dumps({"session_id": "sess-main"}))), \
              redirect_stdout(o), self.assertRaises(SystemExit):
             hz.cmd_hook_orient(mock.Mock())
         self.assertLess(time.time() - t0, 2)
-        self.assertIn("skipped this prompt", o.getvalue())
+        # Log 202: the hook's own timing is nothing the session can act on, so it
+        # hears nothing of it; and nothing it wasn't shown is recorded as told.
+        self.assertNotIn("skipped this prompt", o.getvalue())
+        self.assertFalse(list((self.ctx.dir / "seen").glob("*.json"))
+                         if (self.ctx.dir / "seen").is_dir() else [])
         self.assertIn("from owner: re-file the delete", o.getvalue())
         self.assertEqual(hz.MAIL().pending(self.ctx.state, "main"), 0)
         self.assertIn("main hook-orient over 0.3s", (self.ctx.dir / "hook_slow.log").read_text())

@@ -7265,7 +7265,10 @@ def print_check_report(rep, base):
                  "   peak not recorded" if "capBy" in r and not r.get("peakMemory")
                  and not r.get("memoryKilled") and r.get("exit") is not None else "")
               + ("" if r.get("exit") in (0, None) or r.get("timedOut") or r.get("memoryKilled")
-                 else f"   exit {r['exit']}"))
+                 else f"   exit {r['exit']}")
+              + (f"   (earlier run, {(r.get('at') or '')[5:16].replace('T', ' ')}, job "
+                 f"{r.get('job')})" if r.get("job") and rep.get("job") and r["job"] != rep["job"]
+                 and not r.get("carried") else ""))
         if v == "FAIL":
             for line in (r.get("stderr") or r.get("stdout") or "").strip().splitlines()[-6:]:
                 print(f"        {clip(line)}")
@@ -7274,12 +7277,28 @@ def print_check_report(rep, base):
     if rep.get("carried"):
         print(f"  carried: {', '.join(rep['carried'])} finished in {rep.get('rerun_of')} before "
               f"its runner died, and were not run again")
+    if rep.get("earlier"):
+        print(f"  this run: {', '.join(rep.get('ran') or [])}; "
+              f"{len(rep['earlier'])} arm(s) keep their result from an earlier run at this commit")
     if rep.get("partial"):
         print(f"  partial: only {', '.join(rep.get('arms') or [])} ran; this is not the full set")
     if rep.get("scoped"):
         sc = rep["scoped"]
         print(f"  scoped: {', '.join(rep.get('arms') or []) or 'no arm'} — {sc.get('why')} "
               f"since {sc.get('base')}; the full set runs at the lead's merge")
+
+
+def row_failed(r):
+    """A report row that counts as a failure (arm_result's `ok`, read back)."""
+    return not r.get("held") and (r.get("exit") != 0 or bool(r.get("memoryKilled")))
+
+
+def earlier_rows(ctx, sha, ran):
+    """The commit's last result for each arm a run didn't cover, from its report
+    on file, each marked with the job and time it ran (log 199)."""
+    old = _read_json(shared_report_path(ctx, sha)) or {}
+    return [dict(r, job=r.get("job") or old.get("job"), at=r.get("at") or old.get("at"))
+            for r in old.get("checks") or [] if r.get("name") and r["name"] not in ran]
 
 
 def make_check_report(node, sha, rows, failed, base, **extra):
@@ -8621,17 +8640,40 @@ def testd_close(ctx, S, jid):
             # Finished before its first runner died: kept, not run again (log 197).
             o["rows"][n] = dict(c.get("row") or {}, carried=job.get("rerun_of"))
             o["failed"] += not c.get("ok")
+        now = _now()
+        for n, r in o["rows"].items():
+            r.setdefault("job", job.get("rerun_of") if n in carried else jid)
+            r.setdefault("at", now)
+        ran = list(o["rows"])
+        failed, arms = o["failed"], job.get("arms")
+        partial = bool(arms) and not job.get("scope")
+        earlier = []
+        if arms:
+            # Some arms only: the commit's other arms keep their last result
+            # (log 199: a one-arm rerun replaced a nine-arm report, so a commit
+            # with nine reds read 1/1 passed at sign-off).
+            earlier = earlier_rows(ctx, sha, ran)
+            for r in earlier:
+                o["rows"][r["name"]] = r
+                failed += row_failed(r)
+            if earlier:
+                every = job_arm_names(ctx, None)
+                if every and set(every) <= set(o["rows"]):
+                    arms, partial = None, False
+                else:
+                    arms = job_arm_names(ctx, list(o["rows"]))
         order = job_arm_names(ctx, list(o["rows"]))
         names = order + [n for n in o["rows"] if n not in order]
         rows = [o["rows"][n] for n in names if n in o["rows"]]
         base = o["base"]
-        rep = make_check_report(node, sha, rows, o["failed"], base,
+        rep = make_check_report(node, sha, rows, failed, base,
                                 job=jid, requested_by=[r.get("node") for r in job["requested_by"]],
-                                arms=job.get("arms"),
-                                partial=bool(job.get("arms")) and not job.get("scope"),
+                                arms=arms, partial=partial,
+                                **({"ran": ran, "ran_failed": o["failed"],
+                                    "earlier": [r["name"] for r in earlier]} if earlier else {}),
                                 **({"caps": S["caps"]} if S.get("caps") else {}),
                                 **({"behind": job["behind"]} if job.get("behind") else {}),
-                                **({"scoped": job["scope"]} if job.get("scope") else {}),
+                                **({"scoped": job["scope"]} if job.get("scope") and arms else {}),
                                 **({"rerun_of": job["rerun_of"], "carried": sorted(carried)}
                                    if job.get("rerun_of") else {}))
         shared = shared_report_path(ctx, sha)
@@ -8723,7 +8765,10 @@ def testq_ring(ctx, job, rep, code):
         n = len(rep.get("checks") or [])
         text = ((partial_line(rep) + ". ") if partial_line(rep) else "") + (
                 (stale_line(rep.get("behind")) + " ") if rep.get("behind") else "") + (
-                f"check of {job['sha'][:8]}: {n - rep['failed'] - rep['held']}/{n} passed"
+                (f"arms {', '.join(rep['ran'])}: {len(rep['ran']) - rep.get('ran_failed', 0)}/"
+                 f"{len(rep['ran'])} passed this run; with earlier runs, " if rep.get("earlier")
+                 else "")
+                + f"check of {job['sha'][:8]}: {n - rep['failed'] - rep['held']}/{n} passed"
                 + (f", {rep['new']} new failure(s) against the baseline" if rep.get("new") else "")
                 + f" — harness check --report {job['sha'][:8]}")
     else:

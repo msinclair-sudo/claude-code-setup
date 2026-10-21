@@ -6315,6 +6315,42 @@ class RankZeroUnderHalt(unittest.TestCase):
         self.assertNotEqual(self.as_node("main", hz.cmd_test, rerun="nope")[0], 0)
 
 
+class PartialKeepsTheRest(unittest.TestCase):
+    """Log 199: a one-arm rerun at a sha replaced its nine-arm report, so a commit
+    with nine reds read 1/1 passed at sign-off."""
+
+    setUp = TestQueue.setUp
+    run_queue = TestQueue.run_queue
+
+    def test_a_partial_run_keeps_the_other_arms_last_result(self):
+        full, _ = hz.testq_submit(self.ctx, "check", self.sha, "dev_1", "s")
+        self.run_queue()
+        one, _ = hz.testq_submit(self.ctx, "check", self.sha, "dev_1", "s", arms=["good"])
+        self.run_queue()
+        for f in (hz.shared_report_path(self.ctx, self.sha),
+                  hz.check_report_path(self.ctx, "dev_1", self.sha)):
+            rep = json.loads(f.read_text())
+            self.assertEqual([r["name"] for r in rep["checks"]], ["good", "bad"])
+            self.assertEqual({r["name"]: r["job"] for r in rep["checks"]},
+                             {"good": one["id"], "bad": full["id"]})
+            self.assertEqual((rep["failed"], rep["passed"], rep["partial"], rep["arms"],
+                              rep["earlier"]), (1, False, False, None, ["bad"]))
+        rung = [json.loads(f.read_text())["text"] for f in
+                sorted((self.state / "doorbell" / "dev_1" / "inbox").glob("*.json"))]
+        self.assertIn("arms good: 1/1 passed this run; with earlier runs, check of", rung[-1])
+        self.assertIn("1/2 passed", rung[-1])
+        with redirect_stdout(io.StringIO()) as o:
+            hz.print_check_report(rep, None)
+        self.assertIn(f"earlier run", o.getvalue())
+        self.assertIn("1/2 passed", o.getvalue())
+
+    def test_a_partial_run_with_nothing_earlier_is_still_partial(self):
+        hz.testq_submit(self.ctx, "check", self.sha, "dev_1", "s", arms=["good"])
+        self.run_queue()
+        rep = json.loads(hz.shared_report_path(self.ctx, self.sha).read_text())
+        self.assertEqual((rep["partial"], rep["arms"], "earlier" in rep), (True, ["good"], False))
+
+
 class StopKillsWork(unittest.TestCase):
     """obs 80: `stop` ends the session's processes, not just the conversation."""
 

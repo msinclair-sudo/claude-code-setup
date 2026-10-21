@@ -20,30 +20,34 @@ Any result note with a review body and references. Everything else is detected, 
 | Detected | Effect |
 |---|---|
 | a critique | applied: its corrections win over the body and the answers |
-| labelled citations (`[FT; meas; repl]`, research-brief rule 3a) | `conf` and `class` read from the labels; exact omission check over every labelled sentence |
-| no labels | claims read as written; `conf: not stated` wherever the note gives no standing; omission check falls back to the answers plus the critique |
+| labelled citations (an access label with a standing: `[FT; meas; repl]`, research-brief rule 3a, or `[Key; FT; measured; SINGLE SOURCE]`) | `conf` and `class` read from the labels; exact omission check over every labelled sentence, the answers and the critique |
+| no labels | claims read as written; `conf: not stated` wherever the note gives no standing in words; omission check falls back to the answers plus the critique |
+| a section of refuted claims | read as critique: its items become do-not-say entries |
 | a `run.json` sidecar | reported; nothing requires it |
 
 `kn.py detect` reports all of this, and the knowledge note's Inputs table records it.
 
 ## Output
 
-`<...>/Research/Knowledge/<topic>.md` beside the `Results` folder, and `<topic>.index.json` (written by lint, for
+`<...>/Knowledge/<topic>.md` beside the `Results` folder (matching its case), and `<topic>.index.json` (written by lint, for
 scripts and later fact-checks). Format: `references/format.md`. One note per research set, reused by every piece
 written from it. It covers everything the research found: never trim.
 
 ## Procedure
 
 1. **Detect.** For each input: `python3 scripts/kn.py detect "<note>" --id <ID> --inventory <tmp>/<ID>.md`. The
-   inventory lists every item the knowledge note must account for, with IDs.
+   inventory lists the required items (every one must be accounted for) and gives every other sentence of the
+   note an address, so that every entry can say where it came from.
 2. **Read** each note whole, the critique first, then the answers, then the body.
-3. **Sources.** Transcribe the references into one BibTeX block (`format.md`, Sources); never look one up.
+3. **Sources.** Transcribe the references into one BibTeX block (`format.md`, Sources); never look one up. Make
+   each key with `kn.py citekey`, giving `--refs` the vault's bibliography so sources already in it keep their key.
 4. **Concepts and claims.** Name the concepts; give each its `needs`; write a claim for every finding, in the
-   corrected form where the critic corrected it, with all six fields. Group concepts that need each other.
-5. **Do not say, gaps, out of scope.** Uncorrected and overstated wordings; what research must still answer;
-   inventory items that are not findings, with reasons.
+   corrected form where the critic corrected it, with every field filled. Group concepts that need each other.
+5. **Do not say, gaps, out of scope.** Wordings the inputs say are wrong; what research must still answer;
+   required items that are not findings, with reasons.
 6. **Background** (optional): for a concept the claims rely on that no input defines, add a background entry with
-   one standard reference and its check. This is the only step that may use the web, for that reference only.
+   one standard reference and its check. This is the only step that may use the web: to find and check that
+   one reference, and nothing else.
 7. **Lint** until clean: `python3 scripts/kn.py lint "<knowledge note>"`. It checks the fields, the sources, the
    trails, the `needs` graph and groups, the quoted bases, the Inputs table against detection, and omission
    (every inventory item accounted for).
@@ -56,10 +60,13 @@ Each check the inputs allow is run, and the Inputs table says which ran.
 
 - **Never infer a standing.** `conf` comes from a label, the critic or the note's own words, quoted; otherwise
   `not stated`.
-- **The critic wins.** Its corrections become the claims; the wording it corrected goes to Do not say when it
-  would mislead.
+- **The critic wins.** Its corrections become the claims; the wording it corrected goes to Do not say.
+- **Only the inputs say what not to say.** A do-not-say entry rests on the critic, a refutation or the note's own
+  warning. Without a critic, overstatements you notice are not yours to flag: the note gets a gap saying it was
+  never checked by a second reader.
 - **Nothing new.** No searching (except one reference per background entry), no re-verification, no facts or
-  figures that are not in the inputs, no combining figures from different sources.
+  figures that are not in the inputs, no combining figures from different sources (a range the note itself gives
+  stays, as the note's claim).
 - **No writing guidance.** No story, order of telling, emphasis, audience or style. The concept order is one
   valid ordering of the `needs` graph and means nothing more.
 - **Gaps go back to research.** A missing or weak finding is a gap, never filled here.

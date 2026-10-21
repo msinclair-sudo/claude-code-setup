@@ -1,0 +1,3 @@
+16S: A = raw, B = view
+TSL: A = raw, B = view
+NFERT: A = view, B = raw

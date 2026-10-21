@@ -19,14 +19,19 @@ At the end of every say(...) block the segment's `verify` list is checked:
   hold_min_s: 2                every object released in this segment stayed >= 2 s
 Results go to <report>/checks/scene-<Class>.json; `x check` reads them.
 
-Inside a segment, time each move to the sentence that names it:
-    with self.say("s12") as t:
-        self.play(Create(gene), run_time=self.left(t, 0))   # finish within sentence 1
-        self.at(t, 1)                                        # hold until sentence 2 starts
-        self.play(Write(label), run_time=0.5)
-        self.at(t, 1, "merged")                              # or until a word in it is spoken
-at() logs a warning when the picture is still busy after its sentence has begun (the voice ran
-ahead), and say() warns when a segment of two or more sentences has no cue at all.
+Inside a segment, attach each move to the words that name it. The storyboard declares the events
+(`sync: {pool: "The samples are pooled"}`, a phrase that occurs once in the narration) and the scene
+tags the play that shows each one:
+    with self.say("s16") as t:
+        self.play(pour, run_time=self.left(t, 0, cap=1.5), sync="pool")   # starts when "The samples..." does
+        self.at(t, 1, "a random draw")                       # a cue the code chooses: hold until a word
+        self.play(draw, run_time=self.left(t, 1))
+A tagged play waits for its phrase, so it never starts early; if the picture is still busy when the
+phrase is spoken, the start is late. Every anchor and cue becomes a row in the scene log ("sync"),
+and `x check` writes them to checks/sync.json. Faults: late by more than the tolerance (storyboard
+`sync_tolerance`, default 0.5 s), a declared event never played, events played out of the order they
+are spoken. A phrase at a sentence's start is exact; inside a sentence it is estimated (timing.py,
+about 0.25 s). say() warns when a segment of two or more sentences has no anchor or cue.
 Set EXPLAIN_STRICT=1 to raise on the first failure instead.
 """
 import json
@@ -36,6 +41,7 @@ from pathlib import Path
 
 from .kokoro_service import KokoroService, spans as clip_spans  # noqa: F401  (quiets sox/phonemizer on import)
 from . import report as _report
+from . import timing
 
 from manim import DOWN, LEFT, RIGHT, UP, config  # noqa: E402
 from manim_voiceover import VoiceoverScene  # noqa: E402
@@ -47,6 +53,20 @@ from .tts import PACING, pause_for, sentences  # noqa: E402  (one pacing table f
 
 class VerifyError(AssertionError):
     pass
+
+
+class Until(float):
+    """A run_time from left(): the seconds from the call to a point in the narration, which remembers
+    that point, so a play that first waits for its sync phrase can shorten it by the wait."""
+    @classmethod
+    def make(cls, d, end, floor, cap):
+        d = max(d, floor)
+        o = super().__new__(cls, min(d, cap) if cap else d)
+        o.end, o.floor, o.cap = end, floor, cap
+        return o
+
+    def after(self, now):
+        return Until.make(self.end - now, self.end, self.floor, self.cap)
 
 
 def cell_box(cell: str, span: str = "1x1"):
@@ -84,7 +104,9 @@ class ExplainScene(VoiceoverScene):
         self._placed = {}   # name -> {"m": mobject, "t": time placed, "cell": ...}
         self._released = []  # (name, placed_t, released_t, segment)
         self._current = None
-        self._log = {"scene": type(self).__name__, "segments": [], "warnings": [], "failures": []}
+        self._tol = float(self.report.story.get("sync_tolerance") or 0.5)
+        self._t = None   # the current segment's voiceover tracker
+        self._log = {"scene": type(self).__name__, "segments": [], "sync": [], "warnings": [], "failures": []}
 
     # placement ------------------------------------------------------------
     def place(self, m, cell: str, name: str | None = None, span: str = "1x1", pad: float = 0.12):
@@ -135,15 +157,29 @@ class ExplainScene(VoiceoverScene):
             raise KeyError(f"segment {sid} is not in storyboard.yaml")
         self._current, start = sid, self.renderer.time
         with self.voiceover(text=g["narration"]) as t:
-            t.spans = clip_spans(Path(t.cache_dir) / t.data["final_audio"])
+            audio = Path(t.cache_dir) / t.data["final_audio"]
+            t.spans = clip_spans(audio)
             t.sentences = sentences(g["narration"])
-            self._cues = 0
+            t.audio, t.knots = audio, {}
+            self._t, self._cues, self._played, self._motion = t, 0, {}, 0.0
             yield t
-        if len(t.spans) > 1 and not self._cues and g.get("role") != "distil":
-            self._log["warnings"].append(f"{sid}: {len(t.spans)} sentences and no at() cue; "
+        declared = g.get("sync") or {}
+        if len(t.spans) > 1 and not self._cues and not declared and g.get("role") != "distil":
+            self._log["warnings"].append(f"{sid}: {len(t.spans)} sentences and no sync anchor or at() cue; "
                                          "the picture may run ahead of or behind the voice")
+        for name in declared:
+            if name not in self._played:
+                self._fail(f"{sid}: sync '{name}' (\"{declared[name]}\") is never played; tag its play with sync='{name}'")
+        shown = sorted(self._played, key=lambda n: self._played[n][1])        # by when they started
+        spoken = sorted(self._played, key=lambda n: self._played[n][0])       # by when they are said
+        if shown != spoken:
+            self._fail(f"{sid}: sync events play in the order {', '.join(shown)} but are spoken {', '.join(spoken)}")
         self._verify(g, start)
-        self._log["segments"][-1]["sentences"] = [[round(start + a, 3), round(start + b, 3)] for a, b in t.spans]
+        seg = self._log["segments"][-1]
+        seg["sentences"] = [[round(start + a, 3), round(start + b, 3)] for a, b in t.spans]
+        seg["speech"] = round(sum(b - a for a, b in t.spans), 2)   # seconds of voice
+        seg["motion"] = round(self._motion, 2)                     # seconds something moves (not waits)
+        self._t = None
         # a beat after each segment, a longer one at the end of a chapter (a paragraph break)
         pause = pause_for(g, self.pacing, chapter_end=sid == self._last)
         if pause:
@@ -151,30 +187,82 @@ class ExplainScene(VoiceoverScene):
         if self._log["segments"] and self._log["segments"][-1]["id"] == sid:
             self._log["segments"][-1]["settled"] = round(self.renderer.time, 3)   # end of the pause: stills
 
+    def _knots(self, t, k: int):
+        if k not in t.knots:
+            a, b = t.spans[k]
+            y, rate = (None, 24000)
+            try:
+                import soundfile as sf
+                y, rate = sf.read(str(t.audio))
+                y = y.mean(axis=1) if y.ndim > 1 else y
+            except Exception:
+                pass
+            lang = "en-gb" if os.environ.get("REPORT_VOICE", "b")[:1] == "b" else "en-us"
+            t.knots[k] = timing.knots(t.sentences[k], a, b, y, rate, lang, float(self.pacing.get("clause", 0.2)))
+        return t.knots[k]
+
     def mark(self, t, k: int, word: str | None = None) -> float:
         """Scene time when sentence k (0 = first) starts, or, with `word`, when that word in it is
-        reached (estimated from its share of the sentence's characters: Kokoro speaks at an even rate)."""
-        a, b = t.spans[k]
-        if word:
-            text = (t.sentences[k] if k < len(t.sentences) else "")
-            i = text.lower().find(word.lower())
-            if i < 0:
-                raise ValueError(f"{self._current}: {word!r} is not in sentence {k + 1}: {text!r}")
-            a += (b - a) * i / max(len(text), 1)
-        return t.start_t + a
+        reached (phoneme share between the clause pauses heard in the audio: timing.py)."""
+        if not word:
+            return t.start_t + t.spans[k][0]
+        text = t.sentences[k] if k < len(t.sentences) else ""
+        i = text.lower().find(word.lower())
+        if i < 0:
+            raise ValueError(f"{self._current}: {word!r} is not in sentence {k + 1}: {text!r}")
+        return t.start_t + timing.onset(text, i, self._knots(t, k))
 
-    def at(self, t, k: int, word: str | None = None, late: float = 0.4, fault: float = 1.0):
-        """Hold until sentence k (or `word` in it) is spoken. If the picture is still busy after that,
-        the voice has run ahead: a warning past `late` seconds, a fault past `fault`."""
+    def _row(self, kind, name, phrase, k, exact, due, start):
+        late = start - due
+        status = "late" if late > self._tol else "slow" if late > self._tol / 2 else "pass"
+        row = {"segment": self._current, "id": name, "kind": kind, "phrase": phrase, "sentence": k + 1,
+               "exact": exact, "voice_at": round(due - self._t.start_t, 2), "due": round(due, 3),
+               "start": round(start, 3), "delta": round(late, 2), "status": status}
+        self._log["sync"].append(row)
+        msg = (f"{self._current}: {kind} '{name}' (\"{phrase}\") is spoken at {row['voice_at']:.1f}s "
+               f"but its picture starts {late:.1f}s later; the move before it runs too long")
+        if status == "late":
+            self._fail(msg)
+        elif status == "slow":
+            self._log["warnings"].append(msg)
+        return row
+
+    def at(self, t, k: int, word: str | None = None):
+        """Hold until sentence k (or `word` in it) is spoken: a cue the code chooses (declare the events
+        that matter in the storyboard's `sync` instead). Late past the tolerance is a fault."""
         self._cues += 1
         due, now = self.mark(t, k, word), self.renderer.time
-        if now > due + late:
-            where = f"'{word}' in sentence {k + 1}" if word else f"sentence {k + 1}"
-            msg = (f"{self._current}: {where} is spoken at {due - t.start_t:.1f}s "
-                   f"but the picture is busy until {now - t.start_t:.1f}s")
-            self._fail(msg) if now > due + fault else self._log["warnings"].append(msg)
-        elif due > now:
+        self._row("cue", f"{k + 1}:{word or ''}", word or t.sentences[k][:30], k, not word or
+                  t.sentences[k].lower().startswith(word.lower()), due, max(now, due))
+        if due > now:
             self.wait(due - now)
+
+    def play(self, *args, sync: str | None = None, **kwargs):
+        """Scene.play; with `sync`, first hold until the storyboard's phrase for that event is spoken."""
+        from manim import Wait
+        if sync is not None:
+            t = self._t
+            declared = (self._seg[self._current].get("sync") or {}) if t else {}
+            if sync not in declared:
+                raise ValueError(f"{self._current}: sync '{sync}' is not declared in the segment's storyboard `sync`")
+            if sync in self._played:
+                raise ValueError(f"{self._current}: sync '{sync}' is played twice")
+            phrase = declared[sync]
+            k, i = timing.find(t.sentences, phrase)
+            due = self.mark(t, k, t.sentences[k][i:i + len(phrase)]) if i else self.mark(t, k)
+            now = self.renderer.time
+            if due > now:
+                self.wait(due - now)
+                if isinstance(kwargs.get("run_time"), Until):     # left() measured from before the wait
+                    kwargs["run_time"] = kwargs["run_time"].after(self.renderer.time)
+            self._played[sync] = (due, max(now, due))
+            row = self._row("anchor", sync, phrase, k, i == 0, due, max(now, due))
+        t0 = self.renderer.time
+        super().play(*args, **kwargs)
+        if sync is not None:
+            row["end"] = round(self.renderer.time, 3)
+        if self._t is not None and not all(isinstance(a, Wait) for a in args):
+            self._motion += self.renderer.time - t0
 
     def left(self, t, k: int | None = None, word: str | None = None, floor: float = 0.3,
              cap: float | None = None) -> float:
@@ -183,8 +271,7 @@ class ExplainScene(VoiceoverScene):
         that should run the whole sentence (reads flowing, bars growing one by one)."""
         k = len(t.spans) - 1 if k is None else k
         end = self.mark(t, k, word) if word else t.start_t + t.spans[k][1]
-        d = max(end - self.renderer.time, floor)
-        return min(d, cap) if cap else d
+        return Until.make(end - self.renderer.time, end, floor, cap)
 
     # checks ---------------------------------------------------------------
     def _fail(self, msg):

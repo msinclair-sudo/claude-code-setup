@@ -8,7 +8,7 @@ The plan is written before any code, and `x lint` checks it. A plan that cannot 
 - `voice` (tier 2), `default_view` and `controls` (tier 3), `numbers_ok` (incidental numbers needing no claim).
 - `segments[]`: `id`, `role` (setting, mechanism, problem, resolution, limits), `visual` (what is drawn), `onscreen` (the frame's labels, separated by `;`, each at most 4 words), `narration` (≤ 35 words, about 13 s), `claims` (ids in `claims.yaml`), and:
   - tier 2: `step` = `"h.v.f"`, the slide and fragment where it plays (`f` = -1 before any fragment);
-  - tier 4: `scene` (the Manim class), `anchors` (`{name: cell}`, cells A1-F4 on a 6×4 grid, A1 top left), `verify` (`inside_frame: all`, `no_overlap: all | [a, b]`, `order: [a, b]`, `hold_min_s: 2`).
+  - tier 4: `scene` (the Manim class), `anchors` (`{name: cell}`, cells A1-F4 on a 6×4 grid, A1 top left), `verify` (`inside_frame: all`, `no_overlap: all | [a, b]`, `order: [a, b]`, `hold_min_s: 2`), `sync` (`{event: phrase}`: each event the narration names, by a phrase that occurs once in it; at least the one the first sentence names; the scene's `play(sync=...)` starts on it). Storyboard-level `sync_tolerance` (seconds, default 0.5).
 
 ## The token pass
 Before any code, edit `tokens.json`: 4-6 colours with one accent, the typefaces, and a one-line layout concept. Data carries the colour; chrome stays quiet. Defaults read as generic; a deliberate choice of accent and type, made for this material, does not.

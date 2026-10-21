@@ -260,12 +260,68 @@ class Animation(unittest.TestCase):
                 """))
             subprocess.run([str(X), "build", str(d), "--draft"], check=True, capture_output=True)
             log = json.loads((d / "checks/scene-Scene1.json").read_text())
-            self.assertIn("sentence 2 is spoken", " ".join(log["failures"]))
-            self.assertIn("s2: 2 sentences and no at() cue", " ".join(log["warnings"]))
+            self.assertIn("but its picture starts", " ".join(log["failures"]))
+            self.assertIn("s2: 2 sentences and no sync anchor or at() cue", " ".join(log["warnings"]))
             (a0, a1), (b0, b1) = log["segments"][0]["sentences"]
             self.assertAlmostEqual(b0 - a1, 0.7, delta=0.05)
         finally:
             shutil.rmtree(tmp)
+
+    def test_sync_anchors(self):
+        """A tagged play waits for its phrase; late, never played and out of order are faults; rows are logged."""
+        tmp = tempfile.mkdtemp()
+        try:
+            d = scaffold(tmp, 4, delivery="presented", segments=[
+                {"id": "s1", "scene": "Scene1", "visual": "a box", "narration": "A box appears. Then it turns, and then it shrinks.",
+                 "sync": {"box": "A box appears", "turn": "Then it turns", "shrink": "it shrinks", "glow": "appears"}},
+                {"id": "s2", "scene": "Scene1", "visual": "it stays", "narration": "It stays. It waits.",
+                 "sync": {"stay": "It stays", "wait": "It waits"}}])
+            (d / "src/scene.py").write_text(textwrap.dedent("""\
+                from explainlib.anchors import ExplainScene
+                from manim import *
+
+                class Scene1(ExplainScene):
+                    def construct(self):
+                        a = Square()
+                        with self.say("s1") as t:
+                            self.play(FadeIn(a), run_time=0.5, sync="box")
+                            self.play(Rotate(a), run_time=self.left(t, 1, "and then"), sync="turn")   # shortened by its wait
+                            self.play(Wiggle(a), run_time=3.0)                      # runs on past "it shrinks"
+                            self.play(a.animate.scale(0.5), run_time=0.3, sync="shrink")
+                        with self.say("s2") as t:
+                            self.play(a.animate.shift(LEFT), run_time=0.3, sync="wait")
+                            self.play(a.animate.shift(RIGHT), run_time=0.3, sync="stay")
+                """))
+            subprocess.run([str(X), "build", str(d), "--draft"], check=True, capture_output=True)
+            log = json.loads((d / "checks/scene-Scene1.json").read_text())
+            fails = " ".join(log["failures"])
+            rows = {(x["segment"], x["id"]): x for x in log["sync"]}
+            self.assertEqual(rows[("s1", "box")]["status"], "pass")
+            self.assertTrue(rows[("s1", "box")]["exact"])
+            turn = rows[("s1", "turn")]
+            self.assertAlmostEqual(turn["start"], turn["due"], delta=0.05)    # waited for sentence 2
+            s2a, s2b = log["segments"][0]["sentences"][1]
+            self.assertLess(turn["end"], s2a + 0.6 * (s2b - s2a))              # ended near "and then", not later
+            self.assertEqual(rows[("s1", "shrink")]["status"], "late")
+            self.assertFalse(rows[("s1", "shrink")]["exact"])
+            self.assertIn("'glow'", fails)                                       # declared, never played
+            self.assertIn("in the order wait, stay but are spoken stay, wait", fails)
+            self.assertGreater(log["segments"][0]["motion"], 3.0)
+            self.assertGreater(log["segments"][0]["speech"], 2.0)
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_sync_lint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = scaffold(tmp, 4, delivery="presented", sync_tolerance=5, segments=[
+                {"id": "s1", "scene": "S", "visual": "v", "narration": "The dots move. The dots stop.",
+                 "sync": {"a": "The dots", "b": "pooled"}},
+                {"id": "s2", "scene": "S", "visual": "v", "narration": "One. Two."}])
+            msgs = " | ".join(m for _, m in lint.lint(report.load(d)))
+            self.assertIn("'The dots' occurs 2 times", msgs)
+            self.assertIn("'pooled' occurs 0 times", msgs)
+            self.assertIn("segment s2: no 'sync'", msgs)
+            self.assertIn("sync_tolerance = 5", msgs)
 
 
 if __name__ == "__main__":

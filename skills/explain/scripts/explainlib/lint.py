@@ -117,6 +117,20 @@ def lint(r) -> list:
                     err(f"segment {sid}: anchor {name}={cell}; cells are A1..F4 (6 columns, 4 rows)")
             if not g.get("verify"):
                 warn(f"segment {sid}: no 'verify' list; overlap and hold checks will be all it gets")
+            sync = g.get("sync")
+            if not sync:
+                warn(f"segment {sid}: no 'sync'; declare each event the narration names (id: a phrase from "
+                     "the narration) so the render can check it starts when the phrase is spoken")
+            elif not isinstance(sync, dict):
+                err(f"segment {sid}: sync is a mapping, event id: phrase from the narration")
+            else:
+                from .timing import find
+                from .tts import sentences
+                for name, phrase in sync.items():
+                    try:
+                        find(sentences(g.get("narration") or ""), str(phrase))
+                    except ValueError as e:
+                        err(f"segment {sid}: sync {name}: {e} (and stays inside one sentence)")
     if t == 3:
         n = int(s.get("controls", 0) or 0)
         if n > 2:
@@ -129,6 +143,9 @@ def lint(r) -> list:
             chapters.setdefault(g.get("scene"), []).append(g)
         quiet = sum(pause_for(g, pacing, chapter_end=g is gs[-1]) for gs in chapters.values() for g in gs)
         minutes = narr_words / WPM + quiet / 60
+        tol = s.get("sync_tolerance")
+        if tol is not None and (not isinstance(tol, (int, float)) or not 0.1 <= tol <= 2):
+            err(f"storyboard: sync_tolerance = {tol}; seconds, 0.1 to 2 (default 0.5)")
         cap = float(s.get("max_minutes") or ANIM_MINUTES_MAX)
         if cap > ANIM_MINUTES_MAX and not str(s.get("length_reason") or "").strip():
             err(f"storyboard: max_minutes {cap:g} is over {ANIM_MINUTES_MAX}; say why in length_reason")

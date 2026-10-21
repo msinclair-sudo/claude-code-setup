@@ -30,7 +30,7 @@ def _scene_strings(path) -> str:
 
 
 def run(r, rnd: int) -> dict:
-    faults, warns = [], []
+    faults, warns, sync_sum = [], [], None
     for level, msg in lint(r):
         (faults if level == "error" else warns).append(f"lint: {msg}")
     t, b = r.tier, r.p("build")
@@ -111,16 +111,31 @@ def run(r, rnd: int) -> dict:
         elif dur.get("video", 0) > 10 * 60 + 5:
             warns.append(f"video is {dur['video'] / 60:.1f} min, over 10: {r.story.get('length_reason')}")
         warns += motion_warnings(r.p("src/scene.py")) + text_warnings(r.p("src/scene.py"))
-        for log in r.p("checks").glob("scene-*.json"):
+        rows = []
+        for log in sorted(r.p("checks").glob("scene-*.json")):
             j = json.loads(log.read_text())
             faults += [f"{j['scene']}: {f}" for f in j["failures"]]
             warns += [f"{j['scene']}: {w}" for w in j["warnings"]]
+            rows += [{"scene": j["scene"], **x} for x in j.get("sync", [])]
+        # one row per anchor (declared in the storyboard) and cue (chosen in the code): when the voice
+        # says it, when its picture starts, the difference
+        r.p("checks/sync.json").write_text(json.dumps(rows, indent=1))
+        anchored = {x["segment"] for x in rows if x["kind"] == "anchor"}
+        bare = [g["id"] for g in r.segments if g.get("id") not in anchored]
+        if bare:
+            warns.append(f"sync: {len(bare)} segments with no anchor in the storyboard ({', '.join(bare[:6])}"
+                         f"{', ...' if len(bare) > 6 else ''}); their opening moves are not checked")
+        sync_sum = {"anchors": sum(x["kind"] == "anchor" for x in rows), "cues": sum(x["kind"] == "cue" for x in rows),
+                    "late": sum(x["status"] == "late" for x in rows),
+                    "worst": max((x["delta"] for x in rows), default=0)}
         if not (b / "captions.vtt").exists() or (b / "captions.vtt").stat().st_size < 20:
             faults.append("captions.vtt missing or empty")
         faults += [f"numbers: {f}" for f in numbers.orphans(
             r, {"narration": spoken, "on screen": shown, "scene text": _scene_strings(r.p("src/scene.py"))})]
 
     res = {"round": rnd, "tier": t, "pass": not faults, "faults": faults, "warnings": warns}
+    if sync_sum:
+        res["sync"] = sync_sum
     r.p("checks").mkdir(exist_ok=True)
     r.p(f"checks/round-{rnd}.json").write_text(json.dumps(res, indent=1))
     return res

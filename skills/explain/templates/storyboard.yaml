@@ -24,6 +24,7 @@ segments:                 # tier 0-1: optional (the page's sections); tier 2-4: 
     visual: "what is drawn"
     onscreen: "labels; separated by semicolons; each at most 4 words"
     narration: "at most 35 words, said while the visual is on screen"
+    sync: {thing: "at most 35 words"}   # event id: a phrase from the narration; the scene's play(sync="thing") starts on it
     claims: [c1]
     # tier 2:  step: "0.0.-1"      (slide h, vertical v, fragment f; -1 before the first fragment)
     # tier 4:  scene: Scene1

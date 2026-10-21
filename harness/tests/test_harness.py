@@ -507,6 +507,17 @@ class OwedWake(unittest.TestCase):
         self.present(at=time.strftime("%Y-%m-%dT%H:%M:%S%z"))     # just presented: mid-review
         self.assertEqual(hz.owed_now(self.ctx, "dev"), {})
 
+    def test_a_presentation_whose_check_runs_is_owed_by_nobody_until_it_reports(self):
+        # Log 202: rung three times for a close that `mark --close` refused.
+        job = {"id": "j1", "state": "running", "requested_by": [], "at": "1"}
+        hz.testq_save(self.ctx, job)
+        self.present(_after_check="j1")
+        self.assertEqual(hz.owed_now(self.ctx, "dev"), {})
+        with mock.patch.object(hz, "STALLED_SIGNOFF", 0):
+            self.assertEqual([r for r in hz.lead_owes(self.ctx, "dev") if r[0] == "sign off"], [])
+        hz.testq_save(self.ctx, dict(job, state="done"))
+        self.assertTrue(hz.owed_now(self.ctx, "dev"))
+
     def test_a_parked_sign_off_is_owed_by_nobody_until_the_wait_ends(self):
         # Owner, 2026-10-15: dev's item waited on the owner, so dev parks it,
         # with a time, rather than being rung for it.
@@ -1510,6 +1521,53 @@ class Orphan(unittest.TestCase):
                              ["orphan"])
 
 
+class StopFromAShell(unittest.TestCase):
+    """Log 202: the owner's `harness stop dev` from a shell in dev's worktree
+    recorded nothing, so dev's lead kept being told to spawn it."""
+
+    def test_it_is_recorded(self):
+        ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev"})
+        ctx.require_enrolled = lambda: None
+        ctx.me, ctx.branch = "dev", "dev"
+        idx = {"byWorktree": {}, "byBranch": {"dev": "dev"},
+               "nodes": {n: {"children": ctx.children(n)} for n in ("main", "dev", "dev_1")}}
+        with mock.patch.object(hz, "Ctx", return_value=ctx), \
+             mock.patch.object(hz, "load_index", return_value=idx), \
+             mock.patch.object(hz, "agents_json", return_value=[]), \
+             mock.patch.dict(os.environ, {}), \
+             mock.patch("sys.argv", ["harness", "stop", "dev", "--why", "owner: hold dev"]), \
+             redirect_stdout(io.StringIO()):
+            os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
+            hz.main()
+        self.assertEqual(hz.stopped(ctx, "dev")["why"], "owner: hold dev")
+
+
+class LeadReachesBelow(unittest.TestCase):
+    """Log 202: dev couldn't defer dev_tax_1's task ("deferred by 'dev_tax' or
+    rank 0"), so it declined the same nag on the record every turn."""
+
+    def run_cli(self, me, *argv):
+        ctx = FakeCtx({"main": None, "dev": "main", "dev_tax": "dev", "dev_tax_1": "dev_tax",
+                       "dev_2": "main"})
+        ctx.repo = ctx.worktree = ctx.dir
+        (ctx.dir / "briefs").mkdir()
+        (ctx.dir / "briefs" / "tx.json").write_text(json.dumps(
+            {"task": "tx", "node": "dev_tax_1", "text": "do it"}))
+        ctx.me, ctx.branch = me, me
+        with mock.patch.object(hz, "Ctx", return_value=ctx), \
+             mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "s" * 36}), \
+             mock.patch("sys.argv", ["harness", "brief", *argv]), \
+             mock.patch("sys.stderr", io.StringIO()), redirect_stdout(io.StringIO()):
+            try:
+                hz.main(); return 0
+            except SystemExit as e:
+                return e.code
+
+    def test_a_lead_defers_any_task_below_it_and_no_other(self):
+        self.assertEqual(self.run_cli("dev", "tx", "--defer", "the owner's stop"), 0)
+        self.assertNotEqual(self.run_cli("dev_2", "tx", "--defer", "not mine"), 0)
+
+
 class SilentNodes(unittest.TestCase):
     """Log 128: a lead that released with its lanes mid-work and mail unread is
     down; log 129: a child's unanswered question while it idles is owed."""
@@ -1545,6 +1603,18 @@ class SilentNodes(unittest.TestCase):
         self.assertIn(("down", "dev_tests", "and its lanes still hold open work; 1 unread ring(s)"),
                       rows)
         self.assertEqual(self.owed("dev", running=("unclaimed", {"sessionId": "x"})), [])
+
+    def test_work_a_stop_left_open_does_not_make_its_lead_down(self):
+        # Log 202: "dev has no running session, and its lanes still hold open
+        # work", for lanes the owner had stopped.
+        self.ring("dev_tests", "dev", "present it, please", 600)
+        hz._save(hz.stopped_path(self.ctx, "dev_tests_1"), {"by": "main", "why": "owner stop"})
+        rows = [r for r in self.owed("dev") if r[0] == "down"]
+        self.assertFalse([r for r in rows if "lanes" in r[2]], rows)
+        self.assertEqual(rows, [("down", "dev_tests", "1 unread ring(s)")])   # its own mail still is
+        hz.stopped_path(self.ctx, "dev_tests_1").unlink()
+        hz._save(hz.stopped_path(self.ctx, "dev"), {"by": "main", "why": "owner stop"})
+        self.assertTrue(hz.stopped_up(self.ctx, "dev_tests_1"))           # a stop above covers it
 
     def test_nothing_that_would_start_a_session_is_owed_while_halted(self):
         # Log 135: under the owner's halt the Stop hook still blocked main with

@@ -92,6 +92,27 @@ def lint(r) -> list:
         for sent in re.split(r"(?<=[.!?])\s+", (g.get("narration") or "").strip()):
             if words(sent) > SENTENCE_MAX:
                 warn(f"segment {sid}: a {words(sent)}-word sentence; keep spoken sentences to about 20 words")
+        pace = g.get("pace")
+        if pace is not None:
+            from .tts import sentences as _sentences
+            ns = len(_sentences(g.get("narration") or ""))
+            if not isinstance(pace, dict):
+                err(f"segment {sid}: pace maps a sentence number (from 1) to {{pause, speed}}")
+                pace = {}
+            for k, d in pace.items():
+                if not str(k).isdigit() or not 1 <= int(k) <= ns:
+                    err(f"segment {sid}: pace {k}: sentences are numbered 1 to {ns}")
+                    continue
+                if not isinstance(d, dict) or set(d) - {"pause", "speed"}:
+                    err(f"segment {sid}: pace {k}: the keys are pause (seconds after it) and speed (times the voice's)")
+                    continue
+                if "pause" in d:
+                    if int(k) == ns:
+                        err(f"segment {sid}: pace {k}: no pause on the last sentence; the segment's pause_after sets it")
+                    elif not isinstance(d["pause"], (int, float)) or not 0 <= d["pause"] <= 6:
+                        err(f"segment {sid}: pace {k}: pause is seconds, 0 to 6")
+                if "speed" in d and (not isinstance(d["speed"], (int, float)) or not 0.5 <= d["speed"] <= 2):
+                    err(f"segment {sid}: pace {k}: speed multiplies the voice's speed, 0.5 to 2")
         on = re.sub(r"[^a-z0-9 ]", "", str(g.get("onscreen") or "").lower()).strip()
         if on and len(on.split()) >= 4 and on in re.sub(r"[^a-z0-9 ]", "", str(g.get("narration") or "").lower()):
             warn(f"segment {sid}: on-screen text repeats the narration word for word; show key words, reworded")

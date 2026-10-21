@@ -26,7 +26,7 @@ Silence is part of the narration: without it, sentences run together and chapter
 - `distil` (3.0): after a `distil` segment, the idea just restated stays on screen with nothing new;
 - `chapter` (3.5): after a chapter's last segment, with a visible boundary (clear the stage, the next chapter's title). Use it where a written text would start a new section.
 
-A segment can set `pause_after` (for example after a number the viewer should take in). Pauses are part of the clip cache key, so changing them resynthesises. The pauses lengthen the video: a chaptered video for an enrolled audience may run to about 10 minutes (design-rules: MOOC viewers dropped off near 6 min; enrolled students watched 12-13 min sessions).
+A segment can set `pause_after` (for example after a number the viewer should take in), and `pace` sets one sentence's following pause or speed (storyboard.md). Pauses are part of the clip cache key, so changing them resynthesises. The pauses lengthen the video: a chaptered video for an enrolled audience may run to about 10 minutes (design-rules: MOOC viewers dropped off near 6 min; enrolled students watched 12-13 min sessions).
 
 ## Writing for the ear
 - **Short sentences**, one idea each; about 20 words at most. Long, complex narration did worse than written text.

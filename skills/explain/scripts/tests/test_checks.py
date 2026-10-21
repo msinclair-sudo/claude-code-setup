@@ -323,6 +323,29 @@ class Animation(unittest.TestCase):
             self.assertIn("segment s2: no 'sync'", msgs)
             self.assertIn("sync_tolerance = 5", msgs)
 
+    def test_pace_lint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = scaffold(tmp, 4, delivery="presented", segments=[
+                {"id": "s1", "scene": "S", "visual": "v", "narration": "One. Two. Three.", "sync": {"a": "One"},
+                 "pace": {1: {"pause": 1.5}, 2: {"speed": 3}, 3: {"pause": 1}, 4: {"speed": 1}, 2.5: {"tone": 1}}}])
+            msgs = " | ".join(m for _, m in lint.lint(report.load(d)))
+            self.assertNotIn("pace 1:", msgs)
+            self.assertIn("pace 2: speed multiplies", msgs)
+            self.assertIn("pace 3: no pause on the last sentence", msgs)
+            self.assertIn("pace 4: sentences are numbered 1 to 3", msgs)
+
+    def test_pace_synth(self):
+        """A sentence's own pause and speed change the clip; without pace the cache key is unchanged."""
+        from explainlib import tts
+        text = "The first sentence is here. The second one follows it."
+        _, _, base = tts.synth_spans(text)
+        _, _, paused = tts.synth_spans(text, pace={1: {"pause": 1.6}})
+        _, _, slow = tts.synth_spans(text, pace={"2": {"speed": 0.7}})
+        self.assertAlmostEqual(paused[1][0] - paused[0][1], 1.6, delta=0.02)
+        self.assertGreater(slow[1][1] - slow[1][0], 1.2 * (base[1][1] - base[1][0]))
+        self.assertEqual(tts.key(text, "bm_george", 1.0), tts.key(text, "bm_george", 1.0, pace={}))
+        self.assertNotEqual(tts.key(text, "bm_george", 1.0), tts.key(text, "bm_george", 1.0, pace={1: {"pause": 1.6}}))
+
 
 if __name__ == "__main__":
     unittest.main()

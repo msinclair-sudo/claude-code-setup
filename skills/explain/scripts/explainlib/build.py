@@ -85,7 +85,7 @@ def t2(r, out, draft):
         new_slide = nxt is None or nxt["step"].split(".")[0] != g["step"].split(".")[0]
         pause = tts.pause_for(g, pacing, chapter_end=new_slide)
         if voice:
-            p, sec = tts.clip(text, out / "audio", name=g["id"], pacing=pacing)
+            p, sec = tts.clip(text, out / "audio", name=g["id"], pacing=pacing, pace=g.get("pace"))
             amap[g["step"]] = {"src": f"audio/{p.name}", "text": text, "pause": pause}
         else:
             sec = len(text.split()) / 155 * 60

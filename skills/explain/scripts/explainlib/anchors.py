@@ -156,7 +156,7 @@ class ExplainScene(VoiceoverScene):
         if g is None:
             raise KeyError(f"segment {sid} is not in storyboard.yaml")
         self._current, start = sid, self.renderer.time
-        with self.voiceover(text=g["narration"]) as t:
+        with self.voiceover(text=g["narration"], **({"pace": g["pace"]} if g.get("pace") else {})) as t:
             audio = Path(t.cache_dir) / t.data["final_audio"]
             t.spans = clip_spans(audio)
             t.sentences = sentences(g["narration"])

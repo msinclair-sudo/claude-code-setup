@@ -95,7 +95,7 @@ silent one.
 **In consolidation now** (v3, applied): where a note or its critic says a claim is limited because of access,
 the knowledge note keeps the reason in an optional `limit: access` (or `access and evidence`) field with its
 basis, and in a do-not-say entry's `why`. Label errors become critic-corrected labels in `src`. Where the note
-gives no reason, nothing is added. In the v3 H2-01 build, 5 claims carry `limit: access` and 4 a corrected label.
+gives no reason, nothing is added. In the six v3 knowledge notes, 22 claims carry `limit` (16S 12, H2-01 5, CB1 5; none in TSL, CB2 or NFERT).
 
 **For future runs** (proposed, not applied):
 1. **Every negative names its reason.** The critique schema's items each carry `reason: access | evidence |

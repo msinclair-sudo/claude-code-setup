@@ -10,6 +10,10 @@
   kn.py spotcheck KNOWLEDGE.md OUT.md [--n 20 --seed S]
                                                      a random sample of entries, each with its from text and
                                                      trail, for a person to judge (the seed is recorded)
+  kn.py view KNOWLEDGE.md [OUT.md]                   the writer's view, from the index: each question's
+                                                     answer (the critic's version where there is one), the
+                                                     concepts with each claim and its standing, what not to
+                                                     say, the gaps; no provenance
   kn.py citekey --author A --title T --year Y [--doi D --refs BIB]
                                                      the source's key: its key in BIB if the DOI is there,
                                                      else auth.lower + shorttitle(3,3) + year
@@ -264,6 +268,120 @@ def detect(path, nid=None):
         "body addresses": sum(1 for x in inv if x["id"][0] == "B"),
     }
     return feats, inv
+
+
+# ---------------------------------------------------------------- questions and answers, for the writer's view
+
+ANS_LABEL = re.compile(r"^(?:[-*+]\s+)?\*\*((?:D\d+|Q(?:uestion)?\s*\d+)\b[^*]*?)[:.]?\*\*[:.]?\s*(.*)$", re.S)
+
+
+def ans_key(label):
+    """'D1 (a) 16S copies per genome' -> 'D1 (a)'; 'D2: definitions' -> 'D2'; 'Question 1 — ...' -> 'D1'."""
+    m = re.match(r"(?:D|Q(?:uestion)?\s*)(\d+)(?:,?\s*case\s*([A-Za-z](?:/[A-Za-z])*)\b|,?\s*(?:case\s*)?\(([a-z])\))?",
+                 label.strip())
+    if not m:
+        return label.strip()
+    case = m.group(2) or m.group(3)
+    return f"D{m.group(1)}" + (f" ({case})" if case else "")
+
+
+def plain(s):
+    """Answer text without citation markers and labels ([3], [30, FT], [S1], [FT; meas; repl], [[links]])."""
+    s = re.sub(r"\[\[([^\]|]+\|)?([^\]]+)\]\]", r"\2", s)
+    s = re.sub(r"\s*\[(?:\d[^\[\]]{0,60}|S\d+[^\[\]]{0,40}|(?:FT|AB|SEC)\b[^\[\]]{0,60})\]", "", s)
+    s = BRACKET.sub(lambda m: "" if label_parts(m.group(1))[0] else m.group(0), s)
+    return re.sub(r"\s{2,}", " ", s).strip()
+
+
+def labelled_blocks(lines, stop_at_blank=False):
+    """[(key or None, label, text)]: a line opening with **D1...** or **Question 1...** starts an answer; other
+    lines continue the one before (a blank line keeps the paragraph break). With stop_at_blank, the first blank
+    line after an answer has started ends the list (the critic's reformulated answers, before its assessment)."""
+    out, gap = [], False
+    for ln in lines:
+        s = ln.strip()
+        if not s or re.fullmatch(r"-{3,}|```.*", s):
+            if out and stop_at_blank:
+                break
+            gap = True
+            continue
+        m = ANS_LABEL.match(s)
+        if m:
+            out.append([ans_key(m.group(1)), m.group(1).strip(), m.group(2).strip()])
+        elif out:
+            out[-1][2] += ("\n\n" if gap else " ") + s
+        else:
+            out.append([None, "", s])
+        gap = False
+    return [tuple(x) for x in out if x[2].strip()]
+
+
+def note_answers(path):
+    """The note's answers: the critic's reformulated answers where it gave them, otherwise the note's answers
+    or verdict section. [{key, label, text, source}]."""
+    _, body, _ = read(path)
+    secs = sections(body)
+    crit = []
+    for kind, title, _, lines, _ in secs:
+        if kind == "callout" and CRITIC_TITLE.search(title) and not NO_CRITIC.search(title):
+            joined = "\n".join(lines)
+            if re.search(r"reformulated answers", joined, re.I):
+                after = re.split(r"\*\*reformulated answers:?\*\*:?", joined, flags=re.I)[-1].splitlines()
+                crit = [b for b in labelled_blocks(after, stop_at_blank=True) if b[0]]
+                break
+    body_ans = []
+    for kind, title, _, lines, _ in secs:      # the body's own answers section, then the answers callout
+        b = bare(kind, title)
+        if kind == "heading" and not CRITIC_TITLE.search(title) and (ANSWER_TITLE.search(b) or "answer" in b.lower()):
+            body_ans = labelled_blocks(lines)
+            break
+    if not body_ans:
+        for kind, title, _, lines, _ in secs:
+            if kind == "callout" and "answer" in title.lower() and not CRITIC_TITLE.search(title):
+                body_ans = labelled_blocks(lines)
+                break
+    out = [{"key": k, "label": lb, "text": plain(t), "source": "critic"} for k, lb, t in crit]
+    have = {k for k, *_ in crit}
+    out += [{"key": k, "label": lb, "text": plain(t), "source": "review"} for k, lb, t in body_ans
+            if not (k and (k in have or k.split(" (")[0] in {h.split(" (")[0] for h in have}))]
+    return out
+
+
+def find_note(root, name):
+    name = name.split("|")[0].split("#")[0].strip()
+    for p in root.rglob(f"{name}.md"):
+        if ".trash" not in p.parts and not any(x.startswith(".") for x in p.relative_to(root).parts):
+            return p
+    return None
+
+
+def brief_questions(path, nid, root):
+    """The questions the research asked, verbatim from the AGENT BRIEF its Note Role links to (the block for this
+    ID, or the only one), else the note's own question headings. ({key: question}, where they came from)."""
+    full, body, _ = read(path)
+    role = next(("\n".join(ln) for k, t, _, ln, _ in sections(body) if k == "callout" and "note role" in t.lower()),
+                "")
+    link = re.search(r"\[\[([^\]]+)\]\]", role)
+    brief = find_note(root, link.group(1)) if link else None
+    if brief:
+        btext = brief.read_text(encoding="utf-8", errors="replace")
+        blocks = re.split(r"^#### ", btext, flags=re.M)[1:]
+        blocks = [b for b in blocks if "AGENT BRIEF" in b]
+        named = re.search(r"(?:review|result) for (?:brief )?\*{0,2}([A-Z][A-Za-z0-9-]+)", role)
+        pick = [b for b in blocks if b.split(":")[0].split()[0] in (nid, named.group(1) if named else nid)]
+        block = pick[0] if pick else (blocks[0] if len(blocks) == 1 else None)
+        if block:
+            agent = block.split("[!note] ROUTING")[0].split("[!example] DISPATCH")[0]
+            qs = {f"D{m.group(1)}": m.group(2).strip()
+                  for m in re.finditer(r"^>\s*-\s*\*\*D(\d+)\.?\*\*\s*(.+)$", agent, re.M)}
+            if not qs:
+                m = re.search(r"^>\s*\*\*Question:\*\*\s*(.+)$", agent, re.M)
+                qs = {"D1": m.group(1).strip()} if m else {}
+            if qs:
+                return qs, f"the AGENT BRIEF in {brief.relative_to(root).with_suffix('')}"
+    qs = {f"D{m.group(1)}": m.group(2).strip() for m in
+          re.finditer(r"^#{1,4}\s+Q(?:uestion)?\s*(\d+)\s*[—:\-–.]+\s*(.+)$", body, re.M)}
+    return qs, ("the note's own question headings" if qs else "not stated in the note or a linked brief")
 
 
 def cmd_detect(argv):
@@ -839,7 +957,16 @@ def lint(path):
                                      f"[[{inputs[n].relative_to(root).with_suffix('')}]] (callout: {bare(k, h)})"
                                      for n, h, k in trails.get(e["id"], [])]} for e in entries],
         "sources": bib,
+        "answers": {},
     }
+    for nid, p in inputs.items():          # the questions asked and the answers already checked, for the writer
+        qs, where = brief_questions(p, nid, root)
+        ans = note_answers(p)
+        for a in ans:
+            if a["key"] is None and len(qs) <= 1:
+                a["key"] = next(iter(qs), "D1")
+        index["answers"][nid] = {"questions": qs, "questions_from": where,
+                                 "critique": feats[nid]["critique"], "answers": ans}
     out = path.with_suffix(".index.json")
     out.write_text(json.dumps(index, indent=1, ensure_ascii=False), encoding="utf-8")
     counts = Counter(e["type"] for e in entries)
@@ -934,6 +1061,87 @@ def spotcheck(path, out, n=20, seed=None):
     print(f"seed {seed}: {', '.join(ents[k]['id'] for k in pick)} -> {out}")
 
 
+def view(path, out):
+    """The writer's view, from the index: the answer to each question the research asked (the critic's
+    reformulation where there is one), then the concepts in dependency order with each claim's statement and
+    standing, then what not to say and the gaps. No trails, links, keys or other provenance; the full note stays
+    the audit version."""
+    path = Path(path)
+    idx = path.with_suffix(".index.json")
+    if (not idx.exists() or idx.stat().st_mtime < path.stat().st_mtime
+            or "answers" not in json.loads(idx.read_text(encoding="utf-8"))):
+        lint(path)
+    index = json.loads(idx.read_text(encoding="utf-8"))
+    fm = frontmatter(path.read_text(encoding="utf-8"))
+    ents = index["entries"]
+    by_id = {e["id"]: e for e in ents}
+    names = {c["id"]: c["name"] for c in index["concepts"]}
+    w = [f"# {fm.get('title') or path.stem}: writer's view\n\n",
+         "> [!abstract] About this view\n"
+         "> What the research found, for writing from. It is generated from the knowledge note "
+         f"`{path.name}`, which stays the audit version: every claim here is checked there against the research, "
+         "with its setting, sources and trail. Standing is given in brackets where the research stated one "
+         "(`repl` replicated, `single` one source, `cont` contested, `unclear`, `mixed` the inputs differ); a claim "
+         "with no bracket has no standing stated. \"Limited by access\" means the research says a source was not "
+         "read in full, not that the evidence is weak.\n\n",
+         "## What the research found, by question\n\n"]
+    for nid, a in index.get("answers", {}).items():
+        qs, ans = a["questions"], a["answers"]
+        crit = not a["critique"].startswith("no")
+        w.append(f"### {nid}\n\n")
+        if not qs:
+            w.append(f"The questions are {a['questions_from']}.\n\n")
+        keys = list(qs) + [k for k in dict.fromkeys(x["key"] for x in ans) if k and k.split(" (")[0] not in qs]
+        for q in keys:
+            base = q.split(" (")[0]
+            if q in qs:
+                w.append(f"**{base}. {qs[q]}**\n\n")
+            mine = [x for x in ans if x["key"] and x["key"].split(" (")[0] == base]
+            if not mine:
+                w.append("*No answer to this question in the research.*\n\n")
+            for x in mine:
+                who = ("as the critic reformulated it" if x["source"] == "critic" else
+                       "as the review gave it; the critic did not reformulate it" if crit else
+                       "as the review gave it; no critic checked it")
+                head = x["label"] if x["label"] and not re.fullmatch(r"D\d+|Q(?:uestion)?\s*\d+", x["label"]) else ""
+                w.append(f"*Answer to {x['key']}, {who}.*" + (f" **{head}**" if head else "") + "\n\n")
+                w.append(x["text"] + "\n\n")
+    w.append("## Concepts\n\nIn an order where each concept comes after the ones it builds on; the order means "
+             "nothing more.\n\n")
+    for c in sorted(index["concepts"], key=lambda c: c["order"]):
+        w.append(f"### {c['name']}\n\n")
+        if c.get("needs"):
+            w.append(f"Builds on: {', '.join(names.get(n, n) for n in c['needs'])}.\n\n")
+        for e in ents:
+            if e["concept"] != c["id"] or e["type"] not in ("claim", "background"):
+                continue
+            f = e["fields"]
+            tags = []
+            conf = re.match(r"(repl|single|cont|unclear|mixed)", f.get("conf", ""))
+            if conf:
+                tags.append(conf.group(1))
+            if f.get("limit"):
+                tags.append("limited by access" if f["limit"].startswith("access (") else
+                            "limited by access and evidence")
+            if e["type"] == "background":
+                tags.append("background, not from the research")
+            w.append(f"- {e['statement']}" + (f" *({'; '.join(tags)})*" if tags else "") + "\n")
+        w.append("\n")
+    w.append("## Do not say\n\nWordings the research itself says are wrong or overstated.\n\n")
+    for e in ents:
+        if e["type"] == "dns":
+            f = e["fields"]
+            inst = [by_id[x]["statement"] for x in re.split(r",\s*", f.get("instead", "")) if x in by_id]
+            w.append(f"- {e['statement']}\n  Why: {f.get('why', '')}\n" +
+                     (f"  Say instead: {' / '.join(inst)}\n" if inst else ""))
+    w.append("\n## Gaps\n\nWhat the research did not establish.\n\n")
+    for e in ents:
+        if e["type"] == "gap":
+            w.append(f"- {e['statement']}\n")
+    Path(out).write_text("".join(w), encoding="utf-8")
+    print(f"writer's view -> {out} ({sum(1 for e in ents if e['type'] == 'claim')} claims)")
+
+
 def cmd_citekey(argv):
     opt = {k: argv[argv.index(f"--{k}") + 1] for k in ("author", "title", "year", "doi", "refs") if f"--{k}" in argv}
     if opt.get("doi") and opt.get("refs"):
@@ -945,7 +1153,7 @@ def cmd_citekey(argv):
 
 
 if __name__ == "__main__":
-    cmds = ("detect", "lint", "packets", "spotcheck", "citekey")
+    cmds = ("detect", "lint", "packets", "spotcheck", "view", "citekey")
     if {"-h", "--help"} & set(sys.argv):
         print(__doc__)
         sys.exit(0)
@@ -963,6 +1171,8 @@ if __name__ == "__main__":
         only = opt("--only")
         only = set(re.split(r"[,\s]+", only.strip())) if only else None
         sys.exit(packets(pos[0], pos[1] if len(pos) > 1 else "packets", only=only) or 0)
+    if sys.argv[1] == "view":
+        sys.exit(view(pos[0], pos[1] if len(pos) > 1 else Path(pos[0]).with_suffix(".writer.md")) or 0)
     if sys.argv[1] == "spotcheck":
         seed = opt("--seed")
         sys.exit(spotcheck(pos[0], pos[1] if len(pos) > 1 else "spotcheck.md", int(opt("--n", 20)),

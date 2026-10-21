@@ -268,6 +268,29 @@ class KnTests(unittest.TestCase):
         self.assertIn("`holds`:", s)                       # the fault kinds come from checker.md
         self.assertIn("trail links: [[R/plain#Verdict]]", s)
 
+    def test_writer_view(self):
+        (self.v / "R" / "brief.md").write_text("#### AB-01: copy number\n\n> [!abstract] AGENT BRIEF\n"
+                                              "> **Directions:**\n> - **D1.** How much PCR bias does copy number "
+                                              "explain?\n\n> [!note] ROUTING\n> - **D2.** project only\n")
+        f, inv = kn.detect(self.v / "R" / "lab.md")
+        ids = [x["id"] for x in inv if not x["id"].startswith("B-")]
+        row = "| AB-01 | [[lab]] | yes | labelled (access; class; standing) | yes (11 of 11 labels) | no | exact |"
+        c = ("### copy: Copy number\nneeds: none\n- **copy.1** Genomes carry 1 to 15 copies.\n"
+             "  conf: repl (marker) · class: meas (marker) · holds: genomes · src: rayGenomesCopies2015 (repl) · "
+             "trail: AB-01 §1. Copy · from: AB-01:I-0002")
+        oos = "- " + ", ".join(f"AB-01:{i}" for i in ids if i != "I-0002") + ": test"
+        p = self.v / "K.md"
+        p.write_text(knowledge("  - AB-01: R/lab.md", c, table=row, oos=oos))
+        kn.view(p, self.v / "W.md")
+        w = (self.v / "W.md").read_text()
+        self.assertIn("**D1. How much PCR bias does copy number explain?**", w)
+        self.assertNotIn("project only", w)                       # ROUTING never reaches the view
+        self.assertIn("Answer to D1, as the review gave it; the critic did not reformulate it.", w)
+        self.assertIn("Copy number explains about 60% of PCR bias (Lee 2019).", w)   # label stripped
+        self.assertIn("- Genomes carry 1 to 15 copies. *(repl)*", w)
+        for prov in ("rayGenomesCopies2015", "trail:", "AB-01:I-0002", "holds:", "§"):
+            self.assertNotIn(prov, w)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=1)

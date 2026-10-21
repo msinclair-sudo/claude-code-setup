@@ -58,6 +58,12 @@ written from it. It covers everything the research found: never trim.
 
 Each check the inputs allow is run, and the Inputs table says which ran.
 
+**The writer's view** (`kn.py view "<knowledge note>"`, written beside it as `<topic>.writer.md`): generated
+from the index, never edited by hand. It gives the answer to each question the research asked (the question
+verbatim from the linked AGENT BRIEF, the critic's reformulated answer where there is one, labelled as such),
+then the concepts in dependency order with each claim's statement and standing, then Do not say and Gaps. No
+trails, keys or other provenance: the knowledge note stays the audit version, for fact-checking.
+
 ## Hard rules
 
 - **Never infer a standing.** `conf` comes from a label, the critic or the note's own words, quoted; otherwise

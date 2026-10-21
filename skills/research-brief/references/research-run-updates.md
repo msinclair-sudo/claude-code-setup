@@ -108,3 +108,34 @@ gives no reason, nothing is added. In the six v3 knowledge notes, 22 claims carr
 4. **Try the open copy before labelling abstract only** (PMC, Europe PMC, the publisher's open version), and
    record the route tried: six of the 52 were open copies the review never opened.
 5. **Coverage gaps say which kind they are:** not searched, searched and not found, or found and not obtained.
+
+## 3. The research comes back shaped like its questions
+
+**Raised 2026-10-21** by the owner. Briefs ask specific questions, and the results come back fitted to them.
+When the claims are reused in writing, they carry that shape: what was not asked is not there, even when the
+literature holds it a step away. The questions should stay targeted; the run should leave room around them.
+
+**Proposed** (not applied):
+1. **A fixed share of search effort for nearby material:** the same quantity in a different setting, a related
+   quantity in the same setting, and the mechanism behind it. Fixed, so that it is neither crowded out by the
+   directions nor allowed to take the run over. For a deep run this could be one angle's worth; for standard
+   and quick runs, a stated share of the searches.
+2. **One open direction per brief:** "what does this literature treat as important that the directions above
+   do not ask about?" It obeys every AGENT BRIEF constraint (no project framing, no expected answer) and goes
+   through the same lint and blind preflight.
+3. **A fallback order when the exact answer is not there:** the exact answer; the same measure in a different
+   setting; a related measure in the same setting; the mechanism or theory; expert opinion. Each answer reports
+   the closest level actually reached, instead of "not found".
+4. **Distance labels on every finding.** Nearby material is only usable if it says how far it is from what was
+   asked, and along which dimension: setting, organism, method, scale or measure ("measured in faeces, not
+   soil"). Extend the two existing `FINDINGS_SCHEMA` fields rather than adding new ones: `nearest_precedent` and
+   `bounding_or_contrary` are now true/false flags; each becomes the flag plus `distance` (the fallback level
+   from item 3) and `dimension` (what differs, in words). In-text, a short flag after the rule 3a label.
+5. **The critic checks for narrowness:** did the way the directions were worded exclude relevant evidence?
+   Reported beside the existing `expectation_echo` check, as `narrow_framing` with the evidence it names. (The
+   preflight already looks for this before the run, as `nearest_precedent_risk`; this is the same question asked
+   after it, against what the search actually found.)
+
+**What consolidation would need:** a place for the distance label (a claim field, or in `holds`), and the open
+direction's findings read as ordinary claims. Nothing in the knowledge-note format changes until the research
+side does.

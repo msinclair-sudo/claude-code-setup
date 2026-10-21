@@ -129,9 +129,16 @@ def lint(r) -> list:
             chapters.setdefault(g.get("scene"), []).append(g)
         quiet = sum(pause_for(g, pacing, chapter_end=g is gs[-1]) for gs in chapters.values() for g in gs)
         minutes = narr_words / WPM + quiet / 60
-        if minutes > ANIM_MINUTES_MAX:
-            err(f"narration and pauses come to about {minutes:.1f} min; at most {ANIM_MINUTES_MAX} (cut, or split the video)")
+        cap = float(s.get("max_minutes") or ANIM_MINUTES_MAX)
+        if cap > ANIM_MINUTES_MAX and not str(s.get("length_reason") or "").strip():
+            err(f"storyboard: max_minutes {cap:g} is over {ANIM_MINUTES_MAX}; say why in length_reason")
+        if minutes > cap:
+            err(f"narration and pauses come to about {minutes:.1f} min; at most {cap:g} (cut, or split the video)")
         for sc, gs in chapters.items():
             if len(gs) >= 3 and not any(g.get("role") == "distil" for g in gs):
                 warn(f"chapter {sc}: {len(gs)} segments and no distil line; restate the idea before moving on")
+        for sc, gs in list(chapters.items())[1:]:
+            if not str(gs[0].get("question") or "").strip():
+                warn(f"chapter {sc}: its first segment {gs[0].get('id')} has no 'question': the question the last chapter "
+                     "left the viewer with, which this one answers (say it, or set it up, in the narration)")
     return out

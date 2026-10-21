@@ -105,8 +105,11 @@ def run(r, rnd: int) -> dict:
         dur = frames.durations(v)
         if abs(dur.get("video", 0) - dur.get("audio", 0)) > 1.5:
             warns.append(f"video {dur.get('video', 0):.1f}s against audio {dur.get('audio', 0):.1f}s")
-        if dur.get("video", 0) > 10 * 60 + 5:
-            faults.append(f"video is {dur['video'] / 60:.1f} min; at most 10 (chapters)")
+        cap = float(r.story.get("max_minutes") or 10)
+        if dur.get("video", 0) > cap * 60 + 5:
+            faults.append(f"video is {dur['video'] / 60:.1f} min; at most {cap:g} (chapters, or split it)")
+        elif dur.get("video", 0) > 10 * 60 + 5:
+            warns.append(f"video is {dur['video'] / 60:.1f} min, over 10: {r.story.get('length_reason')}")
         warns += motion_warnings(r.p("src/scene.py")) + text_warnings(r.p("src/scene.py"))
         for log in r.p("checks").glob("scene-*.json"):
             j = json.loads(log.read_text())

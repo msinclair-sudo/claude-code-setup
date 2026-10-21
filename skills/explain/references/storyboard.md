@@ -27,6 +27,8 @@ From tier 2 up, `x lint` warns when the first segment is not `setting`, and when
 ## Chapters
 Order the chapters as causes and consequences, a problem and its answer, or a comparison, not as a list of topics: the same content was recalled better in organised forms. Each chapter ends on a distil line and a visible boundary (the stage clears, the next title appears), then the chapter pause.
 
+**Every step answers a question the viewer now has.** Write it on the chapter's first segment as `question:` (`x lint` warns when it is missing), and let the narration voice it or set it up: the last chapter's distil raises it, the new chapter's first sentence answers it. Owner review of the sixth exemplar: the soil chapter ended on "this is the truth an experiment sets out to measure" and the next began "First, we pull the DNA out of the cells": "there's no connection between counting taxa and extracting DNA. There's a question missing: how do we count the taxa in the first place?" The chain should read as want, obstacle, so: we want the cells of each taxon; we can't count them by eye; so we extract their DNA and read one gene. Check every segment boundary the same way, not only the chapters: a step that starts without its reason is a gap.
+
 ## Writing segments
 - One idea per segment. If the narration needs "and then", split it.
 - Spoken sentences of about 20 words at most; plain words; talk to the viewer ("you", "we"). `x lint` warns past 22 words.

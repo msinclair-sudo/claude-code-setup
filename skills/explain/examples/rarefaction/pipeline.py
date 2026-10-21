@@ -19,7 +19,8 @@ measurement, the source is named (MB-01 literature review, vault Topics/Biology/
   rarefying    a random subsample without replacement down to a common depth; rarefaction is the
                average over many such subsamples (Schloss 2024)
 Left out on purpose (the narration says so): chimeras, index misassignment, sequencing errors and
-spurious ASVs, all of which add false taxa; contamination; differences in total load between samples.
+spurious ASVs, all of which add false taxa; genome copies per cell (barely measured in soil);
+contamination; differences in total load between samples.
 """
 import numpy as np
 

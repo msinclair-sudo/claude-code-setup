@@ -118,3 +118,13 @@ Blind checker, sources only (DADA2 Pipeline Tutorial 1.16; Bokulich et al. 2013;
 - m37 overstated, fixed: the tutorial says off-length sequences "may be" from non-specific priming (narration: "can make"); quality falling at read ends is "common in Illumina sequencing" (narration: "on Illumina machines, quality tends to fall").
 - m38 supported except "every sample", which is shown in practice (one filterAndTrim call) but stated by no source: narration now "usually".
 
+## t4 seventh version (2026-10-21): narrative bridges, m39 to m42, m15 amended
+
+Blind checker, sources only. References correctly identified (Illumina 16S protocol part number not checked).
+- m39 overstated: Woese 1987 is the rRNA basis of bacterial phylogeny (morphology passage not quoted; the shapes point is background), and 16S does not always separate close relatives: s7 now "tell most bacteria apart", "roughly which kind".
+- m40 supported (1 ng of a 300 bp amplicon is about 3 x 10^9 molecules; a MiSeq v3 run about 25 million read pairs); "a random draw" is a simplification, since loading and clustering both subsample.
+- m41 supported; the 93% comes from quality trimming, error correction and overlapping together (claim text fixed); the spoken line carries no number.
+- m42 overstated: depth also varies with DNA yield and co-amplified non-specific DNA (Schloss 2024b): s17 now "pooling and DNA yields are uneven"; "one dataset", not "one study".
+- m15 overstated, "mainly" unsupported: the 2% (Edgar 2016) names no cause; Wright and Vetsigian 2016 (non-16S) say misread bases are not the cause; Minich 2019 is spillover between wells. s18 now "through index mix-ups or spillover between samples"; "almost none" (a filtered, non-16S figure) dropped.
+- s6 "can start out undercounted"; s33 "whether that trade is worth it is still argued" (the dispute is the cost in data and power, not discarding reads as such).
+

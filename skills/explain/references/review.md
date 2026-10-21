@@ -10,7 +10,12 @@ Tools first, eyes second. `x check` measures what a model judges poorly (overflo
 
    > These stills are an explanation meant to convey: "<message>". Say what you understand from them in one sentence. Then list problems as **blocking** (the message is wrong, unclear, or misleading; text unreadable; something overlaps or is cut off; a number contradicts another) or **minor**. Use the checklist. Be specific: which still, where.
 
-5. Fix the blocking items. Re-render only what changed. Next round.
+5. The narrative reader (tiers 2 and 4, round 1, and again after the narration changes): a second fresh subagent gets only the narration in order, the audience and the message; no pictures. Prompt:
+
+   > Read this narration as the audience. At every segment boundary, does the next step arrive with the question or reason that motivates it? List each gap (the question the viewer would have, and a bridging sentence of at most 20 words), then wording that is vague or awkward aloud, casual verbs where the field has a term, and terms used before they are explained.
+
+   Stills cannot show these faults; the owner found them by watching (sixth exemplar: "the narrative still has too many gaps").
+6. Fix the blocking items. Re-render only what changed. Next round.
 
 A round is build, check **and** review. Rebuilding to clear `x check` faults before the reader sees anything is part of the same round; the count is of reviews. **Stop** when `x check` passes and the reader reports nothing blocking, or after round 3. Most of the gain is in round one; later rounds layer fixes on fixes. Report what is left.
 

@@ -70,8 +70,8 @@ claims:
   kind: derived
   value: 100
 - id: m15
-  text: demultiplexing sorts reads back to samples by index; a few can land in the wrong sample, about 2% of reads in one 16S study and negligibly few in another
-  source: 'Edgar, R. C. (2016a) UNCROSS: filtering of high-frequency cross-talk in 16S amplicon reads. bioRxiv 088666, doi:10.1101/088666 (preprint; about 2%); Minich, J. J., Sanders, J. G., Amir, A., Humphrey, G., Gilbert, J. A. and Knight, R. (2019) Quantifying and understanding well-to-well contamination in microbiome research. mSystems 4(4): e00186-19, doi:10.1128/mSystems.00186-19 (barcode leakage negligible)'
+  text: demultiplexing sorts reads back to samples by index; a few land in the wrong sample, through index mix-ups on the sequencer or spillover between neighbouring wells in the lab; about 2% of reads in one 16S study
+  source: 'Wright, E. S. and Vetsigian, K. H. (2016) Quality filtering of Illumina index reads mitigates sample cross-talk. BMC Genomics 17: 876, doi:10.1186/s12864-016-3217-x (index cross-talk, non-16S); Edgar, R. C. (2016a) UNCROSS: filtering of high-frequency cross-talk in 16S amplicon reads. bioRxiv 088666, doi:10.1101/088666 (preprint; about 2%); Minich, J. J., Sanders, J. G., Amir, A., Humphrey, G., Gilbert, J. A. and Knight, R. (2019) Quantifying and understanding well-to-well contamination in microbiome research. mSystems 4(4): e00186-19, doi:10.1128/mSystems.00186-19 (barcode leakage negligible)'
   kind: quoted
   value: 2
   unit: '%'
@@ -179,3 +179,20 @@ claims:
   text: where to set the length and quality cut-offs is a judgement made by inspecting quality and length plots; one set of cut-offs is usually applied to every sample in a study (shown in practice, not stated as a rule); too strict loses real reads, too loose keeps faulty ones, and the choice changes the diversity found
   source: 'DADA2 Pipeline Tutorial (as m36): "The standard filtering parameters are starting points, not set in stone"; truncation positions chosen from the quality profiles; one filterAndTrim call with one truncLen for all samples (derived); removing non-target lengths "is analogous to cutting a band in-silico". Bokulich et al. 2013 (as m16): quality threshold and minimum read length strongly affected diversity and composition on mock communities; stringency disputed (Kopylova et al. 2016, mSystems 1(1): e00003-15, doi:10.1128/mSystems.00003-15)'
   kind: derived
+- id: m39
+  text: most bacteria look alike under a microscope (a few simple shapes), so taxa cannot be counted by eye; they are told apart by DNA sequence, such as the 16S rRNA gene, which separates most groups though not always close relatives (background; Woese 1987 is the rRNA basis of bacterial phylogeny, morphology passage not quoted)
+  source: 'Woese, C. R. (1987) Bacterial evolution. Microbiological Reviews 51(2): 221-271, doi:10.1128/mr.51.2.221-271.1987 (bacterial morphology too simple to classify by; rRNA sequence as the basis of bacterial phylogeny)'
+  kind: quoted
+- id: m40
+  text: a PCR pool holds far more barcode copies than a sequencing run reads, so the run reads a random draw of them
+  source: 'derived: 1 ng of a 300 bp amplicon is about 3 x 10^9 molecules (660 g/mol per base pair); an Illumina MiSeq v3 run gives up to about 25 million read pairs (Illumina MiSeq specifications); reads as a random draw: model, as m13'
+  kind: derived
+- id: m41
+  text: where the two reads of a pair overlap they check each other; quality trimming, error correction and read overlapping together cut substitution errors by 93% on average in one evaluation
+  source: 'Schirmer, M., Ijaz, U. Z., D''Amore, R., Hall, N., Sloan, W. T. and Quince, C. (2015) Insight into biases and sequencing errors for amplicon sequencing with the Illumina MiSeq platform. Nucleic Acids Research 43(6): e37, doi:10.1093/nar/gku1341; Edgar, R. C. and Flyvbjerg, H. (2015) Error filtering, pair assembly and error correction for next-generation sequencing reads. Bioinformatics 31(21): 3476-3482, doi:10.1093/bioinformatics/btv401'
+  kind: quoted
+- id: m42
+  text: libraries are pooled in roughly equal amounts, but pooling is never perfectly even and samples yield different amounts of usable DNA, so samples get different numbers of reads
+  source: 'Illumina, Inc. 16S Metagenomic Sequencing Library Preparation, Part 15044223 Rev. B (normalise and pool libraries in equimolar amounts); Schloss (2024b), as m14 ("pooling of DNA from multiple PCRs is fraught with numerous opportunities for random sampling errors"; co-amplified non-specific DNA removed later; depth linked to biomass)'
+  kind: derived
+

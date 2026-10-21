@@ -80,7 +80,7 @@ const NOT_OBTAINED = {
   items: {
     type: 'object',
     properties: {
-      reference: { type: 'string' },
+      reference: { type: 'string', description: 'complete BibTeX entry (protocol rule 3b), access: not_obtained' },
       routes_tried: { type: 'string' },
       why_relevant: { type: 'string' },
     },
@@ -98,7 +98,7 @@ const FINDINGS_SCHEMA = {
         properties: {
           direction: { type: 'string', description: 'which direction (D1, D2, ...) this bears on' },
           claim: { type: 'string' },
-          reference: { type: 'string', description: 'complete reference with DOI' },
+          reference: { type: 'string', description: 'complete BibTeX entry with DOI (protocol rule 3b)' },
           access: ACCESS,
           quote_or_figure: { type: 'string' },
           evidence_class: { type: 'string', enum: ['measured', 'derived', 'modelled', 'asserted'] },
@@ -240,10 +240,22 @@ if (size === 'quick') {
   if (!critique) log('critic returned nothing: treat the review as uncritiqued')
 }
 
-const notObtained = [
-  ...sweeps.flatMap(s => s.not_obtained.map(n => ({ ...n, angle: s.angle }))),
-  ...review.not_obtained,
-]
+// One entry per source: the angles and the review list the same unreachable papers (MB-01 listed one three times).
+const sourceKey = ref => {
+  const doi = /10\.\d{4,9}\/[^\s;,}]+/i.exec(ref || '')
+  return doi ? doi[0].replace(/[.)\]]+$/, '').toLowerCase() : String(ref || '').toLowerCase().replace(/\W+/g, ' ').trim()
+}
+const notObtained = []
+const seen = new Map()
+for (const [from, list] of [...sweeps.map(s => [s.angle, s.not_obtained]), ['review', review.not_obtained]]) {
+  for (const n of list || []) {
+    const k = sourceKey(n.reference)
+    if (seen.has(k)) { seen.get(k).from.push(from); continue }
+    const entry = { ...n, from: [from] }
+    seen.set(k, entry)
+    notObtained.push(entry)
+  }
+}
 
 const accessCounts = { full_text: 0, abstract_only: 0, secondary: 0 }
 for (const s of sweeps) for (const f of s.findings) if (f.access in accessCounts) accessCounts[f.access]++
@@ -257,4 +269,5 @@ return {
   notObtained,
   review,
   critique,
+  sweeps,   // the search agents' findings records, for the optional run.json sidecar (references/workflow.md)
 }

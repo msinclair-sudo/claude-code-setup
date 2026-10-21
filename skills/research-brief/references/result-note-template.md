@@ -1,6 +1,6 @@
 # Result note template
 
-Write one note per returned brief into the results folder next to the briefs folder. Title the note after the review, not after the brief ID. This file is for the human reader. The workflow returns `{ mode, size, angles, sweepCounts, accessCounts, notObtained, review, critique }`, and every section below is filled from those fields.
+Write one note per returned brief into the results folder next to the briefs folder. Title the note after the review, not after the brief ID. The note is the output of the run: everything downstream (consolidation, citing, the stage-2 check) reads the note, and nothing may require more. The workflow returns `{ mode, size, angles, sweepCounts, accessCounts, notObtained, review, critique, sweeps }`, and every section below is filled from those fields. Afterwards, optionally, write the whole return beside the note as `<note title>.run.json` (references/workflow.md, stage 8); it is an audit trail, not an input.
 
 Callout choice for the critic block:
 - `critique.answers_supported` is `yes`: use `[!warning]` ("read before citing").
@@ -13,14 +13,14 @@ The critic block and the access basis come before the answers on purpose: read h
 created: <YYYY-MM-DD>
 updated: <YYYY-MM-DD>
 tags:
-  - PhD
-  - Research
-  - Result
+  - research
+  - result
+  - <subject, e.g. biology>
 ---
 # <Review title>
 
 > [!abstract] Note Role
-> **Contains**: The returned literature review for <BriefID> of [[<brief note>]], its answers, reference list, and the adversarial critique of it.
+> **Contains**: The returned literature review for <BriefID> of [[<brief note>]], its answers, references (BibTeX), and the adversarial critique of it.<, and its run record [[<note title>.run.json]] if one was written>
 > **Cannot contain**: Design decisions drawn from the review. Those belong in the consuming note named in the brief's ROUTING.
 
 > [!info] Provenance
@@ -49,11 +49,15 @@ tags:
 > <Did the ROUTING stage-2 condition fire? Name the gaps that trigger a follow-up brief, or write "not triggered".>
 
 > [!failure] Sources not obtained
-> <notObtained: reference, routes tried. Nothing beyond a citation was reachable for these; none supports any claim in the review.>
+> Nothing beyond a citation was reachable for these; none supports any claim in the review.
+>
+> ```bibtex
+> <notObtained, one BibTeX entry each (protocol rule 3b), note = {access: not_obtained; routes tried: ...; listed by: <from>}>
+> ```
 
 ---
 
-<review body verbatim, with its access labels and reference list>
+<review body verbatim, with its citation labels (protocol rule 3a) and its ```bibtex reference block (rule 3b)>
 ```
 
 Before any reference moves into the bibliography, confirm it against Crossref yourself, even if the critic passed it. Before citing a claim, check its access label: a claim resting on an abstract or a secondary account is cited as such, or its full text is obtained first.

@@ -17,6 +17,20 @@ Passed verbatim to every agent that runs an AGENT BRIEF: search agents, the synt
    - *evidence class*: **measured** (data collected and reported), **derived** (inferred from other data without measuring the thing itself, for example from sequences, structure or proxies), **modelled** (simulation or fitted model), or **asserted** (stated without data, for example in a discussion section or a review);
    - *setting*: the conditions the finding comes from, in whatever terms matter for the brief: system, population or organism group, environment, scale, sample size, measurement type, and the range of the key variable. If the source does not report the range, say so;
    - *standing*: whether the finding is broadly replicated, contested, or rests on a single study, as far as you can tell.
+
+   **3a. Mark every citation in the review the same way.** In the body and the answers, each citation of a source for a claim is the citation followed by its labels: `[access; class; standing]`, then any flags.
+   - *Citation*: numbered, `[12]`, or author and year (APA), `(Smith & Jones, 2020)`. Use one form throughout the review. Examples: `[12] [FT; meas; repl]`, `(Lee et al., 2019b) [AB; model; single; INDIRECT]`.
+   - *access*: `FT`, `AB` or `SEC` (rule 1).
+   - *class*: `meas`, `deriv`, `model` or `assert` (rule 3); two joined by `/` when the source does both.
+   - *standing*: `repl`, `single`, `cont` or `unclear`. Never left out: write `unclear` when you cannot tell.
+   - *flags*, after the standing: `INDIRECT` (evidence from another marker, method or field), `PROTOCOL`, `DOC`, `PREPRINT` or `MAKER` (the source's type, or a maker's claim about its own work), `checked` (you re-opened the source to confirm this claim).
+   - Several sources for one claim: one citation and label set each, side by side. A table may cite sources without labels in a sources column, provided each claim in it is also stated in the text with full labels.
+
+   **3b. References are BibTeX.** The reference list is one fenced `bibtex` block with a complete entry (rule 8) for every source cited, and "Sources not obtained" is a second `bibtex` block in the same form, so that references can be collected into a bibliography file.
+   - Citekey: Better BibTeX's `auth.lower + shorttitle(3,3) + year`, that is, the first author's surname in lower case, the first three words of the title that are not function words, each capitalised, and the year: `loucaDecouplingFunctionTaxonomy2016` for "Decoupling function and taxonomy in the global ocean microbiome" (Louca, 2016). Add `a`, `b` if two sources would share a key.
+   - Fields: `author` (every author, `Surname, Given and Surname, Given`), `title`, `journal` (or `booktitle`, `publisher`, `institution`, `howpublished`), `year`, `volume`, `number`, `pages`, `doi`; `url` and `urldate` for web pages and documents without a DOI.
+   - `note`: `access: full_text`, `abstract_only` or `secondary`; the source type (`type: peer reviewed`, `protocol`, `documentation`, `preprint`); for numbered citations, the number (`cited as: 12`); for sources not obtained, `access: not_obtained; routes tried: ...`. Fields separated by semicolons.
+   - Example: `@article{smithExampleTitleWords2020, author = {Smith, Ann B. and Jones, Carl D.}, title = {Example Title Words for a Study}, journal = {Journal Name}, year = {2020}, volume = {12}, number = {3}, pages = {45--67}, doi = {10.0000/example}, note = {access: full_text; type: peer reviewed; cited as: 12}}`
 4. **Flag single sources.** A general statement resting on one study is marked SINGLE SOURCE and is not phrased as a property of the field. Single-source and contested findings are still reported; standing is information, not a filter.
 5. **Do not pool incommensurable numbers.** Combine figures only when they share a definition and a denominator. Otherwise report each with its own definition.
 6. **Report the authors' own conclusion.** If you read a study's data against the conclusion its authors drew, state their conclusion next to yours and label yours as the reviewer's reading.

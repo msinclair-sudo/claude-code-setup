@@ -137,7 +137,7 @@ The size, the triage answers behind it, the search angles for a deep run, any br
 5. **Write the DISPATCH** from the triage. The direction count in the triage line must equal the number of directions in the brief.
 6. **Verify (do not skip).** Run all three checks below: lint, consistency, blind preflight. A brief that fails any of them is not ready.
 7. **After any revision, re-run every check on the whole brief.** Revisions create new faults: a threshold added to one clause and not its counterpart, a direction split without splitting its answer, scope narrowed in one sentence and not another. Checking only the edited line misses them.
-8. **Run it** (see Dispatch), then **write the result note** from `references/result-note-template.md` and check the stage-2 condition against the critique.
+8. **Run it** (see Dispatch), then **write the result note** from `references/result-note-template.md` and check the stage-2 condition against the critique. The stages, what each agent sees and what each writes are in `references/workflow.md`.
 
 ---
 
@@ -260,7 +260,7 @@ Running a brief uses the workflow shipped with this skill, `workflows/research-r
    - `angles`: for deep, `[{ "name": "...", "vocabulary": "..." }]`, from DISPATCH.
    - `extra`: the DISPATCH extra instructions, as a list of strings (may be empty).
 3. **Batches:** run each brief as its own workflow call, **one at a time**, with a 15-minute gap after each, and say the pacing and the expected total time before starting. In September 2026, five deep runs in parallel hit the account's usage limit within the hour, and three lost their synthesis after their searches were paid for. A session also has a web-search budget (200 by default, `CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION`), and a whole round run from one session spends it in the first half hour, after which every later run searches nothing and says so only in its search record. For more than a few deep briefs, run each from a fresh headless session, or use the harness (below). Briefs with a batch order wait for their predecessor.
-4. **On return,** write the result note from `references/result-note-template.md`. If `critique.answers_supported` is `partial` or `no`, lead with the critic's reformulated answers. Report the access basis (`accessCounts` for deep runs, each answer's `access_basis` otherwise). Then check the ROUTING stage-2 condition against `critique.coverage_gaps` and tell the user whether it fired.
+4. **On return,** write the result note from `references/result-note-template.md`. If `critique.answers_supported` is `partial` or `no`, lead with the critic's reformulated answers. Report the access basis (`accessCounts` for deep runs, each answer's `access_basis` otherwise). Then check the ROUTING stage-2 condition against `critique.coverage_gaps` and tell the user whether it fired. The note is the output; optionally write the whole return beside it as `<note title>.run.json` (an audit trail that nothing downstream may require; `references/workflow.md`, stage 8).
 5. **Reading the answers against ROUTING** is where the human's expectation meets the evidence. Read the critic's block and the access counts before the answers, and note in the consuming decision where the evidence rests on abstracts or secondary accounts.
 
 ---

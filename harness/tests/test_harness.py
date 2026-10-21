@@ -6378,8 +6378,10 @@ class PartialKeepsTheRest(unittest.TestCase):
                               rep["earlier"]), (1, False, False, None, ["bad"]))
         rung = [json.loads(f.read_text())["text"] for f in
                 sorted((self.state / "doorbell" / "dev_1" / "inbox").glob("*.json"))]
-        self.assertIn("arms good: 1/1 passed this run; with earlier runs, check of", rung[-1])
-        self.assertIn("1/2 passed", rung[-1])
+        # Two rings in one second: the inbox's file order isn't the order rung.
+        (merged,) = [t for t in rung if "this run" in t]
+        self.assertIn("arms good: 1/1 passed this run; with earlier runs, check of", merged)
+        self.assertIn("1/2 passed", merged)
         with redirect_stdout(io.StringIO()) as o:
             hz.print_check_report(rep, None)
         self.assertIn(f"earlier run", o.getvalue())

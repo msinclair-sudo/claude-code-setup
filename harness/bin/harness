@@ -2094,6 +2094,11 @@ def cmd_status(a):
             _st = start_standing(ctx, n)
             if _st:
                 print(f"  {n:<12} {start_words(_st)}")
+        # Log 202: a live session of this project's on no node (the worktree it
+        # was started in has been trimmed) was visible nowhere.
+        for r in stray_sessions(ctx, idx, rows):
+            print(f"  {'(no node)':<12} {(r.get('name') or '?'):<22} [{r.get('sessionId')}]  "
+                  f"live in {r.get('cwd')} — claude stop {str(r.get('sessionId'))[:8]}")
     except Exception:
         pass
 
@@ -17982,6 +17987,19 @@ def superseded_sessions(ctx, node, rows, before_ms=None):
         out.append((r, None if named else "renamed, so maybe not the node's: listed, not "
                                           "stopped (claude stop it by hand if it is)"))
     return out
+
+
+def stray_sessions(ctx, idx, rows):
+    """Live sessions named for this project that stand on no node: in no
+    node's worktree (one since trimmed, or outside them all), and not an
+    intermediary's, documenter's, reporter's or design session."""
+    placed = set()
+    for n in idx.get("nodes") or {}:
+        placed |= {r.get("sessionId") for r in node_sessions(idx, n, rows)}
+    prefix = f"{Path(ctx.repo).name}-"
+    return [r for r in live_rows(rows) if r.get("sessionId") not in placed
+            and str(r.get("name") or "").startswith(prefix)
+            and r.get("kind") != "interactive" and not aux_session(ctx, r)]
 
 
 def stop_superseded(ctx, node, dry=False, rows=None, before_ms=None):

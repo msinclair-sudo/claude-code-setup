@@ -160,9 +160,9 @@ Coupling keeps a session alive across a boundary the evidence says to reset at, 
 
 Focus exists so a lead working one thing is not pulled sideways by nags about everything else, while still seeing a one-line count of what it is setting aside.
 
-### Orientation and your todo list
+### Orientation, and why not a todo list
 
-A lead learned it owed a sign-off, held a long exchange with its own lead about something else, and the debt was gone from its head long before it left the ledger. This happened repeatedly on a live tree. The todo list is the only structure in a session that survives that conversation. Signing off starts the child's next task, so a carried debt is a lane standing still.
+A lead learned it owed a sign-off, held a long exchange with its own lead about something else, and the debt was gone from its head long before it left the ledger. This happened repeatedly on a live tree, and for a while the answer was to name the todo list at the moment the debt was learned. That copy drifted (log 201: rank 0's list reached 25 entries, 19 finished), so now the harness says an owed debt again itself, as `still`, every ten minutes while it stands. Signing off starts the child's next task, so a carried debt is a lane standing still.
 
 Nags print only at orientation because printing them after every command made them noise. A lead with lanes holding open marks used to be reported idle and told to recycle, which was wrong: it is waiting. Ghost roster rows and ad hoc `/proc` checks were replaced by one liveness reading so that `claim`, `status` and the hooks agree.
 

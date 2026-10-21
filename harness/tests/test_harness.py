@@ -1622,6 +1622,14 @@ class Superseded(unittest.TestCase):
         self.assertEqual(stopped, ["s-old"[:8]])
         self.assertTrue(any(x.lstrip().startswith("listed") for x in lines))
 
+    def test_status_names_a_live_session_on_no_node(self):
+        rows = [{"sessionId": "a", "name": "biblion2-dev_1", "cwd": "/w/biblion2-dev_1"},
+                {"sessionId": "b", "name": "biblion2-dev_2", "cwd": "/w/biblion2-dev_2"},  # trimmed
+                {"sessionId": "c", "name": "owner-chat", "cwd": "/home/x"}]
+        with mock.patch.object(hz, "live_rows", side_effect=lambda r: r):
+            got = hz.stray_sessions(self.ctx, self.idx, rows)
+        self.assertEqual([r["sessionId"] for r in got], ["b"])
+
     def test_ending_them_is_rank_0s_or_the_owners(self):
         self.ctx.me, self.ctx.branch = "dev", "dev"
         self.idx["byBranch"] = {"dev": "dev"}

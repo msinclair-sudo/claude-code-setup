@@ -44,6 +44,8 @@ spawned or recycled (log 115).
 work outside a node's stream, yours included. If the owner wants one task done outside its stream,
 they grant it from a shell (`harness exception <task> --for <node> --why`); you can't.
 
+**Superseded sessions** (log 202). `spawn` and `recycle` end a node's earlier sessions that Claude Code still lists as blocked with no process. For the backlog, `harness stop --superseded --dry-run`, then without `--dry-run`. A renamed session is listed, not stopped: check it and `claude stop` it by hand if it is the node's.
+
 ## Focus
 
 When the operator names a priority, set it: `harness focus <task>... --why "…"` (several tasks, or a quoted glob such as `'enrich*'`; split parts follow their segment). `--add`/`--remove` edit it, `harness focus` shows it, `--clear` ends it. Nags about other work fold into one line; queues are labelled, never filtered, so there is no need to list a lane's out-of-focus tasks in it. Setting it prints the queued work it leaves out.

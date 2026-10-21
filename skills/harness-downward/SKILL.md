@@ -107,9 +107,9 @@ harness focus --clear
 
 While set, nags about work outside it fold into one line. Queues are never filtered: a lead sees in-focus work first, and a lane's out-of-focus task is labelled, not hidden. A `--supersede --by` replacement inherits its predecessor's place.
 
-## Orientation and your todo list
+## Orientation
 
-Nags print only at orientation (SessionStart `whoami`, UserPromptSubmit `hook-orient`). When one says a child presented or needs something, record it with `TaskCreate` before replying to anything else. An owed sign-off re-nags every ten minutes; everything else fires once.
+Nags print only at orientation (SessionStart `whoami`, UserPromptSubmit `hook-orient`). When one says a child presented or needs something, act on it before replying to anything else. Don't copy it into a todo list (log 201): the harness keeps the record, and an owed sign-off comes back as `still` every ten minutes while it stands; everything else is said once, and a count again only when it moves.
 
 Children: a lead whose lanes hold open marks is waiting, not idle. A quiet live child gets "message it to start (SendMessage)". A child with no running session gets `harness spawn <child>`. A child with an empty queue means you owe a brief. One `ListAgents` call shows which children are live and busy.
 
@@ -287,6 +287,8 @@ Write every brief with the charter feature it serves: `--feature "<name>"` (the 
 first prompt). A part split with `--from` inherits its segment's. If the work you were about to
 brief serves no feature, it is out of scope: don't brief it; tell your lead or rank 0 why it came
 up.
+
+You may defer, gate or set the close of any task below you, not only your children's (log 202).
 
 **A stream does its own feature's work and nothing else** (log 200). Orientation names your stream's
 feature, and the streams below you if you lead several. `brief --for` refuses a feature outside the

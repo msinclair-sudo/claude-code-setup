@@ -1577,6 +1577,76 @@ class LeadReachesBelow(unittest.TestCase):
         self.assertNotIn("That is the default", self.out)
 
 
+class Superseded(unittest.TestCase):
+    """Log 202: 22 sessions sat "blocked" for days, most of them earlier
+    sessions of nodes since respawned. Only those are ended."""
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_1": "dev"})
+        self.ctx.repo = Path("/w/biblion2")
+        self.ctx.require_enrolled = lambda: None
+        self.ctx.lock("dev_1", 1, ref="s-hold")
+        lk = self.ctx.lock_path("dev_1")
+        lk.write_text(json.dumps(dict(json.loads(lk.read_text()), session_id="s-hold")))
+        wt = "/w/biblion2-dev_1"
+        row = lambda sid, name, state, cwd=wt, at=1000: {
+            "sessionId": sid, "name": name, "state": state, "cwd": cwd, "kind": "background",
+            "startedAt": at}
+        self.rows = [row("s-new", "biblion2-dev_1", "working", at=9000),     # just launched
+                     row("s-hold", "biblion2-dev_1", "blocked"),             # the holder
+                     row("s-item", "biblion2-intermediary-x", "blocked", cwd=wt + "/intermediary/x"),
+                     row("s-name", "grid-finer-arm-hold", "blocked"),        # renamed
+                     row("s-done", "biblion2-dev_1", "done"),
+                     row("s-old", "biblion2-dev_1", "blocked")]              # superseded
+        self.idx = {"nodes": {"dev_1": {"worktree": wt}, "dev": {"worktree": "/w/biblion2-dev"},
+                              "main": {"worktree": "/w/biblion2"}},
+                    "byWorktree": {wt: "dev_1"}, "byBranch": {"main": "main"}}
+
+    def run_it(self, fn):
+        with mock.patch.object(hz, "load_index", return_value=self.idx), \
+             mock.patch.object(hz, "live_rows", side_effect=lambda rows: []), \
+             mock.patch.object(hz, "live_sessions", return_value=[]), \
+             mock.patch.object(hz, "item_sessions", return_value={}):
+            return fn()
+
+    def test_only_an_earlier_session_with_no_process_is_stopped(self):
+        got = self.run_it(lambda: hz.superseded_sessions(self.ctx, "dev_1", self.rows,
+                                                         before_ms=5000))
+        self.assertEqual({r["sessionId"]: why is None for r, why in got},
+                         {"s-old": True, "s-name": False})        # the renamed one only listed
+        stopped = []
+        with mock.patch.object(hz.subprocess, "run", side_effect=lambda cmd, **k: (
+                stopped.append(cmd[2]), mock.Mock(returncode=0))[1]):
+            lines = self.run_it(lambda: hz.stop_superseded(self.ctx, "dev_1", rows=self.rows,
+                                                           before_ms=5000))
+        self.assertEqual(stopped, ["s-old"[:8]])
+        self.assertTrue(any(x.lstrip().startswith("listed") for x in lines))
+
+    def test_ending_them_is_rank_0s_or_the_owners(self):
+        self.ctx.me, self.ctx.branch = "dev", "dev"
+        self.idx["byBranch"] = {"dev": "dev"}
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.object(hz, "load_index", return_value=self.idx), \
+             mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "s" * 36}), \
+             mock.patch("sys.argv", ["harness", "stop", "--superseded", "--dry-run"]), \
+             mock.patch("sys.stderr", io.StringIO()), redirect_stdout(io.StringIO()), \
+             self.assertRaises(SystemExit):
+            hz.main()
+        self.ctx.me, self.ctx.branch = "main", "main"
+        self.idx["byBranch"] = {"main": "main"}
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.object(hz, "load_index", return_value=self.idx), \
+             mock.patch.object(hz, "all_sessions", return_value=self.rows), \
+             mock.patch.object(hz, "live_rows", side_effect=lambda rows: []), \
+             mock.patch.object(hz, "live_sessions", return_value=[]), \
+             mock.patch.object(hz, "item_sessions", return_value={}), \
+             mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "s" * 36}), \
+             mock.patch("sys.argv", ["harness", "stop", "--superseded", "--dry-run"]), \
+             redirect_stdout(io.StringIO()) as o:
+            hz.main()                                                   # rank 0: allowed
+        self.assertIn("would stop dev_1", o.getvalue())
+
+
 class SilentNodes(unittest.TestCase):
     """Log 128: a lead that released with its lanes mid-work and mail unread is
     down; log 129: a child's unanswered question while it idles is owed."""

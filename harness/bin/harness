@@ -2074,7 +2074,17 @@ def cmd_status(a):
                     continue                    # the holder, or the owner's own in the repository
                 tag = f"  {n:<12} {(r.get('name') or '?'):<22} [{r.get('sessionId')}]  "
                 if n not in claimed:
-                    print(tag + "OCCUPIED but unclaimed — released the node, kept the session")
+                    # Log 202: six at once, and nothing said which were working.
+                    _sid_r = r.get("sessionId") or ""
+                    _age = last_turn(_sid_r)[0]
+                    _doing = ("a turn is running" if turn_running(_sid_r) else
+                              f"idle {human_age(_age)}" if _age is not None else "idle")
+                    _act = node_activity(ctx, n, _waits)
+                    _done = finished_released(ctx, n, [r])
+                    print(tag + f"OCCUPIED but unclaimed — {_doing}"
+                          + (f"; {_act}" if _act else "")
+                          + (f"; its work is presented or done: harness stop {n}"
+                             if _done and not turn_running(_sid_r) else ""))
                 elif _hs == "live":
                     print(tag + f"SECOND SESSION beside the holder — harness stop {n} --surplus")
                 else:
@@ -2666,6 +2676,7 @@ def cmd_spawn(a):
                           + " (a ring would have resumed it)")
             except Exception:
                 pass
+            _t0 = time.time() * 1000
             ok, why = launch_bg(cmd, sp["worktree"], env=launch_env(n))
             if not ok:
                 start_clear(ctx, n)
@@ -2673,6 +2684,11 @@ def cmd_spawn(a):
                 skipped += 1; continue
             stopped_path(ctx, n).unlink(missing_ok=True)
             print(f"  spawned {name:<18} {model}/{effort:<7} in {sp['worktree']}{reach}")
+            try:
+                for line in stop_superseded(ctx, n, before_ms=_t0):
+                    print(line)
+            except (Exception, SystemExit):
+                pass
             if _direct:
                 # Its lead did not start it, and is the one who reviews it.
                 _p = (ctx.tree["nodes"].get(n) or {}).get("parent")
@@ -3324,10 +3340,24 @@ def cmd_stop(a):
     the process dies, the session file is removed, and it leaves the table."""
     ctx = Ctx(); ctx.require_enrolled()
     idx = load_index(ctx)
-    rows = live_rows(agents_json())
-    by_wt = idx["byWorktree"]
     mine = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     here = idx["byBranch"].get(ctx.branch)
+    if getattr(a, "superseded", False) is True:
+        # Log 202: the backlog of earlier sessions nothing ended. Rank 0's or the
+        # owner's; every node, or the ones named.
+        if mine and (here is None or ctx.rank(here) != 0):
+            die(REFUSED, "ending superseded sessions is rank 0's or the owner's")
+        rows = all_sessions()
+        lines = []
+        for n in (a.node or list(idx["nodes"])):
+            lines += stop_superseded(ctx, n, dry=a.dry_run, rows=rows)
+        print("\n".join(lines) if lines else "no superseded sessions")
+        acted = sum(1 for x in lines if x.lstrip().startswith(("stopped", "would stop")))
+        print(f"{'would stop' if a.dry_run else 'stopped'} {acted}; removal from the list is "
+              f"the session sweep's (it keeps each node's newest {SESSIONS_KEEP})")
+        return
+    rows = live_rows(agents_json())
+    by_wt = idx["byWorktree"]
     if a.children:
         if here is None:
             die(NOT_ENROLLED, "not standing in a node, so --children has no meaning")
@@ -11116,7 +11146,14 @@ def cmd_recycle(a):
         if _st:
             print(f"  NOT started {n:<12} {start_words(_st)}; its old session is stopped")
             continue
+        _t0 = time.time() * 1000
         ok, why = launch_bg(cmd, sp["worktree"], env=launch_env(n))
+        if ok:
+            try:
+                for line in stop_superseded(ctx, n, before_ms=_t0):
+                    print(line)
+            except (Exception, SystemExit):
+                pass
         if not ok:
             start_clear(ctx, n)
             # The old session is already stopped: say so plainly, and leave the
@@ -17904,6 +17941,67 @@ def all_sessions():
     if r.returncode:
         die(REFUSED, f"`claude agents --json --all` failed: {r.stderr.strip()[:120]}")
     return json.loads(r.stdout)
+
+
+# Log 202: 22 sessions sat "blocked" for days, most of them earlier sessions
+# of nodes since respawned. A blocked session waits on a permission prompt; if
+# anyone answered one it would resume on a days-old picture in a worktree a
+# newer session holds. With no process, `spawn`/`recycle` never saw them.
+SUPERSEDED_STATES = ("blocked", "working")
+
+
+def superseded_sessions(ctx, node, rows, before_ms=None):
+    """Earlier sessions of `node` that Claude Code still lists as blocked or
+    working, with no process: [(row, None to stop | why it is only listed)].
+    Never the lock holder, a start in flight, a limit's session or one an open
+    task or item names (kept_sessions); never an aux or interactive session, or
+    one in a subfolder (an intermediary's); on rank 0, only one carrying the
+    node's own name (rivals). `before_ms` keeps out what started since."""
+    wt = ((load_index(ctx).get("nodes") or {}).get(node) or {}).get("worktree")
+    if not wt:
+        return []
+    live = {r.get("sessionId") for r in live_rows(rows)}
+    try:
+        live |= {d.get("sessionId") for d in live_sessions() if pid_alive(d.get("pid"))}
+    except Exception:
+        pass
+    keep = kept_sessions(ctx, rows)
+    me = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    prefix = f"{Path(ctx.repo).name}-"
+    out = []
+    for r in rivals(ctx, node, [r for r in rows if r.get("cwd") == wt]):
+        sid = r.get("sessionId") or ""
+        if (not sid or sid == me or sid in live or sid in keep
+                or r.get("state") not in SUPERSEDED_STATES
+                or r.get("kind") == "interactive" or aux_session(ctx, r)):
+            continue
+        if before_ms and isinstance(r.get("startedAt"), (int, float)) \
+                and r["startedAt"] >= before_ms:
+            continue
+        named = str(r.get("name") or "").startswith(prefix)
+        out.append((r, None if named else "renamed, so maybe not the node's: listed, not "
+                                          "stopped (claude stop it by hand if it is)"))
+    return out
+
+
+def stop_superseded(ctx, node, dry=False, rows=None, before_ms=None):
+    """`claude stop` each superseded session of `node`. -> lines to print."""
+    rows = all_sessions() if rows is None else rows
+    lines = []
+    for r, why in superseded_sessions(ctx, node, rows, before_ms):
+        label = f"{node:<12} {r.get('name') or '?'} [{r['sessionId'][:8]}] ({r.get('state')}"
+        label += (time.strftime(", started %m-%d %H:%M", time.localtime(r["startedAt"] / 1000))
+                  if isinstance(r.get("startedAt"), (int, float)) else "") + ")"
+        if why:
+            lines.append(f"  listed   {label}: {why}")
+        elif dry:
+            lines.append(f"  would stop {label}")
+        else:
+            res = subprocess.run(["claude", "stop", r["sessionId"][:8]], capture_output=True,
+                                 text=True)
+            lines.append(f"  stopped  {label}" if not res.returncode else
+                         f"  FAILED   {label}: {(res.stderr or res.stdout).strip()[:80]}")
+    return lines
 
 
 # Owner, 2026-10-15: "finished sessions need to be deleted. a node can keep the
@@ -25524,6 +25622,7 @@ def double_settled(ctx, f, node):
         try:
             ask_withdraw(ctx.state, p, rec, f"one session is left in {node}'s worktree",
                          "", by="harness (ringer)")
+            item_close_detached(ctx.state, aid)       # its intermediary too (log 202)
             print(f"{_now()} {node}: one session left; withdrew {aid}")
         except (SystemExit, Exception):
             pass
@@ -26492,6 +26591,9 @@ def main():
                     help="two sessions in one worktree: stop every one but the node's holder")
     st.add_argument("--keep", metavar="ID",
                     help="with --surplus, the session to keep when none holds the node")
+    st.add_argument("--superseded", action="store_true",
+                    help="rank 0 or the owner: end earlier sessions of the named nodes (or "
+                         "every node) still listed blocked or working with no process")
     st.add_argument("--dry-run", action="store_true")
     sp = add("spawn", cmd_spawn)
     sp.add_argument("node", nargs="*",

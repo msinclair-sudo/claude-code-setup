@@ -19,7 +19,8 @@ For every entry, return one line: `<id>: ok` or `<id>: <fault>: <one sentence>`,
 - `stronger`: the entry is firmer than its text: standing raised, a hedge dropped, scope widened (one setting
   stated as general), a single study stated as a pattern.
 - `conf`: `conf`, `class` or `limit` gives a value its text does not state (a standing inferred from tone, the
-  basis quoted does not say it, or `limit: access` where the text gives no access reason). `not stated` is always
+  basis quoted does not say it, or `limit: access` where the text gives no access reason; abstract only, not obtained, second-hand and "not read
+  in the original" are access reasons). `not stated` is always
   acceptable.
 - `numbers`: a figure differs from its text, lost its definition or denominator, or figures from different
   sources were combined.
@@ -29,4 +30,6 @@ For every entry, return one line: `<id>: ok` or `<id>: <fault>: <one sentence>`,
 - `merged`: two cases the text keeps apart are folded into one entry.
 - `holds`: the setting in `holds` is missing or differs from the text.
 
-Be strict and literal. An entry that is narrower or weaker than its text is ok. End with a count of each fault.
+Be strict and literal. An entry that is narrower or weaker than its text is ok. Citekeys in `src` are
+identifiers, not claims: a key may carry another year (an existing bibliography's key is kept), so judge the
+labels beside a key, never the key itself. End with a count of each fault.

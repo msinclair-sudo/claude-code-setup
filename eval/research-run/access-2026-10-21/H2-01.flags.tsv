@@ -1,0 +1,171 @@
+id	reason	quote
+H2-01:I-0001	evidence	[Louca2016a, abstract, derived from taxonomy]
+H2-01:I-0002	evidence	[Jiang2012; FT; measured; fitted and scored on the same samples; SINGLE SOURCE]
+H2-01:I-0003	evidence	[Piton2023; FT; measured; SINGLE SOURCE]
+H2-01:I-0004	evidence	[Flinkstrom2024; FT; measured; SINGLE SOURCE]
+H2-01:I-0008	evidence	[Tian2020; FT; derived/modelled; SINGLE SOURCE]
+H2-01:I-0013	evidence	[Fahimipour2020; FT; modelled; SINGLE SOURCE]
+H2-01:I-0017	evidence	[Lenz2016; FT; measured; SINGLE SOURCE]
+H2-01:I-0018	evidence	the only direct microbial test found [Chen2020; FT, figures re-checked; measured; SINGLE SOURCE]
+H2-01:I-0021	evidence	[Beavan2024; FT; SINGLE SOURCE]
+H2-01:I-0022	evidence	[KonnoIwasaki2023; FT; modelled; SINGLE SOURCE]
+H2-01:I-0023	evidence	[Cleary2017; FT; measured; SINGLE SOURCE]
+H2-01:I-0024	evidence	[Subramanian2017; FT; measured; SINGLE SOURCE]
+H2-01:I-0031	evidence	[Fierer2012; FT per trait-ecology angle; measured; small n]
+H2-01:I-0033	evidence	[RamirezFlandes2019; FT; measured; SINGLE SOURCE]
+H2-01:I-0034	evidence	[Louca2016a; AB; derived, because functional groups were assigned from taxonomy]
+H2-01:I-0035	evidence	[Bruelheide2018; FT; measured; SINGLE SOURCE]
+H2-01:I-0036	evidence	[FloresMoreno2019; FT; heavy imputation] ... [DwyerLaughlin2017; AB; SINGLE SOURCE]
+H2-01:A-001	evidence	Few direct estimates exist for microbial sample-by-function matrices, and they use incompatible methods.
+H2-01:A-004	evidence	which is not a dimension estimate
+H2-01:A-006	evidence	in each case n is small or only about half the variance is in the leading axes
+H2-01:A-007	evidence	No microbial study re-estimated dimension under different normalisation, sparsity filters, presence/absence against abundance, or sample size.
+H2-01:A-009	evidence	That these shifts lower apparent dimension is the reviewer's inference.
+H2-01:A-010	evidence	has only been measured in species trait databases
+H2-01:A-013	not given	*Strength:* Weak for the microbial sample-level question.
+H2-01:A-014	evidence	Each direct estimate is a single study, and all are fitted and scored on the same samples.
+H2-01:A-015	evidence	Processing effects are measured but only indirect for dimension.
+H2-01:A-016	evidence	rests on one species-trait study from another setting
+H2-01:A-017	evidence	*Conflicts:* Low (Jiang2012, Piton2023's two leading axes, Heimberg2016) against higher
+H2-01:A-019	evidence	*Not measured:* No microbial estimate with a formal rank rule
+H2-01:A-020	evidence	No held-out (cross-validated) rank estimate for functional profiles.
+H2-01:A-021	evidence	Dimension by habitat not compared.
+H2-01:A-025	evidence	*Single-source sensitivity:* Yes.
+H2-01:A-026	evidence	Removing Piton2023 leaves no variance-explained figure
+H2-01:A-027	evidence	Removing Mouillot2021 leaves no measured dependence
+H2-01:A-028	evidence	Removing Manor2017 removes the only measurement
+H2-01:A-030	evidence	Withheld habitat, microbial functional covariation: not found.
+H2-01:A-032	evidence	Withheld study, same habitat: one study.
+H2-01:A-034	evidence	Shared pathway members, strong common factors and a lenient threshold make this an optimistic reading of transfer.
+H2-01:A-035	evidence	Neighbouring microbial evidence concerns other quantities
+H2-01:A-041	evidence	transfer appears to depend on ...; each dependency rests on one to three sources
+H2-01:A-042	evidence	*Strength:* Absent for the withheld-habitat microbial case.
+H2-01:A-043	evidence	Weak for withheld-study (one study, one habitat).
+H2-01:A-044	evidence	Moderate for partial transfer in transcriptomics, but that is another field and each quantitative result is a single study
+H2-01:A-047	evidence	*Not measured:* Any microbial test withholding a whole habitat.
+H2-01:A-048	evidence	Any test of function-function covariance ... across habitats.
+H2-01:A-049	evidence	Any test with presence/absence profiles, or comparing annotation schemes, in a held-out design.
+H2-01:A-050	evidence	Held-out tests in soils, oceans or other non-human habitats at all.
+H2-01:A-053	evidence	Removing Chen2020 leaves no direct microbial test
+H2-01:A-054	evidence	Removing Cleary2017 leaves no other-field test that withholds a biologically distinct group
+H2-01:A-057	evidence	This pattern depends on processing and annotation.
+H2-01:A-058	evidence	comparing fine taxonomy with coarse function favours functional stability by construction (reviewer's reading)
+H2-01:A-060	evidence	may itself vary by habitat [EngBorenstein2018, modelled]
+H2-01:A-061	evidence	weak for the claim that the stability is biological rather than processing-driven
+H2-01:A-062	evidence	none controls for normalisation, aggregation and granularity together
+H2-01:A-063	evidence	*Conflicts:* Galand2018 (and the processing studies Manor2017, Nayfach2015) against HMP2012, Louca2016b, Burke2011
+H2-01:A-064	evidence	*Not measured:* Same-habitat comparisons using marker-normalised, unaggregated or all-read functional profiles
+H2-01:A-067	evidence	it is the only measured test of aggregation and shared-member mapping
+H2-01:A-068	both	removes the only direct same-habitat contrary result, which is abstract only
+H2-01:A-069	evidence	Case B is contested.
+H2-01:A-071	evidence	but the feature sets differ in size and sparsity
+H2-01:A-073	evidence	use different function definitions and different statistics and cannot be pooled
+H2-01:A-074	evidence	Case C: no microbial study found
+H2-01:A-075	not given	*Strength:* Weak to moderate.
+H2-01:A-076	both	not commensurable and several are single studies or abstract only
+H2-01:A-077	evidence	Case C: absent.
+H2-01:A-078	evidence	*Conflicts:* Fierer2012 and Salazar2019 (coupled) against Louca2016a and Nelson2016 (decoupled).
+H2-01:A-080	evidence	*Not measured:* Case C entirely.
+H2-01:A-081	evidence	Case B with taxonomy and function at matched resolution and matched feature counts.
+H2-01:A-082	evidence	Case B with marker-normalised functional profiles.
+H2-01:A-085	both	Removing Louca2016a (abstract only, derived) would leave the decoupled side resting on Nelson2016 alone.
+H2-01:A-086	evidence	would leave the coupled side resting on Salazar2019's global statement
+H2-01:A-087	evidence	No microbial study was found that compares the between-habitat stability
+H2-01:A-088	evidence	The closest microbial evidence is single-habitat
+H2-01:A-089	evidence	In that setting ... (not composition itself)
+H2-01:A-091	evidence	has only been fitted on pooled cross-habitat data
+H2-01:A-092	evidence	In plant traits the evidence runs both ways
+H2-01:A-094	evidence	*Strength:* Absent for the microbial cross-habitat case.
+H2-01:A-095	evidence	Weak (one study) for the microbial between-cohort case.
+H2-01:A-096	evidence	Mixed and other-field for plant traits and expression.
+H2-01:A-097	evidence	*Conflicts:* Bruelheide2018 (covariation stable, levels variable) against FloresMoreno2019, Wright2005 and DwyerLaughlin2017
+H2-01:A-098	evidence	The plant sources differ in level (community against species), in imputation and in gradient.
+H2-01:A-099	evidence	*Not measured:* Microbial cross-habitat comparison of covariation stability
+H2-01:A-102	evidence	Removing Chen2020 leaves no microbial measurement of functional covariation stability at all.
+H2-01:A-103	evidence	Removing Bruelheide2018 removes the only large-scale case
+H2-01:A-104	evidence	Direct estimates for microbial sample-level functional profiles are few and use different methods
+H2-01:A-105	evidence	None tests sensitivity to normalisation, sparsity, presence against abundance, or sample size.
+H2-01:A-106	evidence	measured ... but indirect for dimension
+H2-01:A-107	evidence	The only source measuring how dimension estimates depend on ... is from species trait databases.
+H2-01:A-110	evidence	No held-out-habitat test of microbial functional covariation was found.
+H2-01:A-113	evidence	levels mostly more stable, but processing-sensitive
+H2-01:A-114	evidence	Across habitats: contested, dependent on annotation and resolution.
+H2-01:A-116	evidence	Plant-trait studies go both ways.
+H2-01:A-117	evidence	No microbial cross-habitat comparison was found.
+H2-01:B-0007	not given	Read every answer here sceptically; the critic's corrections ... are the ones to trust.
+H2-01:B-0015	access	Attempts to reach Galand2018 full text ... failed, so it stays abstract only and its R2 values are not used.
+H2-01:B-0016	access	PMC E-utilities returns contained only the abstract; their full-text labels rest on the search angles' reading
+H2-01:B-0018	evidence	Not found by these routes
+H2-01:B-0020	evidence	*Single-source sensitivity:* Yes.
+H2-01:B-0021	evidence	*Single-source sensitivity:* Yes.
+H2-01:B-0024	both	with Raguideau 2016 and Jiang et al. 2012 not obtained and the rank against p/n question resting on Mouillot 2021 alone
+H2-01:B-0025	access	PICRUSt2 and Tax4Fun2 soil, marine and engineered validations (not obtained)
+H2-01:B-0036	evidence	The core cases of the brief are thinly covered.
+H2-01:B-0037	evidence	no study was found that estimated covariation among microbial functions in some habitats and scored it on a habitat left out
+H2-01:B-0038	evidence	No study was found that compared the between-habitat stability
+H2-01:B-0039	evidence	The closest microbial evidence is a between-cohort, single-habitat (human gut) study
+H2-01:B-0040	evidence	either (a) direct evidence on a neighbouring quantity, or (b) evidence from another field
+H2-01:B-0046	evidence	Only a handful of studies report something that can be read as a dimension estimate
+H2-01:B-0047	evidence	None uses a formal rank-selection rule ... *and* tests how the estimate changes with processing.
+H2-01:B-0049	evidence	No variance-explained figure was reported.
+H2-01:B-0051	evidence	with n = 45 the rank cannot exceed 45, and much of the fit is a shared mean-like profile
+H2-01:B-0054	evidence	only 5 to 15% of reads were annotated
+H2-01:B-0055	evidence	the other half is not low-dimensional on this evidence
+H2-01:B-0056	evidence	Cluster number is not an intrinsic-dimension estimate, and it is reported here as a nearest precedent only.
+H2-01:B-0057	evidence	With n = 25 and many modules, a high first canonical correlation on the same samples is expected.
+H2-01:B-0058	evidence	It does not measure dimension.
+H2-01:B-0064	evidence	No microbial study found reports both.
+H2-01:B-0065	evidence	No study was found that re-estimated the dimension of functional profiles
+H2-01:B-0066	evidence	(indirect for D1)
+H2-01:B-0070	evidence	Reviewer's reading: at least one leading axis ... may be a genome-size or normalisation axis.
+H2-01:B-0071	evidence	This is an inference, not a measured decomposition.
+H2-01:B-0077	evidence	[SINGLE SOURCE for this set of quantities]
+H2-01:B-0079	evidence	[Donato2013; AB; other field]
+H2-01:B-0080	evidence	None of these measures a covariance matrix between overlapping gene sets.
+H2-01:B-0081	evidence	is the reviewer's inference
+H2-01:B-0082	evidence	[Lovell2015; AB; other field]
+H2-01:B-0084	evidence	By analogy (reviewer's reading)
+H2-01:B-0085	evidence	These are different objects ... and are reported as related work.
+H2-01:B-0090	evidence	This is the only source found that measures how a dimension estimate depends on
+H2-01:B-0091	evidence	It concerns species-level traits, not sample-level profiles.
+H2-01:B-0094	evidence	[Schrodt2015; AB], so covariation in imputed matrices is partly built in (reviewer's reading)
+H2-01:B-0097	evidence	weakens when dimension is judged by reproducibility across datasets
+H2-01:B-0098	evidence	No study was found that fitted covariation among functions ... and scored it on a withheld habitat.
+H2-01:B-0100	evidence	This is a statement about those routes, not a statement that the literature lacks such a study.
+H2-01:B-0108	evidence	Cautions (reviewer's reading): ... pathway-pathway co-abundance partly reflects shared members
+H2-01:B-0109	evidence	"Replicated at P < 0.05" with n = 77 is a lenient bar.
+H2-01:B-0110	evidence	The withheld unit is a study within the same habitat and disease state, not a habitat.
+H2-01:B-0112	evidence	These transfer a genome-derived taxon-to-gene mapping, not covariation among functions.
+H2-01:B-0114	evidence	Human gut only; a classifier, not a covariance structure.
+H2-01:B-0116	evidence	[Chung2024; AB], a benchmark partly circular with KEGG membership
+H2-01:B-0119	access	The meaning of "generalizable" (held-out design) was not read.
+H2-01:B-0121	evidence	The authors warn that a dictionary is biased when training data do not represent the test data.
+H2-01:B-0122	evidence	Samples, not tissues, were withheld.
+H2-01:B-0123	evidence	[Taroni2019; FT; qualitative] ... [SteinOBrien2019; FT; framework, no failure rate]
+H2-01:B-0126	evidence	These are transfers across scale or taxonomic level, not across habitat.
+H2-01:B-0127	evidence	three dependencies recur, each from few sources
+H2-01:B-0128	evidence	None of these has been measured for microbial function-function covariation across habitats.
+H2-01:B-0130	evidence	The evidence is very uneven across the six cells.
+H2-01:B-0131	evidence	with serious cautions
+H2-01:B-0132	evidence	compares a species table with a coarser COG table, and the taxonomic figure is from an earlier study
+H2-01:B-0134	evidence	[Aira2026; AB; no non-earthworm control]
+H2-01:B-0136	evidence	The counter-evidence here is methodological, and it applies to every item above.
+H2-01:B-0137	evidence	favours functional stability by construction (reviewer's reading
+H2-01:B-0138	access	[Galand2018; AB for me; the reported R² values came from an automated summary and are not used]
+H2-01:B-0140	evidence	the "levels stable, taxonomy variable" pattern depends on annotation scheme
+H2-01:B-0141	evidence	Here the direction is contested.
+H2-01:B-0144	evidence	The feature sets differ in size and sparsity, so the F statistics are not commensurable.
+H2-01:B-0146	access	[Nelson2016; FT via an automated summary; figures not re-verified]
+H2-01:B-0148	evidence	The same data can support turnover or constancy depending on resolution.
+H2-01:B-0149	evidence	use different function definitions ... and cannot be pooled
+H2-01:B-0150	evidence	No microbial metagenomic study was found that holds taxonomy fixed while habitat varies
+H2-01:B-0151	access	per the search agent's reading, turnover dominated at global scale
+H2-01:B-0152	evidence	concerns expression, not gene content
+H2-01:B-0153	evidence	**Microbial, direct but single-habitat.**
+H2-01:B-0156	evidence	This compares functional covariation with *taxonomic covariation*, not with taxonomic composition itself.
+H2-01:B-0157	evidence	The cohorts differ by disease state, not habitat.
+H2-01:B-0158	evidence	Shared-member and common-factor cautions apply (Section 3.2).
+H2-01:B-0160	evidence	covariation among community genomic traits, some possibly technical in origin [Barberan2012; AB]
+H2-01:B-0161	evidence	None of these measures whether the covariation differs by habitat.
+H2-01:B-0166	evidence	No trait-ecology study of temporal CWM covariation was found.
+H2-01:B-0169	evidence	(... Galand2018 abstract), but each is a single study for its specific quantity

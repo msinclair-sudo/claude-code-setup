@@ -1,0 +1,15 @@
+id	reason	quote
+NFERT:A-004	evidence	ESTABLISHED BUT QUALIFIED, with strong direct evidence bounded by wide variability in fixation fraction and by fertiliser suppression of fixation
+NFERT:A-005	evidence	the link is WEAKLY / ONLY INDIRECTLY SUPPORTED
+NFERT:A-006	evidence	measures yield gain rather than input reduction at constant yield (INDIRECT; Schütz et al. 2018), free-living fixation is modest (INDIRECT; Ladha et al. 2022)
+NFERT:A-007	evidence	No reviewed source isolates microbial-community efficiency from confounding soil and management variables
+NFERT:B-0015	evidence	the review correctly found that weakly supported
+NFERT:B-0029	evidence	The conversion is arithmetic applied to the cited per-ammonia values, not a separately measured quantity.
+NFERT:B-0053	evidence	the support is mostly indirect
+NFERT:B-0057	evidence	Two qualifications bound even this channel.
+NFERT:B-0062	evidence	none isolates the microbial term cleanly
+NFERT:B-0064	evidence	Their support for a reduced requirement is INDIRECT: the fixed quantities are rarely large enough
+NFERT:B-0067	evidence	INDIRECT for the substitution question, because it measures yield gain at a given input rather than input reduction at a held yield
+NFERT:B-0070	evidence	the lever is the measured soil supply, not a demonstrated property of microbial-community efficiency
+NFERT:B-0071	evidence	concerns legume inclusion, a deliberate management choice, not the spontaneous efficiency of a resident community
+NFERT:B-0073	evidence	Attribution: reduced fertiliser need co-varies with organic matter, water, and rotation, so the microbial contribution is hard to separate.

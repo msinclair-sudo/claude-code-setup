@@ -1,0 +1,150 @@
+id	type	reason	quote
+MB-01:C-001	positive		
+MB-01:C-002	positive		
+MB-01:C-003	other		
+MB-01:C-004	negative	evidence	used any high-throughput community sequencing
+MB-01:C-005	negative	evidence	not a 16S-only figure, and it is SINGLE SOURCE
+MB-01:C-006	negative	evidence	The review contradicts itself
+MB-01:C-007	negative	evidence	the Search record says no angle searched them
+MB-01:C-008	gap	not given	
+MB-01:C-009	gap	not given	
+MB-01:C-010	positive		
+MB-01:C-011	negative	evidence	not at all of them
+MB-01:C-012	gap	not given	
+MB-01:C-013	negative	evidence	showed little or no detectable effect
+MB-01:C-014	positive		
+MB-01:C-015	negative	evidence	rests on one 7-taxon vaginal dataset
+MB-01:C-016	negative	evidence	contested by Fouhy 2016
+MB-01:C-017	negative	evidence	SINGLE DATASET, not as a field-wide ordering
+MB-01:C-018	negative	evidence	mostly come from one or two small mocks
+MB-01:C-019	negative	both	one 16S cell-mixture dataset and one shotgun spike-in known only secondarily
+MB-01:C-020	other		
+MB-01:C-021	negative	evidence	comes from the Brooks 16S cell mixtures, not from a shotgun dataset
+MB-01:C-022	other		
+MB-01:C-023	positive		
+MB-01:C-024	negative	evidence	predictions from one source
+MB-01:C-025	negative	not given	
+MB-01:C-026	negative	access	in Zhou 2013's supplementary Table S3; the main text does not state them and they were not verified
+MB-01:C-027	negative	evidence	a single study (Kembel 2012) that pools ocean and skin
+MB-01:C-028	negative	access	rest on a full text that was not openly retrievable
+MB-01:C-029	gap	not given	
+MB-01:C-030	negative	evidence	comes from one dataset
+MB-01:C-031	negative	evidence	modelled the same 24 Oklahoma grassland soils
+MB-01:C-032	negative	evidence	from the same laboratory
+MB-01:C-033	negative	evidence	cut against pure sampling
+MB-01:C-034	negative	evidence	plateaued at 39% near 30,000 reads
+MB-01:C-035	negative	evidence	'biases other than random sampling'
+MB-01:C-036	negative	evidence	weak and contested
+MB-01:C-037	negative	evidence	one caecal extract (Barlow 2020, SINGLE SOURCE)
+MB-01:C-038	negative	evidence	are each single studies
+MB-01:C-039	negative	evidence	shown only between biological samples, not among technical replicates
+MB-01:C-040	gap	not given	
+MB-01:C-041	positive		
+MB-01:C-042	positive		
+MB-01:C-043	negative	evidence	presents statistical argument plus a worked simulated example
+MB-01:C-044	negative	evidence	understates the evidence against rarefying
+MB-01:C-045	negative	evidence	is between qPCR and flow cytometry, not ddPCR and flow
+MB-01:C-046	negative	evidence	the authors conclude that the internal-standard method is quantitative
+MB-01:C-047	negative	evidence	does not give the authors' conclusion
+MB-01:C-048	negative	not given	
+MB-01:C-049	negative	evidence	has one microbial test
+MB-01:C-050	negative	evidence	the evidence is non-microbial
+MB-01:C-051	gap	not given	
+MB-01:C-052	other		
+MB-01:C-053	other		
+MB-01:C-054	positive		
+MB-01:C-055	negative	evidence	it is from the Brooks 16S cell mixtures
+MB-01:C-056	negative	evidence	the abstract gives them for 515F-Y/806R
+MB-01:C-057	negative	evidence	it is qPCR versus flow (r = -0.50)
+MB-01:C-058	negative	evidence	the source says after OTU clustering and singleton removal
+MB-01:C-059	negative	evidence	reported without the word 'distance'
+MB-01:C-060	other		
+MB-01:C-061	negative	evidence	its own sensitivity note says the ordering rests on McLaren/Brooks
+MB-01:C-062	negative	evidence	includes unsearched field-sampling steps
+MB-01:C-063	negative	evidence	these are one dataset and one lab
+MB-01:C-064	negative	evidence	handles Willis 2019 asymmetrically
+MB-01:C-065	negative	access	could not be confirmed as open full text by Europe PMC or PMC
+MB-01:C-066	other		
+MB-01:C-067	negative	evidence	The full text places this in the Brooks et al. 2015 16S cell mixtures
+MB-01:C-068	negative	evidence	reported only qualitatively
+MB-01:C-069	negative	evidence	The error survives in a source the synthesis agent says it re-opened and checked
+MB-01:C-070	negative	evidence	the abstract gives the SAR11 bias
+MB-01:C-071	negative	evidence	The full text reports qPCR versus flow-cytometry enumeration
+MB-01:C-072	negative	evidence	The source says 'OTU clustering and singleton removal
+MB-01:C-073	other		
+MB-01:C-074	negative	access	returned only front matter for each; ASM and PMC HTML pages were bot-blocked
+MB-01:C-075	negative	access	are in its abstract and should be labelled AB-derived
+MB-01:C-076	negative	access	could not be confirmed, and the review shows no evidence of full-text reading
+MB-01:C-077	other		
+MB-01:C-078	negative	access	The best-fit results are in supplementary Table S3; the main text does not state which distributions won
+MB-01:C-079	negative	access	rests on unread or unshown supplementary material
+MB-01:C-080	negative	access	labelled AB, but an open PMC copy exists
+MB-01:C-081	negative	evidence	without the authors' conclusion
+MB-01:C-082	negative	evidence	without 'distance' the figure reads as high similarity
+MB-01:C-083	negative	both	firmer than the access and source base allow (one re-analysed 454 dataset)
+MB-01:C-084	negative	evidence	rest on one 7-taxon dataset
+MB-01:C-085	negative	evidence	rests on one caecal extract with four technical replicates
+MB-01:C-086	negative	evidence	rests on one 454 dataset of 24 Oklahoma soils
+MB-01:C-087	negative	evidence	generalises from Nearing 2018
+MB-01:C-088	negative	evidence	rests on Schirmer 2015 alone
+MB-01:C-089	negative	evidence	from one author who also develops competing classifiers
+MB-01:C-090	negative	evidence	rests on Haas 2011 (Sanger and 454) alone
+MB-01:C-091	negative	both	rests on one abstract-only study
+MB-01:C-092	negative	both	rests on Parada 2016 (abstract only), for one primer pair
+MB-01:C-093	reference		
+MB-01:C-094	reference		
+MB-01:C-095	reference		
+MB-01:C-096	reference		
+MB-01:C-097	reference		
+MB-01:C-098	positive		
+MB-01:C-099	reference		
+MB-01:C-100	reference		
+MB-01:C-101	positive		
+MB-01:C-102	other		
+MB-01:C-103	positive		
+MB-01:C-104	positive		
+MB-01:C-105	gap	not given	
+MB-01:C-106	gap	not given	
+MB-01:C-107	gap	access	known secondarily via McLaren
+MB-01:C-108	gap	not given	
+MB-01:C-109	gap	evidence	only the developer's own claim
+MB-01:C-110	gap	both	The 16S rate is one preprint abstract
+MB-01:C-111	gap	access	the review knows them only secondarily and did not open them
+MB-01:C-112	gap	evidence	rests on prediction-only sources
+MB-01:C-113	gap	not given	
+MB-01:C-114	gap	access	were not read
+MB-01:C-115	gap	evidence	confined to one soil laboratory (Zhou, Wen) and one mouse caecum
+MB-01:C-116	gap	not given	
+MB-01:C-117	gap	access	were not benchmarked from primary sources
+MB-01:C-118	gap	not given	
+MB-01:C-119	gap	evidence	Archaeal evidence is thin
+MB-01:C-120	negative	evidence	cited only as support
+MB-01:C-121	negative	evidence	Its own contrary evidence goes unreported
+MB-01:C-122	other		
+MB-01:C-123	negative	evidence	not held to the same caution
+MB-01:C-124	negative	evidence	the paper gives statistical argument plus a worked simulated example
+MB-01:C-125	other		
+MB-01:C-126	negative	evidence	The evidence class is applied unevenly
+MB-01:C-127	negative	evidence	without the authors' conclusion
+MB-01:C-128	negative	evidence	comes from 7 taxa mixed as cells and reanalysed
+MB-01:C-129	negative	evidence	is weighed as 'limiting'
+MB-01:C-130	negative	both	small-n and access limits
+MB-01:C-131	negative	evidence	each also rest on a single mock design
+MB-01:C-132	negative	evidence	reported as if they described 16S amplicon practice
+MB-01:C-133	negative	evidence	merges non-16S genome and exome libraries
+MB-01:C-134	negative	evidence	answered together from one study
+MB-01:C-135	negative	evidence	One dataset is counted as several studies
+MB-01:C-136	negative	evidence	pools free-living (soil, water, sediment) and plant-associated samples
+MB-01:C-137	negative	evidence	mixing measurement types
+MB-01:C-138	negative	evidence	the reviewer's framing of what matters for analysis design, not a literature finding
+MB-01:C-139	other		
+MB-01:C-140	negative	evidence	the reviewer's own reconciliation
+MB-01:C-141	negative	evidence	not marked as the reviewer's reading
+MB-01:C-142	negative	evidence	phrased as the review's own causal diagnosis
+MB-01:C-143	negative	evidence	mix makers' claims and simulation results with measured results
+MB-01:C-144	other		
+MB-01:C-145	other		
+MB-01:C-146	positive		
+MB-01:C-147	negative	not given	
+MB-01:C-148	negative	evidence	several choices showed no detectable effect
+MB-01:C-149	negative	not given	

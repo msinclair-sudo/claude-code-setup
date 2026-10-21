@@ -1,0 +1,24 @@
+id	reason	quote
+TSL:A-008	evidence	an engineering instantiation, not an independently validated specificity measure
+TSL:A-009	evidence	group df has no head-to-head support against collection df or IC
+TSL:A-012	evidence	log binning is only a *proposed* mitigation for distribution analysis [S7b], not validated for label banding
+TSL:A-013	evidence	documented as **conventions, not benchmarked optima** (the primary survey notes "no systematic study" existed and tests only simulated LDA corpora)
+TSL:A-014	evidence	no controlled head-to-head exists
+TSL:A-015	evidence	indirect for the label-ordering task
+TSL:A-016	evidence	Report this as "no controlled evidence found," not as a point for any option.
+TSL:B-0011	evidence	Caveat: df is a *frequency proxy*, not a definition of semantic specificity
+TSL:B-0015	evidence	Caveat: needs a unified root; WordNet has none naturally.
+TSL:B-0017	evidence	the "spread across many classes" gloss is the docs' own simplification
+TSL:B-0018	evidence	**not** independently benchmarked
+TSL:B-0020	evidence	produced no surviving verified claim tying them to *altitude ordering*; treat as known weighting signals, not validated specificity-altitude axes
+TSL:B-0026	evidence	Indirect:* this is is-a taxonomy induction, not cluster-label ordering.
+TSL:B-0032	evidence	it's a *proposal* for distribution analysis (Milojević 2010), debated vs MLE (Clauset/Shalizi/Newman), and **not validated for label ordering**
+TSL:B-0034	evidence	conventions, not optima; evidence is a **single simulated-corpus LDA study**
+TSL:B-0039	evidence	Appears **not done**; closest tests are WordNet/taxonomy induction (indirect).
+TSL:B-0041	evidence	Primary evidence is one simulated-LDA study.
+TSL:B-0044	evidence	leans heavily on one simulated-LDA Monte Carlo study (Bystrov et al.)
+TSL:B-0045	evidence	*indirect* for descriptive cluster-label ordering
+TSL:B-0046	evidence	rests on principled monotonicity (IC) plus indirect empirical support, with the direct label-ordering head-to-head genuinely absent
+TSL:B-0036	evidence	**no surviving claims**
+TSL:B-0037	evidence	Treat as unanswered by this corpus.
+TSL:B-0042	evidence	rare-term specificity — uncovered

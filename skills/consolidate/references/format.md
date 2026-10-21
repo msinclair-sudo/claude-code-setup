@@ -102,7 +102,7 @@ the words and the critic pull apart, the critic wins; when the critic gives no v
 | `trail` | where the note verified it: `<ID> §<start of a heading or callout title>`, more after commas (`MB-01 §2.2, §2.14`); `§critic` and `§answers` reach those blocks |
 | `from` | the inventory items it comes from and accounts for: `MB-01:I-0012`, `MB-01:B-0340`, ranges `MB-01:I-0012..0015`, critique items `MB-01:C-004`. Never empty |
 | `rating` (optional) | the note's own grade for this claim, in its words and in quotes: `rating: "Moderate"`, `rating: "Confidence: high (3-0)"`, `rating: "well established"` |
-| `limit` (optional) | `access`, or `access and evidence`, with its basis: the note says the claim's standing or verification is limited because a source was not accessed (abstract only, not obtained, a figure not confirmable from the text read). Only when the note gives that reason |
+| `limit` (optional) | `access`, or `access and evidence`, with its basis: the note says the claim's standing or verification is limited because a source was not accessed (abstract only, not obtained, known only second-hand or "not read in the original", a figure not confirmable from the text read). Only when the note gives that reason |
 
 All but `rating` and `limit` are required, and none may be empty.
 

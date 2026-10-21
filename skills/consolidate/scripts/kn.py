@@ -882,7 +882,7 @@ def entry_block(e, items, default, trail=False):
     for ref in entry_refs(fl, default):
         for g in expand(ref) or []:
             x = items.get(g)
-            out.append(f"> {g} [{x['where'][:40]}] {x['text']}\n>\n" if x else f"> {g}: not in inventory\n>\n")
+            out.append(f"> {g} [{x['where']}] {x['text']}\n>\n" if x else f"> {g}: not in inventory\n>\n")
     return "".join(out)
 
 

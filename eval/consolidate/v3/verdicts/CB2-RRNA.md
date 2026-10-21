@@ -1,0 +1,66 @@
+mimag-hq.1: ok
+mimag-hq.2: ok
+catalogue-recovery.1: ok
+catalogue-recovery.2: ok
+catalogue-recovery.3: ok
+catalogue-recovery.4: holds: holds says "full-scale tropical activated sludge", but the quoted text says only "Tropical activated sludge | engineered"; "full-scale" is not in it.
+catalogue-recovery.5: ok
+catalogue-recovery.6: ok
+catalogue-recovery.7: ok
+catalogue-recovery.8: ok
+catalogue-recovery.9: ok
+marker-gap.1: ok
+marker-gap.2: ok
+marker-gap.3: holds: holds says "full-scale tropical activated sludge", but the quoted text (B-0038, B-0039) says only "Activated sludge (Haryono et al.)"; neither "full-scale" nor "tropical" is in it.
+marker-gap.4: ok
+marker-gap.5: ok
+marker-gap.6: holds: the entry and its text say "four environments", but holds lists only three (soil, activated sludge, human gut), so the setting does not match the text.
+assembly-graph-collapse.1: ok
+assembly-graph-collapse.2: ok
+assembly-graph-collapse.3: ok
+assembly-graph-collapse.4: ok
+assembly-graph-collapse.5: ok
+assembly-graph-collapse.6: ok
+assembly-graph-collapse.7: ok
+copy-number.1: ok
+copy-number.2: ok
+binning.1: ok
+binning.2: ok
+targeted-reconstruction.1: ok
+targeted-reconstruction.2: ok
+targeted-reconstruction.3: ok
+targeted-reconstruction.4: ok
+targeted-reconstruction.5: ok
+targeted-reconstruction.6: ok
+targeted-reconstruction.7: ok
+linking-tools.1: ok
+read-length-axis.1: ok
+read-length-axis.2: ok
+read-length-axis.3: ok
+read-length-axis.4: ok
+read-length-axis.5: ok
+read-length-axis.6: ok
+read-length-axis.7: ok
+assembler-axis.1: ok
+assembler-axis.2: ok
+assembler-axis.3: ok
+depth-axis.1: ok
+depth-axis.2: ok
+depth-axis.3: ok
+depth-axis.4: ok
+depth-axis.5: ok
+study-origin-axis.1: ok
+study-origin-axis.2: ok
+study-origin-axis.3: ok
+study-origin-axis.4: ok
+study-origin-axis.5: ok
+recovery-variation.1: ok
+dns.1: ok
+dns.2: ok
+dns.3: ok
+dns.4: ok
+dns.5: ok
+dns.6: ok
+dns.7: ok
+
+Counts: stronger 0, conf 0, numbers 0, absent 0, critic 0, merged 0, holds 3 (64 entries; 61 ok)

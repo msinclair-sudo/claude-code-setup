@@ -1,0 +1,328 @@
+id	reason	quote
+MB-01:I-0001	evidence	(Brooks 2015) [FT; meas; cont]
+MB-01:I-0002	evidence	One reanalysis finds it consistent ... (McLaren 2019) [FT; model; single]
+MB-01:I-0003	evidence	(Sze and Schloss 2019) [FT; meas; single]
+MB-01:I-0006	evidence	(Penton 2016) [FT; meas; single]
+MB-01:I-0007	evidence	(McLaren 2019) [FT, re-opened; deriv/model; single dataset]
+MB-01:I-0008	evidence	(Brooks 2015) [FT; meas; cont]
+MB-01:I-0011	evidence	(Sinha 2017, MBQC) [FT; meas; single]
+MB-01:I-0012	evidence	(Carini 2016) [AB; meas; cont]
+MB-01:I-0013	evidence	(Lennon 2018) [FT; meas; cont]
+MB-01:I-0014	evidence	**Older soil work (INDIRECT, pre-NGS).** ... (Frostegard 1999) [AB; meas; repl]
+MB-01:I-0016	evidence	(Zemb 2020) [FT; meas; single]
+MB-01:I-0021	evidence	(Sipos 2007) [AB; meas; single; T-RFLP, pre-NGS]
+MB-01:I-0022	evidence	(Fitzpatrick 2018) [FT; meas; single]
+MB-01:I-0023	evidence	(Johnson 2019) [FT; deriv; single]
+MB-01:I-0026	evidence	(Laursen 2017) [FT; meas; single]
+MB-01:I-0027	evidence	(Silverman 2021) [FT; meas; single]
+MB-01:I-0028	evidence	(Sze and Schloss 2019) [FT, re-opened; meas; single]
+MB-01:I-0029	evidence	(Sipos 2007) [AB; meas; single]
+MB-01:I-0030	evidence	(Acinas 2005) [AB; meas; single; Sanger]
+MB-01:I-0031	evidence	(Kennedy 2014) [AB; meas; single]
+MB-01:I-0033	evidence	(Smith and Peay 2014) [FT; meas; INDIRECT]
+MB-01:I-0034	evidence	(Kebschull and Zador 2015) [FT; meas; single; INDIRECT, non-16S]
+MB-01:I-0036	evidence	**Supportive (modelled).** ... (Kembel 2012) [FT; model; cont]
+MB-01:I-0039	evidence	(Schloss 2021) [FT; deriv; cont]
+MB-01:I-0040	evidence	(Callahan 2019) [FT; meas; single; developer]
+MB-01:I-0041	evidence	(Schirmer 2015) [FT; meas; single]
+MB-01:I-0043	evidence	Kircher 2012 [FT; meas; repl; INDIRECT]
+MB-01:I-0044	evidence	Costello 2018 [FT; meas; repl; INDIRECT]
+MB-01:I-0045	evidence	Wright and Vetsigian 2016 [FT; meas; single; INDIRECT]
+MB-01:I-0046	evidence	Edgar 2016a [AB; PREPRINT; meas; single]
+MB-01:I-0047	evidence	Minich 2019 [FT; meas; single]
+MB-01:I-0048	evidence	Esling 2015 [FT; meas; INDIRECT]
+MB-01:I-0049	evidence	Schnell 2015 [AB; meas; INDIRECT]
+MB-01:I-0051	evidence	**Contrary.** ... (Kopylova 2016) [FT; meas; cont]
+MB-01:I-0053	evidence	(Straub 2020) [FT; meas; repl; authors also built nf-core/ampliseq]
+MB-01:I-0055	evidence	(Callahan 2016) [FT; meas; developer claim]
+MB-01:I-0056	evidence	(Reitmeier 2021) [FT; meas; single]
+MB-01:I-0057	evidence	(Edgar 2017a) [FT; meas; single]
+MB-01:I-0058	evidence	(Glassman and Martiny 2018) [FT; meas; cont]
+MB-01:I-0059	evidence	(Chiarello 2022) [FT; meas; cont]
+MB-01:I-0060	evidence	(Joos 2020) [FT; meas; single]
+MB-01:I-0061	evidence	(Edgar 2018a) [AB; deriv; single]
+MB-01:I-0062	evidence	(Caruso 2019) [FT; meas; single]
+MB-01:I-0064	evidence	(Edgar 2018b) [FT; meas; single]
+MB-01:I-0065	evidence	(Bokulich 2018) [FT; meas; developer claim]
+MB-01:I-0066	evidence	(Kaehler 2019) [FT; meas; developer claim]
+MB-01:I-0067	evidence	(Murali 2018) [FT; meas; developer claim]
+MB-01:I-0068	evidence	(Edgar 2018c) [FT; deriv; single]
+MB-01:I-0069	evidence	(Almeida 2018) [FT; model; single]
+MB-01:I-0071	evidence	(Karstens 2019) [FT; meas; single]
+MB-01:I-0072	evidence	(Minich 2019) [FT; meas; single]
+MB-01:I-0073	evidence	(Hornung 2019) [FT; meas; single]
+MB-01:I-0075	evidence	(Zhou 2011) [FT per statistics angle; meas; single]
+MB-01:I-0076	evidence	(Edgar 2017b, UNBIAS) [AB; PREPRINT; meas; single]
+MB-01:I-0078	evidence	(Kelly 2019) [FT; model; INDIRECT]
+MB-01:I-0079	evidence	from only 175 archaeal records (148 species)
+MB-01:I-0081	evidence	(Roller 2016) [AB; meas; single]
+MB-01:I-0082	evidence	Thompson 2017 [FT; deriv; single]
+MB-01:I-0083	evidence	Nemergut 2016 [FT; deriv; single]
+MB-01:I-0084	evidence	(Schloss 2024b) [FT, re-opened; meas; single]
+MB-01:I-0085	evidence	(Zhou 2013) [FT; model; single]
+MB-01:I-0087	evidence	(Shoemaker 2017) [AB; model; single]
+MB-01:I-0088	evidence	(Grilli 2020) [FT, partly re-opened; model; single]
+MB-01:I-0090	evidence	(Lin 2019) [FT; meas; single]
+MB-01:I-0091	evidence	(Barlow 2020) [FT; meas; single]
+MB-01:I-0092	evidence	(Zhou 2011) [FT; meas; single]
+MB-01:I-0093	evidence	(Zhou 2013) [FT; model; single]
+MB-01:I-0094	evidence	For one caecal extract ... (Barlow 2020) [FT; meas; single]
+MB-01:I-0095	evidence	(Marioni 2008) [FT; meas; INDIRECT]
+MB-01:I-0098	evidence	(Harrison 2020) [AB; model; single]
+MB-01:I-0099	evidence	(Silverman 2018) [FT; model; single]
+MB-01:I-0100	evidence	(Dyrhovden 2021) [FT; meas; single]
+MB-01:I-0101	evidence	(Yeh 2018) [FT; meas; single]
+MB-01:I-0102	evidence	(Silverman 2020) [AB; model; single]
+MB-01:I-0103	evidence	(Kaul 2017) [AB; model; single]
+MB-01:I-0104	evidence	(Schloss 2024a) [FT; assert], which conflicts with Grilli 2020's sampling interpretation
+MB-01:I-0106	evidence	(Gotelli and Colwell 2001) [AB; assert; INDIRECT]
+MB-01:I-0107	evidence	(Chao and Jost 2012) [FT; model; INDIRECT]
+MB-01:I-0108	evidence	(Chao 2014) [FT; model; INDIRECT]
+MB-01:I-0109	evidence	(Alroy 2026) [AB; model; single; INDIRECT]
+MB-01:I-0110	evidence	(Gloor 2017) [AB; assert; cont]
+MB-01:I-0111	evidence	(Shelton 2023) [AB; model; INDIRECT]
+MB-01:I-0113	evidence	(Schloss 2024b) [FT, re-opened; model; cont]
+MB-01:I-0114	evidence	(Willis 2019) [FT; assert; cont]
+MB-01:I-0116	evidence	(Deng 2024) [FT; assert; single]
+MB-01:I-0117	evidence	(Chiu and Chao 2016) [AB; model; single]
+MB-01:I-0118	evidence	(Llorens-Rico 2021) [FT; model; single]
+MB-01:I-0119	evidence	(Lundin 2012) [AB; meas; single]
+MB-01:I-0121	evidence	(McMurdie and Holmes 2014) [FT; model; cont]
+MB-01:I-0122	evidence	(Schloss 2024a) [FT; model; single]
+MB-01:I-0123	evidence	(McKnight 2019) [AB; model; single]
+MB-01:I-0124	evidence	(Thorsen 2016) [AB; meas; single]
+MB-01:I-0125	evidence	(Cameron 2021) [FT; meas; single]
+MB-01:I-0126	evidence	(Kers and Saccenti 2022) [AB; meas; single]
+MB-01:I-0127	evidence	(Hong 2022) [FT; model; single]
+MB-01:I-0129	evidence	(Nearing 2022) [FT; meas; single]
+MB-01:I-0131	evidence	(Calgaro 2020) [AB; meas; single]
+MB-01:I-0133	evidence	(Pelto 2025) [AB; meas; single]
+MB-01:I-0134	evidence	(Morton 2019) [AB; meas; single]
+MB-01:I-0135	evidence	(McLaren 2022) [AB; PREPRINT; model; single]
+MB-01:I-0137	evidence	(Barlow 2020) [FT; meas; single]
+MB-01:I-0138	evidence	(Smets 2016) [AB; meas; single]
+MB-01:I-0139	evidence	(Jian 2020) [FT; meas; single]
+MB-01:I-0140	evidence	(Galazzo 2020) [FT; meas; single]
+MB-01:I-0142	evidence	(Lin 2019) [FT; meas; single]
+MB-01:A-017	evidence	(Hornung 2019, single source)
+MB-01:A-019	evidence	How often each choice is made in practice is weak; the only usage survey is Hornung 2019.
+MB-01:A-021	evidence	Within steps, the recommended choice is disputed.
+MB-01:A-022	evidence	Quality-filter stringency: Bokulich 2013 versus Kopylova 2016.
+MB-01:A-023	evidence	OTUs versus ASVs: Schloss 2021 versus the ASV developers.
+MB-01:A-024	evidence	Pooled versus single PCR: Marotz 2019 and Smith and Peay 2014 versus the triplicate pooling in the EMP protocol.
+MB-01:A-026	evidence	*Not measured:* No source found on how often each choice is used across the field
+MB-01:A-027	evidence	No source found that documents field sampling choices for water ... or for host tissue; the angles did not search them.
+MB-01:A-033	evidence	The figure on how often controls are reported rests only on Hornung 2019.
+MB-01:A-041	evidence	(Rubin 2013; single soil)
+MB-01:A-045	evidence	(Fouhy 2016, contrary)
+MB-01:A-047	evidence	(Carini 2016, abstract) but had minimal effect in another study ... (Lennon 2018); contested
+MB-01:A-049	both	(Costea 2017, known only via McLaren; secondary; indirect)
+MB-01:A-058	evidence	(Silverman 2021, single study)
+MB-01:A-063	evidence	(Kebschull 2015, indirect; Dyrhovden 2021)
+MB-01:A-067	evidence	(single source; 7 taxa)
+MB-01:A-082	evidence	(Costello 2018, indirect, non-16S)
+MB-01:A-083	evidence	(Wright 2016, indirect)
+MB-01:A-084	evidence	(Edgar 2016a, preprint abstract)
+MB-01:A-086	evidence	(Schnell 2015, other markers)
+MB-01:A-089	evidence	(Yeh 2018, single source)
+MB-01:A-096	evidence	The direction of the OTU versus ASV richness difference conflicts between studies
+MB-01:A-099	evidence	Edgar 2018b argues that mocks overstate accuracy
+MB-01:A-106	evidence	An abstract-only preprint reports essentially no correlation
+MB-01:A-108	evidence	In the one dataset modelled for this question
+MB-01:A-109	evidence	The original authors read the same data as composition-dependent (Brooks 2015).
+MB-01:A-113	evidence	Magnitudes per step are moderate: most come from one or two mocks of 7-20 taxa, often on 454 or Ion Torrent.
+MB-01:A-114	evidence	weak to moderate: it rests mainly on one reanalysis of 7 taxa, with contrary or limiting field evidence
+MB-01:A-115	evidence	*Conflicts:* Composition dependence of bias: Brooks 2015 versus McLaren 2019, on the same data.
+MB-01:A-116	evidence	Effect of cycle number: Sipos 2007, Acinas 2005 and Brooks 2015 versus Suzuki 1996, Silverman 2021 and Sze and Schloss 2019 (mock).
+MB-01:A-117	evidence	Size of extraction effect: Fouhy 2016 versus Albertsen 2015 and MBQC.
+MB-01:A-118	evidence	Relic DNA: Carini 2016 versus Lennon 2018.
+MB-01:A-119	evidence	Copy-number correction: Kembel 2012 versus Louca 2018, Starke 2021 and McLaren 2019.
+MB-01:A-120	evidence	Direction of the OTU versus ASV richness difference: Glassman and Martiny 2018 versus Chiarello 2022.
+MB-01:A-121	evidence	Whether mock-derived bias applies to field samples: Parada 2016 versus calibration claims
+MB-01:A-122	evidence	*Not measured:* No 16S-specific measurement of index hopping on patterned flow cells (NovaSeq) was found.
+MB-01:A-123	evidence	No archaeal-rich mock was found beyond Pinto and Raskin 2012 and D'Amore 2016.
+MB-01:A-124	evidence	No mock study in soil matrix with known composition was found
+MB-01:A-125	evidence	has not been measured in the sources found
+MB-01:A-131	evidence	would weaken substantially without McLaren 2019 and its source data (Brooks 2015)
+MB-01:A-132	evidence	The per-cycle PCR bias magnitude rests on Silverman 2021 alone.
+MB-01:A-137	evidence	only relative efficiencies have been measured
+MB-01:A-138	evidence	(Silverman 2021, single source)
+MB-01:A-139	evidence	(Kelly 2019, indirect)
+MB-01:A-140	evidence	Absolute per-cycle efficiencies for universal 16S primers on environmental templates were not found.
+MB-01:A-143	evidence	(Vetrovsky and Baldrian 2013, derived; genome collection skewed)
+MB-01:A-144	evidence	from only 148 species in rrnDB 2015
+MB-01:A-147	evidence	Soil: predicted, not measured; ... (Thompson 2017, single source)
+MB-01:A-149	evidence	Water: no separate value was found.
+MB-01:A-152	evidence	All environment values are predictions from reference genomes.
+MB-01:A-153	evidence	these predictions are inaccurate beyond about 15% divergence
+MB-01:A-158	evidence	(Schloss 2024b; per study, not per run)
+MB-01:A-159	evidence	Makers claim
+MB-01:A-160	evidence	No peer-reviewed coefficient of variation of reads within a run after equimolar pooling was found.
+MB-01:A-165	evidence	(Shoemaker 2017, abstract only, no per-environment breakdown)
+MB-01:A-166	access	(Grilli 2020; per-biome figures in supplements not read)
+MB-01:A-168	not given	*Strength:* Moderate for copy-number ranges across genomes
+MB-01:A-169	evidence	Weak for environment-level copy number: predicted, single source, and with prediction accuracy itself contested.
+MB-01:A-170	not given	Moderate for documented cycle numbers.
+MB-01:A-171	evidence	Weak for per-cycle efficiencies: relative only, and single source.
+MB-01:A-172	not given	Moderate for reads per sample per study.
+MB-01:A-173	evidence	Absent for the within-run coefficient of variation.
+MB-01:A-174	evidence	Weak for abundance-distribution shapes split by environment, because the field-wide sources do not separate soil, water and host.
+MB-01:A-175	evidence	*Conflicts:* Soil SAD shape: exponential or inverse gamma (Zhou 2013) versus lognormal
+MB-01:A-176	evidence	the conflict is only partial; Haegeman 2013 argues the tail is not identifiable
+MB-01:A-177	evidence	Copy-number estimates for environments conflict with Louca 2018's finding that the predictions are inaccurate.
+MB-01:A-178	evidence	*Not measured:* Not found: measured (not predicted) community-average copy number
+MB-01:A-183	evidence	Environment-level copy number rests entirely on Thompson 2017.
+MB-01:A-184	evidence	The within-study read range rests mainly on Schloss 2024b Table 1.
+MB-01:A-185	evidence	Relative per-cycle efficiency rests on Silverman 2021.
+MB-01:A-186	evidence	Soil SAD shape rests on Zhou 2013 and Haegeman 2013.
+MB-01:A-187	evidence	extra-sampling variation is real but measured in few studies
+MB-01:A-190	evidence	(Smith and Peay 2014, ITS, indirect)
+MB-01:A-191	evidence	(Marioni 2008, indirect)
+MB-01:A-195	evidence	measured in one artificial-gut series ... (Silverman 2018, single source)
+MB-01:A-196	evidence	(Kebschull 2015, indirect)
+MB-01:A-198	evidence	(Yeh 2018, single source)
+MB-01:A-201	evidence	(Kelly 2019, indirect, modelled)
+MB-01:A-214	not given	*Strength:* Moderate that multinomial or Poisson sampling explains most replicate disagreement
+MB-01:A-215	evidence	Weak on how much non-sampling technical variance there is, since quantified values come from single studies
+MB-01:A-216	not given	Moderate for the depth dependence of replicate agreement
+MB-01:A-217	evidence	No study fits Dirichlet-multinomial overdispersion to 16S technical replicates
+MB-01:A-218	evidence	*Conflicts:* Zhou 2013 (sampling explains replicate variation) versus Silverman 2018 (76% beyond counting)
+MB-01:A-219	evidence	Grilli 2020 treats zeros as sampling; Schloss 2024a asserts zeros are more likely true absence.
+MB-01:A-220	evidence	no effect at moderate to high input ... but strong replicate disagreement before PCR at low load
+MB-01:A-221	evidence	The difference in load is the likely reason, though no single study tested both conditions.
+MB-01:A-222	evidence	*Not measured:* Not found: a 16S study testing whether technical-replicate variance
+MB-01:A-226	evidence	The 76% technical-beyond-counting figure rests on Silverman 2018 alone.
+MB-01:A-227	evidence	Depth curves for replicate overlap on MiSeq rest on Wen 2017.
+MB-01:A-228	evidence	The before-versus-after PCR split rests on Dyrhovden 2021.
+MB-01:A-229	evidence	The predicted reads for 90% overlap rest on Zhou 2013.
+MB-01:A-230	evidence	contested; no approach is shown to correct depth, load and taxon-specific bias together
+MB-01:A-234	evidence	in ecology it is argued to give less biased richness ratios (Chao and Jost 2012, indirect)
+MB-01:A-235	evidence	Alroy 2026 (abstract, non-microbial)
+MB-01:A-239	evidence	(Chao 2014, indirect)
+MB-01:A-243	evidence	(Llorens-Rico 2021, single source)
+MB-01:A-246	evidence	Schloss 2024a disputes their design
+MB-01:A-249	evidence	according to McKnight 2019 (abstract), but still depth-sensitive under Schloss's null
+MB-01:A-267	evidence	(Galazzo 2020, single source)
+MB-01:A-270	evidence	(Bullard 2010; Robinson and Oshlack 2010; Anders and Huber 2010, indirect)
+MB-01:A-273	evidence	Weak to moderate overall, because the answer depends on the simulation design and the strongest pro-rarefaction evidence comes mainly from one author.
+MB-01:A-275	evidence	rests mostly on simulations from one author (Schloss 2024b), contested by an assertion (Willis 2019)
+MB-01:A-276	evidence	Beta: contested, simulation-based.
+MB-01:A-278	evidence	Which method is best is contested.
+MB-01:A-279	evidence	weak on the agreement between quantification methods
+MB-01:A-280	evidence	*Conflicts:* Rarefying: McMurdie and Holmes 2014 versus Schloss 2024a and 2024b
+MB-01:A-281	evidence	Proportions for beta: McKnight 2019 versus Schloss 2024b.
+MB-01:A-282	evidence	Coverage-based standardisation: Chao and Jost 2012 versus Alroy 2026 (both non-microbial)
+MB-01:A-283	evidence	ANCOM-BC: maker claims versus Yang and Chen 2022 and Wirbel 2024. qPCR versus flow cytometry: Jian 2020 versus Galazzo 2020.
+MB-01:A-284	evidence	Simulation results flip with design choices
+MB-01:A-285	evidence	*Not measured:* Not found: an independent microbial amplicon benchmark of coverage-based standardisation
+MB-01:A-289	evidence	Ecological and RNA-seq origins are indirect.
+MB-01:A-290	evidence	rests on Schloss 2024b
+MB-01:A-291	evidence	Removing Schloss 2024b would leave rarefying contested
+MB-01:A-292	evidence	The divergence of absolute-quantification methods rests on Galazzo 2020.
+MB-01:A-293	evidence	The bias-invariance of ratio-based methods rests on McLaren 2019.
+MB-01:A-295	evidence	weak on how often each is used (only Hornung 2019)
+MB-01:A-299	evidence	Consistency across samples is shown on the ratio scale in one 7-taxon dataset.
+MB-01:A-301	not given	Strong qualitatively, moderate for magnitudes, weak for consistency.
+MB-01:A-303	evidence	Environment-level copy numbers are predicted only, from a single source.
+MB-01:A-304	evidence	Absolute per-cycle efficiencies and the within-run read CV were not found.
+MB-01:A-305	evidence	Abundance-distribution shapes are mostly not split by environment.
+MB-01:A-308	evidence	each mostly in a single study
+MB-01:A-309	evidence	**D5.** Contested.
+MB-01:A-310	evidence	in null-model simulations dominated by one author
+MB-01:A-313	evidence	Coverage-based standardisation has almost no microbial benchmark.
+MB-01:B-0017	evidence	Not found by any route
+MB-01:B-0018	evidence	No angle searched water-sampling or host-tissue sampling choices.
+MB-01:B-0039	not given	Whether bias is consistent across samples is less settled.
+MB-01:B-0040	evidence	The original authors of the same data read it as composition dependent (Brooks 2015).
+MB-01:B-0041	evidence	how to compare samples with unequal depth or load is a live dispute
+MB-01:B-0052	evidence	Otherwise not measured
+MB-01:B-0067	evidence	about 10% of total bias in one mock
+MB-01:B-0084	access	Lauber et al. 2010 is known only through Rubin's description (SEC; see Sources not obtained).
+MB-01:B-0086	evidence	SINGLE SOURCE.
+MB-01:B-0087	evidence	No source found on the effect of water sampling choices (volume, filter pore size) or host tissue sampling.
+MB-01:B-0097	evidence	**Contrary result.**
+MB-01:B-0100	evidence	**Relic DNA (contested).**
+MB-01:B-0102	both	(Costea 2017, known only via McLaren 2019) [SEC; INDIRECT, shotgun]
+MB-01:B-0111	evidence	(Lundberg 2013) [AB; makers' claim]
+MB-01:B-0117	evidence	The authors note that their mock "ground truth" carried its own bias
+MB-01:B-0125	evidence	**Does correction help?** Evidence runs both ways.
+MB-01:B-0127	evidence	SINGLE SOURCE, and only 7 points.
+MB-01:B-0129	evidence	(Illumina 16S guide) [DOCUMENTATION; maker's claim]
+MB-01:B-0131	access	(Gohl 2016) was not obtained in full
+MB-01:B-0136	both	which it read through a fetch-tool summary, probably at an earlier stage of curation
+MB-01:B-0137	evidence	(Callahan 2019) [developer claim]
+MB-01:B-0139	evidence	At the time of the issue the method had not been tested on NovaSeq data (DADA2 GitHub issue #791) [DOCUMENTATION; assert]
+MB-01:B-0141	evidence	Illumina index-hopping page [DOCUMENTATION; maker's claim]
+MB-01:B-0145	both	The 16S-specific evidence is thin: one preprint abstract and one plate study.
+MB-01:B-0150	evidence	(Edgar and Flyvbjerg 2015) [AB; developer claim]
+MB-01:B-0159	evidence	SINGLE SOURCE.
+MB-01:B-0160	evidence	**OTU versus ASV richness (contested).**
+MB-01:B-0171	evidence	(Edgar 2016b) [AB; PREPRINT; developer claim]
+MB-01:B-0180	evidence	(Davis 2018) [FT; developer claim]
+MB-01:B-0182	evidence	it is where the evidence is thinnest
+MB-01:B-0186	evidence	The authors list where the model may fail
+MB-01:B-0188	evidence	The two readings conflict
+MB-01:B-0193	evidence	**Strong pessimistic claim.** A preprint by the tool's author
+MB-01:B-0194	evidence	is reported as a single-source contrary result
+MB-01:B-0197	evidence	Only relative efficiencies were found.
+MB-01:B-0198	evidence	(SINGLE SOURCE)
+MB-01:B-0199	evidence	**Not found.** No absolute per-cycle efficiency for universal 16S primers on environmental templates was found by the lab angle
+MB-01:B-0202	evidence	Stoddard warns that means over all genomes mislead
+MB-01:B-0206	evidence	Every value found is predicted from reference genomes, not measured.
+MB-01:B-0208	evidence	No separate value found.
+MB-01:B-0211	evidence	the predictions underlying these values are unreliable for taxa more than about 15% divergent
+MB-01:B-0221	evidence	(Illumina guide) [maker's claim]
+MB-01:B-0225	evidence	**Not found.** No peer-reviewed coefficient of variation of reads per sample within a run
+MB-01:B-0228	evidence	**Across environments, not separated.**
+MB-01:B-0229	both	No per-environment breakdown in the abstract.
+MB-01:B-0230	access	Per-biome results are in supplementary figures that were not read.
+MB-01:B-0231	evidence	**Not found.** Abundance-distribution shapes reported separately for water and for host-associated 16S data
+MB-01:B-0232	evidence	The paper's discussion gives 13.1% and 5.9%, which differ from its abstract.
+MB-01:B-0234	evidence	it rests on RNA-seq, not on 16S technical replicates
+MB-01:B-0236	evidence	(Martin 2020; Willis and Martin 2022) [AB; makers' claims]
+MB-01:B-0239	evidence	**Gap.** No study fitting overdispersion to 16S technical replicates was found.
+MB-01:B-0240	evidence	SINGLE SOURCE.
+MB-01:B-0244	evidence	(Kebschull and Zador 2015) [INDIRECT]
+MB-01:B-0251	evidence	their makers claim they work (Gibbons 2018; Ling 2022) [AB]
+MB-01:B-0253	evidence	(Kelly 2019) [model; INDIRECT]
+MB-01:B-0257	evidence	A preprint reports ... (Edgar 2017b) [AB; PREPRINT]
+MB-01:B-0261	evidence	(Smith and Peay 2014) [INDIRECT, ITS]
+MB-01:B-0265	evidence	(Bullard 2010) [AB; INDIRECT]
+MB-01:B-0266	evidence	[AB; INDIRECT]
+MB-01:B-0268	evidence	(Buongermino Pereira 2018) [AB; INDIRECT, shotgun]
+MB-01:B-0274	evidence	Two cautions apply to these results.
+MB-01:B-0275	evidence	The null model reassigns sequences at random, so samples differ only through multinomial-type sampling.
+MB-01:B-0276	evidence	Taxon-specific bias, technical variation beyond counting, and differences in load are absent from the simulated truth (statistics angle's reading).
+MB-01:B-0279	evidence	This is the only microbial amplicon test of coverage-based standardisation found.
+MB-01:B-0281	evidence	(Willis and Bunge 2015; Willis, Bunge and Whitman 2017) [AB; makers' claims]
+MB-01:B-0294	evidence	Schloss identified 11 design choices that disadvantaged rarefying in that study.
+MB-01:B-0295	evidence	This conflicts with Schloss 2024b
+MB-01:B-0299	evidence	Studies disagree on whether rarefying harms differential-abundance tests.
+MB-01:B-0306	evidence	(Lin and Peddada 2020; Mandal 2015) [AB; makers' claims]
+MB-01:B-0307	evidence	Independent benchmarks disagree in part (above).
+MB-01:B-0308	evidence	(Kumar 2018) [AB; makers' claim]
+MB-01:B-0309	evidence	SRS's makers claim better reproducibility than rarefying (Beule 2020) [AB].
+MB-01:B-0326	evidence	Not benchmarked as a comparison method in the sources found
+MB-01:B-0327	evidence	All three; contested
+MB-01:B-0330	evidence	Bias composition dependence: Brooks 2015 versus McLaren 2019, on the same data.
+MB-01:B-0331	evidence	Cycle-number effects: small effects (Sipos 2007; Acinas 2005; Brooks 2015) versus growing bias
+MB-01:B-0333	evidence	Extraction magnitude: Fouhy 2016 versus Albertsen 2015, Brooks 2015 and MBQC.
+MB-01:B-0334	evidence	Relic DNA: Carini 2016 versus Lennon 2018.
+MB-01:B-0335	evidence	Copy-number correction: Kembel 2012 versus Louca 2018, Starke 2021 and McLaren 2019.
+MB-01:B-0336	evidence	OTU versus ASV richness direction: Glassman and Martiny 2018 versus Chiarello 2022.
+MB-01:B-0337	evidence	Quality-filter stringency: Bokulich 2013 versus Kopylova 2016.
+MB-01:B-0338	evidence	Whether mock bias transfers to field samples: Parada 2016 versus calibration claims.
+MB-01:B-0339	evidence	Sampling as the cause of replicate variation (Zhou 2013; Grilli 2020) versus technical variance beyond counting
+MB-01:B-0340	evidence	Rarefying: McMurdie and Holmes 2014 versus Schloss 2024a and 2024b, Weiss 2017 and Hong 2022.
+MB-01:B-0341	evidence	Willis 2019 opposes rarefying for richness.
+MB-01:B-0342	evidence	Proportions for beta diversity: McKnight 2019 versus Schloss 2024b.
+MB-01:B-0343	evidence	Absolute quantification: Jian 2020 versus Galazzo 2020.
+MB-01:B-0344	evidence	Zeros: Grilli 2020 (sampling) versus Schloss 2024a (true absence, asserted).
+MB-01:B-0379	evidence	Within-run read-count CV after equimolar pooling (all angles; web search found only forums).
+MB-01:B-0380	evidence	Absolute per-cycle 16S amplification efficiency on environmental templates (lab angle).
+MB-01:B-0381	evidence	Measured, rather than predicted, community copy number by environment
+MB-01:B-0382	evidence	16S-specific index hopping on patterned flow cells (bioinformatics angle).
+MB-01:B-0383	evidence	Overdispersion fitted to 16S technical replicates at controlled depths (statistics angle).
+MB-01:B-0384	evidence	An independent microbial benchmark of coverage-based standardisation (statistics angle).
+MB-01:B-0385	evidence	Water-sampling and host-tissue sampling choices (not searched by any angle).
+MB-01:B-0386	evidence	Abundance-distribution shapes split by water and host (no angle located such a breakdown).

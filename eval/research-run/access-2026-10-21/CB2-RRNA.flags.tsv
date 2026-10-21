@@ -1,0 +1,42 @@
+id	reason	quote
+CB2-RRNA:A-001	evidence	for study of origin, NO EVIDENCE EXISTS
+CB2-RRNA:A-004	evidence	only as simulated per-genome coverage in targeted-assembly benchmarks — not as library depth in a real assemble-and-bin pipeline
+CB2-RRNA:A-005	evidence	the review reports a plain absence
+CB2-RRNA:A-006	evidence	this is an absence, not weak support, and must not be filled in from the mechanism
+CB2-RRNA:A-007	evidence	no evidence exists for the fourth
+CB2-RRNA:A-008	evidence	one study (Overholt et al.) where the hybrid-versus-short-read difference in rRNA recovery was not significant
+CB2-RRNA:A-010	evidence	only as simulated per-genome coverage in targeted-assembly benchmarks ... not as library depth in a real assemble-and-bin pipeline counting rRNA in MAGs, which I could not find anywhere
+CB2-RRNA:A-011	evidence	**no evidence exists** in the literature I searched
+CB2-RRNA:A-012	evidence	no paper stratifies rRNA recovery by the study a dataset came from
+CB2-RRNA:A-013	evidence	This is an absence, not weak support, and it should not be filled in from the mechanism.
+CB2-RRNA:B-0017	access	the *claims* rest on a single agent's reading
+CB2-RRNA:B-0018	access	Treat the numbers as unconfirmed until spot-checked against the primary text, and note where the review itself says it read only an abstract.
+CB2-RRNA:B-0030	evidence	**Treat this one carefully.** It is published as an Opinion article ... there is no methods section
+CB2-RRNA:B-0031	evidence	the specific 7% figure rests on a piece that does not document how it was obtained
+CB2-RRNA:B-0032	not given	I would not build anything on that number alone.
+CB2-RRNA:B-0034	evidence	Same caveat applies.
+CB2-RRNA:B-0049	evidence	Neither statement is itself a measurement.
+CB2-RRNA:B-0060	evidence	This is one paper and one lab; I have not found an independent replication ... would call its support thin
+CB2-RRNA:B-0065	evidence	I did not find a paper that isolates and quantifies the binning contribution separately from the assembly contribution
+CB2-RRNA:B-0066	evidence	That is a real gap.
+CB2-RRNA:B-0069	evidence	across two different studies and two different plants, so it confounds technology with everything else
+CB2-RRNA:B-0075	both	single-pass extraction, and from the tool's own authors
+CB2-RRNA:B-0077	access	These figures come from a single-pass extraction of the article HTML.
+CB2-RRNA:B-0079	evidence	the community was low-complexity relative to soil; I would not generalise it to Illumina-length reads in a complex environment
+CB2-RRNA:B-0091	evidence	worth stating as disagreement in magnitude with Orellana et al. and Singleton et al., not as agreement
+CB2-RRNA:B-0095	evidence	their main text does not tabulate per-assembler rRNA counts across both datasets, so only the KBF figure is a clean number
+CB2-RRNA:B-0096	evidence	DIRECT EVIDENCE, but only in simulation and only for targeted assembly
+CB2-RRNA:B-0100	evidence	What nobody I found has done
+CB2-RRNA:B-0101	evidence	their quality axis there is the completeness/contamination classification, not rRNA presence
+CB2-RRNA:B-0102	evidence	Coverage of an *organism* is not the same variable as depth of a *library*
+CB2-RRNA:B-0103	evidence	unmeasured for rRNA-in-MAG recovery in real data
+CB2-RRNA:B-0104	evidence	**Study of origin — NO EVIDENCE FOUND.**
+CB2-RRNA:B-0105	evidence	I found nothing that measures rRNA gene recovery as a function of which study
+CB2-RRNA:B-0106	evidence	none of them stratifies it by source study
+CB2-RRNA:B-0107	evidence	does not measure rRNA genes at all
+CB2-RRNA:B-0108	evidence	varies technology, plant, depth and pipeline simultaneously and was not designed to isolate study of origin
+CB2-RRNA:B-0109	evidence	it is therefore *plausible* that recovery varies by study of origin
+CB2-RRNA:B-0110	evidence	That is an inference, **INDIRECT** at best, and it is not a measured finding.
+CB2-RRNA:B-0111	evidence	Nobody has measured it.
+CB2-RRNA:B-0118	access	What this check does **not** cover: whether the figures quoted in the synthesis actually appear in the cited papers.
+CB2-RRNA:B-0119	access	No claim-level verification was performed.

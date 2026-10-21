@@ -1,0 +1,120 @@
+id	reason	quote
+MB-02:A-010	evidence	Moderate for exact means and shares, which depend on which genomes are counted (record versus species level) and on assembly completeness.
+MB-02:A-011	evidence	the high values were not checked against assembly quality by any source found
+MB-02:A-012	evidence	Means differ by counting unit
+MB-02:A-013	evidence	plausibly assembly error ... which is the reviewer's reading, not a tested claim
+MB-02:A-014	evidence	*Not measured:* Copy numbers for uncultured lineages without genomes ... are not measured
+MB-02:A-015	evidence	No source found measured 16S copy number directly in environmental populations of soil archaea
+MB-02:A-018	evidence	rest on the reviewer's derivation from rrnDB alone
+MB-02:A-019	evidence	The unlinked-operon point rests on Brewer et al. 2020 [7] alone.
+MB-02:A-026	evidence	In environmental samples, only indirect measures were found
+MB-02:A-027	evidence	No source found reports, for any natural community, the share of cells carrying exactly one genome copy
+MB-02:A-029	evidence	most polyploidy numbers come from one laboratory's qPCR protocol (Soppa group) ...; independent replication by other groups was not located either
+MB-02:A-030	evidence	Weak for environmental samples: all evidence is indirect (DNA mass, population-average replication indices), mostly non-soil, and single-study per setting.
+MB-02:A-032	evidence	Tension in interpretation
+MB-02:A-033	evidence	goes to about five copies in three species [18] but to one copy in Synechocystis [17]
+MB-02:A-034	evidence	*Not measured:* Genome copies per cell for named soil bacterial or archaeal taxa in situ
+MB-02:A-036	evidence	would remove the only direct origin and terminus counts
+MB-02:A-037	evidence	would leave no soil measurement of DNA per cell at all
+MB-02:A-038	evidence	would leave no environmental replication-index figure
+MB-02:A-044	evidence	Against this, eleven DNA-based mock communities fitted 7.1% better without correction [32], and one preprint found
+MB-02:A-045	evidence	Effects on ecological conclusions are mixed
+MB-02:A-047	not given	*Strength:* Moderate.
+MB-02:A-049	evidence	conflicting and mostly from simulations, mocks of few species, or non-soil communities
+MB-02:A-050	evidence	*Conflicts:* Direct conflict between studies
+MB-02:A-053	evidence	No soil mock community or soil cell-count benchmark of copy-number correction was found.
+MB-02:A-054	both	the polyploidy literature asserts that ploidy also biases community analyses (Soppa 2017, not obtained)
+MB-02:A-055	both	asserted in a review [36] but not quantified in the sources read
+MB-02:A-057	evidence	rest on Louca et al. 2018 [30] alone
+MB-02:A-058	evidence	The only figures on how often correction changes the dominant taxon in real communities rest on Gao and Wu 2023 [33].
+MB-02:A-059	evidence	The only soil example of correction size rests on Vetrovsky and Baldrian 2013 [6].
+MB-02:A-071	evidence	Moderate on threshold sensitivity: several direct tests, but each in one system, with results pointing both ways.
+MB-02:A-072	evidence	*Conflicts:* Robustness versus sensitivity
+MB-02:A-075	evidence	*Not measured:* No survey found that tallies definitions specifically within soil studies
+MB-02:A-076	evidence	No study found that compares threshold-based rarity classes between amplicon and metagenome data from the same soil samples
+MB-02:A-077	evidence	Copy-number-corrected thresholds were not found to have been tested.
+MB-02:A-079	evidence	removing either removes the quantitative usage picture for that term
+MB-02:A-080	evidence	The only soil test of threshold sensitivity found is Jia et al. 2022 [49].
+MB-02:A-087	both	which include soils but do not report them separately in the abstracts read
+MB-02:A-088	evidence	no taxon abundance distribution for soil from metagenomes was found
+MB-02:A-089	evidence	no study was found that reports a taxon abundance distribution in soil from cell counts
+MB-02:A-090	not given	*Strength:* Moderate for the qualitative shape
+MB-02:A-091	evidence	Weak for the functional form (lognormal versus power law), which is contested and method-dependent.
+MB-02:A-092	evidence	Absent for cell-count-based distributions in soil.
+MB-02:A-093	evidence	*Conflicts:* Functional form: power law from reassociation kinetics [66] versus lognormal
+MB-02:A-094	evidence	these are not comparable figures because the definitions and denominators differ
+MB-02:A-095	evidence	*Not measured:* Cell-count-based taxon abundance distributions in soil
+MB-02:A-097	evidence	removes the only global amplicon-metagenome cross-check
+MB-02:A-098	evidence	removes the power-law side of the functional-form conflict
+MB-02:A-099	evidence	Archaeal figures rest on Bates et al. 2011 [64] alone.
+MB-02:A-101	evidence	(no coefficient given)
+MB-02:A-103	evidence	(abundance not the axis tested)
+MB-02:A-104	evidence	cannot test the relationship because dominance was defined by both abundance and ubiquity
+MB-02:A-107	evidence	the authors of [62] note abundant taxa may simply be easier to detect
+MB-02:A-114	evidence	No soil study was found that tests whether the observed bulk-soil relationship exceeds what sampling and detection alone would produce.
+MB-02:A-115	not given	*Strength:* Moderate for the existence of a positive relationship
+MB-02:A-116	evidence	Weak for its interpretation, because the main soil evidence does not separate biology from detection, and the sampling-null evidence comes from non-soil data.
+MB-02:A-117	evidence	Rhizosphere evidence is limited to core-membership studies of two to three crops.
+MB-02:A-118	evidence	*Conflicts:* Relic DNA effects conflict [77 versus 78].
+MB-02:A-119	evidence	the same observation is read as ecological signal by some authors and as near-null by others
+MB-02:A-120	evidence	cutting against a uniform relationship
+MB-02:A-121	evidence	*Not measured:* Abundance-occupancy relationships in soil from cell counts or from metagenomes (none found)
+MB-02:A-123	evidence	leaves one quantitative bulk-soil figure
+MB-02:A-124	evidence	removes the only parameter-free sampling null, which is non-soil in any case
+MB-02:A-125	evidence	rests on Stopnisek and Shade 2021 [74] alone
+MB-02:A-130	evidence	The new maxima and the current shares rest on the reviewer's derivation from rrnDB alone.
+MB-02:A-132	evidence	Uncultured soil lineages are unmeasured.
+MB-02:A-136	evidence	though mostly from one laboratory's method
+MB-02:A-137	evidence	In environmental samples, evidence is indirect and sparse
+MB-02:A-138	evidence	has not been measured in the sources found
+MB-02:A-141	evidence	but not DNA mocks [32] or most mock tests in one preprint [31]
+MB-02:A-143	evidence	The evidence is moderate and conflicting, with no soil benchmark.
+MB-02:A-146	evidence	Tests of threshold sensitivity point both ways
+MB-02:A-149	evidence	The functional form is contested (lognormal versus power law).
+MB-02:A-150	evidence	There are no cell-count or metagenome-based soil taxon distributions in the sources found.
+MB-02:A-153	evidence	no soil test against a sampling null was found, so the share attributable to biology is unknown
+MB-02:B-0011	evidence	Ploidy contrary evidence searched once (WebSearch on P. putida copy number by flow cytometry); none found.
+MB-02:B-0032	evidence	Species were grouped by the first two words of the NCBI name, which is approximate.
+MB-02:B-0043	evidence	No source I found checked whether these extremes survive scrutiny of assembly quality.
+MB-02:B-0062	evidence	on small numbers of species
+MB-02:B-0065	evidence	In the reviewer's reading, part of this is likely assembly error rather than biology
+MB-02:B-0066	evidence	The 2015 figure of 77% identical [3] used far fewer genomes.
+MB-02:B-0079	evidence	This is SINGLE SOURCE for the soil figure.
+MB-02:B-0087	evidence	cited here only as context
+MB-02:B-0088	evidence	Most direct measurements come from one laboratory's real-time PCR protocol (Soppa group).
+MB-02:B-0108	access	[14, AB]; the abstract gives no per-cell shares
+MB-02:B-0109	evidence	I also did not find independent replication of most of them
+MB-02:B-0113	access	This figure is SECONDARY: Bremer and Dennis (1996), Table 3, as reported by BioNumbers [21].
+MB-02:B-0114	evidence	No source I found measured 16S copies per cell directly in environmental cells.
+MB-02:B-0115	evidence	**Environmental samples (all indirect).**
+MB-02:B-0119	evidence	DNA mass cannot separate genome size from copy number.
+MB-02:B-0120	evidence	but this is inference
+MB-02:B-0122	evidence	an inference rather than a measurement
+MB-02:B-0128	evidence	I found no published replication indices for soil metagenomes.
+MB-02:B-0129	evidence	is not reported by taxon for any natural community in the sources reached
+MB-02:B-0142	evidence	[31, AB, preprint]
+MB-02:B-0148	evidence	they test correction against a DNA truth, not a cell truth
+MB-02:B-0153	evidence	This is SINGLE SOURCE for soil.
+MB-02:B-0155	both	The prokaryote evidence for this was not quantified in what I read.
+MB-02:B-0189	access	The original was not obtained.
+MB-02:B-0226	evidence	use different definitions and denominators and are not combined here
+MB-02:B-0235	evidence	This is the main contrary result on the shape of the distribution.
+MB-02:B-0238	both	These abstracts do not report soil separately.
+MB-02:B-0239	evidence	I found no soil taxon abundance distribution built from metagenome coverage.
+MB-02:B-0242	evidence	[80, FT, qualitative]
+MB-02:B-0244	evidence	No taxon abundance distribution from cell counts in soil was found.
+MB-02:B-0245	evidence	[83, AB, non-soil], which converts gene copies but not cells per taxon
+MB-02:B-0249	evidence	no coefficient is given
+MB-02:B-0250	evidence	abundant taxa may simply be easier to detect, and that undersampling could hide intermediate distributions
+MB-02:B-0254	evidence	Abundance was not the axis tested.
+MB-02:B-0255	evidence	it cannot serve as an independent test of the relationship
+MB-02:B-0263	both	None of these rhizosphere studies reports an abundance-occupancy correlation coefficient in the passages read.
+MB-02:B-0269	evidence	**Relic DNA (conflicting).**
+MB-02:B-0278	both	The text read does not name soil among the biomes, so this is nearest precedent (non-soil).
+MB-02:B-0280	access	The sampling-artefact literature (Wright 1991; Holt et al. 2002) was not obtained.
+MB-02:B-0281	evidence	I found no soil study that tests whether the observed bulk-soil abundance-occupancy relationship exceeds a sampling or detection null.
+MB-02:B-0282	evidence	I also found none from cell counts or metagenomes, none specific to archaea, and none comparing bulk and rhizosphere within one study.
+MB-02:B-0301	evidence	I did not run a systematic search for every crop rhizosphere core study.
+MB-02:B-0303	access	Ramirez et al. 2018 (reference 65) was read at abstract level.
+MB-02:B-0304	evidence	it does not report abundance-occupancy and is not used in the answers
+MB-02:B-0308	access	whose meaning was unclear from the abstract

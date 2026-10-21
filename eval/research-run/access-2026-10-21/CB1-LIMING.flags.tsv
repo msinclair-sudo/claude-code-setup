@@ -1,0 +1,42 @@
+id	reason	quote
+CB1-LIMING:A-001	not given	The claim that carbonate lime is a globally scarce or limited material is UNSUPPORTED.
+CB1-LIMING:A-005	evidence	a carbon dioxide source of contested magnitude
+CB1-LIMING:A-006	evidence	No source I reviewed describes carbonate lime as a globally scarce or limited material, and the one primary source that speaks directly to the question says the opposite.
+CB1-LIMING:A-016	evidence	The claim is regionally qualified in one narrow and one broad sense, and both need care.
+CB1-LIMING:A-019	evidence	no source I read extends the specialty-grade limitation to it
+CB1-LIMING:A-020	evidence	Treating that sentence as evidence for ag-lime scarcity would be a misreading.
+CB1-LIMING:A-025	evidence	**Indirect support, labelled as such.** Two observations could be read as *consistent with* scarcity but do not evidence it.
+CB1-LIMING:A-028	not given	the "globally limited" half fails
+CB1-LIMING:A-029	evidence	a carbon dioxide source of contested magnitude
+CB1-LIMING:B-0009	access	the *claims* rest on a single agent's reading
+CB1-LIMING:B-0010	access	Treat the numbers as unconfirmed until spot-checked against the primary text, and note where the review itself says it read only an abstract.
+CB1-LIMING:B-0025	evidence	mostly appears as a working assumption rather than a measurement
+CB1-LIMING:B-0028	evidence	I found no systematic survey establishing it.
+CB1-LIMING:B-0037	evidence	**Consumption figures disagree with each other inside a single country.**
+CB1-LIMING:B-0040	evidence	somewhere between about 11 and 30 Mt/yr depending on whose accounting you take
+CB1-LIMING:B-0041	evidence	**This is a genuine unresolved disagreement and I am not resolving it.**
+CB1-LIMING:B-0047	evidence	There is no authoritative global consumption figure in the peer-reviewed or inventory literature I could reach.
+CB1-LIMING:B-0048	evidence	commercial market-research vendors whose method and underlying data I cannot verify, and one of them asserts US consumption "more than 45 million tons," which contradicts both USGS and EPA
+CB1-LIMING:B-0050	evidence	The absence of a verified global total is itself a finding
+CB1-LIMING:B-0053	evidence	it does not describe current practice
+CB1-LIMING:B-0059	evidence	nothing in the USGS text extends that limitation to it
+CB1-LIMING:B-0068	both	The single most directly relevant figure is old and reaches me second-hand.
+CB1-LIMING:B-0074	both	this decomposition rests on one paper's arithmetic, and that the 36 kg C/t figure is a 2002 US estimate I did not read in the original
+CB1-LIMING:B-0075	evidence	grinds rock far finer than agricultural lime and therefore gives an **upper bound rather than a like-for-like figure**
+CB1-LIMING:B-0082	evidence	I did not find a published *measured* distribution of haul distances for agricultural lime specifically
+CB1-LIMING:B-0089	evidence	found only trade-press and forum material with no verifiable method
+CB1-LIMING:B-0120	evidence	Their own paired measurements were not one-sided
+CB1-LIMING:B-0121	evidence	**Evidence pointing the other way.**
+CB1-LIMING:B-0122	access	the abstract is withheld from the indexes I could reach, so I am citing it only as a pointer to a contrary result in an organic soil and making no claim about its magnitude
+CB1-LIMING:B-0123	evidence	**The whole-system balance is disputed, and the disagreement is large.**
+CB1-LIMING:B-0126	both	I am not adjudicating that; the scopes, baselines and emission factors differ and I did not read the Gibbons paper in the original.
+CB1-LIMING:B-0127	not given	The soil-carbon term, which drives much of the difference, is itself unsettled.
+CB1-LIMING:B-0134	evidence	Poorly constrained: the actual emission factor, which measured values put anywhere from 0.026 to 0.12 Mg C/Mg
+CB1-LIMING:B-0135	evidence	appears as a five-year working assumption rather than a surveyed quantity
+CB1-LIMING:B-0136	evidence	the most-cited figure is a single 2002 estimate [18] and the modern detail comes from enhanced-weathering work on finer-ground basalt
+CB1-LIMING:B-0137	evidence	US estimates differ by up to threefold depending on the accounting
+CB1-LIMING:B-0138	evidence	Absent: a verified global consumption figure.
+CB1-LIMING:B-0139	evidence	I found no peer-reviewed global total that was not a counterfactual
+CB1-LIMING:B-0145	access	those attributions are the agent's and were not independently confirmed
+CB1-LIMING:B-0146	access	What this check does **not** cover: whether the figures quoted in the synthesis actually appear in the cited papers.
+CB1-LIMING:B-0147	access	No claim-level verification was performed.

@@ -1,0 +1,146 @@
+id	type	reason	quote
+MB-02:C-001	other		
+MB-02:C-002	negative	evidence	the review's own sources conflict on the archaeal maximum
+MB-02:C-003	negative	evidence	rests on 4 genomes from 4 species
+MB-02:C-004	negative	evidence	rests on 29 species
+MB-02:C-005	negative	evidence	These soil-relevant low values are imprecise
+MB-02:C-006	negative	evidence	they are not independent replications
+MB-02:C-007	negative	evidence	remain the reviewer's own derivation from rrnDB
+MB-02:C-008	positive		
+MB-02:C-009	negative	evidence	does not change in one direction with growth phase
+MB-02:C-010	positive		
+MB-02:C-011	negative	evidence	however, is reported to rise from about 4 copies in exponential phase to about 80 in stationary phase
+MB-02:C-012	negative	evidence	1 (up to 8) copies in slow growth and 40 in fast growth
+MB-02:C-013	negative	evidence	Several non-Soppa measurements exist
+MB-02:C-014	negative	both	apart from Pecoraro 2011 it rests largely on abstracts and on one laboratory's qPCR method
+MB-02:C-015	negative	evidence	the reviewer's inference from an abstract [20]; no source in the review measures it
+MB-02:C-016	negative	evidence	evidence is indirect and sparse
+MB-02:C-017	negative	evidence	are by method taxon-specific measurements of the share of cells with replicated DNA
+MB-02:C-018	negative	access	The review read only the abstract
+MB-02:C-019	gap	not given	
+MB-02:C-020	other		
+MB-02:C-021	positive		
+MB-02:C-022	negative	evidence	on n = 10 mocks (one of the eleven was excluded)
+MB-02:C-023	negative	evidence	against predicted, not measured, truth
+MB-02:C-024	positive		
+MB-02:C-025	negative	access	not supported by the McLaren abstract [35, AB]
+MB-02:C-026	gap	not given	
+MB-02:C-027	gap	not given	
+MB-02:C-028	positive		
+MB-02:C-029	positive		
+MB-02:C-030	positive		
+MB-02:C-031	other		
+MB-02:C-032	negative	evidence	uses a single rare/common cutoff and does not support 'abundant above 1%'
+MB-02:C-033	negative	evidence	165 to 176 taxa were agreed by all four methods, which is 13 to 16% of core assignments
+MB-02:C-034	negative	evidence	is its own derivation
+MB-02:C-035	negative	evidence	internally inconsistent
+MB-02:C-036	negative	evidence	point both ways and are each single-system
+MB-02:C-037	positive		
+MB-02:C-038	gap	not given	
+MB-02:C-039	positive		
+MB-02:C-040	negative	not given	
+MB-02:C-041	positive		
+MB-02:C-042	positive		
+MB-02:C-043	negative	evidence	contradicting its own body
+MB-02:C-044	negative	both	one study, abstract only
+MB-02:C-045	negative	both	is contested, and most of that evidence is abstract-only or modelled
+MB-02:C-046	gap	not given	
+MB-02:C-047	gap	not given	
+MB-02:C-048	positive		
+MB-02:C-049	negative	evidence	These are not fully independent
+MB-02:C-050	negative	evidence	partly built in by construction
+MB-02:C-051	negative	evidence	predict a positive relationship without selection
+MB-02:C-052	gap	not given	
+MB-02:C-053	negative	evidence	overstates a search that reviewed about 25 titles
+MB-02:C-054	positive		
+MB-02:C-055	gap	not given	
+MB-02:C-056	other		
+MB-02:C-057	positive		
+MB-02:C-058	positive		
+MB-02:C-059	other		
+MB-02:C-060	negative	evidence	pools the 0.4 to 2% and 41 to 58% figures that the body says must not be combined
+MB-02:C-061	negative	evidence	on two partly overlapping datasets whose metrics are partly circular
+MB-02:C-062	negative	evidence	applies the circularity caution to Delgado-Baquerizo but not to Bickel and Or's
+MB-02:C-063	negative	evidence	although the review read Pecoraro 2011 in full
+MB-02:C-064	negative	both	open in PMC but labelled abstract only, reports A. vinelandii rising from 4 to 80 copies
+MB-02:C-065	negative	evidence	Small misreports
+MB-02:C-066	negative	access	I could not verify Nemergut 2011's figures (PMC returned a captcha)
+MB-02:C-067	negative	evidence	not soils alone
+MB-02:C-068	negative	access	stated more firmly than its access allows
+MB-02:C-069	negative	access	is open in PMC (PMC1762399; Europe PMC fullTextXML works) but labelled AB
+MB-02:C-070	negative	not given	
+MB-02:C-071	negative	access	without trying the full text
+MB-02:C-072	negative	access	is open in PMC (PMC10536925) but labelled AB
+MB-02:C-073	negative	evidence	carry more chromosomes in stationary than in exponential phase
+MB-02:C-074	negative	evidence	That contradicts the review's framing and was missed
+MB-02:C-075	negative	evidence	was read in full, but its Table 5
+MB-02:C-076	negative	access	labelled AB without noting that a PMC route exists
+MB-02:C-077	negative	access	that the abstract does not contain
+MB-02:C-078	other		
+MB-02:C-079	negative	access	The abstract gives no share
+MB-02:C-080	negative	access	the claim goes beyond the access
+MB-02:C-081	negative	evidence	is not a figure in the source
+MB-02:C-082	other		
+MB-02:C-083	negative	evidence	Its abstract frames the study across Earth's major habitat types
+MB-02:C-084	negative	access	Europe PMC full text returned HTTP 500 and PMC returned a captcha
+MB-02:C-085	negative	not given	
+MB-02:C-086	negative	both	generalises from Zhou et al. 2011 [76, AB] alone
+MB-02:C-087	negative	both	rests largely on one laboratory's (Soppa group) abstracts
+MB-02:C-088	negative	both	rests on one abstract (Couturier and Rocha 2006 [20]) plus reviewer inference
+MB-02:C-089	negative	evidence	without the n
+MB-02:C-090	negative	access	read at abstract level only
+MB-02:C-091	negative	both	rests on Bates et al. 2011 [64, AB] alone
+MB-02:C-092	negative	evidence	rests on one simulation study
+MB-02:C-093	negative	both	rests on Brewer 2020 [7, AB] alone
+MB-02:C-094	positive		
+MB-02:C-095	positive		
+MB-02:C-096	reference		
+MB-02:C-097	reference		
+MB-02:C-098	reference		
+MB-02:C-099	reference		
+MB-02:C-100	positive		
+MB-02:C-101	positive		
+MB-02:C-102	gap	not given	
+MB-02:C-103	gap	not given	
+MB-02:C-104	gap	not given	
+MB-02:C-105	other		
+MB-02:C-106	gap	not given	
+MB-02:C-107	negative	access	They were read only at abstract level
+MB-02:C-108	other		
+MB-02:C-109	gap	not given	
+MB-02:C-110	gap	not given	
+MB-02:C-111	gap	not given	
+MB-02:C-112	gap	not given	
+MB-02:C-113	gap	not given	
+MB-02:C-114	gap	not given	
+MB-02:C-115	other		
+MB-02:C-116	gap	not given	
+MB-02:C-117	gap	not given	
+MB-02:C-118	gap	not given	
+MB-02:C-119	gap	not given	
+MB-02:C-120	gap	access	was not checked in the Supplementary Information
+MB-02:C-121	other		
+MB-02:C-122	gap	not given	
+MB-02:C-123	negative	evidence	is applied to Delgado-Baquerizo 2018 but not to Bickel and Or 2021
+MB-02:C-124	negative	evidence	pooled abundance rises mechanically with prevalence
+MB-02:C-125	negative	evidence	where summed abundance also rises with occupancy
+MB-02:C-126	negative	evidence	The supporting side is held to a lower bar
+MB-02:C-127	negative	evidence	whose 25 hits were reviewed by title
+MB-02:C-128	other		
+MB-02:C-129	negative	evidence	Contrary cases, ploidy rising in stationary phase (A. vinelandii; M. acetivorans in slow growth), are omitted
+MB-02:C-130	negative	not given	
+MB-02:C-131	negative	evidence	does not report the independent measurements listed in the paper it read in full
+MB-02:C-132	negative	access	are both abstract-level
+MB-02:C-133	negative	evidence	Only the anti-correction preprint is flagged for its standing
+MB-02:C-134	positive		
+MB-02:C-135	negative	evidence	which the body says must not be combined
+MB-02:C-136	negative	evidence	folds taxon-specific and sometimes opposite behaviours into one trend
+MB-02:C-137	negative	evidence	These are different measures
+MB-02:C-138	negative	evidence	reported in different places without reconciliation
+MB-02:C-139	negative	evidence	is the reviewer's argument, presented in the body as a finding
+MB-02:C-140	negative	evidence	presented without a 'reviewer's reading' label
+MB-02:C-141	negative	evidence	the answer leads with them over published values
+MB-02:C-142	other		
+MB-02:C-143	other		
+MB-02:C-144	other		
+MB-02:C-145	negative	not given	

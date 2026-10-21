@@ -1,0 +1,137 @@
+id	type	reason	quote
+H2-01:C-001	other		
+H2-01:C-002	negative	not given	
+H2-01:C-003	other		
+H2-01:C-004	other		
+H2-01:C-005	negative	evidence	Neither is a decomposition that measures how much of a sample-by-function matrix is a mean profile
+H2-01:C-006	negative	evidence	The body supports only this
+H2-01:C-007	negative	evidence	rests on one modelled study (Fahimipour2020)
+H2-01:C-008	negative	evidence	Both should be marked SINGLE SOURCE
+H2-01:C-009	negative	evidence	are single studies fitted and scored on the same samples
+H2-01:C-010	gap	not given	
+H2-01:C-011	negative	both	measured only for species-by-trait matrices (Mouillot2021, read by a search agent and not re-opened by the reviewer)
+H2-01:C-012	gap	not given	
+H2-01:C-013	positive		
+H2-01:C-014	positive		
+H2-01:C-015	negative	evidence	each result from a single study
+H2-01:C-016	negative	not given	
+H2-01:C-017	negative	evidence	It pools different quantities
+H2-01:C-018	negative	evidence	the reviewer's synthesis across incommensurable tests
+H2-01:C-019	negative	evidence	is recovery of expression from 25 random composite measurements through a learned dictionary
+H2-01:C-020	negative	evidence	It is not a direct covariance-reproduction score
+H2-01:C-021	positive		
+H2-01:C-022	negative	access	three rest on abstracts
+H2-01:C-023	negative	evidence	Contrary same-habitat evidence exists and is measured in full text
+H2-01:C-024	negative	evidence	identified hosts as well as strain-level taxonomic markers did
+H2-01:C-025	negative	evidence	'a potential misconception'
+H2-01:C-026	negative	not given	
+H2-01:C-027	negative	evidence	dependent on processing, with direct measured contrary evidence
+H2-01:C-028	positive		
+H2-01:C-029	negative	access	The access labelling needs correcting
+H2-01:C-030	negative	both	Louca2016a (abstract only, taxonomy-derived function) and Nelson2016, which was read only through an automated summary
+H2-01:C-031	negative	access	That is not full-text access
+H2-01:C-032	negative	access	were read in full text by only one angle and were not re-checked
+H2-01:C-033	gap	not given	
+H2-01:C-034	gap	not given	
+H2-01:C-035	gap	not given	
+H2-01:C-036	positive		
+H2-01:C-037	negative	evidence	and also 76% of 100 species differed in level
+H2-01:C-038	negative	evidence	The review reports only the pathway figure
+H2-01:C-039	negative	evidence	not with composition
+H2-01:C-040	negative	evidence	differ in disease state and population, not habitat
+H2-01:C-041	negative	evidence	that caution is not applied
+H2-01:C-042	negative	evidence	a count of non-significant differences at n = 77
+H2-01:C-043	negative	evidence	each item is a single study
+H2-01:C-044	other		
+H2-01:C-045	positive		
+H2-01:C-046	other		
+H2-01:C-047	positive		
+H2-01:C-048	positive		
+H2-01:C-049	other		
+H2-01:C-050	other		
+H2-01:C-051	negative	evidence	Manor2017's full text directly measures
+H2-01:C-052	negative	evidence	turn a per-sample accuracy metric and HMP descriptive statements into 'profiles dominated by a shared mean'
+H2-01:C-053	negative	evidence	which no cited source measured
+H2-01:C-054	negative	evidence	pools incommensurable transfer tests
+H2-01:C-055	negative	evidence	omits the matching species result
+H2-01:C-056	other		
+H2-01:C-057	negative	access	FT via automated summary of the PMC page; figures not re-verified
+H2-01:C-058	negative	access	A machine summary is not a full-text reading
+H2-01:C-059	negative	access	SECONDARY/unverified
+H2-01:C-060	negative	access	I could not reach PMC4961168 full text via NCBI efetch (only a header was returned)
+H2-01:C-061	other		
+H2-01:C-062	negative	access	other angles had the abstract, and the reviewer did not re-open the paper
+H2-01:C-063	negative	access	returned no body text
+H2-01:C-064	negative	access	were not re-checked
+H2-01:C-065	negative	not given	
+H2-01:C-066	negative	evidence	They are Spearman recovery from 25 simulated random composite measurements
+H2-01:C-067	negative	evidence	more directly than the full text supports
+H2-01:C-068	other		
+H2-01:C-069	negative	evidence	counts co-abundances with no significant difference
+H2-01:C-070	negative	evidence	That is an absence-of-evidence count
+H2-01:C-071	negative	evidence	The review gives no quantitative figure
+H2-01:C-072	negative	evidence	rests on Fahimipour2020 alone (modelled, diffusion maps)
+H2-01:C-073	other		
+H2-01:C-074	negative	evidence	One study, not flagged SINGLE SOURCE
+H2-01:C-075	negative	evidence	The labelling is asymmetric
+H2-01:C-076	negative	evidence	This generalises Sun2020
+H2-01:C-077	negative	evidence	Breadth rests on Taroni2019 alone (qualitative)
+H2-01:C-078	other		
+H2-01:C-079	negative	evidence	No cited source estimated dimension for fine against coarse functions
+H2-01:C-080	negative	evidence	the reviewer's synthesis presented as a pattern
+H2-01:C-081	other		
+H2-01:C-082	negative	evidence	One study, one habitat, one heterogeneity test
+H2-01:C-083	negative	evidence	without the power caveat
+H2-01:C-084	negative	both	One modelled, abstract-only study
+H2-01:C-085	reference		
+H2-01:C-086	reference		
+H2-01:C-087	reference		
+H2-01:C-088	reference		
+H2-01:C-089	reference		
+H2-01:C-090	reference		
+H2-01:C-091	reference		
+H2-01:C-092	reference		
+H2-01:C-093	positive		
+H2-01:C-094	reference		
+H2-01:C-095	reference		
+H2-01:C-096	positive		
+H2-01:C-097	positive		
+H2-01:C-098	positive		
+H2-01:C-099	reference		
+H2-01:C-100	gap	not given	
+H2-01:C-101	gap	not given	
+H2-01:C-102	gap	not given	
+H2-01:C-103	gap	access	Faust2012 is not obtained
+H2-01:C-104	gap	not given	
+H2-01:C-105	gap	not given	
+H2-01:C-106	gap	not given	
+H2-01:C-107	gap	not given	
+H2-01:C-108	gap	access	are listed as not obtained
+H2-01:C-109	gap	evidence	left to Mouillot2021 alone
+H2-01:C-110	gap	evidence	not across samples
+H2-01:C-111	gap	access	only through Coelho2022 and Sunagawa2015 abstracts
+H2-01:C-112	gap	both	Only Donato2013 (significance crosstalk, abstract) is cited
+H2-01:C-113	gap	not given	
+H2-01:C-114	gap	access	are listed as not obtained
+H2-01:C-115	gap	not given	
+H2-01:C-116	other		
+H2-01:C-117	negative	evidence	does not apply the matching low-power caution
+H2-01:C-118	negative	evidence	Nor does it apply a power caution
+H2-01:C-119	negative	evidence	treated leniently
+H2-01:C-120	negative	evidence	It omits the matching full-text figure
+H2-01:C-121	negative	evidence	SINGLE SOURCE flags are applied unevenly
+H2-01:C-122	other		
+H2-01:C-123	negative	evidence	carry the same weight from one study and are not flagged
+H2-01:C-124	positive		
+H2-01:C-125	negative	evidence	is used only as a caution, not as contrary evidence
+H2-01:C-126	negative	evidence	Contrary evidence is under-weighted relative to its access
+H2-01:C-127	negative	evidence	taken at the authors' word
+H2-01:C-128	negative	evidence	fold four different quantities into one set of transfer dependencies
+H2-01:C-129	negative	evidence	loses the qualifier
+H2-01:C-130	negative	evidence	merges sample-level functional profiles
+H2-01:C-131	negative	evidence	which none of them measured
+H2-01:C-132	negative	evidence	The dimensionality half is the reviewer's inference
+H2-01:C-133	negative	evidence	The Section 6 summary then drops that label
+H2-01:C-134	other		
+H2-01:C-135	other		
+H2-01:C-136	other		

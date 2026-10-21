@@ -1,0 +1,47 @@
+haber-bosch.1: ok
+manufacturing-energy.1: ok
+manufacturing-energy.2: ok
+manufacturing-energy.3: ok
+manufacturing-energy.4: ok
+manufacturing-co2.1: ok
+manufacturing-co2.2: ok
+manufacturing-co2.3: ok
+manufacturing-co2.4: ok
+manufacturing-co2.5: ok
+manufacturing-co2.6: ok
+manufacturing-co2.7: ok
+emission-share.1: ok
+emission-share.2: ok
+emission-share.3: ok
+emission-share.4: ok
+emission-share.5: ok
+emission-share.6: ok
+emission-share.7: ok
+emission-share.8: ok
+nue.1: ok
+symbiotic-fixation.1: ok
+symbiotic-fixation.2: ok
+symbiotic-fixation.3: ok
+symbiotic-fixation.4: ok
+symbiotic-fixation.5: ok
+symbiotic-fixation.6: ok
+symbiotic-fixation.7: ok
+free-living-fixation.1: ok
+free-living-fixation.2: ok
+inoculants.1: ok
+inoculants.2: ok
+mineralisation.1: holds: holds says "humid temperate soils", but the quoted text gives no soil or climate setting; it says only "in a season" and "modern cultivars".
+mineralisation.2: ok
+substitution.1: ok
+substitution.2: ok
+substitution.3: ok
+substitution.4: ok
+substitution.5: ok
+substitution.6: ok
+substitution.7: ok
+dns.1: ok
+dns.2: ok
+dns.3: ok
+dns.4: ok
+
+Counts: stronger 0, conf 0, numbers 0, absent 0, critic 0, merged 0, holds 1 (45 entries; 44 ok)

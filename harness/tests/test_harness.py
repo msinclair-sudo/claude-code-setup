@@ -6703,6 +6703,14 @@ class LogEntries92to102(unittest.TestCase):
         # buried in a summary's body, not its closing words
         self.assertFalse(hz.handoff_unasked(self.ctx, "dev", [
             "The owner is waiting on nothing here.\n\nNext: tfm-store. The doorbell is armed."]))
+        # Log 202: a later step, and the ask named as a noun, are not a hand-off now.
+        for s in ("When dev_tax_3 signs it off, dev_tax rings me and I file the owner ask for "
+                  "you to run it.",
+                  "Once the check is green I'll ring the owner to run the migration.",
+                  "The owner ask goes in after dev signs it off."):
+            self.assertFalse(hz.handoff_unasked(self.ctx, "main", [s]), s)
+            self.assertFalse(hz.handoff_unasked(self.ctx, "dev", [s]), s)
+        self.assertTrue(hz.handoff_unasked(self.ctx, "dev", ["The migration waits on the owner."]))
         (self.ctx.dir / "asks" / "owner-4.json").write_text(json.dumps(
             {"id": "owner-4", "asker_node": "main", "state": "asked"}))
         self.assertFalse(hz.handoff_unasked(self.ctx, "dev", [

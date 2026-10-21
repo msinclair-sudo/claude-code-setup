@@ -5235,10 +5235,21 @@ _HANDOFF_YOU = re.compile(r"\b(?:leave|leaving)\b.{0,40}\bto you\b|\bover to you
 _NEGATED = re.compile(r"\b(?:nothing|no|not|none|never|nobody|neither)\b|n't\b", re.I)
 
 
+# A sentence about a later step is not a hand-off now (log 202: "When dev_tax_3
+# signs it off, dev_tax rings me and I file the owner ask for you to run it"
+# blocked main's stop, and an ask filed then would have been unrunnable).
+_LATER = re.compile(r"^\W*(?:when|once|after|if|until)\b", re.I)
+_ASK_NOUN = re.compile(r"\b(?:the |an? )?(?:owner|operator)(?:'s)? asks?\b", re.I)
+
+
 def _handoff_said(text, rx):
     """A sentence of `text` that hands off by `rx`, with no negation before the
-    match or inside it."""
+    match or inside it, that isn't about a later step. "the owner ask" names
+    the ask, not a hand-off."""
     for s in re.split(r"(?<=[.!?;])\s+", text):
+        if _LATER.match(s):
+            continue
+        s = _ASK_NOUN.sub("the ask", s)
         for m in rx.finditer(s):
             if not _NEGATED.search(s[:m.end()]):
                 return True

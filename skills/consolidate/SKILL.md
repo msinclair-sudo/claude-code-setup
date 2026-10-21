@@ -52,14 +52,18 @@ written from it. It covers everything the research found: never trim.
    trails, the `needs` graph and groups, the quoted bases, the Inputs table against detection, and omission
    (every inventory item accounted for).
 8. **Faithfulness check.** `python3 scripts/kn.py packets "<knowledge note>" <tmp>/packets`, then one fresh agent
-   per packet with `references/checker.md`. Fix every fault, lint again.
+   per packet with `references/checker.md`. Fix every fault and lint again. Then a fresh agent that made none of
+   the fixes re-checks the fixed entries: `kn.py packets "<knowledge note>" <tmp>/recheck --only <ids>`. Repeat
+   until the re-check finds nothing; never grade your own corrections.
 
 Each check the inputs allow is run, and the Inputs table says which ran.
 
 ## Hard rules
 
 - **Never infer a standing.** `conf` comes from a label, the critic or the note's own words, quoted; otherwise
-  `not stated`.
+  `not stated`. Quote only words from the sentences the entry cites in `from`.
+- **Not accessed is not weak.** Where the note says a claim is limited because a source was not accessed, keep
+  that reason (`limit: access`); where it does not say, add nothing.
 - **The critic wins.** Its corrections become the claims; the wording it corrected goes to Do not say.
 - **Only the inputs say what not to say.** A do-not-say entry rests on the critic, a refutation or the note's own
   warning. Without a critic, overstatements you notice are not yours to flag: the note gets a gap saying it was

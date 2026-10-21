@@ -1,5 +1,6 @@
 """Tests for kn.py on a synthetic vault: python3 scripts/tests/test_kn.py"""
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -203,7 +204,11 @@ class KnTests(unittest.TestCase):
         b = next(x["id"] for x in inv if x["text"].startswith("Rates vary"))
         code, out = self.lint(self._plain(base.format(f=f"LIME:{b}")))
         self.assertEqual(code, 0, out)
+        b2 = next(x["id"] for x in inv if x["text"].startswith("One agent"))
         rated = base.format(f=f"LIME:{b}").replace("holds: h", 'holds: h · rating: "One agent"')
+        code, out = self.lint(self._plain(rated))
+        self.assertIn("not in this entry's from text", out)       # in the note, but not in what the checker sees
+        rated = rated.replace(f"from: LIME:{b}", f"from: LIME:{b}, LIME:{b2}")
         code, out = self.lint(self._plain(rated))
         self.assertEqual(code, 0, out)
         code, out = self.lint(self._plain(rated.replace('"One agent"', '"Strong"')))
@@ -211,6 +216,57 @@ class KnTests(unittest.TestCase):
         crit = base.format(f=f"LIME:{b}").replace("conf: not stated", "conf: single (critic: C-009)")
         code, out = self.lint(self._plain(crit))
         self.assertIn("basis LIME:C-009 is not in the inventory", out)
+
+    def test_bullet_label_covers_bullet_and_repeats_get_addresses(self):
+        note = ("# R\n\n## Body\n\n"
+                "- Copy number varies by taxon. It ranges from 1 to 15 (Ray 2015) [FT; meas; repl].\n"
+                "- One finding (Kay 2021) [FT; meas; single]. Another finding (Lee 2019) [AB; meas; single].\n\n"
+                + " ".join(f"Finding {i} holds here (Lee 2019) [FT; meas; single]." for i in range(8))
+                + "\n\n*Strength:* Moderate here.\n\n## More\n\n*Strength:* Moderate here.\n")
+        (self.v / "R" / "b.md").write_text(note)
+        _, inv = kn.detect(self.v / "R" / "b.md", "BB")
+        texts = [x["text"] for x in inv if x["id"].startswith("I-")]
+        self.assertIn("- Copy number varies by taxon. It ranges from 1 to 15 (Ray 2015) [FT; meas; repl].", texts)
+        self.assertIn("Another finding (Lee 2019) [AB; meas; single].", texts)   # two labels: each its own
+        self.assertEqual(len(texts), 11)
+        strength = [x for x in inv if x["text"] == "*Strength:* Moderate here."]
+        self.assertEqual([x["id"][0] for x in strength], ["B", "B"])
+        self.assertEqual([x["where"] for x in strength], ["Body", "More"])
+
+    def test_limit_src_correction_trail_comma_and_table_words(self):
+        f, inv = kn.detect(self.v / "R" / "lab.md")
+        ids = [x["id"] for x in inv if not x["id"].startswith("B-")]
+        row = "| AB-01 | [[lab]] | yes | labelled (access; class; standing) | yes (11 of 11 labels) | no | exact |"
+        c = ("### copy: Copy number\nneeds: none\n- **copy.1** Genomes carry 1 to 15 copies.\n"
+             "  conf: single (critic: C-002) · class: meas (marker) · holds: genomes · "
+             'src: rayGenomesCopies2015 (FT; meas; single; critic: C-002 was "FT; meas; repl") · '
+             "trail: AB-01 §1. Copy, §2. More · from: AB-01:I-0002 · limit: access (critic: C-001)")
+        oos = "- " + ", ".join(f"AB-01:{i}" for i in ids if i != "I-0002") + ": test"
+        code, out = self.lint(knowledge("  - AB-01: R/lab.md", c, table=row, oos=oos))
+        self.assertEqual(code, 0, out)
+        for bad, msg in ((c.replace("critic: C-002 was", "critic: C-077 was"), "src names critic C-077"),
+                         (c.replace('was "FT; meas; repl"', 'was "AB; meas; repl"'), "src says the note's label was"),
+                         (c.replace("limit: access (critic: C-001)", "limit: weak"), "limit 'weak'"),
+                         (c.replace("conf: single (critic: C-002)", 'conf: single (note: "Genomes carry")'),
+                          "no word the format's table counts")):
+            code, out = self.lint(knowledge("  - AB-01: R/lab.md", bad, table=row, oos=oos))
+            self.assertIn(msg, out)
+
+    def test_packets_only_and_spotcheck(self):
+        c = "".join(f"- **lime.{n}** Lime is not scarce.\n  conf: not stated · class: not stated · holds: h · "
+                    f"src: leeTitleWords2019 · trail: LIME §Verdict · from: LIME:A-00{1 + n % 2}\n" for n in range(1, 6))
+        p = self.v / "K.md"
+        p.write_text(self._plain("### lime: Lime\nneeds: none\n" + c, oos=""))
+        kn.lint(p)
+        kn.packets(p, self.v / "pk", only={"lime.2", "lime.4"})
+        txt = (self.v / "pk" / "packet-01.md").read_text()
+        self.assertEqual(re.findall(r"^## (\S+)", txt, re.M), ["lime.2", "lime.4"])
+        kn.spotcheck(p, self.v / "s.md", n=3, seed=7)
+        s = (self.v / "s.md").read_text()
+        self.assertIn("random.Random(7)", s)
+        self.assertEqual(len(re.findall(r"^## \d+\. lime\.\d", s, re.M)), 3)
+        self.assertIn("`holds`:", s)                       # the fault kinds come from checker.md
+        self.assertIn("trail links: [[R/plain#Verdict]]", s)
 
 
 if __name__ == "__main__":

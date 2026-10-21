@@ -60,8 +60,11 @@ The Inputs row copies what `kn.py detect` printed; lint compares them. A blank s
 `kn.py detect --inventory` lists two kinds of item for each input:
 
 - **Required** (the omission check): critique items `C-nnn`; answer sentences `A-nnn`; and, when the note labels
-  its citations, every labelled sentence `I-nnnn`. Each must appear in some entry's `from`, or in Out of scope.
-- **Body addresses** `B-nnnn`: every other sentence of the note, callouts included (the references are not). Not
+  its citations, every labelled sentence `I-nnnn`. A bullet whose only label ends it is one item: the label
+  covers the bullet. Each must appear in some entry's `from`, or in Out of scope. A sentence repeated word for
+  word is required once.
+- **Body addresses** `B-nnnn`: every other sentence of the note, callouts included (the references and the
+  critique are not), each occurrence its own address, so a repeated line can be cited where it stands. Not
   required, but they are how an entry built from the body says where it came from.
 
 ## Concepts
@@ -95,24 +98,34 @@ the words and the critic pull apart, the critic wins; when the critic gives no v
 | `conf` | the standing the note gives this claim: `repl`, `single`, `cont`, `unclear`, `mixed` (labelled sources disagree), or `not stated`, with its basis in brackets |
 | `class` | `meas`, `deriv`, `model`, `assert` (two joined by `/`), `reading` (the reviewer's own reading or inference, said to be so), `search` (a statement about what the review's search found or did not find), or `not stated`; with its basis |
 | `holds` | the setting it comes from (system, measurement, scale, n, range) and what it was not shown for, in the note's terms |
-| `src` | citekeys from Sources, comma-separated, each optionally followed by the note's labels for it in brackets: `mclarenConsistentCorrectableBias2019 (FT; single)`, `(AB; INDIRECT)`. `none (<reason>)` when the note cites nothing for it: `none (the reviewer's synthesis)` |
+| `src` | citekeys from Sources, comma-separated, each optionally followed by the note's labels for it in brackets: `mclarenConsistentCorrectableBias2019 (FT; single)`, `(AB; INDIRECT)`. Where the critic corrected a label, the corrected one, marked: `(AB; meas; single; critic: MB-01:C-019 was "FT; meas; repl")`. `none (<reason>)` when the note cites nothing for it: `none (the reviewer's synthesis)` |
 | `trail` | where the note verified it: `<ID> §<start of a heading or callout title>`, more after commas (`MB-01 §2.2, §2.14`); `§critic` and `§answers` reach those blocks |
 | `from` | the inventory items it comes from and accounts for: `MB-01:I-0012`, `MB-01:B-0340`, ranges `MB-01:I-0012..0015`, critique items `MB-01:C-004`. Never empty |
 | `rating` (optional) | the note's own grade for this claim, in its words and in quotes: `rating: "Moderate"`, `rating: "Confidence: high (3-0)"`, `rating: "well established"` |
+| `limit` (optional) | `access`, or `access and evidence`, with its basis: the note says the claim's standing or verification is limited because a source was not accessed (abstract only, not obtained, a figure not confirmable from the text read). Only when the note gives that reason |
 
-All but `rating` are required, and none may be empty.
+All but `rating` and `limit` are required, and none may be empty.
 
-**Basis** for `conf` and `class` (required unless `not stated`):
+**Basis** for `conf`, `class` and `limit` (required unless `not stated`):
 - `(marker)`: read from the citation labels (`[FT; meas; repl]`) of a note with labelled citations.
 - `(critic: C-012)`: the critic's finding about this claim; it overrides the marker and the review. With more than
   one input, give the ID: `(critic: MB-01:C-012)`.
-- `(note: "exact words")`: the note says it in words about this claim. Lint checks the words are in the note.
+- `(note: "exact words")`: the note says it in words about this claim.
 - `(inputs: MB-01 repl, MB-02 single)`, with `mixed`: two inputs give the same claim different standings.
 
+**Everything quoted sits in the entry's own text.** A quoted basis, a `rating`, and a label's `was "..."` must be
+words from the items in the entry's `from` (or the critique items it names), because that is all the checker
+sees. If the words are in a neighbouring sentence, add that sentence to `from`. The same goes for `holds`: the
+setting comes from the cited sentences, or the sentence it comes from is cited. Lint checks the quotes; the
+checker checks `holds`.
+
 A label covers the sentence it is in, not its neighbours: another sentence about the same source has its own
-label or none. In `src`, a source's labels stay as the note gave them, even where the critic overrides the
-claim's `conf`; `src` describes the source, `conf` the claim. The same finding in two inputs is one claim with
-both trails and both `from` items.
+label or none. The exception is a bullet whose only label ends it: the label covers the bullet, and detection
+makes the bullet one item. `src` shows a source's labels as the critic left them: where the critic corrects a
+source's access, class or standing as cited for this claim, `src` gives the corrected label, then
+`critic: <item>` and the note's original label as `was "..."`. Where the critic corrects the claim and not the
+source's label, the label stays and `conf` carries the correction. The same finding in two inputs is one claim
+with both trails and both `from` items.
 
 **Which words count.** A standing is stated only by words like these, said of this claim:
 
@@ -142,6 +155,11 @@ A method the note describes ("by construction", "a Monte Carlo study") is a basi
 - A "not found" can be a claim (`class: search`, the routes in `holds`) as well as a gap.
 - Access and directness (`INDIRECT`, abstract only, "single-pass extraction") go with the source in `src`, in the
   note's own words.
+- **Not accessed is not weak.** "Not confirmable, the source was not accessed" is a different finding from "not
+  supported". Where the note or its critic says a claim was downgraded, left unverified or called unsupported
+  because of access, keep that reason: `limit: access (critic: C-020)`, and in a do-not-say entry's `why`. Where
+  it gives both reasons, `limit: access and evidence`. Where it gives no reason, write nothing: never infer that
+  a weak claim is weak because of access.
 - Don't trim: every finding the note reports becomes a claim, whether it is in the answers or only in the body,
   however minor or off the apparent topic. Choosing what to use is the writing stage's job.
 
@@ -198,7 +216,7 @@ waiting on it. These go back to research; consolidation never fills them.
 ```markdown
 - MB-01:C-030..034: reference corrections, applied in Sources
 - MB-02:A-151, MB-02:A-152: access basis of the answers (provenance, kept in the result note)
-- TSL:A-016: the review's choice among the brief's options (routing, not a finding)
+- AB-01:A-016: the review's choice among the brief's options (routing, not a finding)
 ```
 
 Required inventory items that are not findings, each range with its reason: provenance, search records, routing,
@@ -217,7 +235,9 @@ block can be collected into the bibliography.
   (`auth.lower + shorttitle(3,3) + year`, as `PhD/Proposal/.hb/websearch/build_bibs.py` applies it). Lint warns
   when a key differs. Add `a`, `b` when two sources would share a key.
 - `note = {access: full_text (MB-01), abstract_only (MB-02); type: peer reviewed; cited as: MB-02 [3]}`. Access
-  is `full_text`, `abstract_only`, `secondary` or `not_obtained`, followed by the note's own words in brackets when
-  it says more ("full_text (single-pass extraction)"). `type` only when the note says it. `not cited` for a source
+  is `full_text`, `abstract_only`, `secondary`, `not_obtained` or `not stated` (the note gives none), followed by
+  the note's own words in brackets when it says more ("full_text (single-pass extraction)"). Where the critic
+  corrects a source's access, the corrected value, with the critic item: `abstract_only (critic: MB-01:C-020;
+  the note said full_text)`. `type` only when the note says it. `not cited` for a source
   the note lists but cites nowhere; `background` for a background reference; a conflict between the note's lists
   (a source both used and "not obtained") is recorded here.

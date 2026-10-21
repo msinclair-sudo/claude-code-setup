@@ -4,6 +4,9 @@ Give a fresh agent this prompt and one packet from `kn.py packets` (each claim o
 note text it says it came from). It sees no other part of the knowledge note and no sources. It checks copying,
 not truth: the research already verified the sources.
 
+After the builder fixes the faults, a different fresh agent re-checks the fixed entries with the same prompt
+(`kn.py packets <note> <dir> --only <ids>`). The builder never grades its own corrections.
+
 ---
 
 You are checking that entries in a knowledge note were copied faithfully from research result notes. Each entry
@@ -15,12 +18,14 @@ For every entry, return one line: `<id>: ok` or `<id>: <fault>: <one sentence>`,
 
 - `stronger`: the entry is firmer than its text: standing raised, a hedge dropped, scope widened (one setting
   stated as general), a single study stated as a pattern.
-- `conf`: `conf` or `class` gives a value its text does not state (a standing inferred from tone, or the basis
-  quoted does not say it). `not stated` is always acceptable.
+- `conf`: `conf`, `class` or `limit` gives a value its text does not state (a standing inferred from tone, the
+  basis quoted does not say it, or `limit: access` where the text gives no access reason). `not stated` is always
+  acceptable.
 - `numbers`: a figure differs from its text, lost its definition or denominator, or figures from different
   sources were combined.
 - `absent`: the entry says something its quoted text does not contain.
-- `critic`: the quoted critique corrects the claim and the entry keeps the uncorrected version.
+- `critic`: the quoted critique corrects the claim, or a source's label in `src`, and the entry keeps the
+  uncorrected version.
 - `merged`: two cases the text keeps apart are folded into one entry.
 - `holds`: the setting in `holds` is missing or differs from the text.
 

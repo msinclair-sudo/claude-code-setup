@@ -4,8 +4,12 @@
   kn.py detect NOTE [--id ID] [--inventory OUT.md]   what the note has, which checks can run, and the
                                                      inventory of items the knowledge note must account for
   kn.py lint KNOWLEDGE.md                            check the knowledge note; write KNOWLEDGE.index.json
-  kn.py packets KNOWLEDGE.md OUTDIR                  each claim and do-not-say entry beside the note text it
-                                                     came from, for the faithfulness checker
+  kn.py packets KNOWLEDGE.md OUTDIR [--only IDS]     each claim and do-not-say entry beside the note text it
+                                                     came from, for the faithfulness checker; --only takes
+                                                     comma-separated entry IDs (the fixed ones, for the re-check)
+  kn.py spotcheck KNOWLEDGE.md OUT.md [--n 20 --seed S]
+                                                     a random sample of entries, each with its from text and
+                                                     trail, for a person to judge (the seed is recorded)
   kn.py citekey --author A --title T --year Y [--doi D --refs BIB]
                                                      the source's key: its key in BIB if the DOI is there,
                                                      else auth.lower + shorttitle(3,3) + year
@@ -157,6 +161,10 @@ def sentences(u):
     return [s.strip() for s in out if len(s.split()) >= 2]     # "*Strength:* Moderate." is a finding too
 
 
+def is_bullet(u):
+    return bool(re.match(r"([-*+]|\d+[.)])\s+", u))
+
+
 def detect(path, nid=None):
     full, body, _ = read(path)
     secs = sections(body)
@@ -182,6 +190,7 @@ def detect(path, nid=None):
     sidecar = Path(path).with_suffix(".run.json")
 
     inv = []
+    occupied = set()        # (section, unit, sentence) positions that already have a required address
     for title_c, lines in crit:
         for u in units(lines):
             if re.fullmatch(r"\**[A-Za-z ,()\-]+\**\s*(\(\d+\))?:?\**", u) or len(u.split()) < 4:
@@ -198,35 +207,47 @@ def detect(path, nid=None):
                             default=True)
         n = 0
         for where, lines in keep:
-            for u in units(lines):
-                for s in sentences(u):
-                    if labels_in(s) and norm(s) not in seen:
-                        seen.add(norm(s))
-                        n += 1
-                        inv.append({"id": f"I-{n:04d}", "where": where, "text": s, "labels": labels_in(s)})
+            for ui, u in enumerate(units(lines)):
+                ss = sentences(u)
+                lab = [bool(labels_in(s)) for s in ss]
+                if is_bullet(u) and len(ss) > 1 and lab[-1] and sum(lab) == 1:
+                    found = [(range(len(ss)), u)]          # one label ending a bullet covers the bullet
+                else:
+                    found = [([k], s) for k, s in enumerate(ss) if lab[k]]
+                for ks, s in found:
+                    if norm(s) in seen:                    # a repeat gets a body address below
+                        continue
+                    seen.add(norm(s))
+                    occupied.update((id(lines), ui, k) for k in ks)
+                    n += 1
+                    inv.append({"id": f"I-{n:04d}", "where": where, "text": s, "labels": labels_in(s)})
     if answers:
         if not labelled:
             ver = "fallback (answers and critique; the note has no labelled citations)"
         n = 0
         for where, lines in answers:
-            for u in units(lines):
-                for s in sentences(u):
+            for ui, u in enumerate(units(lines)):
+                for k, s in enumerate(sentences(u)):
                     if norm(s) in seen:      # the same answer in the callout and in the body
                         continue
                     seen.add(norm(s))
+                    occupied.add((id(lines), ui, k))
                     n += 1
                     inv.append({"id": f"A-{n:03d}", "where": where, "text": s})
     elif not labelled:
         ver = ("critique only (no labelled citations and no answers section found)" if crit
                else "not run (no labelled citations, answers or critique found)")
-    # every other sentence of the note gets an address: not required, but a claim's `from` can point to it
-    taken = {norm(x["text"]) for x in inv}
+    # every other sentence of the note gets an address: not required, but a claim's `from` can point to it. Each
+    # occurrence gets its own, so a repeated line ("*Strength:* Moderate.") can be cited where it stands. The
+    # critique has its own addresses (C-nnn).
+    in_crit = {id(lines) for _, lines in crit}
     n = 0
     for where, lines in region_lines(secs, refs_only, default=True):
-        for u in units(lines):
-            for s in sentences(u):
-                if norm(s) not in taken:
-                    taken.add(norm(s))
+        if id(lines) in in_crit:
+            continue
+        for ui, u in enumerate(units(lines)):
+            for k, s in enumerate(sentences(u)):
+                if (id(lines), ui, k) not in occupied:
                     n += 1
                     inv.append({"id": f"B-{n:04d}", "where": where, "text": s})
     feats = {
@@ -271,8 +292,17 @@ def cmd_detect(argv):
 CONF = re.compile(r"^(repl|single|cont|unclear|mixed|not stated)(?:\s*\((marker|critic: [^)]+|inputs: [^)]+|note: \"[^\"]+\")\))?$")
 KLASS = re.compile(r"^(meas|deriv|model|assert|reading|search|not stated)(?:/(meas|deriv|model|assert))?"
                    r"(?:\s*\((marker|critic: [^)]+|note: \"[^\"]+\")\))?$")
+LIMIT = re.compile(r"^(access|access and evidence)\s*\((critic: [^)]+|note: \"[^\"]+\")\)$")
+CRITREF = re.compile(r"critic:\s*((?:[A-Za-z0-9][A-Za-z0-9-]*:)?C-\d+(?:\.\.\d+)?"
+                     r"(?:\s*,\s*(?:[A-Za-z0-9][A-Za-z0-9-]*:)?C-\d+(?:\.\.\d+)?)*)")
+# The words that state a standing (format.md, "Which words count"); a quoted basis without one is suspect.
+TABLE = {"repl": r"replicat|consistent|converg|independent",
+         "single": r"single|\bone (?:study|dataset|data set|laboratory|lab|source|site|experiment|paper|trial)|"
+                   r"\bonly (?:test|study|one|source|dataset)",
+         "cont": r"contest|disput|conflict|disagree|contradict",
+         "unclear": r"unclear|unsettled|poorly constrained|cannot tell|unknown|uncertain|unresolved"}
 FIELDS = {
-    "claim": ({"conf", "class", "holds", "src", "trail", "from"}, {"rating"}),
+    "claim": ({"conf", "class", "holds", "src", "trail", "from"}, {"rating", "limit"}),
     "background": ({"kind", "ref", "check"}, set()),
     "dns": ({"why", "instead", "from"}, {"trail"}),
     "gap": ({"blocks", "origin"}, {"from", "trail", "src"}),
@@ -408,11 +438,34 @@ def expand(ref):
     return [f"{a}:{kind}-{n:0{w}d}" for n in range(lo, hi + 1)]
 
 
+def critic_refs(fields, default):
+    """Critique items an entry names as a basis (conf, class, limit) or as a label correction (src), each with its
+    input ID (the ID may be left off when there is one input)."""
+    out = []
+    for fld in ("conf", "class", "limit", "src"):
+        for m in CRITREF.finditer(fields.get(fld, "")):
+            out += [r if re.match(r"[A-Za-z0-9][A-Za-z0-9-]*:", r) else f"{default}:{r}"
+                    for r in re.split(r"\s*,\s*", m.group(1))]
+    return out
+
+
+def entry_refs(fields, default):
+    """Every inventory reference the checker is shown for an entry: its `from`, then the critique it names."""
+    refs = [r for r in re.split(r",\s*", fields.get("from", "")) if r.strip()]
+    return refs + [r for r in critic_refs(fields, default) if r not in refs]
+
+
+def qnorm(s):
+    """For matching a quotation against note text: case, emphasis marks, curly quotes and spacing ignored."""
+    s = s.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
+    return re.sub(r"\s+", " ", re.sub(r"[*`]", "", s)).lower().strip()
+
+
 def resolve_trail(t, inputs, secs_by):
     """'MB-01 §2.2', '§critic', '§answers', or the start of a callout's title ('§Integration read');
     returns [(id, title, kind)] or raises ValueError."""
-    out = []
-    for part in [x.strip() for x in t.split(",")]:
+    out = []        # a comma separates trail parts only before '§' or '<ID> §': headings may contain commas
+    for part in [x.strip() for x in re.split(r",\s*(?=(?:[A-Za-z0-9][A-Za-z0-9-]*\s+)?§)", t)]:
         m = re.match(r"([A-Za-z0-9][A-Za-z0-9-]*)\s+\u00a7\s*(.+)", part)
         if not m:
             m2 = re.match(r"\u00a7\s*(.+)", part)
@@ -597,8 +650,44 @@ def lint(path):
     known = {e["id"] for e in entries}
     covered = defaultdict(list)
     trails = {}
+    default = next(iter(invs)) if len(invs) == 1 else "?"
+    ntexts = [qnorm(t) for t in texts.values()]
+
+    def item(g):
+        nid, iid = g.split(":")
+        return invs.get(nid, {}).get(iid)
+
+    def check_basis(eid, fld, basis, value, ptext):
+        """A basis names a critique item that exists, or quotes words that sit in the entry's own text."""
+        if basis.startswith("critic:"):
+            for ref in re.split(r",\s*", basis[7:].strip()):
+                ref = ref if ":" in ref else f"{default}:{ref}"
+                got = expand(ref)
+                if not got:
+                    err(f"{eid}: {fld} basis '{ref}': write critic: <ID>:C-nnn (the ID may be left off when there "
+                        "is one input)")
+                elif not all(item(g) for g in got):
+                    err(f"{eid}: {fld} basis {ref} is not in the inventory")
+        elif basis.startswith("note:"):
+            quote = basis[7:-1]
+            msg = where_is(quote, ptext)
+            if msg:
+                err(f"{eid}: {fld} quotes \"{quote}\", which {msg}")
+            if fld == "conf" and value in TABLE and not re.search(TABLE[value], quote, re.I):
+                warn(f"{eid}: conf {value} quotes \"{quote}\", which has no word the format's table counts as "
+                     f"'{value}' (references/format.md, Which words count)")
+
+    def where_is(quote, ptext):
+        if qnorm(quote) in ptext:
+            return None
+        if any(qnorm(quote) in t for t in ntexts):
+            return ("is in the note but not in this entry's from text (the checker sees only that): cite the "
+                    "sentence it is in")
+        return "is not in any input note"
+
     for e in entries:
         f, eid, req_opt = e["fields"], e["id"], FIELDS[e["type"]]
+        ptext = qnorm(" ".join(x["text"] for r in entry_refs(f, default) for g in (expand(r) or []) if (x := item(g))))
         for bad in f.pop("_bad", []):
             err(f"{eid}: '{bad[:50]}' is not 'field: value' (fields are separated by ' \u00b7 ')")
         missing = req_opt[0] - set(f)
@@ -615,8 +704,23 @@ def lint(path):
             q = re.fullmatch(r'"([^"]+)"', f["rating"].strip())
             if not q:
                 err(f"{eid}: rating is the note's own words in quotes: rating: \"Moderate\"")
-            elif not any(q.group(1).lower() in tx.lower() for tx in texts.values()):
-                err(f'{eid}: rating "{q.group(1)}" is not in any input note')
+            elif where_is(q.group(1), ptext):
+                err(f'{eid}: rating "{q.group(1)}" {where_is(q.group(1), ptext)}')
+        if "limit" in f:
+            mm = LIMIT.match(f["limit"])
+            if not mm:
+                err(f"{eid}: limit '{f['limit']}': 'access' or 'access and evidence', with the basis that says so: "
+                    "(critic: C-nnn) or (note: \"words from the note\")")
+            else:
+                check_basis(eid, "limit", mm.group(2), mm.group(1), ptext)
+        for m in CRITREF.finditer(f.get("src", "")):        # a label the critic corrected
+            for ref in re.split(r"\s*,\s*", m.group(1)):
+                got = expand(ref if ":" in ref else f"{default}:{ref}")
+                if not got or not all(item(g) for g in got):
+                    err(f"{eid}: src names critic {ref}, which is not in the inventory")
+        for was in re.findall(r'was "([^"]+)"', f.get("src", "")):
+            if where_is(was, ptext):
+                err(f'{eid}: src says the note\'s label was "{was}", which {where_is(was, ptext)}')
         unknown = set(f) - req_opt[0] - req_opt[1]
         if unknown:
             err(f"{eid}: unknown field(s) {', '.join(sorted(unknown))}; the format has no others")
@@ -633,20 +737,8 @@ def lint(path):
                 if mm.group(1) != "not stated" and not basis:
                     err(f"{eid}: {fld} {mm.group(1)} needs its basis: (marker), (critic: C-nnn) or "
                         "(note: \"words from the note\")")
-                if basis and basis.startswith("critic:"):
-                    for ref in re.split(r",\s*", basis[7:].strip()):
-                        ref = ref if ":" in ref else (f"{next(iter(invs))}:{ref}" if len(invs) == 1 else ref)
-                        got = expand(ref)
-                        if not got:
-                            err(f"{eid}: {fld} basis '{ref}': write critic: <ID>:C-nnn (the ID may be left off "
-                                "when there is one input)")
-                        elif any(g.split(":")[0] not in invs or g.split(":")[1] not in invs[g.split(":")[0]]
-                                 for g in got):
-                            err(f"{eid}: {fld} basis {ref} is not in the inventory")
-                if basis and basis.startswith("note:"):
-                    quote = basis[7:-1]
-                    if not any(quote.lower() in t.lower() for t in texts.values()):
-                        err(f"{eid}: {fld} quotes \"{quote}\", which is not in any input note")
+                if basis and basis != "marker" and not basis.startswith("inputs:"):
+                    check_basis(eid, fld, basis, mm.group(1), ptext)
                 if basis == "marker" and not any(feats[n]["citations"].startswith("labelled") for n in feats):
                     err(f"{eid}: {fld} (marker) but no input has labelled citations")
         if e["type"] == "background":
@@ -710,6 +802,10 @@ def lint(path):
         want = reuse or citekey(src.get("author", ""), src.get("title", ""), year.group(0) if year else "")
         if re.sub(r"[a-z]$", "", k) != want and k != want:
             warn(f"source {k}: the key rule gives {want}" + (" (its key in the refs bibliography)" if reuse else ""))
+        ky = re.search(r"(\d{4})[a-z]?$", reuse or "")
+        if ky and year and ky.group(1) != year.group(0):
+            warn(f"source {k}: its DOI is in the refs bibliography as {reuse}, whose year is not the entry's "
+                 f"{year.group(0)}: check which is right")
 
     # the Inputs table must report what detection found
     head = next((k for k, ln in enumerate(lines) if ln.startswith("|") and re.search(r"\|\s*id\s*\|", ln, re.I)), None)
@@ -761,8 +857,8 @@ def lint(path):
     return 1 if errs else 0
 
 
-def packets(path, outdir, per=60):
-    """For the faithfulness check: each entry beside the exact note text it says it came from."""
+def load_index(path):
+    """The lint index of a knowledge note, and every inventory item of its inputs by 'ID:X-nnn'."""
     path = Path(path)
     idx = path.with_suffix(".index.json")
     if not idx.exists():
@@ -773,7 +869,30 @@ def packets(path, outdir, per=60):
     for nid, ft in index["inputs"].items():
         for x in detect(root / ft["path"], nid)[1]:
             items[f"{nid}:{x['id']}"] = x
-    ents = [e for e in index["entries"] if e["type"] in ("claim", "dns")]
+    return index, items
+
+
+def entry_block(e, items, default, trail=False):
+    """One entry as the checker sees it: statement, fields, and the note text of its `from` and named critique."""
+    fl = e["fields"]
+    out = [f"{e['statement']}\n\n", "".join(f"- {k}: {v}\n" for k, v in fl.items() if k != "from")]
+    if trail and e.get("trail_links"):
+        out.append(f"- trail links: {', '.join(e['trail_links'])}\n")
+    out.append("\nFrom the note:\n\n")
+    for ref in entry_refs(fl, default):
+        for g in expand(ref) or []:
+            x = items.get(g)
+            out.append(f"> {g} [{x['where'][:40]}] {x['text']}\n>\n" if x else f"> {g}: not in inventory\n>\n")
+    return "".join(out)
+
+
+def packets(path, outdir, per=60, only=None):
+    """For the faithfulness check: each entry beside the exact note text it says it came from."""
+    index, items = load_index(path)
+    default = next(iter(index["inputs"])) if len(index["inputs"]) == 1 else "?"
+    ents = [e for e in index["entries"] if e["type"] in ("claim", "dns") and (not only or e["id"] in only)]
+    if only and len(ents) != len(only):
+        print("not entries:", ", ".join(sorted(set(only) - {e["id"] for e in ents})))
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     files = []
@@ -781,21 +900,38 @@ def packets(path, outdir, per=60):
         f = outdir / f"packet-{k // per + 1:02d}.md"
         with f.open("w", encoding="utf-8") as w:
             for e in ents[k:k + per]:
-                fl = e["fields"]
-                w.write(f"## {e['id']} ({'do not say' if e['type'] == 'dns' else 'claim'})\n\n{e['statement']}\n\n")
-                w.write("".join(f"- {k2}: {v}\n" for k2, v in fl.items() if k2 != "from"))
-                w.write("\nFrom the note:\n\n")
-                bases = re.findall(r"critic: ([^)]+)\)", fl.get("conf", "") + " " + fl.get("class", ""))
-                refs = re.split(r",\s*", fl.get("from", "")) + [
-                    r if ":" in r else f"{next(iter(index['inputs']))}:{r}"
-                    for b in bases for r in re.split(r",\s*", b.strip())]
-                for ref in refs:
-                    for g in expand(ref) or []:
-                        x = items.get(g)
-                        w.write(f"> {g} [{x['where'][:40]}] {x['text']}\n>\n" if x else f"> {g}: not in inventory\n>\n")
-                w.write("\n")
+                w.write(f"## {e['id']} ({'do not say' if e['type'] == 'dns' else 'claim'})\n\n")
+                w.write(entry_block(e, items, default) + "\n")
         files.append(f)
     print(f"{len(ents)} entries in {len(files)} packets -> {outdir}")
+
+
+def spotcheck(path, out, n=20, seed=None):
+    """A random sample of the entries the checker judges, for a person to judge blind to the checker's verdicts."""
+    import random
+    index, items = load_index(path)
+    default = next(iter(index["inputs"])) if len(index["inputs"]) == 1 else "?"
+    ents = [e for e in index["entries"] if e["type"] in ("claim", "dns")]
+    if seed is None:
+        seed = random.SystemRandom().randrange(10 ** 8)
+    pick = sorted(random.Random(seed).sample(range(len(ents)), min(n, len(ents))))
+    kinds = re.findall(r"^- `(\w+)`: (.+?)(?=\n- `|\n\nBe strict)", (Path(__file__).parents[1] / "references" /
+                                                                       "checker.md").read_text(), re.S | re.M)
+    with Path(out).open("w", encoding="utf-8") as w:
+        w.write(f"# Spot-check: {Path(path).stem}\n\n"
+                f"- Knowledge note: `{index['note']}`\n- Drawn: {len(pick)} of the {len(ents)} claims and do-not-say "
+                f"entries, `random.Random({seed}).sample` over them in file order (`kn.py spotcheck --seed {seed}`)\n"
+                f"- Entries: {', '.join(ents[k]['id'] for k in pick)}\n\n"
+                "Judge each entry only against the note text quoted under it, as the checker does: does the entry "
+                "say what that text says? Not whether the research is right. The trail is there if you want the "
+                "context; the checker never sees it. Mark `ok`, or one or more faults:\n\n")
+        w.write("".join(f"- `{k}`: {' '.join(v.split())}\n" for k, v in kinds) + "\n")
+        for i, k in enumerate(pick, 1):
+            e = ents[k]
+            w.write(f"## {i}. {e['id']} ({'do not say' if e['type'] == 'dns' else 'claim'})\n\n")
+            w.write(entry_block(e, items, default, trail=True))
+            w.write("\n**Verdict:** \n\n**Why:** \n\n")
+    print(f"seed {seed}: {', '.join(ents[k]['id'] for k in pick)} -> {out}")
 
 
 def cmd_citekey(argv):
@@ -809,14 +945,26 @@ def cmd_citekey(argv):
 
 
 if __name__ == "__main__":
-    cmds = ("detect", "lint", "packets", "citekey")
+    cmds = ("detect", "lint", "packets", "spotcheck", "citekey")
+    if {"-h", "--help"} & set(sys.argv):
+        print(__doc__)
+        sys.exit(0)
     if len(sys.argv) < 3 or sys.argv[1] not in cmds:
         print(__doc__)
         sys.exit(2)
+    a = sys.argv[2:]
+    opt = lambda k, d=None: a[a.index(k) + 1] if k in a else d
+    pos = [x for i, x in enumerate(a) if not x.startswith("--") and (i == 0 or not a[i - 1].startswith("--"))]
     if sys.argv[1] == "detect":
-        sys.exit(cmd_detect(sys.argv[2:]) or 0)
+        sys.exit(cmd_detect(a) or 0)
     if sys.argv[1] == "citekey":
-        sys.exit(cmd_citekey(sys.argv[2:]) or 0)
+        sys.exit(cmd_citekey(a) or 0)
     if sys.argv[1] == "packets":
-        sys.exit(packets(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else "packets") or 0)
-    sys.exit(lint(sys.argv[2]))
+        only = opt("--only")
+        only = set(re.split(r"[,\s]+", only.strip())) if only else None
+        sys.exit(packets(pos[0], pos[1] if len(pos) > 1 else "packets", only=only) or 0)
+    if sys.argv[1] == "spotcheck":
+        seed = opt("--seed")
+        sys.exit(spotcheck(pos[0], pos[1] if len(pos) > 1 else "spotcheck.md", int(opt("--n", 20)),
+                           int(seed) if seed is not None else None) or 0)
+    sys.exit(lint(a[0]))

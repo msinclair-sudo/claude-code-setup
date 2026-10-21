@@ -1557,15 +1557,24 @@ class LeadReachesBelow(unittest.TestCase):
         with mock.patch.object(hz, "Ctx", return_value=ctx), \
              mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "s" * 36}), \
              mock.patch("sys.argv", ["harness", "brief", *argv]), \
-             mock.patch("sys.stderr", io.StringIO()), redirect_stdout(io.StringIO()):
+             mock.patch("sys.stderr", io.StringIO()), redirect_stdout(io.StringIO()) as o:
             try:
                 hz.main(); return 0
             except SystemExit as e:
                 return e.code
+            finally:
+                self.out = o.getvalue()
 
     def test_a_lead_defers_any_task_below_it_and_no_other(self):
         self.assertEqual(self.run_cli("dev", "tx", "--defer", "the owner's stop"), 0)
         self.assertNotEqual(self.run_cli("dev_2", "tx", "--defer", "not mine"), 0)
+
+    def test_a_default_deferral_says_how_to_make_it_longer(self):
+        # Log 202: a week-long freeze came back twice a day.
+        self.assertEqual(self.run_cli("dev_tax", "tx", "--defer", "the owner's stop"), 0)
+        self.assertIn("--defer-for", self.out)
+        self.assertEqual(self.run_cli("dev_tax", "tx", "--defer", "frozen", "--defer-for", "3d"), 0)
+        self.assertNotIn("That is the default", self.out)
 
 
 class SilentNodes(unittest.TestCase):

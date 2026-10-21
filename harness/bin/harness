@@ -14728,6 +14728,12 @@ def cmd_brief(a):
               + f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(until))}"
               + (")" if _when else f" ({human_age(span)})") + ".")
         print(f"  Then it returns to the normal pool and your stop hook says so.")
+        if not lift and not a.__dict__.get("defer_for"):
+            # Log 202: a week-long freeze came back twice a day, because the 12 h
+            # default was all the writer knew of.
+            print(f"  That is the default. For longer, defer again with --defer-for, up to "
+                  f"{human_age(WAIT_MAX)} (e.g. --defer-for 3d), or name what lifts it "
+                  f"(--defer-until-task/-ask/-research).")
         return
 
     if a.write is None and (a.not_before or a.requires):

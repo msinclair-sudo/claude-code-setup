@@ -4134,6 +4134,39 @@ class Ringer(unittest.TestCase):
         self.tick(S, t + 1)
         self.assertIsNone(hz.unwoken(self.ctx, "dev_1"))
 
+    def test_nothing_is_posted_while_a_turn_runs(self):
+        # Log 202: a post mid-turn is a reminder, not a prompt, so the mail was
+        # never taken and each retry added an identical reminder.
+        self.own("dev_1", "s-1")
+        self.rows = [{"sessionId": "s-1", "status": "idle", "messagingSocketPath": "/b"}]
+        hz.ring_inbox(self.ctx.state, "dev_1", "dev", "your check finished")
+        with mock.patch.object(hz, "turn_running", return_value=True):
+            self.tick({}, 1000)
+        self.assertEqual(self.sent, [])
+
+    def test_after_a_turn_with_the_mail_unread_one_more_post_then_its_lead_is_told(self):
+        self.own("dev_1", "s-1")
+        self.rows = [{"sessionId": "s-1", "status": "idle", "messagingSocketPath": "/b"}]
+        hz.ring_inbox(self.ctx.state, "dev_1", "dev", "your check finished")
+        S = {}
+        self.tick(S, 1000)                                   # woken
+        self.tick(S, 1100, ended=1050)                       # a turn since: once more
+        self.assertEqual(len(self.sent), 2)
+        self.tick(S, 1500, ended=1450)                       # another turn, still unread
+        self.tick(S, 3000, ended=1450)
+        self.assertEqual(len(self.sent), 2)                  # no more posts
+        self.assertIsNotNone(hz.unwoken(self.ctx, "dev_1"))  # its lead is told instead
+
+    def test_a_session_beside_a_live_holder_is_not_woken_for_its_mail(self):
+        # Log 202: its prompt hook refuses the holder's mail, so it was woken forever.
+        (self.ctx.dir / "locks" / "dev_1.lock").write_text(json.dumps(
+            {"session_id": "s-hold", "ref": "s-hold", "pid": 4242}))
+        self.rows = [{"sessionId": "s-other", "status": "idle", "cwd": "/w/dev_1",
+                      "name": "p-dev_1", "messagingSocketPath": "/b"}]
+        hz.ring_inbox(self.ctx.state, "dev_1", "dev", "go")
+        self.tick({}, 1000, resumed=[])
+        self.assertEqual(self.sent, [])
+
     def test_a_session_stopped_while_idle_is_resumed_and_a_halt_resumes_nothing(self):
         self.own("dev_1", "s-1")                             # claimed, no live process
         hz.ring_inbox(self.ctx.state, "dev_1", "dev", "your check finished")

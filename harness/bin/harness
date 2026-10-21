@@ -189,6 +189,13 @@ def pid_alive(pid):
         return True                       # no /proc: trust the signal
 
 
+def turn_running(sid):
+    """A turn is running in this session: its transcript can be read and no
+    turn end follows its last message. Unlike `not turn_ended`, an unreadable
+    transcript is not a running turn."""
+    return bool(sid) and transcript_for(sid) is not None and turn_end_at(sid) is None
+
+
 def holder_alive(held, rows=None):
     """Is a lock's holder running? True, False, or None when this host cannot know.
 
@@ -25268,7 +25275,8 @@ def ringer_tick(ctx, S, now=None):
         # own job id and is nobody's session.
         there = [r for r in live.values() if wts.get(node) and r.get("cwd") == wts[node]
                  and r.get("name") and r.get("name") != r.get("jobId")]
-        if row is None and there:
+        held = _read_json(ctx.state_file("locks", node, ".lock")) or {}
+        if row is None and there and not (held.get("pid") and holder_alive(held) is True):
             # Not claimed yet, or the lock names a session that has gone: mail
             # goes to whoever is in the worktree at its next prompt, so that
             # session is the one to wake. With a lock this used to fall through
@@ -25313,6 +25321,25 @@ def ringer_tick(ctx, S, now=None):
         act, why = ringer_plan(state, idle_for, mail, node, last, now, sid)
         if not act:
             continue
+        after_turn = False
+        if act == "wake":
+            wsid = row.get("sessionId") or ""
+            # A post while a turn runs lands as a mid-turn reminder, not a
+            # prompt, so its mail is never taken and every retry adds another
+            # (log 202: five identical reminders in one turn of main's).
+            if turn_running(wsid):
+                continue
+            ended = turn_end_at(wsid) or 0
+            if last and last.get("ok") and ended > last.get("at", 0):
+                # It has run a turn since the last wake and the mail is still
+                # unread. One more post, now as a prompt; after that, its lead
+                # is told (unwoken) rather than the session posted again.
+                if last.get("after_turn"):
+                    (d / "unwoken.json").write_text(json.dumps(
+                        {"since": last.get("first", now), "tries": last.get("tries", 1),
+                         "unread": len(calls)}))
+                    continue
+                after_turn = True
         text = wake_text(node, calls)
         lim = (S.get("_limited") or {}).get(node)
         if lim or act == "resume":
@@ -25334,7 +25361,7 @@ def ringer_tick(ctx, S, now=None):
         if act == "resume" and not ok:
             start_clear(ctx, node)
         tries = (last or {}).get("tries", 0) + 1
-        S[node] = {"sig": sig, "tries": tries, "at": now,
+        S[node] = {"sig": sig, "tries": tries, "at": now, "ok": ok, "after_turn": after_turn,
                    "first": (last or {}).get("first", now)}
         (d / "woken.json").write_text(json.dumps(
             {"at": now, "how": act, "ok": ok, "tries": tries, "why": why}))

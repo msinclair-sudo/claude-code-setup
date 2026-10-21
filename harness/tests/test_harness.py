@@ -6351,6 +6351,101 @@ class PartialKeepsTheRest(unittest.TestCase):
         self.assertEqual((rep["partial"], rep["arms"], "earlier" in rep), (True, ["good"], False))
 
 
+class StreamFeature(unittest.TestCase):
+    """Log 200, owner 2026-10-21: "a lane is defined. it's not for doing other
+    things, a job is a job." dev_tests spent five days on taxonomy briefs."""
+
+    CHARTER = {"features": {
+        "Tests": {"name": "Tests", "text": "-", "seq": 1, "parent": None},
+        "Test_speed": {"name": "Test speed", "text": "-", "seq": 1, "parent": "Tests"},
+        "Taxonomy": {"name": "Taxonomy", "text": "-", "seq": 2, "parent": None}}}
+
+    def setUp(self):
+        self.ctx = FakeCtx({"main": None, "dev": "main", "dev_tests": "dev",
+                            "dev_tests_1": "dev_tests", "dev_tax": "dev", "dev_tax_1": "dev_tax"})
+        self.ctx.tree["nodes"]["dev_tests"]["feature"] = "Tests"
+        self.ctx.repo = self.ctx.worktree = self.ctx.dir
+        (self.ctx.dir / "charter.json").write_text(json.dumps(self.CHARTER))
+        (self.ctx.dir / "briefs").mkdir()
+        self.err = mock.patch("sys.stderr", new_callable=io.StringIO)
+        self.err.start(); self.addCleanup(self.err.stop)
+
+    def run_cli(self, *argv, me="dev", session=True):
+        self.ctx.me, self.ctx.branch = me, me
+        env = {"CLAUDE_CODE_SESSION_ID": "s" * 36} if session else {}
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.dict(os.environ, env), \
+             mock.patch("sys.argv", ["harness", *argv]), \
+             redirect_stdout(io.StringIO()) as o:
+            if not session:
+                os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
+            try:
+                hz.main(); return 0, o.getvalue()
+            except SystemExit as e:
+                return e.code, o.getvalue()
+
+    def brief(self, task, node, feature, me="dev_tests"):
+        return self.run_cli("brief", task, "--for", node, "--feature", feature,
+                            "--write", "do it", me=me)[0]
+
+    def test_a_brief_outside_the_streams_feature_is_refused_rank_0_included(self):
+        self.assertNotEqual(self.brief("tl-dedupe", "dev_tests_1", "Taxonomy"), 0)
+        self.assertIn("a lane does its own feature's work", sys.stderr.getvalue())
+        self.assertNotEqual(self.brief("tl-dedupe", "dev_tests_1", "Taxonomy", me="main"), 0)
+        self.assertEqual(self.brief("te-1", "dev_tests_1", "Tests"), 0)
+        self.assertEqual(self.brief("te-2", "dev_tests_1", "Test speed"), 0)     # under it
+        self.assertEqual(self.brief("tx-1", "dev_tax_1", "Taxonomy", me="dev_tax"), 0)
+        # Re-mapping a brief already on the stream is held to it too.
+        self.assertNotEqual(self.run_cli("brief", "te-1", "--feature", "Taxonomy")[0], 0)
+
+    def test_only_the_owner_grants_an_exception_and_it_names_the_task(self):
+        args = ("exception", "tl-dedupe", "--for", "dev_tests_1", "--why", "one-off")
+        self.assertNotEqual(self.run_cli(*args, me="main")[0], 0)              # a session
+        self.assertEqual(self.run_cli(*args, me="main", session=False)[0], 0)
+        self.assertEqual(self.brief("tl-dedupe", "dev_tests_1", "Taxonomy"), 0)
+        self.assertNotEqual(self.brief("tl-other", "dev_tests_1", "Taxonomy"), 0)
+        self.assertIn("one-off", self.run_cli("exception", me="main")[1])
+        self.assertEqual(self.run_cli("exception", "tl-dedupe", "--drop", me="main",
+                                      session=False)[0], 0)
+
+    def test_orientation_names_the_stream_and_what_breaks_it(self):
+        # A brief from before the rule: taxonomy work on the Tests stream.
+        (self.ctx.dir / "briefs" / "tl-dedupe.json").write_text(json.dumps(
+            {"task": "tl-dedupe", "node": "dev_tests_1", "feature": "Taxonomy"}))
+        lane = hz.stream_items(self.ctx, "dev_tests_1")
+        self.assertTrue(any(k.startswith("stream:") and "Tests" in v for k, v in lane.items()))
+        self.assertIn("outside:tl-dedupe:dev_tests_1", lane)
+        self.assertIn("idlestream:dev_tests", hz.stream_items(self.ctx, "dev_tests"))
+        dev = hz.stream_items(self.ctx, "dev")
+        self.assertTrue(any("dev_tests → Tests" in v for v in dev.values()))
+        root = hz.stream_items(self.ctx, "main")
+        self.assertIn("nofeature:dev_tax", root)
+        self.assertNotIn("nofeature:dev_tests", root)
+        self.assertNotIn("outside:tl-dedupe:dev_tests_1", hz.stream_items(self.ctx, "dev_tax"))
+        # Its own work again: no longer idle.
+        self.assertEqual(self.brief("te-1", "dev_tests_1", "Tests"), 0)
+        self.assertNotIn("idlestream:dev_tests", hz.stream_items(self.ctx, "dev_tests"))
+
+    def test_a_standing_segment_asks_for_its_next_part_not_a_close(self):
+        self.assertEqual(self.brief("test-economy", "dev_tests", "Tests", me="dev"), 0)
+        self.assertNotEqual(self.run_cli("brief", "test-economy", "--standing", "on",
+                                         me="dev_tests_1")[0], 0)                 # a lane
+        self.assertEqual(self.run_cli("brief", "test-economy", "--standing", "on")[0], 0)
+        split = [{"task": "test-economy", "ready": True, "closed_at": None, "children": [],
+                  "done": 1}]
+        with mock.patch.object(hz, "delegated", return_value=split), \
+             mock.patch.object(hz, "load_index", side_effect=Exception("no index")):
+            _, out = self.run_cli("queue", "dev_tests")
+        self.assertIn("standing work: brief its next part", out)
+        self.assertNotIn("--close", out)
+        self.assertIn("stream: Tests", out)
+
+    def test_the_tree_refuses_a_feature_that_is_not_a_name(self):
+        with self.assertRaises(SystemExit):
+            hz.validate_tree({"nodes": {"a": {"feature": 3}}}, "tree.json")
+        hz.validate_tree({"nodes": {"a": {"feature": ["Tests", "Taxonomy"]}}}, "tree.json")
+
+
 class StopKillsWork(unittest.TestCase):
     """obs 80: `stop` ends the session's processes, not just the conversation."""
 

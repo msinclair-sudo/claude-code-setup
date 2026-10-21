@@ -288,6 +288,14 @@ first prompt). A part split with `--from` inherits its segment's. If the work yo
 brief serves no feature, it is out of scope: don't brief it; tell your lead or rank 0 why it came
 up.
 
+**A stream does its own feature's work and nothing else** (log 200). Orientation names your stream's
+feature, and the streams below you if you lead several. `brief --for` refuses a feature outside the
+node's stream; brief that work to the stream that serves it instead. Only the owner grants an
+exception, per task. When your stream has nothing of its own open, orientation says so: brief its next
+part, or tell your lead the feature is finished. Don't fill the gap with another stream's work. Mark
+a segment your stream keeps working with `harness brief <task> --standing on`, so settled parts ask
+for the next one rather than a close.
+
 ## Asking the owner (`T17`)
 
 Only for what the tree can't settle: intent, judgement, something only the owner can do, or risk they must accept. `harness ask <task> --kind intent|judgement|action|risk --question "..."` (the task needs a brief), and carry on: the item gets its own intermediary session, started for it. It may question you through your doorbell; answer with `harness ask <id> --msg "..."` (not `SendMessage`: its session may be asleep), which is also how you add to the item later. The ruling lands on the task's brief (`harness brief <task>`) and orientation tells you; a rejected or returned ask is said once. Lanes ask you, not the owner. A list of files for the owner to delete goes through `harness cited <path>...` first; `--deletable` prints only what no open record needs.

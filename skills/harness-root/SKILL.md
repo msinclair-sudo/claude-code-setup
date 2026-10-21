@@ -39,6 +39,11 @@ scope; close it, and don't brief it again. Halting is theirs, not yours. While t
 each node as stopped on purpose, so your stop hook doesn't ask you to respawn them, until one is
 spawned or recycled (log 115).
 
+**Each stream names its feature** (log 200). Give every stream lead `"feature": "<charter feature>"`
+(or a list) in `.harness/tree.json`; orientation lists any that lack one. Then `brief --for` refuses
+work outside a node's stream, yours included. If the owner wants one task done outside its stream,
+they grant it from a shell (`harness exception <task> --for <node> --why`); you can't.
+
 ## Focus
 
 When the operator names a priority, set it: `harness focus <task>... --why "…"` (several tasks, or a quoted glob such as `'enrich*'`; split parts follow their segment). `--add`/`--remove` edit it, `harness focus` shows it, `--clear` ends it. Nags about other work fold into one line; queues are labelled, never filtered, so there is no need to list a lane's out-of-focus tasks in it. Setting it prints the queued work it leaves out.

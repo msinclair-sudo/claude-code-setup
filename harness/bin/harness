@@ -725,6 +725,12 @@ def validate_tree(tree, path):
         if r is not None and r not in ROLE_SKILLS:
             die(CONTRACT, f"node '{n}' has role '{r}'; the roles a tree may name are "
                           f"{', '.join(ROLE_SKILLS)}.  Fix {path}")
+        ft = sp.get("feature")
+        if ft is not None and not (
+                (isinstance(ft, str) and ft.strip()) or
+                (isinstance(ft, list) and ft and all(isinstance(x, str) and x.strip() for x in ft))):
+            die(CONTRACT, f"node '{n}' has feature {ft!r}; it must be a charter feature's name, "
+                          f"or a list of them (log 200).  Fix {path}")
         sk = sp.get("skills")
         if sk is not None and (not isinstance(sk, list)
                                or not all(isinstance(x, str) and x.strip() for x in sk)):
@@ -4534,6 +4540,10 @@ def queue_items(ctx, node):
             for t, n in untraced_briefs(ctx):
                 out[f"untraced:{t}"] = (f"'{t}' ({n}) serves no charter feature — harness brief "
                                         f"{t} --feature <name>, or drop it as out of scope")
+    except Exception:
+        pass
+    try:
+        out.update(stream_items(ctx, node))
     except Exception:
         pass
     # The node's own tree against its lead's (log 139), from the record the
@@ -13400,6 +13410,8 @@ def cmd_queue(a):
         if act and occ is not None and n in occ:
             who = f"   {act}"
         print(f"{n}{who}")
+        if ctx.tree["nodes"][n].get("feature"):
+            print(f"    stream: {', '.join(feature_name(ctx, k) for k in node_features(ctx, n))}")
         for t in openm:
             r = open_marks(ctx)[t]
             state = (f"presented, in review ({r['_review_task']})" if r.get("_review_task")
@@ -13426,6 +13438,9 @@ def cmd_queue(a):
             print(f"    {mark:<4} {b['task']:<24} {brief_preview(b, head)[:44]}")
             for w in waits_on(ctx, b):
                 print(f"    {'':<4} {'':<24} waits: {w}")
+            if b.get("feature") and stream_refusal(ctx, n, b["feature"], b["task"]):
+                print(f"    {'':<4} {'':<24} OUTSIDE its stream: serves "
+                      f"{feature_name(ctx, b['feature'])} (log 200)")
 
             if b.get("ordered_by") and stamps:
                 print(f"    {'':<4} {'':<24} ordered by {b['ordered_by']}: "
@@ -13440,8 +13455,11 @@ def cmd_queue(a):
                     + (f"; closes {', '.join(x['held'])}" if x.get("held") else "")
                     + (f"; no part covers {','.join(map(str, x['uncovered']))}"
                        if x.get("uncovered") else ""))
+            standing = (load_brief(ctx, x["task"])[1] or {}).get("standing")
             print(f"    split {x['task']:<24} "
-                  + (f"ALL PARTS SETTLED — harness mark {x['task']} --close"
+                  + (f"no part open — standing work: brief its next part (harness brief "
+                     f"<part> --for <node> --from {x['task']} --write -)" if x["ready"] and standing
+                     else f"ALL PARTS SETTLED — harness mark {x['task']} --close"
                      if x["ready"] else done))
             if x["ready"]:
                 continue
@@ -13559,6 +13577,204 @@ def resolve_feature(ctx, name):
 def feature_name(ctx, key):
     _, ch = load_charter(ctx)
     return ((ch.get("features") or {}).get(key) or {}).get("name") or key
+
+
+def node_features(ctx, node):
+    """The charter features a node's stream serves (log 200): its own `feature`
+    in the tree, else the nearest one above it, as charter keys (a name the
+    charter doesn't know is kept as written, so it matches nothing and is
+    reported). [] for a node that spans streams, such as rank 0."""
+    seen = set()
+    while node and node not in seen and node in ctx.tree.get("nodes", {}):
+        seen.add(node)
+        sp = ctx.tree["nodes"][node]
+        f = sp.get("feature")
+        if f:
+            return [resolve_feature(ctx, x) or x for x in ([f] if isinstance(f, str) else f)]
+        node = sp.get("parent")
+    return []
+
+
+def stream_scope(ctx, own):
+    """Every feature a stream may serve: its own and everything under them."""
+    _, ch = load_charter(ctx)
+    feats = ch.get("features") or {}
+    ok = set(own)
+    for k in own:
+        if k in feats:
+            ok.update(charter_below(feats, k))
+    return ok
+
+
+def exceptions_path(ctx):
+    return Path(ctx.state) / "exceptions.json"
+
+
+def stream_exception(ctx, task, node):
+    """The owner's exception letting `task` (or the segment it is a part of)
+    sit on `node` outside its stream, or None."""
+    ex = _read_json(exceptions_path(ctx)) or {}
+    t = tkey(task or "")
+    seen = set()
+    while t and t not in seen:
+        seen.add(t)
+        e = ex.get(t)
+        if e and e.get("node") == node:
+            return e
+        t = tkey((all_briefs(ctx).get(t) or {}).get("from") or "")
+    return None
+
+
+def stream_refusal(ctx, node, feature, task):
+    """Why `task`, serving `feature`, can't be on `node`, or None (log 200: "a
+    lane is defined. it's not for doing other things, a job is a job")."""
+    own = node_features(ctx, node)
+    if not own or not feature or feature in stream_scope(ctx, own):
+        return None
+    if stream_exception(ctx, task, node):
+        return None
+    names = ", ".join(f"'{feature_name(ctx, k)}'" for k in own)
+    bad = [k for k in own if resolve_feature(ctx, k) is None]
+    return (f"'{task}' serves '{feature_name(ctx, feature)}', and {node}'s stream serves "
+            f"{names}: a lane does its own feature's work and nothing else (log 200).\n"
+            + (f"           {', '.join(bad)} is not a charter feature: rank 0 fixes the "
+               f"node's \"feature\" in .harness/tree.json.\n" if bad else "")
+            + f"           Brief it to the stream that serves '{feature_name(ctx, feature)}', or "
+              f"the owner grants an exception\n           from a shell: harness exception "
+              f"{task} --for {node} --why \"...\"")
+
+
+def stream_leads(ctx):
+    """Leads of one stream: below rank 0, with children, none of whom lead."""
+    nodes = ctx.tree.get("nodes", {})
+    out = []
+    for n, sp in nodes.items():
+        kids = [k for k, v in nodes.items() if v.get("parent") == n]
+        if sp.get("parent") and kids and not any(v.get("parent") in kids
+                                                  for v in nodes.values()):
+            out.append(n)
+    return sorted(out)
+
+
+def stream_report(ctx):
+    """What breaks a stream's definition, for orientation and queue (log 200):
+    {"outside": [(task, node, feature)], "idle": [stream lead],
+     "nofeature": [stream lead], "badfeature": [(node, name)]}."""
+    nodes = ctx.tree.get("nodes", {})
+    out = {"outside": [], "idle": [], "nofeature": [], "badfeature": []}
+    named = {n: sp["feature"] for n, sp in nodes.items() if sp.get("feature")}
+    _, ch = load_charter(ctx)
+    if not ch.get("features"):
+        return out
+    out["nofeature"] = [n for n in stream_leads(ctx) if not node_features(ctx, n)]
+    for n, f in named.items():
+        for x in ([f] if isinstance(f, str) else f):
+            if resolve_feature(ctx, x) is None:
+                out["badfeature"].append((n, x))
+    if not named:
+        return out
+    briefs = all_briefs(ctx)
+    derived = {tkey(b.get("from")) for b in briefs.values() if b.get("from")}
+    own_live = {}
+    for k, b in briefs.items():
+        n = b.get("node")
+        if (n not in nodes or k in derived or superseded(b) or b.get("out_of_scope")
+                or task_state(ctx, b.get("task") or k) in ("closed", "superseded")):
+            continue
+        feats = node_features(ctx, n)
+        if not feats:
+            continue
+        lead = next((x for x in [n] + ancestors(ctx, n) if nodes.get(x, {}).get("feature")), n)
+        if b.get("feature") in stream_scope(ctx, feats):
+            own_live[lead] = own_live.get(lead, 0) + 1
+        elif b.get("feature") and not stream_exception(ctx, b.get("task") or k, n):
+            out["outside"].append((b.get("task") or k, n, b["feature"]))
+    out["idle"] = sorted(n for n in named if not own_live.get(n))
+    out["outside"].sort()
+    return out
+
+
+def ancestors(ctx, node):
+    """The nodes above `node`, nearest first."""
+    out, seen = [], {node}
+    p = ctx.tree.get("nodes", {}).get(node, {}).get("parent")
+    while p and p not in seen:
+        out.append(p); seen.add(p)
+        p = ctx.tree["nodes"].get(p, {}).get("parent")
+    return out
+
+
+def stream_items(ctx, node):
+    """Orientation's stream lines for `node`: {key: text} (log 200)."""
+    out = {}
+    nodes = ctx.tree.get("nodes", {})
+    feats = node_features(ctx, node)
+    names = lambda ks: ", ".join(feature_name(ctx, k) for k in ks)
+    if feats:
+        out[f"stream:{node}:{','.join(feats)}"] = (
+            f"your stream serves {names(feats)}: every brief here serves that or a feature "
+            f"under it, and nothing else (log 200)")
+    below = [n for n in ctx.children(node) if nodes.get(n, {}).get("feature")]
+    if below:
+        m = "; ".join(f"{n} → {names(node_features(ctx, n))}" for n in below)
+        out[f"streams:{m}"] = (f"streams below you: {m}. Brief each only its own feature's "
+                               f"work; brief --for refuses the rest (log 200)")
+    if not any(sp.get("feature") for sp in nodes.values()) and not (
+            ctx.rank(node) == 0 and stream_leads(ctx)):
+        return out
+    rep_ = stream_report(ctx)
+    watch = set([node] + (list(nodes) if ctx.rank(node) == 0 else subtree(ctx, node)))
+    for t, n, f in rep_["outside"]:
+        if n in watch:
+            out[f"outside:{t}:{n}"] = (
+                f"'{t}' on {n} serves {feature_name(ctx, f)}, outside {n}'s stream "
+                f"({names(node_features(ctx, n))}): move it to the stream that serves it, or "
+                f"close it; only the owner grants an exception (harness exception)")
+    for n in rep_["idle"]:
+        if n in watch:
+            out[f"idlestream:{n}"] = (
+                f"{n}'s stream ({names(node_features(ctx, n))}) has nothing of its own open or "
+                f"queued: brief its next part, or say the feature is finished")
+    if ctx.rank(node) == 0:
+        for n in rep_["nofeature"]:
+            out[f"nofeature:{n}"] = (
+                f"{n} leads a stream but names no feature, so nothing stops it doing any "
+                f"work: add \"feature\": \"<charter feature>\" to it in .harness/tree.json "
+                f"(log 200)")
+        for n, x in rep_["badfeature"]:
+            out[f"badfeature:{n}:{x}"] = (f"{n}'s feature '{x}' is not in the charter: fix it "
+                                          f"in .harness/tree.json")
+    return out
+
+
+def cmd_exception(a):
+    """`harness exception <task> --for NODE --why`: the owner lets one task sit on
+    a node outside its stream (log 200). From a shell only; `--drop` ends it;
+    no task lists them."""
+    ctx = Ctx(); ctx.require_enrolled()
+    ex = _read_json(exceptions_path(ctx)) or {}
+    if not a.task:
+        if not ex:
+            print("no exceptions: every brief serves its node's stream"); return
+        for t, e in sorted(ex.items()):
+            print(f"{t:<28} on {e.get('node')}  ({e.get('at', '')[:16]}) {e.get('why')}")
+        return
+    if os.environ.get("CLAUDE_CODE_SESSION_ID"):
+        die(REFUSED, "an exception to a stream is the owner's: from a shell (log 200)")
+    k = tkey(a.task)
+    if a.drop:
+        if ex.pop(k, None) is None:
+            die(REFUSED, f"no exception for '{a.task}'")
+        _save(exceptions_path(ctx), ex)
+        print(f"dropped: '{a.task}' must serve its node's stream again"); return
+    if not a.for_node or a.for_node not in ctx.tree["nodes"]:
+        die(REFUSED, "name the node: harness exception <task> --for <node> --why \"...\"")
+    if not (a.why or "").strip():
+        die(REFUSED, 'say why: harness exception <task> --for <node> --why "..."')
+    ex[k] = {"node": a.for_node, "why": a.why.strip(), "by": "owner",
+             "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
+    _save(exceptions_path(ctx), ex)
+    print(f"'{a.task}' may sit on {a.for_node} outside its stream: {a.why.strip()}")
 
 
 UNTRACED_HINT = ("every task traces to a charter feature (owner, 2026-10-06). None fits? Then "
@@ -13864,9 +14080,24 @@ def cmd_brief(a):
         if key is None:
             die(REFUSED, f"no charter feature '{a.feature}'. harness charter lists them. "
                          + UNTRACED_HINT)
+        why = stream_refusal(ctx, b.get("node"), key, a.task)
+        if why:
+            die(REFUSED, why)
         b["feature"] = key
         f.write_text(json.dumps(b, indent=2) + "\n")
         print(f"{a.task} serves '{feature_name(ctx, key)}'")
+        return
+    if a.__dict__.get("standing") in ("on", "off") and a.write is None:
+        # Work a stream keeps doing (log 200: test-economy read "ALL PARTS
+        # SETTLED" and was offered --close for days).
+        if b is None:
+            die(REFUSED, f"no brief '{a.task}'")
+        if not (ctx.rank(me) == 0 or ctx.children(me)):
+            die(REFUSED, "a lane doesn't change what a task is; its lead or rank 0 does")
+        b["standing"] = a.standing == "on"
+        f.write_text(json.dumps(b, indent=2) + "\n")
+        print(f"{a.task} is " + ("standing work: once its parts settle, queue asks for the next "
+                                 "part, not a close" if b["standing"] else "ordinary work again"))
         return
     if a.write is None and (a.with_task or a.why):
         die(REFUSED, "--with and --why describe a brief being written. Add --write "
@@ -13996,6 +14227,9 @@ def cmd_brief(a):
         if feature is None and parent_task:
             feature = (load_brief(ctx, parent_task)[1] or {}).get("feature")
         feature = feature or (b or {}).get("feature")
+        why = stream_refusal(ctx, target, feature, a.task)
+        if why:
+            die(REFUSED, why)
         _, _ch = load_charter(ctx)
         if feature is None and _ch.get("features") and b is None:
             die(REFUSED, f"'{a.task}' names no charter feature: --feature <name>. " + UNTRACED_HINT)
@@ -26112,6 +26346,11 @@ def main():
     rgp.add_argument("--fyi", action="store_true",
                      help="information only: asks for nothing, never interrupts, read once idle 5 min")
     add("ringer", cmd_ringer)        # internal: started by ensure_ringer
+    ex = add("exception", cmd_exception)
+    ex.add_argument("task", nargs="?", help="the task; none lists the exceptions")
+    ex.add_argument("--for", dest="for_node", metavar="NODE")
+    ex.add_argument("--why", metavar="TEXT")
+    ex.add_argument("--drop", action="store_true")
     hl = add("halt", cmd_halt)
     hl.add_argument("--why", metavar="TEXT")
     hl.add_argument("--ask", metavar="ID", help=argparse.SUPPRESS)
@@ -26240,7 +26479,11 @@ def main():
     br = add("brief", cmd_brief, force=True)
     br.add_argument("task", help="task id")
     br.add_argument("--feature", metavar="NAME",
-                    help="the charter feature this task serves (required on a new brief)")
+                    help="the charter feature this task serves (required on a new brief); it "
+                         "must be the node's stream's feature or one under it (log 200)")
+    br.add_argument("--standing", choices=("on", "off"),
+                    help="lead or rank 0: mark a segment as work its stream keeps doing, so "
+                         "settled parts ask for the next one, not a close")
     br.add_argument("--for", dest="for_node", metavar="NODE",
                     help="which node the brief is for (needed on the first write)")
     br.add_argument("--write", metavar="TEXT",

@@ -1,0 +1,460 @@
+{
+  "H1-05/averaging.2": {
+    "type": "counter",
+    "statement": "Ho and Huang's null permutes taxon labels across the gene-content matrix, which keeps function prevalences and scrambles taxon-function links.",
+    "fields": {},
+    "changed": "removed \"; it tests variability around a mean community within one environment, not turnover across environments\"",
+    "from_text": "It tests variability around a mean community within one environment, not turnover across environments.",
+    "intended": "absent"
+  },
+  "H2-04/complementarity-overlap.14": {
+    "type": "counter",
+    "statement": "Among 20 soil isolates in 40 carbon environments, overlap in carbon use predicted competition (68% for the most similar non-identical pairs) and difference predicted facilitation (Spearman 0.75).",
+    "fields": {},
+    "changed": "removed \"; this bears on mechanism, not on covariation across samples\"",
+    "from_text": "In vitro results (Kehe 2021: 68%, Spearman 0.75, checked against full text) bear on mechanism, not on covariation across samples.",
+    "intended": "absent"
+  },
+  "H2-01/function-definition.4": {
+    "type": "counter",
+    "statement": "The same pattern appears in transcriptomics, where low dimensionality within datasets (Heimberg2016) comes with partial transfer across tissue types (Cleary2017).",
+    "fields": {"src": "heimbergLowDimensionalityGene2016 (FT), clearyEfficientGenerationTranscriptomic2017 (FT)"},
+    "changed": "removed \"coexists with unstable higher components across datasets (Lenz2016) and\" (\"coexists with\" became \"comes with\"); dropped lenzPrincipalComponentsAnalysis2016 from src",
+    "from_text": "low dimensionality within datasets (Heimberg2016) coexists with unstable higher components across datasets (Lenz2016)",
+    "intended": "absent"
+  },
+  "H1-RES/pangenome.27": {
+    "type": "counter",
+    "statement": "The sub-claim that bacterial species contain both conserved core genomes and large, variable accessory genomes is strongly supported for many taxa: the evidence shows a continuum from closed pangenomes with minimal accessory fractions (MTBC, *E. amylovora*, *Chlamydia*) to highly open pangenomes with accessory fractions exceeding core size (*E. coli*, *Burkholderia*, *Corallococcus*).",
+    "fields": {"rating": "\"strongly supported for many taxa\""},
+    "changed": "removed \"but not universal\" from the statement and the rating",
+    "from_text": "is strongly supported for many taxa but not universal.",
+    "intended": "absent"
+  },
+  "16S/abundance-occupancy.12": {
+    "type": "counter",
+    "statement": "The same positive abundance-occupancy observation is read as ecological signal by some authors; the reviewer notes this is a matter of interpretation, not of data.",
+    "fields": {},
+    "changed": "removed \"and as near-null by others\"; \"a difference of interpretation\" became \"a matter of interpretation\"",
+    "from_text": "the same observation is read as ecological signal by some authors and as near-null by others",
+    "intended": "absent"
+  },
+  "GHOST/missingness-degradation.6": {
+    "type": "counter",
+    "statement": "At 99% missing on Cora, PaGNN sits at a low ~58%.",
+    "fields": {},
+    "changed": "removed \"but not the catastrophic collapse of GCNMF\" (\"sits at ~58%: low\" became \"sits at a low ~58%\")",
+    "from_text": "PaGNN sits at ~58% — low, but not the catastrophic collapse of GCNMF [R3].",
+    "intended": "absent"
+  },
+  "GHOST/contamination.2": {
+    "type": "counter",
+    "statement": "Song et al. argue, by molecular-graph analogy, that severe missingness \"can alter the semantic information of the graph, leading to changes in the graph structure\", which is why they update structure jointly.",
+    "fields": {},
+    "changed": "removed \"; this is a theoretical / motivational statement, not a measured demonstration\"",
+    "from_text": "This is a theoretical/motivational statement (verification vote 2-1), **not** a measured demonstration that featureless nodes distort feature-bearing nodes' clusters.",
+    "intended": "absent"
+  },
+  "H1-02/sample-dependence.2": {
+    "type": "counter",
+    "statement": "In the human gut, dependence on sample properties was not measured for gene or pathway content; proxies (chimerism rate, aligned fraction, ribosomal-protein absence by catalogue) differ between catalogues.",
+    "fields": {},
+    "changed": "removed \", but catalogue is confounded with pipeline and sample set, and these are not gene-content measures\"",
+    "from_text": "but catalogue is confounded with pipeline and sample set, and the review's own Section 4 says these are not gene-content measures.",
+    "intended": "absent"
+  },
+  "TSL/altitude-ordering.8": {
+    "type": "counter",
+    "statement": "The altitude-axis evidence (Joho & Sanderson; Yang & Callan; Resnik) is over WordNet / taxonomies and sound for those; the verdict's altitude claim rests on principled monotonicity (IC) plus indirect empirical support.",
+    "fields": {},
+    "changed": "removed \"indirect for descriptive cluster-label ordering\" (\": sound for those,\" became \"and sound for those\")",
+    "from_text": "sound for those, *indirect* for descriptive cluster-label ordering.",
+    "intended": "absent"
+  },
+  "H1-06/rankwise-structuring.12": {
+    "type": "counter",
+    "statement": "By preserving topology, Lu's null holds the count of groups per level and the number of fine taxa per group fixed.",
+    "fields": {"holds": "Lu 2016's null"},
+    "changed": "removed \"; it does not hold abundance evenness among groups fixed\" and, in holds, \"; the critic calls the evenness caveat appropriate\"",
+    "from_text": "It does not hold abundance evenness among groups fixed.",
+    "intended": "absent"
+  },
+  "CB1/dissolution-pathway.5": {
+    "type": "counter",
+    "statement": "In Hamilton et al.'s own paired measurements, sink strength tended positive under their no-till treatment.",
+    "fields": {},
+    "changed": "removed \"were not one-sided\" and \"while \\\"on average, liming is neither a consistent source nor a sink for CO₂.\\\"\"; reordered the remaining clause",
+    "from_text": "while \"on average, liming is neither a consistent source nor a sink for CO₂.\"",
+    "intended": "absent"
+  },
+  "H1-02/filters-corrections.6": {
+    "type": "counter",
+    "statement": "mOTUpan was checked against a few closed Prochlorococcus genomes plus bootstraps.",
+    "fields": {},
+    "changed": "removed \", and its authors state that genes hard to assemble or bin leave an inevitable underestimate of the accessory genomes\"",
+    "from_text": "its authors state that genes hard to assemble or bin leave \"an inevitable underestimate of the accessory genomes\".",
+    "intended": "absent"
+  },
+  "CB2/depth-axis.3": {
+    "type": "counter",
+    "statement": "Sequencing depth is not measured as library depth in a real assemble-and-bin pipeline counting rRNA in MAGs: the depth axis is unmeasured for rRNA-in-MAG recovery in real data.",
+    "fields": {},
+    "changed": "removed \"measured only as simulated per-genome coverage in targeted-assembly benchmarks,\" (\"is measured only as ..., not as library depth\" became \"is not measured as library depth\")",
+    "from_text": "Sequencing depth is measured, but only as simulated per-genome coverage in targeted-assembly benchmarks",
+    "intended": "absent"
+  },
+  "16S/abundance-distribution.7": {
+    "type": "counter",
+    "statement": "The soil SAD shape is in partial conflict: exponential or inverse gamma (Zhou 2013) against lognormal (Shoemaker 2017; Grilli 2020); these use different fitting targets.",
+    "fields": {"src": "zhouRandomSamplingProcess2013, shoemakerMacroecologicalTheoryMicrobial2017, grilliMacroecologicalLawsDescribe2020"},
+    "changed": "removed \", and Haegeman 2013 argues the tail is not identifiable from sample data at all\"; dropped haegemanRobustEstimationMicrobial2013 from src",
+    "from_text": "Haegeman 2013 argues the tail is not identifiable from sample data at all.",
+    "intended": "absent"
+  },
+  "16S/abundance-occupancy.4": {
+    "type": "counter",
+    "statement": "In the two bulk-soil amplicon studies with figures (Bickel and Or 2021; Nemergut 2011), more abundant taxa occupy more soils, but both measures are partly built in by construction: \"total abundance\" summed across samples and \"common\" defined on the pooled rank-abundance distribution both rise with occupancy. Whether a relationship exists beyond sampling, and how strong it is, is unresolved.",
+    "fields": {},
+    "changed": "removed \"the two are not fully independent (Bickel and Or reanalysed compiled datasets including the Earth Microbiome Project, which plausibly overlaps Nemergut's soils), and\"",
+    "from_text": "These are not fully independent: Bickel and Or reanalysed compiled datasets including the Earth Microbiome Project, which plausibly overlaps the soils Nemergut used.",
+    "intended": "absent"
+  },
+  "CB3/food-system.10": {
+    "type": "setting",
+    "fields": {"holds": "2022; FAOSTAT agrifood systems, four gases, AR5 GWP100; global total 53.5 Gt"},
+    "changed": "added \"agrifood systems, four gases, AR5 GWP100\" to holds",
+    "from_text": "| 5 | Agrifood system (FAOSTAT) | 29.7% | 16.2 Gt CO2eq | 2022 | 4 gases; AR5 GWP100 | FAOSTAT AB 94 [6] | none stated in brief |",
+    "intended": "holds"
+  },
+  "NFERT/manufacturing-co2.3": {
+    "type": "setting",
+    "fields": {"holds": "a global plant mix including coal; cradle-to-gate manufacturing, excluding field N₂O"},
+    "changed": "added \"; cradle-to-gate manufacturing, excluding field N₂O\" to holds",
+    "from_text": "These are cradle-to-gate manufacturing figures. They exclude the field N₂O released after application",
+    "intended": "holds"
+  },
+  "TAXRES/gtdb.4": {
+    "type": "setting",
+    "fields": {"holds": "GTDB release R10-RS226, as found by a single-pass web search on 2026-06-19"},
+    "changed": "added \"release R10-RS226,\" to holds",
+    "from_text": "Release R10-RS226: 715,230 bacterial + 17,245 archaeal genomes in 136,646 + 6,968 **species clusters**",
+    "intended": "holds"
+  },
+  "H2-04/plant-axis-analogues.5": {
+    "type": "setting",
+    "fields": {"holds": "leaf trait spaces across habitat types, within- versus across-species"},
+    "changed": "added \"across habitat types\" to holds",
+    "from_text": "[24a] Puglielli G, ... Intraspecific variability of leaf form and function across habitat types. Ecology Letters. 2024",
+    "intended": "holds"
+  },
+  "H1-02/filters-corrections.8": {
+    "type": "setting",
+    "statement": "None of the completeness-model corrections, tested on mock-community subsamples, simulations or random annotation downsampling, was validated against ground truth on natural-sample MAGs with real, non-random gaps, and the search found no correction so validated.",
+    "fields": {},
+    "changed": "added \", tested on mock-community subsamples, simulations or random annotation downsampling,\" to the statement",
+    "from_text": "Eisenhofer's GLM [3] was validated on mock-community subsamples and over-corrected some genomes. CELEBRIMBOR [19] was validated on simulations ... MetaPathPredict [15] was tested on random annotation downsampling only.",
+    "intended": "holds"
+  },
+  "H1-06/trait-compilations.4": {
+    "type": "setting",
+    "fields": {"holds": "990 traits, SILVA r119 tree; binary traits mostly gene presence"},
+    "changed": "added \"; binary traits mostly gene presence\" to holds",
+    "from_text": "Binary, mostly gene-presence, traits had mean -D+1 = 0.93 (98% significant).",
+    "intended": "holds"
+  },
+  "H1-02/chimerism.3": {
+    "type": "setting",
+    "fields": {"holds": "natural MAG catalogues (CheckM-prefiltered human gut catalogues and the multi-habitat GMGC set)"},
+    "changed": "added \"(CheckM-prefiltered human gut catalogues and the multi-habitat GMGC set)\" to holds",
+    "from_text": "Orakov et al. [9] found that GUNC flagged 15.1% to 29.9% of CheckM-prefiltered human gut MAG catalogues as chimeric at genus level or above. In the multi-habitat GMGC set, 9.4% of MIMAG high-quality MAGs were flagged",
+    "intended": "holds"
+  },
+  "H1-05/averaging.6": {
+    "type": "setting",
+    "fields": {"holds": "HMP stool data [29][30]; functions inferred through a gene-content matrix"},
+    "changed": "added \"; functions inferred through a gene-content matrix\" to holds",
+    "from_text": "It operates on functions inferred through a gene-content matrix (FAPROTAX-style groups or genome annotations), not on shotgun-measured profiles.",
+    "intended": "holds"
+  },
+  "16S/core-microbiome.4": {
+    "type": "standing",
+    "fields": {"holds": "common bean rhizosphere; the rhizosphere neutral-deviation figure is consistent across rhizosphere studies; checked by the critic"},
+    "changed": "in holds, \"rests on this study alone\" became \"is consistent across rhizosphere studies\"",
+    "from_text": "The rhizosphere neutral-deviation figure rests on Stopnisek and Shade 2021 [74] alone.",
+    "intended": "conf"
+  },
+  "16S/abundance-occupancy.14": {
+    "type": "standing",
+    "fields": {"rating": "\"Moderate for its interpretation\""},
+    "changed": "rating \"Weak for its interpretation\" became \"Moderate for its interpretation\"",
+    "from_text": "Weak for its interpretation, because the main soil evidence does not separate biology from detection, and the sampling-null evidence comes from non-soil data.",
+    "intended": "conf"
+  },
+  "TSL/frequency-bucketing.1": {
+    "type": "standing",
+    "fields": {"conf": "repl (marker)"},
+    "changed": "conf \"single (note: \\\"Primary evidence is one simulated-LDA study\\\")\" became \"repl (marker)\"",
+    "from_text": "Primary evidence is one simulated-LDA study.",
+    "intended": "conf"
+  },
+  "CB3/n2o.6": {
+    "type": "standing",
+    "statement": "Global N₂O budgets give agriculture 3.8 (2.5–5.8) Tg N yr−1 for 2007–2016 out of 7.3 (4.2–11.4) Tg N anthropogenic.",
+    "fields": {},
+    "changed": "\"Tian et al. 2020 gave\" became \"Global N₂O budgets give\"",
+    "from_text": "The 2020 predecessor gave agriculture 3.8 (2.5–5.8) Tg N yr−1 for 2007–2016 out of 7.3 (4.2–11.4) Tg N anthropogenic [7].",
+    "intended": "stronger"
+  },
+  "16S/pcr-efficiency.1": {
+    "type": "standing",
+    "fields": {"rating": "\"Strong for documented cycle numbers\""},
+    "changed": "rating \"Moderate for documented cycle numbers\" became \"Strong for documented cycle numbers\"",
+    "from_text": "Moderate for documented cycle numbers.",
+    "intended": "conf"
+  },
+  "NFERT/emission-share.4": {
+    "type": "standing",
+    "statement": "The full synthetic-N supply chain is larger because it adds field and transport emissions: studies put it at 1.13 Gt CO₂-equivalent for 2018, equal to 10.6% of agricultural emissions and 2.1% of global emissions.",
+    "fields": {},
+    "changed": "\"Menegat et al. (2022) estimate 1.13 Gt\" became \"studies put it at 1.13 Gt\"",
+    "from_text": "Menegat et al. (2022) estimate 1.13 Gt CO₂-equivalent for 2018",
+    "intended": "stronger"
+  },
+  "H2-01/neighbouring-transfer.6": {
+    "type": "standing",
+    "fields": {"conf": "repl (marker)"},
+    "changed": "conf \"single (marker)\" became \"repl (marker)\"",
+    "from_text": "[Beavan2024; FT; SINGLE SOURCE]",
+    "intended": "conf"
+  },
+  "16S/workflow-bias.7": {
+    "type": "standing",
+    "fields": {"conf": "repl (marker)"},
+    "changed": "conf \"single (marker)\" became \"repl (marker)\"",
+    "from_text": "(Sinha 2017, MBQC) [FT; meas; single]",
+    "intended": "conf"
+  },
+  "H2-01/levels-within.6": {
+    "type": "number",
+    "statement": "During vermicomposting, taxonomic turnover was about ten times functional turnover.",
+    "fields": {},
+    "changed": "\"twelve\" became \"ten\"",
+    "from_text": "taxonomic turnover about twelve times functional turnover",
+    "intended": "numbers"
+  },
+  "H1-02/read-technology.5": {
+    "type": "number",
+    "statement": "Long-read activated-sludge MAGs carried full rRNA operons in 93.1% of cases.",
+    "fields": {},
+    "changed": "\"91.3%\" became \"93.1%\"",
+    "from_text": "Long-read activated-sludge MAGs carried full rRNA operons in 91.3% of cases [30].",
+    "intended": "numbers"
+  },
+  "H1-06/ph-preference.4": {
+    "type": "number",
+    "statement": "ASVs within single families spanned 3.8 to 4.2 pH units: Xanthobacteraceae in soil 4.01 to 8.20 (4.19 units), Chitinophagaceae in freshwater 4.53 to 8.35 (3.82 units).",
+    "fields": {},
+    "changed": "Chitinophagaceae lower bound \"4.63\" became \"4.53\", with the derived span (3.72 to 3.82 units) and summary range (3.7 to 3.8) kept consistent",
+    "from_text": "The source gives 4.01 to 8.20 (4.19 units) and 4.63 to 8.35 (3.72 units)",
+    "intended": "numbers"
+  },
+  "H1-RES/accessory-function.5": {
+    "type": "number",
+    "statement": "Antarctic *Arthrobacter* strains (36 isolates) harboured 11 plasmids of 8.4 to 98.6 kb encoding UV protection and heavy metal resistance, 10 carrying conjugation modules; the plasmids showed limited similarity to mesophilic *Arthrobacter* plasmids, indicating novel replicons adapted to Antarctic conditions.",
+    "fields": {},
+    "changed": "\"90.6 kb\" became \"98.6 kb\"",
+    "from_text": "11 plasmids ranging from 8.4 to 90.6 kb",
+    "intended": "numbers"
+  },
+  "H1-RES/accessory-function.9": {
+    "type": "number",
+    "statement": "In *Pseudomonas* at a hexachlorocyclohexane (HCH) dumpsite, metabolic pathways were enriched strain-specifically, with an intact mobile class-I integron (3,552 bp) encoding dihydrofolate reductase in strain RL associated with a Tnp21-like transposon (97% identity); metagenomes from pond sediment and HCH-contaminated soils showed in situ enrichment of an integron-associated transposase gene (TnpA6100) with increasing HCH contamination (0.7 to 450 mg HCH g⁻¹ of soil).",
+    "fields": {},
+    "changed": "\"95% identity\" became \"97% identity\"",
+    "from_text": "associated with a Tnp21-like transposon (95% identity) [9]",
+    "intended": "numbers"
+  },
+  "16S/quality-filtering.3": {
+    "type": "number",
+    "statement": "Stringent UPARSE-style filtering could significantly underestimate abundance and diversity, and newer clusterers produced up to 50% fewer spurious OTUs than UCLUST.",
+    "fields": {},
+    "changed": "\"60%\" became \"50%\"",
+    "from_text": "newer clusterers produced up to 60% fewer spurious OTUs than UCLUST (Kopylova 2016)",
+    "intended": "numbers"
+  },
+  "H2-01/neighbouring-transfer.1": {
+    "type": "number",
+    "statement": "PICRUSt accuracy fell with distance to the nearest reference genome (NSTI), across all samples (r = −0.4) and within each habitat (r = −0.25 to −0.82); accuracy was high in soils (0.87) and low in a hypersaline mat (reported 0.25, mean NSTI 0.23).",
+    "fields": {},
+    "changed": "soil accuracy \"0.81\" became \"0.87\"",
+    "from_text": "accuracy was high in soils (0.81)",
+    "intended": "numbers"
+  },
+  "H1-RES/redundancy.14": {
+    "type": "number",
+    "fields": {"holds": "the three counter-evidence studies"},
+    "changed": "in holds, \"four\" became \"three\" (src still lists four sources; the miscount mirrors the second cited sentence, which cites [8] [9] [11])",
+    "from_text": "report strong correlations between taxonomic and functional beta diversity, implying limited redundancy for certain functions or across certain environmental gradients [8] [9] [10] [11].",
+    "intended": "numbers"
+  },
+  "TAXRES/gtdb-ncbi-divergence.5": {
+    "type": "hedge",
+    "statement": "Microbiologists still use the older phylum names.",
+    "fields": {},
+    "changed": "removed \"Many\"",
+    "from_text": "Many microbiologists still use the older names.",
+    "intended": "stronger"
+  },
+  "H1-06/moisture-preference.4": {
+    "type": "hedge",
+    "statement": "Lennon et al. 2012 is the only direct rank-resolved measurement of a moisture optimum.",
+    "fields": {},
+    "changed": "removed \"the review found\"",
+    "from_text": "This is the only direct rank-resolved measurement of a moisture optimum found.",
+    "intended": "stronger"
+  },
+  "H2-01/other-field-transfer.11": {
+    "type": "hedge",
+    "statement": "In other fields covariation transfers, and each quantitative result is a single study.",
+    "fields": {},
+    "changed": "removed \"partly\"",
+    "from_text": "Other fields: covariation transfers partly.",
+    "intended": "stronger"
+  },
+  "16S/abundance-distribution.21": {
+    "type": "hedge",
+    "statement": "Tropical soils are the least-covered communities by Nonpareil estimates.",
+    "fields": {},
+    "changed": "removed \"among\"",
+    "from_text": "Tropical soils are among the least-covered communities by Nonpareil estimates [80, FT, qualitative].",
+    "intended": "stronger"
+  },
+  "H2-04/complementarity-overlap.11": {
+    "type": "hedge",
+    "statement": "Cooperative metabolic potential between pairs of organisms peaks at moderate overlap.",
+    "fields": {},
+    "changed": "removed \"Pairwise metabolic models predict that\"; recast as a direct finding about pairs",
+    "from_text": "Pairwise models predict cooperative potential peaks at moderate overlap [10c, AB; modelled]",
+    "intended": "stronger"
+  },
+  "TAXRES/name-resolution.5": {
+    "type": "hedge",
+    "statement": "The matching problem (synonyms, fuzzy matching of misspellings, homonyms via context) is handled; the unsolved part is a curation choice, which authority's lineage to adopt, not a matching failure: name resolution is the easy part and the authority choice the hard part.",
+    "fields": {},
+    "changed": "removed \"largely\"",
+    "from_text": "The *matching* problem (synonyms, fuzzy/misspelling, homonyms via context) is largely handled",
+    "intended": "stronger"
+  },
+  "16S/abundance-distribution.25": {
+    "type": "hedge",
+    "statement": "Not found for soil: metagenome-based taxon abundance distributions, copy-number- or ploidy-corrected abundance distributions, and rhizosphere-specific abundance distributions.",
+    "fields": {},
+    "changed": "removed \"reported as a distribution\"",
+    "from_text": "metagenome-based taxon abundance distributions (marker-gene or genome coverage) in soil reported as a distribution",
+    "intended": "stronger"
+  },
+  "16S/workflow-bias.5": {
+    "type": "hedge",
+    "statement": "Per-step magnitudes come from one or two small mocks (7 to 20 taxa), often on 454 or Ion Torrent.",
+    "fields": {},
+    "changed": "removed \"mostly\"",
+    "from_text": "Per-step magnitudes mostly come from one or two small mocks (7 to 20 taxa), often on 454.",
+    "intended": "stronger"
+  },
+  "TSL/phrase-and-multilingual-tail.1": {
+    "type": "hedge",
+    "statement": "The review has no surviving claims on single-word vs multi-word phrase selection, or on stopword / multilingual handling at the rare-term tail (brief item 5); these are unanswered.",
+    "fields": {},
+    "changed": "removed \"by this corpus\"",
+    "from_text": "Treat as unanswered by this corpus.",
+    "intended": "stronger"
+  },
+  "H2-01/direct-dimension.12": {
+    "type": "hedge",
+    "statement": "Cluster number is not an intrinsic-dimension estimate; the three KO clusters are reported as a precedent.",
+    "fields": {},
+    "changed": "\"only as a nearest precedent\" became \"as a precedent\" (removed \"only\" and \"nearest\")",
+    "from_text": "it is reported here as a nearest precedent only.",
+    "intended": "stronger"
+  },
+  "H2-01/gene-set-aggregation.1": {
+    "type": "hedge",
+    "statement": "Single-copy-gene normalisation raised pathway coefficients of variation relative to relative normalisation.",
+    "fields": {"holds": "KEGG pathways"},
+    "changed": "removed \"In HMP gut samples\" from the statement and \"HMP gut samples\" from holds",
+    "from_text": "In HMP gut samples, single-copy-gene normalisation raised pathway coefficients of variation relative to relative normalisation.",
+    "intended": "stronger"
+  },
+  "16S/rarefying.6": {
+    "type": "hedge",
+    "statement": "In Weiss 2017, rarefying clustered samples better for presence/absence metrics, and other normalisations were vulnerable.",
+    "fields": {},
+    "changed": "removed \"below about 1,000 reads per sample\"",
+    "from_text": "other normalisations were vulnerable below about 1,000 reads per sample",
+    "intended": "stronger"
+  },
+  "16S/ploidy.4": {
+    "type": "hedge",
+    "statement": "Growth-rate-dependent merodiploidy: E. coli has 6.8 origins and 1.7 termini per cell at 25 min doubling but 2.5 origins and 1.2 termini at 103 min; B. subtilis (5.9 origins, 1.2 termini) and three soil Bacillus and Paenibacillus isolates are mero-oligoploid and down-regulate origins in stationary phase.",
+    "fields": {},
+    "changed": "removed \"in exponential phase\"",
+    "from_text": "are mero-oligoploid in exponential phase (B. subtilis 5.9 origins, 1.2 termini) and down-regulate origins in stationary phase [13].",
+    "intended": "stronger"
+  },
+  "H1-RES/pangenome.20": {
+    "type": "hedge",
+    "statement": "In *Erwinia amylovora*, comparative analysis revealed a pangenome with approximately 89% conserved core genes.",
+    "fields": {"holds": "*E. amylovora*"},
+    "changed": "removed \"of 12 strains\" from the statement and \"12\" and \"strains\" from holds",
+    "from_text": "comparative analysis of 12 strains revealed a pangenome with approximately 89% conserved core genes [44].",
+    "intended": "stronger"
+  },
+  "16S/zeros.1": {
+    "type": "hedge",
+    "statement": "Simple count models sufficed across four zero-generating processes, and zero inflation was warranted only under narrow conditions.",
+    "fields": {"holds": "abstract only"},
+    "changed": "removed \"In simulation,\" from the statement and \"simulation;\" from holds",
+    "from_text": "In simulation, simple count models sufficed across four zero-generating processes",
+    "intended": "stronger"
+  },
+  "H1-06/metabolic-depth.3": {
+    "type": "hedge",
+    "statement": "Oxygenic photosynthesis had a median tau_D of about 0.10 to 0.11.",
+    "fields": {},
+    "changed": "removed \"(one clade)\"",
+    "from_text": "Oxygenic photosynthesis had a median tau_D of about 0.10 to 0.11 (one clade).",
+    "intended": "stronger"
+  },
+  "H2-01/compositional-closure.1": {
+    "type": "hedge",
+    "statement": "Correlation is not a valid association measure; proportionality is offered instead.",
+    "fields": {},
+    "changed": "removed \"for relative data\" (holds still reads \"relative data in general (other field)\")",
+    "from_text": "Correlation is not a valid association measure for relative data",
+    "intended": "stronger"
+  },
+  "H1-RES/pangenome.6": {
+    "type": "hedge",
+    "statement": "In *E. coli* core genes account for about 50% of total genes, with approximately 146 strain-specific genes per strain.",
+    "fields": {"holds": "*E. coli*"},
+    "changed": "\"In 30 *E. coli* genomes\" became \"In *E. coli*\" (\"accounted\" became \"account\"); holds \"30 *E. coli* genomes\" became \"*E. coli*\"",
+    "from_text": "Analysis of 30 *E. coli* genomes found core genes accounted for about 50% of total genes",
+    "intended": "stronger"
+  },
+  "16S/technical-variation.10": {
+    "type": "hedge",
+    "statement": "Batch-correction tools exist, and they work.",
+    "fields": {"holds": "abstracts only"},
+    "changed": "removed \"their makers claim\" from the statement and \"makers' claims;\" from holds",
+    "from_text": "Batch-correction tools exist; their makers claim they work (Gibbons 2018; Ling 2022) [AB].",
+    "intended": "stronger"
+  },
+  "16S/primers.12": {
+    "type": "hedge",
+    "statement": "PCR clamps enrich microbial sequences \"without introducing bias\".",
+    "fields": {"holds": "abstract only"},
+    "changed": "removed \"The makers of PCR clamps state that\" from the statement and \"a maker's claim;\" from holds",
+    "from_text": "The makers of PCR clamps state that clamps enrich microbial sequences \"without introducing bias\" (Lundberg 2013) [AB; makers' claim].",
+    "intended": "stronger"
+  }
+}

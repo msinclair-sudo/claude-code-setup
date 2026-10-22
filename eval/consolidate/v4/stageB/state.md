@@ -34,3 +34,21 @@ options.
 v3 notes, their verdicts, the v4 hints, and packet blocks).
 
 **Next: B1, the planted-fault test**, when the owner says go. Then stop at its checkpoint.
+
+## B1: started (2026-10-22)
+
+Seeds: pool 20261025, assignment 20261026, judge order 20261027. Pool: 130 claims the v3 first-pass checker
+passed, 4 to 29 per note (`planted/pool.json`), committed (765fad0) before screening. The screener is running.
+
+## B1: done, stopped at the checkpoint (2026-10-22)
+
+`planted/results.md`.
+- Screening set aside 28 of 130 v3-passed claims as faulted (24 `holds`).
+- 59 plants were made; 48 passed validation (9 of 15 counter-clause plants failed).
+- Two blind hint-equipped judges caught, by either: hedge 17/20 (85%), counter-clause 5/6, setting 7/7, number 7/7,
+  standing 8/8. They faulted 1 of 43 controls.
+- Double misses were all subtle scope qualifiers: "by this corpus", "nearest precedent", "reported as a
+  distribution", and a second source's contrary argument.
+
+Recommendation: proceed to B2 without the omission hint; the owner decides. **Next: B2** (re-score about 300 v3
+entries, excluding the 130 planted-pool claims; hint effect on 100), on the owner's go.

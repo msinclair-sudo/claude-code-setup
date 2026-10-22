@@ -1,0 +1,366 @@
+{
+ "H2-01/neighbouring-transfer.1": {
+  "type": "number",
+  "hint": true
+ },
+ "H2-01/other-field-transfer.11": {
+  "type": "hedge",
+  "hint": false
+ },
+ "H2-01/levels-within.6": {
+  "type": "number",
+  "hint": false
+ },
+ "CB3/n2o.5": {
+  "type": "control",
+  "hint": true
+ },
+ "H1-RES/redundancy.13": {
+  "type": "control",
+  "hint": false
+ },
+ "TSL/frequency-bucketing.1": {
+  "type": "standing",
+  "hint": true
+ },
+ "H2-01/other-field-transfer.9": {
+  "type": "control",
+  "hint": true
+ },
+ "H1-RES/accessory-function.1": {
+  "type": "control",
+  "hint": false
+ },
+ "16S/abundance-occupancy.14": {
+  "type": "standing",
+  "hint": false
+ },
+ "H1-02/chimerism.3": {
+  "type": "setting",
+  "hint": true
+ },
+ "TSL/frequency-bucketing.2": {
+  "type": "control",
+  "hint": true
+ },
+ "GHOST/missingness-degradation.6": {
+  "type": "counter",
+  "hint": false
+ },
+ "16S/rarefying.6": {
+  "type": "hedge",
+  "hint": true
+ },
+ "CB1/supply-chain-emissions.2": {
+  "type": "control",
+  "hint": true
+ },
+ "H2-01/neighbouring-transfer.5": {
+  "type": "control",
+  "hint": false
+ },
+ "NFERT/emission-share.4": {
+  "type": "standing",
+  "hint": false
+ },
+ "H1-06/metabolic-depth.3": {
+  "type": "hedge",
+  "hint": false
+ },
+ "16S/abundance-distribution.21": {
+  "type": "hedge",
+  "hint": false
+ },
+ "H1-02/pipeline.3": {
+  "type": "control",
+  "hint": false
+ },
+ "16S/workflow-bias.5": {
+  "type": "hedge",
+  "hint": true
+ },
+ "TAXRES/gtdb-ncbi-divergence.5": {
+  "type": "hedge",
+  "hint": false
+ },
+ "16S/contamination.5": {
+  "type": "control",
+  "hint": false
+ },
+ "H1-06/genome-incompleteness.5": {
+  "type": "control",
+  "hint": false
+ },
+ "H2-01/compositional-closure.1": {
+  "type": "hedge",
+  "hint": true
+ },
+ "16S/contamination.1": {
+  "type": "control",
+  "hint": false
+ },
+ "16S/abundance-occupancy.12": {
+  "type": "counter",
+  "hint": false
+ },
+ "CB1/dissolution-pathway.5": {
+  "type": "counter",
+  "hint": true
+ },
+ "16S/primers.12": {
+  "type": "hedge",
+  "hint": false
+ },
+ "H1-RES/pangenome.6": {
+  "type": "hedge",
+  "hint": false
+ },
+ "16S/quality-filtering.1": {
+  "type": "control",
+  "hint": false
+ },
+ "NFERT/haber-bosch.1": {
+  "type": "control",
+  "hint": false
+ },
+ "16S/ploidy.14": {
+  "type": "control",
+  "hint": false
+ },
+ "H2-01/direct-dimension.12": {
+  "type": "hedge",
+  "hint": false
+ },
+ "16S/technical-variation.10": {
+  "type": "hedge",
+  "hint": false
+ },
+ "H2-01/gene-set-aggregation.1": {
+  "type": "hedge",
+  "hint": false
+ },
+ "H2-04/complementarity-overlap.12": {
+  "type": "control",
+  "hint": false
+ },
+ "H1-RES/accessory-function.19": {
+  "type": "control",
+  "hint": false
+ },
+ "H1-06/moisture-preference.1": {
+  "type": "control",
+  "hint": false
+ },
+ "16S/ploidy.1": {
+  "type": "control",
+  "hint": false
+ },
+ "TAXRES/name-resolution.5": {
+  "type": "hedge",
+  "hint": true
+ },
+ "H2-04/plant-axis-analogues.5": {
+  "type": "setting",
+  "hint": false
+ },
+ "16S/technical-replicates.5": {
+  "type": "control",
+  "hint": false
+ },
+ "H1-RES/capacity-expression.5": {
+  "type": "control",
+  "hint": false
+ },
+ "H2-04/covariance-partition.3": {
+  "type": "control",
+  "hint": false
+ },
+ "CB3/food-system.5": {
+  "type": "control",
+  "hint": false
+ },
+ "16S/ploidy.4": {
+  "type": "hedge",
+  "hint": true
+ },
+ "16S/abundance-distribution.25": {
+  "type": "hedge",
+  "hint": true
+ },
+ "16S/beta-diversity.4": {
+  "type": "control",
+  "hint": false
+ },
+ "TSL/phrase-and-multilingual-tail.1": {
+  "type": "hedge",
+  "hint": true
+ },
+ "CB1/consumption.1": {
+  "type": "control",
+  "hint": false
+ },
+ "16S/pcr-efficiency.1": {
+  "type": "standing",
+  "hint": false
+ },
+ "16S/core-microbiome.4": {
+  "type": "standing",
+  "hint": false
+ },
+ "16S/zeros.1": {
+  "type": "hedge",
+  "hint": false
+ },
+ "NFERT/manufacturing-co2.3": {
+  "type": "setting",
+  "hint": true
+ },
+ "H1-06/depth-dependence.4": {
+  "type": "control",
+  "hint": false
+ },
+ "H1-05/genome-size.1": {
+  "type": "control",
+  "hint": false
+ },
+ "H1-RES/pangenome.27": {
+  "type": "counter",
+  "hint": true
+ },
+ "GHOST/missingness-degradation.4": {
+  "type": "control",
+  "hint": false
+ },
+ "16S/workflow-bias.7": {
+  "type": "standing",
+  "hint": false
+ },
+ "H1-06/a1-environmental-preferences.8": {
+  "type": "control",
+  "hint": false
+ },
+ "H1-06/ph-preference.4": {
+  "type": "number",
+  "hint": true
+ },
+ "H1-06/genome-incompleteness.1": {
+  "type": "control",
+  "hint": false
+ },
+ "TAXRES/gtdb.4": {
+  "type": "setting",
+  "hint": true
+ },
+ "H2-01/shared-mean.2": {
+  "type": "control",
+  "hint": true
+ },
+ "H1-RES/pangenome.20": {
+  "type": "hedge",
+  "hint": false
+ },
+ "H2-01/levels-across.8": {
+  "type": "control",
+  "hint": false
+ },
+ "H1-RES/accessory-function.9": {
+  "type": "number",
+  "hint": true
+ },
+ "H1-02/read-technology.5": {
+  "type": "number",
+  "hint": true
+ },
+ "CB2/catalogue-recovery.3": {
+  "type": "control",
+  "hint": false
+ },
+ "H2-04/complementarity-overlap.11": {
+  "type": "hedge",
+  "hint": false
+ },
+ "16S/quality-filtering.3": {
+  "type": "number",
+  "hint": true
+ },
+ "16S/abundance-distribution.15": {
+  "type": "control",
+  "hint": false
+ },
+ "CB1/lime-requirement.1": {
+  "type": "control",
+  "hint": true
+ },
+ "CB3/gwp-metric.1": {
+  "type": "control",
+  "hint": true
+ },
+ "H1-06/trait-compilations.4": {
+  "type": "setting",
+  "hint": false
+ },
+ "16S/abundance-distribution.7": {
+  "type": "counter",
+  "hint": false
+ },
+ "CB1/application-frequency.3": {
+  "type": "control",
+  "hint": true
+ },
+ "16S/pcr.13": {
+  "type": "control",
+  "hint": false
+ },
+ "16S/term-sensitivity.10": {
+  "type": "control",
+  "hint": false
+ },
+ "16S/pcr.2": {
+  "type": "control",
+  "hint": false
+ },
+ "H2-01/gene-set-aggregation.10": {
+  "type": "control",
+  "hint": true
+ },
+ "H1-02/sample-dependence.2": {
+  "type": "counter",
+  "hint": false
+ },
+ "H1-06/moisture-preference.4": {
+  "type": "hedge",
+  "hint": true
+ },
+ "H1-05/averaging.6": {
+  "type": "setting",
+  "hint": true
+ },
+ "H2-04/aggregation-artefacts.2": {
+  "type": "control",
+  "hint": false
+ },
+ "H1-05/chronosequence.2": {
+  "type": "control",
+  "hint": false
+ },
+ "GHOST/feature-propagation.1": {
+  "type": "control",
+  "hint": false
+ },
+ "H1-RES/accessory-function.5": {
+  "type": "number",
+  "hint": true
+ },
+ "CB3/n2o.6": {
+  "type": "standing",
+  "hint": true
+ },
+ "CB3/food-system.10": {
+  "type": "setting",
+  "hint": true
+ },
+ "H2-01/neighbouring-transfer.6": {
+  "type": "standing",
+  "hint": false
+ }
+}

@@ -1,0 +1,1698 @@
+note	id	type	verdict	R1	R2-full	R2-content	R2-setting
+16S	workflow-steps.1	claim	ok		critic mostly	critic mostly	
+16S	workflow-steps.2	claim	ok		covers	covers	
+16S	sampling-storage.1	claim	ok		faeces soil below	faeces soil	soil
+16S	sampling-storage.2	claim	ok				
+16S	sampling-storage.3	claim	ok				
+16S	sampling-storage.4	claim	ok		faeces	faeces	
+16S	sampling-storage.5	claim	ok		one three temperatures emp other	three temperatures emp	emp
+16S	sampling-storage.6	claim	ok				
+16S	sampling-storage.7	claim	ok		critic reads contradiction	critic reads contradiction	
+16S	extraction.1	claim	ok		studies below	studies	
+16S	extraction.2	claim	ok		one data figures checked synthesis agent critic	data figures checked synthesis agent critic	
+16S	extraction.3	claim	ok		same 7-taxon reanalysis	7-taxon reanalysis	7-taxon
+16S	extraction.4	claim	ok		7-taxon vaginal mock note label sits sentence introducing list list	7-taxon vaginal mock note label sits sentence introducing list list	7-taxon vaginal mock
+16S	extraction.5	claim	absent		critic calls partial support extraction ordering	critic calls partial support extraction ordering	
+16S	extraction.6	claim	ok				
+16S	extraction.7	claim	holds		15 laboratories	15 laboratories	15
+16S	extraction.8	claim	ok		labelled	labelled	
+16S	extraction.9	claim	absent		soil pre-ngs labelled indirect	soil pre-ngs labelled indirect	soil pre-ngs indirect
+16S	extraction.10	claim	ok		one study	study	
+16S	extraction.11	claim	ok				
+16S	relic-dna.1	claim	ok				
+16S	relic-dna.2	claim	ok				
+16S	relic-dna.3	claim	ok		two studies above	studies	
+16S	primers.1	claim	ok		primer studies below	primer studies	
+16S	primers.2	claim	ok				
+16S	primers.3	claim	critic		critic says figures misattributes them	critic says figures misattributes	
+16S	primers.4	claim	ok		clone	clone	
+16S	primers.5	claim	absent		abstract	abstract	
+16S	primers.6	claim	ok		sample	sample	sample
+16S	primers.7	claim	ok				
+16S	primers.8	claim	ok		one		
+16S	primers.9	claim	ok		two-template system abstract	two-template system abstract	two-template
+16S	primers.10	claim	ok				
+16S	primers.11	claim	ok		same plant study	plant study	plant
+16S	primers.12	claim	ok		abstract	abstract	
+16S	primers.13	claim	ok				
+16S	pcr.1	claim	ok		studies below	studies	
+16S	pcr.2	claim	ok				
+16S	pcr.3	claim	ok		abstract	abstract	
+16S	pcr.4	claim	ok		one		
+16S	pcr.5	claim	ok		mocks	mocks	mocks
+16S	pcr.6	claim	ok		one study	study	
+16S	pcr.7	claim	ok				
+16S	pcr.8	claim	ok		gut-isolate	gut-isolate	gut-isolate
+16S	pcr.9	claim	ok		one checked synthesis agent critic	checked synthesis agent critic	
+16S	pcr.10	claim	ok		abstract 7-taxon vaginal mock	abstract 7-taxon vaginal mock	7-taxon vaginal mock
+16S	pcr.11	claim	ok		listed among review conflicts	listed review conflicts	review
+16S	pcr.12	claim	ok		abstract	abstract	
+16S	pcr.13	claim	ok		abstract critic notes	abstract critic notes	
+16S	pcr.14	claim	ok		labelled	labelled	
+16S	pcr.15	claim	ok		listed among disputed choices within steps	listed disputed choices steps	
+16S	pcr-efficiency.1	claim	ok		critic	critic	
+16S	pcr-efficiency.2	claim	ok		named	named	
+16S	pcr-efficiency.3	claim	ok		one		
+16S	pcr-efficiency.4	claim	ok		labelled	labelled	
+16S	pcr-efficiency.5	claim	ok		critic	critic	
+16S	pcr-efficiency.6	claim	ok		labelled abstract	labelled abstract	
+16S	copy-number.1	claim	absent		mb-01 rates calls them mb-02 critic	mb-01 rates calls mb-02 critic	mb-01 mb-02
+16S	copy-number.2	claim	ok				
+16S	copy-number.3	claim	ok		rrndb 2015 2015	rrndb 2015 2015	2015 2015
+16S	copy-number.4	claim	numbers		rrndb 2015 note calls	rrndb 2015 note calls	2015
+16S	copy-number.5	claim	ok				
+16S	copy-number.6	claim	ok		dated	dated	
+16S	copy-number.7	claim	ok		critic	critic	
+16S	copy-number.8	claim	ok		releases abstract	releases abstract	
+16S	copy-number.9	claim	ok		derivation	derivation	
+16S	copy-number.10	claim	ok		reviewer derivation rests alone	reviewer derivation rests alone	
+16S	copy-number.11	claim	ok				
+16S	copy-number.12	claim	ok		same 1690 genomes	1690 genomes	1690
+16S	copy-number.13	claim	ok				
+16S	copy-number.14	claim	absent	number:29	rrndb reviewer derivation	rrndb reviewer derivation	
+16S	copy-number.15	claim	ok		rrndb v5.10	rrndb v5.10	v5.10
+16S	copy-number.16	claim	ok		rrndb derivation	rrndb derivation	
+16S	copy-number.17	claim	ok		rrndb v5.10	rrndb v5.10	v5.10
+16S	copy-number.18	claim	ok		genome survey abstract	genome survey abstract	genome survey
+16S	copy-number.19	claim	ok		text abstract	text abstract	
+16S	copy-number.20	claim	ok		one abstract-only	abstract-only	abstract-only
+16S	copy-number.21	claim	ok		mb-02 calls	mb-02 calls	mb-02
+16S	copy-number.22	claim	ok		abstract	abstract	
+16S	copy-number.23	claim	ok		both records	records	
+16S	ploidy.1	claim	ok				
+16S	ploidy.2	claim	conf				
+16S	ploidy.3	claim	ok		cultures text checked critic hildenbrand abstract	cultures text checked critic hildenbrand abstract	cultures hildenbrand
+16S	ploidy.4	claim	ok		cultures	cultures	cultures
+16S	ploidy.5	claim	ok		cultures p pecoraro 2011 full text rest abstract	cultures p pecoraro 2011 full text rest abstract	cultures pecoraro 2011
+16S	ploidy.6	claim	absent		cultures abstracts	cultures abstracts	cultures
+16S	ploidy.7	claim	ok		abstract	abstract	
+16S	ploidy.8	claim	ok		cultures critic did use	cultures critic use	cultures
+16S	ploidy.9	claim	ok		part	part	
+16S	ploidy.10	claim	ok		full text	full text	
+16S	ploidy.11	claim	ok		cultures	cultures	cultures
+16S	ploidy.12	claim	ok		analysis abstract	analysis abstract	
+16S	ploidy.13	claim	ok				
+16S	ploidy.14	claim	ok				
+16S	ploidy.15	claim	ok		searches behind mb-02 not-found claims	searches behind mb-02 not-found claims	mb-02 not-found
+16S	ploidy.16	claim	ok		one		
+16S	ploidy.17	claim	ok		measurements	measurements	
+16S	ploidy.18	claim	ok		clay-loam dna-per-cell average	clay-loam dna-per-cell average	clay-loam dna-per-cell
+16S	ploidy.19	claim	absent		full text read 100000 characters	full text read 100000 characters	100000
+16S	ploidy.20	claim	ok				
+16S	ploidy.21	claim	ok		marine picocyanobacteria	marine picocyanobacteria	marine
+16S	ploidy.22	claim	absent		full text read 100000 characters	full text read 100000 characters	100000
+16S	ploidy.23	claim	ok		abstract	abstract	
+16S	ploidy.24	claim	ok				
+16S	ploidy.25	claim	absent		critic says prochlorococcus cell-cycle literature would supply such shares read abstract see ploidy.21	critic says prochlorococcus cell-cycle literature supply shares read abstract see ploidy.21	prochlorococcus cell-cycle ploidy.21
+16S	copy-number-correction.1	claim	ok		note framing section 2.5	note framing section 2.5	2.5
+16S	copy-number-correction.2	claim	ok		abstract	abstract	
+16S	copy-number-correction.3	claim	ok		figures checked mb-02 critic	figures checked mb-02 critic	mb-02
+16S	copy-number-correction.4	claim	absent		genome-based studies	genome-based studies	genome-based
+16S	copy-number-correction.5	claim	ok		figures checked mb-02 critic	figures checked mb-02 critic	mb-02
+16S	copy-number-correction.6	claim	ok		sites	sites	
+16S	copy-number-correction.7	claim	ok		figures checked mb-02 critic	figures checked mb-02 critic	mb-02
+16S	copy-number-correction.8	claim	ok		simulations	simulations	simulations
+16S	copy-number-correction.9	claim	ok				
+16S	copy-number-correction.10	claim	ok		tool own paper abstract	tool paper abstract	
+16S	copy-number-correction.11	claim	ok				
+16S	copy-number-correction.12	claim	absent		7-taxon synthesis agent	7-taxon synthesis agent	7-taxon
+16S	copy-number-correction.13	claim	ok		mb-01 critic says applies side since	mb-01 critic says applies side	mb-01
+16S	copy-number-correction.14	claim	ok		genome abstract	genome abstract	genome
+16S	copy-number-correction.15	claim	ok		one		
+16S	copy-number-correction.16	claim	absent	number:01; name:MB-01			
+16S	copy-number-correction.17	claim	ok		mb-02	mb-02	mb-02
+16S	copy-number-correction.18	claim	ok		mb-02	mb-02	mb-02
+16S	copy-number-correction.19	claim	ok		mb-02 searches	mb-02 searches	mb-02
+16S	copy-number-correction.20	claim	ok		one abstract	abstract	
+16S	community-copy-number.1	claim	ok	name:Earth; name:Microbiome; name:Project			
+16S	community-copy-number.2	claim	ok		measured	measured	
+16S	community-copy-number.3	claim	absent	number:15	emp against analysis	emp analysis	emp
+16S	community-copy-number.4	claim	ok				
+16S	library-prep.1	claim	ok		protocols documentation	protocols documentation	
+16S	library-prep.2	claim	ok		one study	study	
+16S	library-prep.3	claim	ok		benchmark	benchmark	
+16S	library-prep.4	claim	absent		europe pmc abstract figures publisher paywalled	europe pmc abstract figures publisher paywalled	europe pmc
+16S	sequencing-platform.1	claim	ok		protocols benchmarks	protocols benchmarks	
+16S	sequencing-platform.2	claim	absent		critic could confirm open full text	critic confirm open full text	
+16S	sequencing-platform.3	claim	ok		kozich 2013 two angles readings differ	kozich 2013 angles readings differ	kozich 2013
+16S	sequencing-platform.4	claim	ok				
+16S	sequencing-platform.5	claim	ok				
+16S	index-misassignment.1	claim	ok				
+16S	index-misassignment.2	claim	ok		labelled	labelled	
+16S	index-misassignment.3	claim	absent		libraries labelled	libraries labelled	
+16S	index-misassignment.4	claim	ok				
+16S	index-misassignment.5	claim	ok		labelled	labelled	
+16S	index-misassignment.6	claim	ok		one		
+16S	index-misassignment.7	claim	ok				
+16S	index-misassignment.8	claim	ok		labelled	labelled	
+16S	index-misassignment.9	claim	ok		labelled abstract	labelled abstract	
+16S	index-misassignment.10	claim	ok		eight above summary	eight summary	
+16S	index-misassignment.11	claim	ok				
+16S	quality-filtering.1	claim	ok				
+16S	quality-filtering.2	claim	ok		three platforms	three platforms	
+16S	quality-filtering.3	claim	ok		benchmark	benchmark	
+16S	quality-filtering.4	claim	ok		listed among disputed choices review conflicts	listed disputed choices review conflicts	review
+16S	quality-filtering.5	claim	holds		73 miseq datasets	73 miseq datasets	73 miseq datasets
+16S	quality-filtering.6	claim	ok		abstract	abstract	
+16S	denoising-clustering.1	claim	ok		documentation benchmarks	documentation benchmarks	
+16S	denoising-clustering.2	claim	ok				
+16S	denoising-clustering.3	claim	absent		human faecal samples	human faecal samples	human faecal
+16S	denoising-clustering.4	claim	holds		environmental data	environmental data	
+16S	denoising-clustering.5	claim	holds		three mock runs	three mock runs	mock
+16S	denoising-clustering.6	claim	ok		one		
+16S	denoising-clustering.7	claim	ok				
+16S	denoising-clustering.8	claim	ok				
+16S	denoising-clustering.9	claim	ok				
+16S	denoising-clustering.10	claim	ok				
+16S	denoising-clustering.11	claim	ok		leaf litter against freshwater samples	leaf litter freshwater samples	leaf freshwater
+16S	denoising-clustering.12	claim	ok				
+16S	denoising-clustering.13	claim	ok		abstract	abstract	
+16S	denoising-clustering.14	claim	ok				
+16S	intragenomic-variation.1	claim	ok		genome-based analysis	genome-based analysis	genome-based
+16S	intragenomic-variation.2	claim	ok		study	study	
+16S	intragenomic-variation.3	claim	ok		survey abstract	survey abstract	survey
+16S	intragenomic-variation.4	claim	ok		abstract	abstract	
+16S	chimeras.1	claim	ok		software documentation	software documentation	
+16S	chimeras.2	claim	ok				
+16S	chimeras.3	claim	absent		mock synthesis agent critic	mock synthesis agent critic	mock
+16S	chimeras.4	claim	ok		haas 2011	haas 2011	haas 2011
+16S	chimeras.5	claim	ok		abstract	abstract	
+16S	taxonomic-assignment.1	claim	ok		software documentation	software documentation	
+16S	taxonomic-assignment.2	claim	ok				
+16S	taxonomic-assignment.3	claim	ok				
+16S	taxonomic-assignment.4	claim	ok				
+16S	taxonomic-assignment.5	claim	ok				
+16S	taxonomic-assignment.6	claim	ok		three	three	
+16S	taxonomic-assignment.7	claim	ok				
+16S	contamination.1	claim	ok		studies below	studies	
+16S	contamination.2	claim	ok		one organism	organism	
+16S	contamination.3	claim	ok		one		
+16S	contamination.4	claim	ok		16s plates	16s plates	16s
+16S	contamination.5	claim	ok				
+16S	contamination.6	claim	ok		one		
+16S	contamination.7	claim	ok				
+16S	contamination.8	claim	ok				
+16S	contamination.9	claim	absent		abstract	abstract	
+16S	workflow-bias.1	claim	ok		communities series critic	communities series critic	
+16S	workflow-bias.2	claim	ok				
+16S	workflow-bias.3	claim	ok				
+16S	workflow-bias.4	claim	ok				
+16S	workflow-bias.5	claim	ok		step-wise evidence review	step-wise evidence review	step-wise in review
+16S	workflow-bias.6	claim	ok		listed among review conflicts	listed review conflicts	review
+16S	workflow-bias.7	claim	ok				
+16S	workflow-bias.8	claim	ok		abstract	abstract	
+16S	workflow-bias.9	claim	critic		lab bioinformatics angles	lab bioinformatics angles	lab
+16S	workflow-bias.10	claim	absent	year:2019; year:2015; year:2021; name:McLaren; name:Brooks; name:Silverman; name:D2	review sensitivity d2	review sensitivity d2	review d2
+16S	bias-consistency.1	claim	holds		7 taxa mixed cells brooks 2015 data	7 taxa mixed cells brooks 2015 data	7 brooks 2015
+16S	bias-consistency.2	claim	ok		verified critic	verified critic	
+16S	bias-consistency.3	claim	ok		mclaren 2019	mclaren 2019	mclaren 2019
+16S	bias-consistency.4	claim	ok		7-taxon cell-mixture	7-taxon cell-mixture	7-taxon cell-mixture
+16S	bias-consistency.5	claim	ok				
+16S	bias-consistency.6	claim	ok		metagenomics	metagenomics	metagenomics
+16S	bias-consistency.7	claim	ok		named each small-n two abstract-level	named small-n abstract-level	small-n abstract-level
+16S	bias-consistency.8	claim	holds		oklahoma grassland dataset	oklahoma grassland dataset	oklahoma grassland dataset
+16S	bias-consistency.9	claim	holds		taxon against gut-isolate	taxon gut-isolate	gut-isolate
+16S	bias-consistency.10	claim	ok		above		
+16S	microbial-load.1	claim	ok		critic says	critic says	
+16S	microbial-load.2	claim	ok				
+16S	microbial-load.3	claim	ok				
+16S	read-depth.1	claim	ok	name:Earth; name:Microbiome; name:Project			
+16S	read-depth.2	claim	ok		critic	critic	
+16S	read-depth.3	claim	ok				
+16S	read-depth.4	claim	ok		datasets checked synthesis agent critic	datasets checked synthesis agent critic	datasets
+16S	read-depth.5	claim	ok		secondary	secondary	
+16S	read-depth.6	claim	ok		facility	facility	
+16S	read-depth.7	claim	absent		12 public v4 datasets checked critic	12 public v4 datasets checked critic	12 v4 datasets
+16S	read-depth.8	claim	ok				
+16S	abundance-distribution.1	claim	absent	name:Oklahoma	454 data	454 data	454
+16S	abundance-distribution.2	claim	ok		could confirmed	confirmed	
+16S	abundance-distribution.3	claim	ok		separated	separated	
+16S	abundance-distribution.4	claim	ok		both		
+16S	abundance-distribution.5	claim	ok		including	including	
+16S	abundance-distribution.6	claim	ok		compiled datasets synthesis agent	compiled datasets synthesis agent	datasets
+16S	abundance-distribution.7	claim	ok				
+16S	abundance-distribution.8	claim	ok		all angles	angles	
+16S	abundance-distribution.9	claim	ok				
+16S	abundance-distribution.10	claim	absent		mean publisher pdf noaa repository	mean publisher pdf noaa repository	pdf noaa
+16S	abundance-distribution.11	claim	ok		checked critic	checked critic	
+16S	abundance-distribution.12	claim	ok		2018 2021	2018 2021	2018 2021
+16S	abundance-distribution.13	claim	ok				
+16S	abundance-distribution.14	claim	ok		abstract	abstract	
+16S	abundance-distribution.15	claim	ok		abstract	abstract	
+16S	abundance-distribution.16	claim	ok		abstract	abstract	
+16S	abundance-distribution.17	claim	ok		abstract	abstract	
+16S	abundance-distribution.18	claim	ok		studies above	studies	
+16S	abundance-distribution.19	claim	holds		mb-02 searches genome-resolved global	mb-02 searches genome-resolved global	mb-02 genome-resolved global
+16S	abundance-distribution.20	claim	ok				
+16S	abundance-distribution.21	claim	ok				
+16S	abundance-distribution.22	claim	ok				
+16S	abundance-distribution.23	claim	ok				
+16S	abundance-distribution.24	claim	ok		abstract	abstract	
+16S	abundance-distribution.25	claim	ok		mb-02 searches	mb-02 searches	mb-02
+16S	sampling-model.1	claim	holds		2011 24 oklahoma grassland	2011 24 oklahoma grassland	2011 24 oklahoma grassland
+16S	sampling-model.2	claim	ok				
+16S	sampling-model.3	claim	holds		deeply sample miseq critic	deeply sample miseq critic	sample miseq
+16S	sampling-model.4	claim	holds		soil 454 replicates against artificial-gut hourly series	soil 454 replicates artificial-gut hourly series	soil 454 artificial-gut
+16S	sampling-model.5	claim	holds		mouse	mouse	mouse
+16S	sampling-model.6	claim	ok		labelled	labelled	
+16S	sampling-model.7	claim	ok		compiled	compiled	
+16S	technical-replicates.1	claim	holds		24 communities one oklahoma warming site	24 communities oklahoma warming site	24 oklahoma site
+16S	technical-replicates.2	claim	ok				
+16S	technical-replicates.3	claim	ok		critic	critic	
+16S	technical-replicates.4	claim	holds		soil	soil	soil
+16S	technical-replicates.5	claim	ok				
+16S	technical-replicates.6	claim	ok				
+16S	technical-replicates.7	claim	ok		fungal labelled	fungal labelled	fungal
+16S	technical-replicates.8	claim	holds		study tested both conditions	study tested conditions	
+16S	technical-replicates.9	claim	ok				
+16S	technical-replicates.10	claim	holds		soil one laboratory one mouse caecum	soil laboratory mouse caecum	soil laboratory its mouse
+16S	technical-replicates.11	claim	ok				
+16S	overdispersion.1	claim	ok				
+16S	overdispersion.2	claim	ok				
+16S	overdispersion.3	claim	ok		abstract	abstract	
+16S	overdispersion.4	claim	ok		abstracts	abstracts	
+16S	overdispersion.5	claim	ok				
+16S	technical-variation.1	claim	ok				
+16S	technical-variation.2	claim	holds		clinical	clinical	
+16S	technical-variation.3	claim	ok		dyrhovden	dyrhovden	dyrhovden
+16S	technical-variation.4	claim	holds		mouse gut framework	mouse gut framework	mouse gut
+16S	technical-variation.5	claim	holds		labelled	labelled	
+16S	technical-variation.6	claim	ok				
+16S	technical-variation.7	claim	ok		checked critic	checked critic	
+16S	technical-variation.8	claim	holds		20-strain mock	20-strain mock	20-strain mock
+16S	technical-variation.9	claim	holds		mocks	mocks	mocks
+16S	technical-variation.10	claim	ok		abstracts	abstracts	
+16S	technical-variation.11	claim	ok		eukaryotic labelled	eukaryotic labelled	eukaryotic
+16S	technical-variation.12	claim	ok				
+16S	zeros.1	claim	ok				
+16S	zeros.2	claim	ok		abstract	abstract	
+16S	zeros.3	claim	ok		assertion against model	assertion model	model
+16S	alpha-diversity.1	claim	ok		abstract	abstract	
+16S	alpha-diversity.2	claim	holds		multinomial-type checked synthesis agent	multinomial-type checked synthesis agent	multinomial-type
+16S	alpha-diversity.3	claim	holds		null models silico communities	null models silico communities	models
+16S	alpha-diversity.4	claim	ok				
+16S	alpha-diversity.5	claim	holds		gut-isolate	gut-isolate	gut-isolate
+16S	alpha-diversity.6	claim	holds		faeces taxon-specific bias truth	faeces taxon-specific bias truth	taxon-specific
+16S	alpha-diversity.7	claim	ok		abstract	abstract	
+16S	beta-diversity.1	claim	ok				
+16S	beta-diversity.2	claim	holds		simulation against model	simulation model	simulation model
+16S	beta-diversity.3	claim	ok				
+16S	beta-diversity.4	claim	ok		abstract	abstract	
+16S	beta-diversity.5	claim	holds		freshwater sediment	freshwater sediment	freshwater sediment
+16S	rarefying.1	claim	ok		labelled origins known secondarily	labelled origins known secondarily	
+16S	rarefying.2	claim	ok				
+16S	rarefying.3	claim	ok		same		
+16S	rarefying.4	claim	ok		schloss 2024b	schloss 2024b	schloss 2024b
+16S	rarefying.5	claim	ok				
+16S	rarefying.6	claim	ok		simulations	simulations	simulations
+16S	rarefying.7	claim	ok		data	data	
+16S	rarefying.8	claim	ok		re-analysis simulation	re-analysis simulation	re-analysis simulation
+16S	rarefying.9	claim	ok		freshwater samples	freshwater samples	freshwater
+16S	rarefying.10	claim	ok		one study	study	
+16S	rarefying.11	claim	holds		perspective	perspective	
+16S	rarefying.12	claim	ok		abstracts null models	abstracts null models	models
+16S	rarefying.13	claim	ok		depend data-generating assumptions	depend data-generating assumptions	data-generating
+16S	rarefying.14	claim	ok		simulations	simulations	simulations
+16S	rarefying.15	claim	ok		simulations	simulations	simulations
+16S	rarefying.16	claim	ok				
+16S	rarefying.17	claim	ok				
+16S	coverage-standardisation.1	claim	ok		labelled	labelled	
+16S	coverage-standardisation.2	claim	ok		labelled	labelled	
+16S	coverage-standardisation.3	claim	ok		critic	critic	
+16S	coverage-standardisation.4	claim	ok				
+16S	richness-estimators.1	claim	ok				
+16S	richness-estimators.2	claim	holds		ecology labelled	ecology labelled	
+16S	richness-estimators.3	claim	holds		perspective	perspective	
+16S	richness-estimators.4	claim	holds		mocks 454	mocks 454	mocks 454
+16S	richness-estimators.5	claim	ok				
+16S	richness-estimators.6	claim	ok		abstract	abstract	
+16S	compositional-analysis.1	claim	holds		mini abstract	mini abstract	
+16S	compositional-analysis.2	claim	ok		models	models	models
+16S	compositional-analysis.3	claim	holds		model	model	model
+16S	compositional-analysis.4	claim	ok		abstract	abstract	
+16S	compositional-analysis.5	claim	ok				
+16S	scaling-normalisation.1	claim	ok		labelled abstracts	labelled abstracts	
+16S	scaling-normalisation.2	claim	ok		labelled abstract	labelled abstract	
+16S	scaling-normalisation.3	claim	ok		models simulated faeces	models simulated faeces	models simulated
+16S	scaling-normalisation.4	claim	ok		abstracts	abstracts	
+16S	differential-abundance.1	claim	ok				
+16S	differential-abundance.2	claim	ok				
+16S	differential-abundance.3	claim	holds		benchmark abstract	benchmark abstract	
+16S	differential-abundance.4	claim	ok		abstract	abstract	
+16S	differential-abundance.5	claim	holds		real human microbiome data	real human microbiome data	human
+16S	differential-abundance.6	claim	ok				
+16S	differential-abundance.7	claim	holds		simulations	simulations	simulations
+16S	differential-abundance.8	claim	ok		abstracts against	abstracts	
+16S	differential-abundance.9	claim	holds		real-data simulation benchmarks	real-data simulation benchmarks	real-data simulation
+16S	absolute-quantification.1	claim	holds		human faeces engineered freshwater soil mouse gut	human faeces engineered freshwater soil mouse gut	human engineered freshwater soil mouse gut
+16S	absolute-quantification.2	claim	holds		human faeces abstract	human faeces abstract	human
+16S	absolute-quantification.3	claim	ok		abstract	abstract	
+16S	absolute-quantification.4	claim	ok				
+16S	absolute-quantification.5	claim	ok				
+16S	absolute-quantification.6	claim	holds		mouse gut	mouse gut	mouse gut
+16S	absolute-quantification.7	claim	ok		abstract	abstract	
+16S	absolute-quantification.8	claim	ok		shared	shared	
+16S	absolute-quantification.9	claim	holds		simulated faeces taxon-specific bias	simulated faeces taxon-specific bias	simulated taxon-specific
+16S	absolute-quantification.10	claim	ok				
+16S	absolute-quantification.11	claim	ok				
+16S	absolute-quantification.12	claim	ok		one		
+16S	absolute-quantification.13	claim	ok		16s	16s	16s
+16S	absolute-quantification.14	claim	holds		antarctic open unconfirmed	antarctic open unconfirmed	antarctic
+16S	absolute-quantification.15	claim	ok		abstract	abstract	
+16S	absolute-quantification.16	claim	ok		listed among review conflicts	listed review conflicts	review
+16S	absolute-quantification.17	claim	ok				
+16S	rare-biosphere.1	claim	ok		abstracts	abstracts	
+16S	rare-biosphere.2	claim	ok				
+16S	rare-biosphere.3	claim	holds		amplicon studies mostly non-soil	amplicon studies mostly non-soil	amplicon non-soil
+16S	rare-biosphere.4	claim	holds		arctic ocean	arctic ocean	arctic ocean
+16S	rare-biosphere.5	claim	holds		sediments hangzhou bay abstract	sediments hangzhou bay abstract	sediments hangzhou bay
+16S	rare-biosphere.6	claim	ok		checked critic	checked critic	
+16S	rare-biosphere.7	claim	holds		shade 2014 excerpts chronosequence jia 2022	shade 2014 excerpts chronosequence jia 2022	shade 2014 jia 2022
+16S	rare-biosphere.8	claim	ok		known secondarily jousset 2017	known secondarily jousset 2017	jousset 2017
+16S	rare-biosphere.9	claim	ok		abstract	abstract	
+16S	rare-biosphere.10	claim	holds				
+16S	global-classes.1	claim	ok				
+16S	global-classes.2	claim	holds		844 checked critic	844 checked critic	844
+16S	global-classes.3	claim	ok		definitions surveyed	definitions surveyed	surveyed
+16S	core-microbiome.1	claim	holds		reviews abstracts	reviews abstracts	reviews
+16S	core-microbiome.2	claim	holds		full text read 100000 characters	full text read 100000 characters	100000
+16S	core-microbiome.3	claim	ok		2021	2021	2021
+16S	core-microbiome.4	claim	ok		study checked critic	study checked critic	
+16S	core-microbiome.5	claim	ok		abstract	abstract	
+16S	core-microbiome.6	claim	ok		bean maize arabidopsis root dataset	bean maize arabidopsis root dataset	maize arabidopsis root dataset
+16S	core-microbiome.7	claim	holds		plant microbiomes abstract	plant microbiomes abstract	plant
+16S	abundance-occupancy.1	claim	ok		unverified	unverified	
+16S	abundance-occupancy.2	claim	ok		same study	study	
+16S	abundance-occupancy.3	claim	holds		checked critic	checked critic	
+16S	abundance-occupancy.4	claim	ok		behind	behind	
+16S	abundance-occupancy.5	claim	ok				
+16S	abundance-occupancy.6	claim	ok		one		
+16S	abundance-occupancy.7	claim	absent		one checked critic	checked critic	
+16S	abundance-occupancy.8	claim	holds		288	288	288
+16S	abundance-occupancy.9	claim	ok				
+16S	abundance-occupancy.10	claim	ok		454 abstracts	454 abstracts	454
+16S	abundance-occupancy.11	claim	absent		abstract critic list combines grilli 2020 sloan 2006	abstract critic list combines grilli 2020 sloan 2006	grilli 2020 sloan 2006
+16S	abundance-occupancy.12	claim	ok				
+16S	abundance-occupancy.13	claim	ok		abstract	abstract	
+16S	abundance-occupancy.14	claim	ok				
+16S	abundance-occupancy.15	claim	ok				
+16S	abundance-occupancy.16	claim	ok				
+16S	term-sensitivity.1	claim	ok		checked critic	checked critic	
+16S	term-sensitivity.2	claim	ok				
+16S	term-sensitivity.3	claim	ok		abstract	abstract	
+16S	term-sensitivity.4	claim	ok		checked critic	checked critic	
+16S	term-sensitivity.5	claim	holds		faeces text 100000 characters checked critic	faeces text 100000 characters checked critic	100000
+16S	term-sensitivity.6	claim	ok		faecal	faecal	faecal
+16S	term-sensitivity.7	claim	ok				
+16S	term-sensitivity.8	claim	ok		abstract	abstract	
+16S	term-sensitivity.9	claim	ok		abstract	abstract	
+16S	term-sensitivity.10	claim	ok		abstract	abstract	
+16S	term-sensitivity.11	claim	ok				
+16S	term-sensitivity.12	claim	ok		proposals reviews papers	proposals reviews papers	reviews
+16S	dns.1	dns	ok	quote:No source found on the effect of water sampling choices (volume, filter pore size) or host tissue sampling.			
+16S	dns.2	dns	ok				
+16S	dns.3	dns	ok	quote:Extraction is the largest step for relative-abundance error, then PCR, then sequencing			
+16S	dns.4	dns	ok	quote:The largest measured distortions in relative abundance arise from taxon-specific efficiencies at DNA extraction and PCR			
+16S	dns.5	dns	absent	year:2015; name:Costea			
+16S	dns.6	dns	ok	quote:The original 515F/806R V4 primers under-represented SAR11 by about 4 to 10-fold in field samples but only about 2-fold in mocks.			
+16S	dns.7	dns	ok				
+16S	dns.8	dns	ok	quote:ddPCR versus flow cytometry correlated at only r = 0.50			
+16S	dns.9	dns	ok	quote:Unfiltered OTU tables were 50 to 80% spurious taxa.			
+16S	dns.10	dns	ok				
+16S	dns.11	dns	ok	quote:30% of 16S amplicon papers report a negative control and 10% a positive control.			
+16S	dns.12	dns	ok				
+16S	dns.13	dns	ok				
+16S	dns.14	dns	ok				
+16S	dns.15	dns	ok	quote:Library preparation and primers are the largest drivers of error profile			
+16S	dns.16	dns	ok	quote:V4 genus accuracy is about 50% at 97% identity and reference databases carry 10 to 17% annotation error			
+16S	dns.17	dns	ok	quote:Chimera formation is reproducible across amplifications			
+16S	dns.18	dns	ok	quote:Fast-responding soil isolates average 5.5 copies against 1.4			
+16S	dns.19	dns	ok	quote:Willis 2019 is an assertion			
+16S	dns.20	dns	absent	quote:Spike-in totals agreed poorly with flow cytometry (r2 0.19)			
+16S	dns.21	dns	ok				
+16S	dns.22	dns	ok				
+16S	dns.23	dns	ok				
+16S	dns.24	dns	ok				
+16S	dns.25	dns	ok	quote:0.1 to 6% of reads move between samples			
+16S	dns.26	dns	ok	quote:Water and hosts: copy-corrected rank-abundance data fit a lognormal			
+16S	dns.27	dns	ok				
+16S	dns.28	dns	ok				
+16S	dns.29	dns	ok				
+16S	dns.30	dns	ok	name:Poisson; quote:16S technical replicates are Poisson.			
+16S	dns.31	dns	ok	quote:In bulk-soil amplicon data, 0.4 to 2% of taxa hold about 41 to 58% of reads.			
+16S	dns.32	dns	ok	quote:Bulk soil shows a positive abundance-occupancy relationship wherever tested.			
+16S	dns.33	dns	absent	quote:Genome copies usually fall in stationary phase or starvation			
+16S	dns.34	dns	absent	year:2023; name:Bruck; name:PMC			
+16S	dns.35	dns	ok	quote:Evidence on genome copies per cell is strong for cultures.			
+16S	dns.36	dns	ok	quote:Independent replication of the ploidy values by other groups was not located.; name:Azotobacter			
+16S	dns.37	dns	ok				
+16S	dns.38	dns	ok	quote:In Prochlorococcus the share of cells carrying two genomes changes over the day.			
+16S	dns.39	dns	absent	quote:No source reports, for any natural community, the share of cells carrying one genome copy versus more than one, by taxon; name:Prochlorococcus			
+16S	dns.40	dns	ok	quote:Other biases (extraction, primers) are of similar or larger size than copy-number bias and multiply with it			
+16S	dns.41	dns	ok	quote:Abundant is usually above 1%			
+16S	dns.42	dns	ok	quote:Only about 1% of taxa were agreed by all four core methods			
+16S	dns.43	dns	ok				
+16S	dns.44	dns	ok				
+16S	dns.45	dns	ok				
+16S	dns.46	dns	ok	quote:Archaea carry 1 to 4 copies (to v5.0)			
+16S	dns.47	dns	ok	quote:Acidobacteria average 1.0 copies			
+16S	dns.48	dns	ok	quote:Up to 41% of rRNA genes in soil are unlinked			
+16S	dns.49	dns	ok	quote:The 1 to 15 range is consistent across independent sources			
+16S	dns.50	dns	ok	quote:Eleven DNA-based mock communities fitted 7.1% better without correction.			
+H2-01	functional-profile.1	claim	ok		review account	review account	review
+H2-01	functional-profile.2	claim	ok		review account	review account	review
+H2-01	functional-profile.3	claim	ok		review account	review account	review
+H2-01	literature-coverage.1	claim	ok		plants review found them	plants review found	plants review
+H2-01	literature-coverage.2	claim	critic		taxonomy held fixed kept critic review	taxonomy held fixed kept critic review	review
+H2-01	literature-coverage.3	claim	absent		microbial other-field stability habitats	microbial other-field stability habitats	other-field
+H2-01	dimension-estimate.1	claim	ok		critic answer see shared-mean.1 genome-dimension.1 expression-dimension.1	critic answer see shared-mean.1 genome-dimension.1 expression-dimension.1	shared-mean.1 genome-dimension.1 expression-dimension.1
+H2-01	dimension-estimate.2	claim	ok		sample-by-function matrices	sample-by-function matrices	sample-by-function
+H2-01	dimension-estimate.3	claim	ok		routes search record	routes search record	in
+H2-01	dimension-estimate.4	claim	ok		microbial functional profiles routes search record	microbial functional profiles routes search record	
+H2-01	shared-mean.1	claim	ok		rests under permutation critic	rests permutation critic	
+H2-01	shared-mean.2	claim	ok		metagenome tools scored	metagenome tools scored	metagenome
+H2-01	shared-mean.3	claim	ok		datasets sun2020	datasets sun2020	datasets sun2020
+H2-01	shared-mean.4	claim	ok		offered similarity stable levels	offered similarity stable levels	
+H2-01	shared-mean.5	claim	ok		estimates functional profiles	estimates functional profiles	
+H2-01	shared-mean.6	claim	ok		routes search record	routes search record	in
+H2-01	direct-dimension.1	claim	ok				
+H2-01	direct-dimension.2	claim	ok		global sites	global sites	global
+H2-01	direct-dimension.3	claim	ok	name:NMF	45 ocean sites 8214 pfams	45 ocean sites 8214 pfams	45 ocean 8214 pfams
+H2-01	direct-dimension.4	claim	ok	number:5	jiang2012 nmf samples	jiang2012 nmf samples	jiang2012 nmf
+H2-01	direct-dimension.5	claim	ok				
+H2-01	direct-dimension.6	claim	ok		128 soil metagenomes	128 soil metagenomes	128 soil
+H2-01	direct-dimension.7	claim	ok		128 soil metagenomes	128 soil metagenomes	128 soil
+H2-01	direct-dimension.8	claim	ok		functional tables 128 soils	functional tables 128 soils	128 soils
+H2-01	direct-dimension.9	claim	ok		128 soil metagenomes	128 soil metagenomes	128 soil
+H2-01	direct-dimension.10	claim	ok	name:Piton2023	128 soil metagenomes	128 soil metagenomes	128 soil
+H2-01	direct-dimension.11	claim	ok				
+H2-01	direct-dimension.12	claim	ok				
+H2-01	direct-dimension.13	claim	ok	name:Global; name:Sampling			
+H2-01	direct-dimension.14	claim	ok		raes2011 cca	raes2011 cca	raes2011 cca
+H2-01	direct-dimension.15	claim	ok	name:Global; name:Ocean; name:Sampling	metagenomes	metagenomes	
+H2-01	direct-dimension.16	claim	ok		jiang2012 piton2023 flinkstrom2024	jiang2012 piton2023 flinkstrom2024	jiang2012 piton2023 flinkstrom2024
+H2-01	direct-dimension.17	claim	ok		jiang2012 45 piton2023 two	jiang2012 45 piton2023	jiang2012 45 piton2023
+H2-01	genome-size.1	claim	ok		relatively normalised functional profiles	relatively normalised functional profiles	
+H2-01	genome-size.2	claim	ok				
+H2-01	genome-size.3	claim	ok				
+H2-01	genome-size.4	claim	ok				
+H2-01	genome-size.5	claim	ok		bacteria	bacteria	bacteria
+H2-01	genome-size.6	claim	ok		128 soil metagenomes	128 soil metagenomes	128 soil
+H2-01	genome-size.7	claim	ok		generally	generally	
+H2-01	gene-set-aggregation.1	claim	ok				
+H2-01	gene-set-aggregation.2	claim	ok		hmp gut samples	hmp gut samples	hmp gut
+H2-01	gene-set-aggregation.3	claim	ok		hmp gut samples	hmp gut samples	hmp gut
+H2-01	gene-set-aggregation.4	claim	ok		hmp gut samples	hmp gut samples	hmp gut
+H2-01	gene-set-aggregation.5	claim	ok		hmp gut samples	hmp gut samples	hmp gut
+H2-01	gene-set-aggregation.6	claim	ok		microbial profiles	microbial profiles	
+H2-01	gene-set-aggregation.7	claim	ok		reconstruction genomes metagenomes	reconstruction genomes metagenomes	
+H2-01	gene-set-aggregation.8	claim	ok		analysis expression data	analysis expression data	
+H2-01	gene-set-aggregation.9	claim	ok		manor2017 yedoak2009 donato2013	manor2017 yedoak2009 donato2013	manor2017 yedoak2009 donato2013
+H2-01	gene-set-aggregation.10	claim	ok		profiles built kos	profiles built kos	kos
+H2-01	compositional-closure.1	claim	ok		general	general	in
+H2-01	cwm.1	claim	ok		means	means	
+H2-01	cwm.2	claim	ok				
+H2-01	cwm.3	claim	ok	name:CWM	cwm-environment correlation tests	cwm-environment correlation tests	cwm-environment
+H2-01	cwm.4	claim	ok	name:CWMs	microbial	microbial	
+H2-01	cwm.5	claim	holds		plots worldwide	plots worldwide	plots
+H2-01	cwm.6	claim	holds		plant trait-environment relationships	plant trait-environment relationships	plant trait-environment
+H2-01	processing-dimension.1	claim	ok		search	search	
+H2-01	processing-dimension.2	claim	ok		microbial functional profiles hmp general	microbial functional profiles hmp general	hmp in
+H2-01	processing-dimension.3	claim	ok		microbial functional profiles critic correctly labelled	microbial functional profiles critic correctly labelled	in
+H2-01	genome-dimension.1	claim	ok		rows critic	rows critic	
+H2-01	genome-dimension.2	claim	ok		bacteria archaea	bacteria archaea	bacteria archaea
+H2-01	genome-dimension.3	claim	ok	name:Westoby2021	genome-level	genome-level	genome-level
+H2-01	trait-dimension.1	claim	ok		species-level	species-level	species-level
+H2-01	trait-dimension.2	claim	ok		30 species-by-trait datasets	30 species-by-trait datasets	30 species-by-trait datasets
+H2-01	trait-dimension.3	claim	ok		simulated species-by-trait matrices	simulated species-by-trait matrices	simulated species-by-trait
+H2-01	trait-dimension.4	claim	ok		critic	critic	
+H2-01	trait-dimension.5	claim	ok				
+H2-01	trait-dimension.6	claim	ok				
+H2-01	trait-dimension.7	claim	holds		bhpmf matrix	bhpmf matrix	bhpmf
+H2-01	trait-dimension.8	claim	ok		plant	plant	plant
+H2-01	trait-dimension.9	claim	ok		plant	plant	plant
+H2-01	expression-dimension.1	claim	ok		other field	field	field
+H2-01	expression-dimension.2	claim	ok		gene expression data	gene expression data	
+H2-01	expression-dimension.3	claim	ok		expression other field critic	expression field critic	field
+H2-01	expression-dimension.4	claim	ok		heterogeneous expression compendia	heterogeneous expression compendia	
+H2-01	expression-dimension.5	claim	ok		gene expression data half	gene expression data half	
+H2-01	dimension-comparison.1	claim	ok		sources d1 differ	sources d1 differ	d1 in
+H2-01	heldout-habitat.1	claim	ok		either		
+H2-01	heldout-habitat.2	claim	absent		routes search record	routes search record	
+H2-01	heldout-habitat.3	claim	absent		routes search record	routes search record	
+H2-01	heldout-study.1	claim	ok				
+H2-01	heldout-study.2	claim	ok		unit	unit	
+H2-01	heldout-study.3	claim	ok		discovery against ihmp-ibd	discovery ihmp-ibd	ihmp-ibd
+H2-01	heldout-study.4	claim	ok		discovery cohort against ihmp-ibd	discovery cohort ihmp-ibd	ihmp-ibd
+H2-01	heldout-study.5	claim	ok		chen2020 co-abundances	chen2020 co-abundances	chen2020 co-abundances
+H2-01	heldout-study.6	claim	ok		chen2020 test	chen2020 test	chen2020
+H2-01	heldout-study.7	claim	absent		critic temporal stability between-cohort comparison	critic temporal stability between-cohort comparison	between-cohort
+H2-01	heldout-study.8	claim	ok	name:Chen2020	chen2020	chen2020	chen2020
+H2-01	neighbouring-transfer.1	claim	ok		16s-based prediction metagenome	16s-based prediction metagenome	16s-based metagenome
+H2-01	neighbouring-transfer.2	claim	ok				
+H2-01	neighbouring-transfer.3	claim	ok				
+H2-01	neighbouring-transfer.4	claim	ok		16s-based prediction	16s-based prediction	16s-based
+H2-01	neighbouring-transfer.5	claim	ok				
+H2-01	neighbouring-transfer.6	claim	ok		one species	species	
+H2-01	neighbouring-transfer.7	claim	ok		bacterial phylogenetic prediction	bacterial phylogenetic prediction	bacterial
+H2-01	neighbouring-transfer.8	claim	ok				
+H2-01	neighbouring-transfer.9	claim	ok				
+H2-01	neighbouring-transfer.10	claim	ok				
+H2-01	neighbouring-transfer.11	claim	ok		human	human	human
+H2-01	other-field-transfer.1	claim	ok		found	found	
+H2-01	other-field-transfer.2	claim	ok		tcga tumour types	tcga tumour types	tcga
+H2-01	other-field-transfer.3	claim	ok		other field	field	field
+H2-01	other-field-transfer.4	claim	ok				
+H2-01	other-field-transfer.5	claim	ok				
+H2-01	other-field-transfer.6	claim	ok		transcriptomics other	transcriptomics	
+H2-01	other-field-transfer.7	claim	ok				
+H2-01	other-field-transfer.8	claim	ok				
+H2-01	other-field-transfer.9	claim	ok		plant against	plant	plant
+H2-01	other-field-transfer.10	claim	ok		messier2017 anderegg2018	messier2017 anderegg2018	messier2017 anderegg2018
+H2-01	other-field-transfer.11	claim	ok		microbial functional profiles	microbial functional profiles	
+H2-01	transfer-dependencies.1	claim	ok		quantities fields	quantities fields	fields
+H2-01	transfer-dependencies.2	claim	ok				
+H2-01	levels-within.1	claim	ok		supporting	supporting	
+H2-01	levels-within.2	claim	critic		healthy reviewer critic	healthy reviewer critic	
+H2-01	levels-within.3	claim	ok				
+H2-01	levels-within.4	claim	ok		one		
+H2-01	levels-within.5	claim	ok				
+H2-01	levels-within.6	claim	ok				
+H2-01	levels-within.7	claim	ok		human	human	human
+H2-01	levels-within.8	claim	ok				
+H2-01	levels-within.9	claim	holds		human microbiome hmp levels-within.1	human microbiome hmp levels-within.1	human hmp levels-within.1
+H2-01	levels-within.10	claim	ok		same-habitat comparisons composition	same-habitat comparisons composition	same-habitat
+H2-01	levels-within.11	claim	ok		comparisons tables different granularity	comparisons tables different granularity	
+H2-01	levels-within.12	claim	ok		one		
+H2-01	levels-within.13	claim	ok		same-habitat comparisons	same-habitat comparisons	same-habitat
+H2-01	levels-within.14	claim	ok		same-habitat case	same-habitat case	same-habitat
+H2-01	levels-within.15	claim	ok		routes search record	routes search record	in
+H2-01	levels-across.1	claim	ok		side side result depends	side side result depends	
+H2-01	levels-across.2	claim	ok		case b studies	case b studies	
+H2-01	levels-across.3	claim	ok				
+H2-01	levels-across.4	claim	ok		critic	critic	
+H2-01	levels-across.5	claim	ok	name:Global; name:Ocean; name:Sampling	metagenomes	metagenomes	
+H2-01	levels-across.6	claim	ok				
+H2-01	levels-across.7	claim	ok		247 metagenomes 18	247 metagenomes 18	247 18
+H2-01	levels-across.8	claim	ok				
+H2-01	levels-across.9	claim	ok				
+H2-01	levels-across.10	claim	ok		across		
+H2-01	levels-across.11	claim	ok				
+H2-01	levels-across.12	claim	holds		tara against	tara	tara
+H2-01	levels-across.13	claim	ok				
+H2-01	levels-across.14	claim	absent		routes search record	routes search record	in
+H2-01	taxonomy-fixed.1	claim	ok		record	record	in
+H2-01	taxonomy-fixed.2	claim	ok		metatranscriptomes	metatranscriptomes	
+H2-01	covariation-stability.1	claim	ok				
+H2-01	covariation-stability.2	claim	ok		routes search record	routes search record	
+H2-01	covariation-stability.3	claim	ok		critic	critic	
+H2-01	covariation-stability.4	claim	ok				
+H2-01	covariation-stability.5	claim	ok		critic	critic	
+H2-01	covariation-stability.6	claim	ok				
+H2-01	covariation-stability.7	claim	ok		read through	read	
+H2-01	covariation-stability.8	claim	ok		global	global	global
+H2-01	covariation-stability.9	claim	ok	name:Global			
+H2-01	covariation-stability.10	claim	ok		metagenomes	metagenomes	
+H2-01	covariation-stability.11	claim	ok				
+H2-01	covariation-stability.12	claim	ok		communities	communities	
+H2-01	covariation-stability.13	claim	ok		across		
+H2-01	covariation-stability.14	claim	ok		across climates	climates	
+H2-01	covariation-stability.15	claim	ok		one		
+H2-01	covariation-stability.16	claim	ok		plant	plant	plant
+H2-01	covariation-stability.17	claim	ok		35 gtex	35 gtex	35 gtex
+H2-01	temporal-covariation.1	claim	ok		critic	critic	
+H2-01	temporal-covariation.2	claim	ok		critic	critic	
+H2-01	function-definition.1	claim	ok		all three	three	
+H2-01	function-definition.2	claim	ok		same-habitat cross-habitat levels	same-habitat cross-habitat levels	same-habitat cross-habitat
+H2-01	function-definition.3	claim	conf		sources	sources	
+H2-01	function-definition.4	claim	ok		other field	field	field
+H2-01	function-definition.5	claim	ok		reviewed all three directions	reviewed three directions	reviewed
+H2-01	dns.1	dns	absent				
+H2-01	dns.2	dns	ok				
+H2-01	dns.3	dns	ok				
+H2-01	dns.4	dns	ok	quote:These processing shifts lower apparent dimension			
+H2-01	dns.5	dns	ok				
+H2-01	dns.6	dns	ok				
+H2-01	dns.7	dns	ok	quote:Module dictionaries recovered held-out profiles			
+H2-01	dns.8	dns	absent	quote:Galand2018 is the only direct same-habitat contrary result.			
+H2-01	dns.9	dns	ok	quote:HMP pathways are much more constant than organisms			
+H2-01	dns.10	dns	absent	quote:Nelson2016 (full text).; name:PMC; name:SECONDARY			
+H2-01	dns.11	dns	ok	quote:84% of pathways in variable co-abundances also differed in level			
+H2-01	dns.12	dns	absent				
+H2-01	dns.13	dns	ok				
+H2-01	dns.14	dns	ok				
+TSL	df-idf.1	claim	ok		over document retrieval df-idf.2	document retrieval df-idf.2	df-idf.2
+TSL	df-idf.2	claim	ok		note gives entry collection-df signal opposite verification	note gives entry collection-df signal opposite verification	in its collection-df in
+TSL	information-content.1	claim	ok		taxonomies probabilities	taxonomies probabilities	
+TSL	information-content.2	claim	ok		includes	includes	
+TSL	information-content.3	claim	ok		note gives entry ic s2	note gives entry ic s2	in its ic s2
+TSL	c-tf-idf.1	claim	ok	name:L1-normalises	class-based procedure described paper documentation	class-based procedure described paper documentation	class-based in its
+TSL	c-tf-idf.2	claim	ok		c-tf-idf weighting defined documentation dns.6	c-tf-idf weighting defined documentation dns.6	c-tf-idf its dns.6
+TSL	c-tf-idf.3	claim	ok		weighting	weighting	in
+TSL	c-tf-idf.4	claim	ok		sources review found	sources review found	review
+TSL	altitude-ordering.1	claim	ok		retrieval	retrieval	
+TSL	altitude-ordering.2	claim	ok		is-a taxonomies p c monotonic up hierarchy	is-a taxonomies p c monotonic hierarchy	is-a
+TSL	altitude-ordering.3	claim	ok		vs cluster labels altitude-ordering.8	vs cluster labels altitude-ordering.8	altitude-ordering.8
+TSL	altitude-ordering.4	claim	holds		nouns vs each figure belongs own study	nouns vs figure belongs study	its
+TSL	altitude-ordering.5	claim	ok		review conclusion wordnet figures altitude-ordering.3 4	review conclusion wordnet figures altitude-ordering.3 4	review wordnet altitude-ordering.3 4
+TSL	altitude-ordering.6	claim	ok				
+TSL	altitude-ordering.7	claim	ok		sources review found	sources review found	review
+TSL	altitude-ordering.8	claim	ok				
+TSL	other-signals.1	claim	ok		review	review	review
+TSL	term-frequency-distribution.1	claim	ok				
+TSL	term-frequency-distribution.2	claim	ok		stated note entry s7	stated note entry s7	in s7
+TSL	frequency-bucketing.1	claim	ok		gap.2	gap.2	gap.2
+TSL	frequency-bucketing.2	claim	ok		specificity signals reviewed	specificity signals reviewed	reviewed
+TSL	frequency-bucketing.3	claim	ok		sources found	sources found	
+TSL	frequency-bucketing.4	claim	ok				
+TSL	minimum-support.1	claim	holds		topic-model preprocessing cited within s7	topic-model preprocessing cited s7	topic-model s7
+TSL	minimum-support.2	claim	ok		minimum-support.1	minimum-support.1	minimum-support.1
+TSL	minimum-support.3	claim	ok		gap.2	gap.2	gap.2
+TSL	minimum-support.4	claim	holds		topic models	topic models	models
+TSL	phrase-and-multilingual-tail.1	claim	ok		review source set	review source set	review
+TSL	dns.1	dns	ok				
+TSL	dns.2	dns	ok				
+TSL	dns.3	dns	ok				
+TSL	dns.4	dns	ok				
+TSL	dns.5	dns	ok	name:IC			
+TSL	dns.6	dns	ok	quote:c-TF-IDF down-weights terms spread across many classes.			
+CB1	nitrification-acidity.1	claim	ok		two ways counting lime needed unit given goulding uk review	ways counting lime needed unit given goulding uk review	goulding uk review
+CB1	nitrification-acidity.2	claim	ok		reports them	reports	
+CB1	lime-requirement.1	claim	ok		reviewed note section 1	reviewed note section 1	reviewed in 1
+CB1	lime-requirement.2	claim	ok		reviewer	reviewer	
+CB1	lime-requirement.3	claim	ok		uk arable soils note four values soil classes naming	uk arable soils note four values soil classes naming	uk arable soils soil
+CB1	lime-requirement.4	claim	ok		uk	uk	uk
+CB1	lime-requirement.5	claim	ok		uk	uk	uk
+CB1	lime-requirement.6	claim	ok				
+CB1	lime-requirement.7	claim	ok		two uk	uk	uk
+CB1	lime-requirement.8	claim	ok		uk	uk	uk
+CB1	lime-requirement.9	claim	ok		stated reviewer after result lime-requirement.8	stated reviewer result lime-requirement.8	lime-requirement.8
+CB1	lime-requirement.10	claim	ok		ethiopia	ethiopia	ethiopia
+CB1	lime-requirement.11	claim	ok				
+CB1	lime-requirement.12	claim	ok		tropical soils	tropical soils	tropical soils
+CB1	lime-requirement.13	claim	ok		reviewer conversion assumed	reviewer conversion assumed	
+CB1	application-frequency.1	claim	ok		sources note section 1	sources note section 1	in 1
+CB1	application-frequency.2	claim	ok		assumption	assumption	in
+CB1	application-frequency.3	claim	ok		ethiopia	ethiopia	ethiopia
+CB1	application-frequency.4	claim	ok	name:US; name:Ethiopia	sources us ethiopian	sources ethiopian	us ethiopian
+CB1	application-frequency.5	claim	ok		reviewer searches	reviewer searches	
+CB1	consumption.1	claim	ok		national	national	
+CB1	consumption.2	claim	ok		production	production	
+CB1	consumption.3	claim	ok		reviewer arithmetic	reviewer arithmetic	
+CB1	consumption.4	claim	holds		us 2005	2005	us 2005
+CB1	consumption.5	claim	ok		usgs west mcbride	usgs west mcbride	usgs west mcbride
+CB1	consumption.6	claim	ok				
+CB1	consumption.7	claim	ok		reviewer comparison goulding two figures consumption.6	reviewer comparison goulding figures consumption.6	goulding consumption.6
+CB1	consumption.8	claim	ok				
+CB1	consumption.9	claim	ok	name:UK	uk	uk	uk
+CB1	consumption.10	claim	ok		reviewer	reviewer	
+CB1	consumption.11	claim	ok				
+CB1	consumption.12	claim	ok				
+CB1	lime-resource.1	claim	ok		us		us
+CB1	lime-resource.2	claim	ok				
+CB1	lime-resource.3	claim	ok				
+CB1	lime-resource.4	claim	ok		us		us
+CB1	lime-resource.5	claim	ok				
+CB1	lime-resource.6	claim	ok				
+CB1	lime-resource.7	claim	absent				
+CB1	grinding-energy.1	claim	ok		feedstocks	feedstocks	
+CB1	grinding-energy.2	claim	holds		enhanced-weathering feedstock coterminous	enhanced-weathering feedstock coterminous	enhanced-weathering
+CB1	grinding-energy.3	claim	ok				
+CB1	grinding-energy.4	claim	absent		enhanced weathering	enhanced weathering	in
+CB1	grinding-energy.5	claim	ok		specifications uk review	specifications uk review	uk review
+CB1	grinding-energy.6	claim	ok		reviewer inference grinding-energy.2 5 measured figure	reviewer inference grinding-energy.2 5 measured figure	grinding-energy.2 5
+CB1	delivered-cost.1	claim	ok				
+CB1	delivered-cost.2	claim	ok		us model	model	us model
+CB1	delivered-cost.3	claim	ok		reviewer searches	reviewer searches	
+CB1	delivered-cost.4	claim	ok		ethiopia	ethiopia	ethiopia
+CB1	delivered-cost.5	claim	ok		ethiopia	ethiopia	ethiopia
+CB1	delivered-cost.6	claim	ok	name:Ethiopian	ethiopian	ethiopian	ethiopian
+CB1	delivered-cost.7	claim	ok		reviewer	reviewer	
+CB1	lime-access.1	claim	ok				
+CB1	lime-access.2	claim	ok		ethiopia	ethiopia	ethiopia
+CB1	lime-access.3	claim	ok		ethiopian	ethiopian	ethiopian
+CB1	lime-access.4	claim	ok		ethiopia case study	ethiopia case study	ethiopia
+CB1	scarcity-claim.1	claim	ok		sources review read	sources review read	review
+CB1	scarcity-claim.2	claim	ok	name:USGS	sources read	sources read	
+CB1	scarcity-claim.3	claim	ok		uk ethiopian cases	uk ethiopian cases	uk ethiopian
+CB1	scarcity-claim.4	claim	ok				
+CB1	scarcity-claim.5	claim	ok		reviewer reading ethiopian figures delivered-cost.5	reviewer reading ethiopian figures delivered-cost.5	ethiopian delivered-cost.5
+CB1	scarcity-claim.6	claim	ok		follows consumption.10	follows consumption.10	consumption.10
+CB1	scarcity-claim.7	claim	ok				
+CB1	scarcity-claim.8	claim	ok		review sources taken together	review sources taken together	review
+CB1	emission-factor.1	claim	ok	name:M_limestone; name:EF_limestone; name:M_dolomite; name:EF_dolomite	national greenhouse gas inventories	national greenhouse gas inventories	greenhouse
+CB1	emission-factor.2	claim	ok		2006	2006	2006
+CB1	emission-factor.3	claim	ok	number:1; name:Tier	reviewer conversion ipcc defaults	reviewer conversion ipcc defaults	ipcc
+CB1	emission-factor.4	claim	ok		ipcc 2006 11.3	ipcc 2006 11.3	ipcc 2006 11.3
+CB1	emission-factor.5	claim	ok		2006	2006	2006
+CB1	emission-factor.6	claim	ok	name:IPCC	ipcc 2006	ipcc 2006	ipcc 2006
+CB1	emission-factor.7	claim	ok	name:IPCC	ipcc 2006	ipcc 2006	ipcc 2006
+CB1	emission-factor.8	claim	ok		methodology	methodology	
+CB1	emission-factor.9	claim	ok		united states	united states	united states
+CB1	emission-factor.10	claim	ok		united states	united states	united states
+CB1	emission-factor.11	claim	ok		national	national	
+CB1	emission-factor.12	claim	ok		us national	national	us
+CB1	emission-factor.13	claim	ok		us 2020	2020	us 2020
+CB1	emission-factor.14	claim	ok		range spans ipcc default west mcbride cho et al rousset et al	range spans ipcc default west mcbride cho et al rousset et al	ipcc west mcbride cho rousset
+CB1	dissolution-pathway.1	claim	ok				
+CB1	dissolution-pathway.2	claim	ok		setting dissolution-pathway.1 scaled	setting dissolution-pathway.1 scaled	dissolution-pathway.1
+CB1	dissolution-pathway.3	claim	ok		hamilton et al study	hamilton et al study	hamilton
+CB1	dissolution-pathway.4	claim	ok		reviewer statement hamilton et al dissolution-pathway.3	reviewer statement hamilton et al dissolution-pathway.3	hamilton dissolution-pathway.3
+CB1	dissolution-pathway.5	claim	ok		hamilton et al including	hamilton et al including	hamilton
+CB1	measured-emissions.1	claim	ok				
+CB1	measured-emissions.2	claim	ok				
+CB1	measured-emissions.3	claim	holds		growing period	growing period	
+CB1	measured-emissions.4	claim	holds		rousset	rousset	rousset
+CB1	measured-emissions.5	claim	ok		unknown	unknown	
+CB1	supply-chain-emissions.1	claim	conf				
+CB1	supply-chain-emissions.2	claim	ok		reviewer conversion supply-chain-emissions.1	reviewer conversion supply-chain-emissions.1	supply-chain-emissions.1
+CB1	supply-chain-emissions.3	claim	ok		united states	united states	united states
+CB1	supply-chain-emissions.4	claim	conf		united states	united states	united states
+CB1	supply-chain-emissions.5	claim	ok				
+CB1	soil-carbon.1	claim	ok				
+CB1	soil-carbon.2	claim	ok				
+CB1	ghg-balance.1	claim	ok		scaled globally	scaled globally	
+CB1	ghg-balance.2	claim	conf				
+CB1	ghg-balance.3	claim	conf		meta-analysis vs livestock different	meta-analysis vs livestock different	meta-analysis
+CB1	ghg-balance.4	claim	ok		whole-system balance	whole-system balance	whole-system
+CB1	ghg-balance.5	claim	ok		review sections 4 5	review sections 4 5	review 4 5
+CB1	dns.1	dns	ok	quote:Carbonate lime is a globally scarce (or globally limited) material			
+CB1	dns.2	dns	ok				
+CB1	dns.3	dns	ok	name:Africa			
+CB1	dns.4	dns	ok	name:Beerling			
+CB1	dns.5	dns	ok				
+CB1	dns.6	dns	ok				
+CB1	dns.7	dns	ok				
+CB2	mimag-hq.1	claim	ok		standard review cites	standard review cites	review
+CB2	mimag-hq.2	claim	ok		catalogue section 1	catalogue section 1	in 1
+CB2	catalogue-recovery.1	claim	ok				
+CB2	catalogue-recovery.2	claim	ok				
+CB2	catalogue-recovery.3	claim	ok				
+CB2	catalogue-recovery.4	claim	holds		full-scale	full-scale	full-scale
+CB2	catalogue-recovery.5	claim	ok		gem	gem	gem
+CB2	catalogue-recovery.6	claim	ok		human gut undocumented	human gut undocumented	human gut
+CB2	catalogue-recovery.7	claim	ok		catalogue-recovery.6 method undocumented	catalogue-recovery.6 method undocumented	catalogue-recovery.6
+CB2	catalogue-recovery.8	claim	ok		statement	statement	in
+CB2	catalogue-recovery.9	claim	ok		statement catalogue paper	statement catalogue paper	in
+CB2	marker-gap.1	claim	ok				
+CB2	marker-gap.2	claim	ok		smag reviewer arithmetic marker-gap.1	smag reviewer arithmetic marker-gap.1	smag marker-gap.1
+CB2	marker-gap.3	claim	holds		full-scale tropical	full-scale tropical	full-scale tropical
+CB2	marker-gap.4	claim	ok				
+CB2	marker-gap.5	claim	ok		caveat catalogue-recovery.6 applies	caveat catalogue-recovery.6 applies	catalogue-recovery.6
+CB2	marker-gap.6	claim	holds		soil activated sludge human gut catalogues smag haryono et al uhgg hiseni et al	soil activated sludge human gut catalogues smag haryono et al uhgg hiseni et al	soil sludge human gut smag haryono uhgg hiseni
+CB2	assembly-graph-collapse.1	claim	ok		account	account	
+CB2	assembly-graph-collapse.2	claim	ok		mechanism assembly-side	mechanism assembly-side	assembly-side
+CB2	assembly-graph-collapse.3	claim	ok				
+CB2	assembly-graph-collapse.4	claim	ok				
+CB2	assembly-graph-collapse.5	claim	ok		conventional assembly	conventional assembly	
+CB2	assembly-graph-collapse.6	claim	ok		compared against	compared	
+CB2	assembly-graph-collapse.7	claim	ok		reviewer searches	reviewer searches	
+CB2	copy-number.1	claim	ok				
+CB2	copy-number.2	claim	ok				
+CB2	binning.1	claim	ok		binning-side	binning-side	binning-side
+CB2	binning.2	claim	ok		reviewer searches	reviewer searches	
+CB2	targeted-reconstruction.1	claim	ok		simulated synthetic sets targeted-reconstruction.2 3	simulated synthetic sets targeted-reconstruction.2 3	simulated synthetic targeted-reconstruction.2 3
+CB2	targeted-reconstruction.2	claim	ok				
+CB2	targeted-reconstruction.3	claim	ok				
+CB2	targeted-reconstruction.4	claim	ok		paper	paper	
+CB2	targeted-reconstruction.5	claim	ok		matam paper benchmark	matam paper benchmark	matam
+CB2	targeted-reconstruction.6	claim	ok		benchmark	benchmark	
+CB2	targeted-reconstruction.7	claim	ok				
+CB2	linking-tools.1	claim	ok		three complexities	three complexities	
+CB2	read-length-axis.1	claim	ok		cami ii singleton	cami ii singleton	cami ii singleton
+CB2	read-length-axis.2	claim	ok		sequencing	sequencing	
+CB2	read-length-axis.3	claim	ok		depth pipeline all differ	depth pipeline differ	
+CB2	read-length-axis.4	claim	ok		both ways	ways	
+CB2	read-length-axis.5	claim	ok		assemblies	assemblies	
+CB2	read-length-axis.6	claim	ok		aquifer samples	aquifer samples	
+CB2	read-length-axis.7	claim	ok		overholt against	overholt	overholt
+CB2	assembler-axis.1	claim	ok		within each study	study	
+CB2	assembler-axis.2	claim	ok				
+CB2	assembler-axis.3	claim	ok				
+CB2	depth-axis.1	claim	ok		coverage reconstruction	coverage reconstruction	
+CB2	depth-axis.2	claim	ok		metaseed reconstruction	metaseed reconstruction	metaseed
+CB2	depth-axis.3	claim	ok		reviewer searches	reviewer searches	
+CB2	depth-axis.4	claim	ok		tropical activated sludge	tropical activated sludge	tropical sludge
+CB2	depth-axis.5	claim	ok		stated reviewer	stated reviewer	
+CB2	study-origin-axis.1	claim	ok		reviewer	reviewer	
+CB2	study-origin-axis.2	claim	ok				
+CB2	study-origin-axis.3	claim	ok				
+CB2	study-origin-axis.4	claim	ok		activated sludge	activated sludge	sludge
+CB2	study-origin-axis.5	claim	ok		inferred assembly-graph-collapse copy-number binning never	inferred assembly-graph-collapse copy-number binning never	assembly-graph-collapse copy-number
+CB2	recovery-variation.1	claim	ok		literature reviewer searched	literature reviewer searched	
+CB2	dns.1	dns	ok	quote:rRNA recovery varies by study of origin; name:INDIRECT			
+CB2	dns.2	dns	ok	year:2022; name:Hiseni; quote:Only 7% of MAGs carry a 16S gene			
+CB2	dns.3	dns	ok	quote:MAG-only clusters share 93% 16S identity against 99.8% for RefSeq			
+CB2	dns.4	dns	ok				
+CB2	dns.5	dns	ok	number:91.3; number:1.2; name:Singleton-versus-Ye; name:Orellana			
+CB2	dns.6	dns	ok				
+CB2	dns.7	dns	ok				
+NFERT	haber-bosch.1	claim	ok		manufacture	manufacture	
+NFERT	manufacturing-energy.1	claim	ok				
+NFERT	manufacturing-energy.2	claim	ok		mix	mix	
+NFERT	manufacturing-energy.3	claim	ok		present	present	
+NFERT	manufacturing-energy.4	claim	ok		reviewer manufacturing-energy.1 2	reviewer manufacturing-energy.1 2	manufacturing-energy.1 2
+NFERT	manufacturing-co2.1	claim	ok				
+NFERT	manufacturing-co2.2	claim	ok				
+NFERT	manufacturing-co2.3	claim	ok		plant	plant	plant
+NFERT	manufacturing-co2.4	claim	ok				
+NFERT	manufacturing-co2.5	claim	ok		reviewer conversion per-ammonia figures	reviewer conversion per-ammonia figures	per-ammonia
+NFERT	manufacturing-co2.6	claim	ok		range spans	range spans	
+NFERT	manufacturing-co2.7	claim	ok		system boundary	system boundary	
+NFERT	emission-share.1	claim	ok		manufacture supply chain full life cycle	manufacture supply chain full life cycle	
+NFERT	emission-share.2	claim	ok				
+NFERT	emission-share.3	claim	ok				
+NFERT	emission-share.4	claim	ok				
+NFERT	emission-share.5	claim	ok		synthetic-n supply chain 2018	synthetic-n supply chain 2018	synthetic-n 2018
+NFERT	emission-share.6	claim	ok		n-fertiliser	n-fertiliser	n-fertiliser
+NFERT	emission-share.7	claim	ok		against		
+NFERT	emission-share.8	claim	ok		three system boundaries range spans ifa figure process studies	three system boundaries range spans ifa figure process studies	ifa
+NFERT	nue.1	claim	ok		full life cycle	full life cycle	
+NFERT	symbiotic-fixation.1	claim	ok				
+NFERT	symbiotic-fixation.2	claim	ok				
+NFERT	symbiotic-fixation.3	claim	ok		deliberate inclusion	deliberate inclusion	
+NFERT	symbiotic-fixation.4	claim	ok		legumes across	legumes	
+NFERT	symbiotic-fixation.5	claim	ok				
+NFERT	symbiotic-fixation.6	claim	ok		follows symbiotic-fixation.5	follows symbiotic-fixation.5	symbiotic-fixation.5
+NFERT	symbiotic-fixation.7	claim	ok				
+NFERT	free-living-fixation.1	claim	ok				
+NFERT	free-living-fixation.2	claim	ok		cereal systems	cereal systems	cereal
+NFERT	inoculants.1	claim	ok				
+NFERT	inoculants.2	claim	ok				
+NFERT	mineralisation.1	claim	holds		humid temperate one	humid temperate	temperate
+NFERT	mineralisation.2	claim	ok		stated reviewer after st luce et al	stated reviewer st luce et al	st luce
+NFERT	substitution.1	claim	ok		sources reviewed	sources reviewed	reviewed
+NFERT	substitution.2	claim	ok				
+NFERT	substitution.3	claim	ok		sources read	sources read	
+NFERT	substitution.4	claim	ok		evidence	evidence	
+NFERT	substitution.5	claim	ok		symbiotic symbiotic-fixation.5	symbiotic symbiotic-fixation.5	symbiotic-fixation.5
+NFERT	substitution.6	claim	ok				
+NFERT	substitution.7	claim	ok		question 2	question 2	question 2
+NFERT	dns.1	dns	ok	number:2.1; number:5			
+NFERT	dns.2	dns	ok				
+NFERT	dns.3	dns	ok	quote:Efficient microbial nitrogen cycling in soil reduces the synthetic nitrogen a crop needs			
+NFERT	dns.4	dns	ok				
+H2-04	covariation-sources.1	claim	holds		review three search angles critic source	review three search angles critic source	review
+H2-04	covariation-sources.2	claim	ok				
+H2-04	covariation-sources.3	claim	ok		review	review	review
+H2-04	covariation-sources.4	claim	ok		review check case d1	review check case d1	review d1
+H2-04	genome-linkage.1	claim	ok		n critic	n critic	
+H2-04	genome-linkage.2	claim	ok		system critic	system critic	
+H2-04	genome-linkage.3	claim	ok		predictions	predictions	
+H2-04	genome-linkage.4	claim	ok		biosynthesis	biosynthesis	
+H2-04	genome-linkage.5	claim	ok		versus critic one	versus critic	
+H2-04	genome-linkage.6	claim	ok		search routes critic names work covered	search routes critic names work covered	
+H2-04	association-networks.1	claim	ok		16s	16s	16s
+H2-04	association-networks.2	claim	ok		critic figures	critic figures	
+H2-04	association-networks.3	claim	ok				
+H2-04	association-networks.4	claim	ok		versus one	versus	
+H2-04	association-networks.5	claim	ok		human	human	human
+H2-04	association-networks.6	claim	ok		figures critic	figures critic	
+H2-04	association-networks.7	claim	ok				
+H2-04	association-networks.8	claim	holds		network construction	network construction	
+H2-04	association-networks.9	claim	holds		perspective	perspective	
+H2-04	association-networks.10	claim	ok		non-microbial	non-microbial	non-microbial
+H2-04	association-networks.11	claim	ok				
+H2-04	association-networks.12	claim	ok				
+H2-04	association-networks.13	claim	ok		amplicon data figures critic critic	amplicon data figures critic critic	amplicon
+H2-04	shared-environment.1	claim	holds		perspective	perspective	
+H2-04	shared-environment.2	claim	ok				
+H2-04	shared-environment.3	claim	holds		factors critic	factors critic	
+H2-04	shared-environment.4	claim	ok		et al 2021	et al 2021	2021
+H2-04	shared-environment.5	claim	ok		global	global	global
+H2-04	shared-environment.6	claim	ok				
+H2-04	shared-environment.7	claim	ok				
+H2-04	shared-environment.8	claim	ok		critic	critic	
+H2-04	shared-ancestry.1	claim	ok				
+H2-04	shared-ancestry.2	claim	holds		16s lineages mapped genomes	16s lineages mapped genomes	16s
+H2-04	shared-ancestry.3	claim	holds		soil metagenomes critic	soil metagenomes critic	soil
+H2-04	aggregation-artefacts.1	claim	ok		assemblage data	assemblage data	
+H2-04	aggregation-artefacts.2	claim	ok		trait ecology	trait ecology	
+H2-04	aggregation-artefacts.3	claim	ok		trait ecology	trait ecology	
+H2-04	aggregation-artefacts.4	claim	ok		figure critic	figure critic	
+H2-04	gene-level-networks.1	claim	ok				
+H2-04	gene-level-networks.2	claim	ok		over		
+H2-04	gene-level-networks.3	claim	absent		two critic	critic	
+H2-04	gene-level-networks.4	claim	ok		networks	networks	
+H2-04	gene-level-networks.5	claim	ok		routes case d1	routes case d1	d1
+H2-04	covariance-partition.1	claim	ok		plus critic	plus critic	
+H2-04	covariance-partition.2	claim	ok		levy borenstein critic	levy borenstein critic	levy borenstein
+H2-04	covariance-partition.3	claim	ok		three microbial studies critic figure	three microbial studies critic figure	
+H2-04	covariance-partition.4	claim	ok		case d1 b	case d1 b	d1
+H2-04	covariance-partition.5	claim	ok				
+H2-04	covariance-partition.6	claim	ok	name:Lepš-type	routes case d1 b	routes case d1 b	d1
+H2-04	covariance-partition.7	claim	ok		review	review	review
+H2-04	within-between-partition.1	claim	ok				
+H2-04	within-between-partition.2	claim	ok		reviewer critic	reviewer critic	
+H2-04	within-between-partition.3	claim	ok				
+H2-04	within-between-partition.4	claim	ok				
+H2-04	within-between-partition.5	claim	ok		california woody versus grasslands	california woody versus grasslands	california grasslands
+H2-04	within-between-partition.6	claim	holds		meta-analysis figures critic	meta-analysis figures critic	meta-analysis
+H2-04	within-between-partition.7	claim	holds		organismal biology non-microbial	organismal biology non-microbial	non-microbial
+H2-04	within-between-partition.8	claim	ok		trait ecology	trait ecology	
+H2-04	within-between-partition.9	claim	ok		ecology	ecology	
+H2-04	genome-level-axes.1	claim	holds		bacteria archaea critic	bacteria archaea critic	bacteria archaea
+H2-04	genome-level-axes.2	claim	holds		prokaryote critic read	prokaryote critic read	prokaryote
+H2-04	community-level-axes.1	claim	ok		critic	critic	
+H2-04	community-level-axes.2	claim	ok		metagenomes	metagenomes	
+H2-04	community-level-axes.3	claim	holds		soil metagenomes versus	soil metagenomes versus	soil
+H2-04	axis-agreement.1	claim	ok		critic	critic	
+H2-04	axis-agreement.2	claim	ok		comparison	comparison	
+H2-04	axis-agreement.3	claim	ok				
+H2-04	axis-agreement.4	claim	ok		critic	critic	
+H2-04	axis-agreement.5	claim	ok		case d2	case d2	d2
+H2-04	axis-agreement.6	claim	ok		case d2	case d2	d2
+H2-04	plant-axis-analogues.1	claim	ok				
+H2-04	plant-axis-analogues.2	claim	ok				
+H2-04	plant-axis-analogues.3	claim	ok				
+H2-04	plant-axis-analogues.4	claim	ok				
+H2-04	plant-axis-analogues.5	claim	ok		spaces	spaces	
+H2-04	plant-axis-analogues.6	claim	ok		trait ecology rates critic says	trait ecology rates critic says	
+H2-04	plant-axis-analogues.7	claim	holds		leaf economics spectrum across scales	leaf economics spectrum scales	leaf
+H2-04	plant-axis-analogues.8	claim	absent		case critic	case critic	
+H2-04	complementarity-overlap.1	claim	ok				
+H2-04	complementarity-overlap.2	claim	ok				
+H2-04	complementarity-overlap.3	claim	ok		critic	critic	
+H2-04	complementarity-overlap.4	claim	ok		gut 2013	gut 2013	gut 2013
+H2-04	complementarity-overlap.5	claim	holds		critic both sides depend inference	critic sides depend inference	
+H2-04	complementarity-overlap.6	claim	ok				
+H2-04	complementarity-overlap.7	claim	ok		more two four critic	four critic	
+H2-04	complementarity-overlap.8	claim	ok				
+H2-04	complementarity-overlap.9	claim	ok				
+H2-04	complementarity-overlap.10	claim	ok		whole-community small-group	whole-community small-group	whole-community small-group
+H2-04	complementarity-overlap.11	claim	ok				
+H2-04	complementarity-overlap.12	claim	ok				
+H2-04	complementarity-overlap.13	claim	ok				
+H2-04	complementarity-overlap.14	claim	ok		figures critic	figures critic	
+H2-04	complementarity-overlap.15	claim	holds		bacterial	bacterial	bacterial
+H2-04	complementarity-overlap.16	claim	ok		culturable	culturable	
+H2-04	complementarity-overlap.17	claim	conf		isolates	isolates	
+H2-04	complementarity-overlap.18	claim	ok				
+H2-04	complementarity-overlap.19	claim	ok		case d1 c	case d1 c	d1
+H2-04	complementarity-overlap.20	claim	ok				
+H2-04	complementarity-overlap.21	claim	ok		review check d1 c	review check d1 c	review d1
+H2-04	dns.1	dns	ok				
+H2-04	dns.2	dns	ok				
+H2-04	dns.3	dns	ok				
+H2-04	dns.4	dns	ok	quote:The reanalysis found complementarity non-significant in the combined model			
+H2-04	dns.5	dns	ok				
+H2-04	dns.6	dns	ok				
+H2-04	dns.7	dns	ok	quote:Growth rate, genome size and cell size are near-independent (r2 at most 0.012)			
+H2-04	dns.8	dns	ok				
+H2-04	dns.9	dns	ok	quote:Bruelheide 2018 (agreement at global scale) versus Kembel & Cahill 2011, Anderegg 2018 and Osnas 2018 (disagreement or sign reversal)			
+H2-04	dns.10	dns	ok				
+H2-04	dns.11	dns	ok				
+H2-04	dns.12	dns	ok				
+H2-04	dns.13	dns	ok				
+H2-04	dns.14	dns	ok				
+H2-04	dns.15	dns	ok				
+H2-04	dns.16	dns	ok				
+H2-04	dns.17	dns	ok				
+H2-04	dns.18	dns	ok				
+H2-04	dns.19	dns	ok				
+H2-04	dns.20	dns	ok				
+H2-04	dns.21	dns	ok				
+H2-04	dns.22	dns	ok	year:2023			
+H2-04	dns.23	dns	ok				
+H2-04	dns.24	dns	ok				
+H2-04	dns.25	dns	ok				
+H2-04	dns.26	dns	ok				
+H2-04	dns.27	dns	ok	year:2013			
+H2-04	dns.28	dns	ok				
+H1-05	turnover.1	claim	ok		review working definition used throughout	review working definition used throughout	review
+H1-05	functional-profile.1	claim	ok		studies review covers review keeps kinds	studies review covers review keeps kinds	review review
+H1-05	platform.1	claim	holds		review 7	review 7	review 7
+H1-05	platform.2	claim	holds	number:16	mg-rast seed 16 soils review generalisation	mg-rast seed 16 soils review generalisation	mg-rast seed 16 soils review
+H1-05	platform.3	claim	ok	name:GeoChip	review searches	review searches	review
+H1-05	covariation.1	claim	ok		mainly	mainly	
+H1-05	covariation.2	claim	ok				
+H1-05	covariation.3	claim	ok				
+H1-05	covariation.4	claim	holds		16 reported critic	16 reported critic	in 16
+H1-05	covariation.5	claim	ok		2	2	2
+H1-05	covariation.6	claim	holds	name:NutNet	six grassland sites	six grassland sites	grassland
+H1-05	covariation.7	claim	ok		across studies	studies	
+H1-05	covariation.8	claim	ok				
+H1-05	covariation.9	claim	ok		1 2	1 2	1 2
+H1-05	covariation.10	claim	holds		single-site precipitation experiment forest china geochip	single-site precipitation experiment forest china geochip	single-site experiment forest in china geochip
+H1-05	covariation.11	claim	holds		single-site precipitation experiment eurasian steppe 22	single-site precipitation experiment eurasian steppe 22	single-site experiment in eurasian steppe 22
+H1-05	ordering.1	claim	ok		critic reviewer reasoning correlation-type tests	critic reviewer reasoning correlation-type tests	correlation-type
+H1-05	ordering.2	claim	holds		845 pooled metagenomes coal-fire site	845 pooled metagenomes coal-fire site	845 coal-fire site
+H1-05	ordering.3	claim	ok		845 metagenomes	845 metagenomes	845
+H1-05	ordering.4	claim	holds		845 pooled metagenomes 3	845 pooled metagenomes 3	845 3
+H1-05	ordering.5	claim	ok		soil set against one	soil set	soil
+H1-05	ordering.6	claim	ok				
+H1-05	ordering.7	claim	ok		soil studies critic reading them	soil studies critic reading	soil
+H1-05	ordering.8	claim	holds		broadleaf	broadleaf	
+H1-05	ordering.9	claim	holds		one site published version found	site published version found	site
+H1-05	ordering.10	claim	holds		one coal-fire site	coal-fire site	coal-fire site
+H1-05	ordering.11	claim	holds		grassland fertilization experiment	grassland fertilization experiment	grassland experiment
+H1-05	ordering.12	claim	holds		arctic	arctic	arctic
+H1-05	ordering.13	claim	ok		one soil crop-management regimes	soil crop-management regimes	soil crop-management
+H1-05	ordering.14	claim	holds		southern african	southern african	african
+H1-05	ordering.15	claim	absent		mercury-contaminated soils	mercury-contaminated soils	mercury-contaminated soils
+H1-05	ordering.16	claim	ok		soil	soil	soil
+H1-05	ordering.17	claim	holds		mediterranean-type grassland against	mediterranean-type grassland	mediterranean-type grassland
+H1-05	ordering.18	claim	ok		5	5	5
+H1-05	ordering.19	claim	ok		5	5	5
+H1-05	ordering.20	claim	ok		critic finding handling	critic finding handling	
+H1-05	ordering.21	claim	holds		field simulation	field simulation	field simulation
+H1-05	ordering.22	claim	ok		mountain	mountain	mountain
+H1-05	ordering.23	claim	ok	name:Changbai	6	6	6
+H1-05	ordering.24	claim	ok		14 years moderate warming erosion deposition elevation gradient	14 years moderate warming erosion deposition elevation gradient	14 years
+H1-05	ordering.25	claim	absent				
+H1-05	ordering.26	claim	ok	marker:3	dna-measured profiles	dna-measured profiles	dna-measured
+H1-05	ordering.27	claim	ok		review	review	in review
+H1-05	contrast-size.1	claim	ok		review searches	review searches	review
+H1-05	contrast-size.2	claim	holds		steppe across environments	steppe environments	steppe
+H1-05	contrast-size.3	claim	ok		cross-study comparison soil	cross-study comparison soil	cross-study soil
+H1-05	contrast-size.4	claim	ok				
+H1-05	chronosequence.1	claim	ok				
+H1-05	chronosequence.2	claim	ok		chronosequence alpha	chronosequence alpha	
+H1-05	chronosequence.3	claim	ok		successional gradient alpha	successional gradient alpha	
+H1-05	chronosequence.4	claim	ok				
+H1-05	chronosequence.5	claim	ok				
+H1-05	drivers.1	claim	ok		traits	traits	
+H1-05	other-habitats.1	claim	ok		surface bacterial communities	surface bacterial communities	bacterial
+H1-05	other-habitats.2	claim	ok				
+H1-05	other-habitats.3	claim	ok		one		
+H1-05	other-habitats.4	claim	holds		oregon coastal	oregon coastal	oregon coastal
+H1-05	other-habitats.5	claim	ok		tank communities	tank communities	
+H1-05	other-habitats.6	claim	ok		microbiome faprotax-inferred function	microbiome faprotax-inferred function	faprotax-inferred
+H1-05	other-habitats.7	claim	ok		picrust2-inferred function	picrust2-inferred function	picrust2-inferred
+H1-05	other-habitats.8	claim	absent	name:Ulva; quote:function lower	systems	systems	
+H1-05	other-habitats.9	claim	ok				
+H1-05	other-habitats.10	claim	ok		assemblages	assemblages	
+H1-05	other-habitats.11	claim	ok	name:European	european fish assemblages	european fish assemblages	european
+H1-05	other-habitats.12	claim	ok				
+H1-05	marker-inferred.1	claim	absent		soil polluted nano	soil polluted nano	soil
+H1-05	marker-inferred.2	claim	ok		altitudinal picrust2-inferred	altitudinal picrust2-inferred	picrust2-inferred
+H1-05	marker-inferred.3	claim	ok	name:ZnO	marker-inferred	marker-inferred	marker-inferred in
+H1-05	functional-unit.1	claim	holds		outside review reports coupling scheme	outside review reports coupling scheme	review
+H1-05	functional-unit.2	claim	ok				
+H1-05	functional-unit.3	claim	ok		3	3	3
+H1-05	functional-unit.4	claim	ok				
+H1-05	functional-unit.5	claim	holds		oregon coastal subsurface	oregon coastal subsurface	oregon coastal
+H1-05	functional-unit.6	claim	ok		communities	communities	
+H1-05	functional-unit.7	claim	holds		fungal communities across precipitation gradient targeted families	fungal communities precipitation gradient targeted families	fungal
+H1-05	annotation.1	claim	holds		single-site precipitation dispersion	single-site precipitation dispersion	single-site
+H1-05	annotation.2	claim	absent		one coastal	coastal	coastal
+H1-05	annotation.3	claim	ok		marine	marine	marine
+H1-05	annotation.4	claim	ok				
+H1-05	annotation.5	claim	ok		inference	inference	
+H1-05	metric.1	claim	ok				
+H1-05	metric.2	claim	ok				
+H1-05	taxonomic-resolution.1	claim	ok				
+H1-05	taxonomic-resolution.2	claim	ok		digestion communities	digestion communities	
+H1-05	taxonomic-resolution.3	claim	ok		named	named	
+H1-05	genome-size.1	claim	ok				
+H1-05	genome-size.2	claim	holds		nutnet grasslands coal-fire site	nutnet grasslands coal-fire site	nutnet grasslands coal-fire site
+H1-05	genome-size.3	claim	ok		review searches	review searches	review
+H1-05	measurement-artefacts.1	claim	ok				
+H1-05	measurement-artefacts.2	claim	ok				
+H1-05	non-dna-function.1	claim	ok		american soil mycobiome	american soil mycobiome	american soil
+H1-05	non-dna-function.2	claim	ok				
+H1-05	null-model.1	claim	ok		critic finds	critic finds	
+H1-05	null-model.2	claim	ok				
+H1-05	null-model.3	claim	ok				
+H1-05	null-model.4	claim	ok		pooled ho huang	pooled ho huang	ho huang
+H1-05	null-model.5	claim	ok				
+H1-05	null-model.6	claim	ok				
+H1-05	null-model.7	claim	holds		mesocosm-scale version	mesocosm-scale version	mesocosm-scale
+H1-05	null-model.8	claim	holds		along contamination gradient abstract	along contamination gradient abstract	
+H1-05	null-model.9	claim	ok		human	human	human
+H1-05	null-model.10	claim	ok				
+H1-05	null-model.11	claim	conf	number:148	48	48	48
+H1-05	null-model.12	claim	ok	number:148			
+H1-05	null-model.13	claim	ok				
+H1-05	null-model.14	claim	holds	number:148	diatoms fungi other organisms bacteria trees	diatoms fungi organisms bacteria trees	diatoms fungi bacteria
+H1-05	averaging.1	claim	critic				
+H1-05	averaging.2	claim	ok		29 30	29 30	29 30
+H1-05	averaging.3	claim	ok		reanalysis	reanalysis	
+H1-05	averaging.4	claim	holds		one		
+H1-05	averaging.5	claim	ok		29 30	29 30	29 30
+H1-05	averaging.6	claim	ok		data	data	
+H1-05	averaging.7	claim	ok		29 30	29 30	29 30
+H1-05	averaging.8	claim	ok				
+H1-05	averaging.9	claim	ok		fetch summary	fetch summary	
+H1-05	averaging.10	claim	ok		review	review	in review
+H1-05	averaging.11	claim	ok		29 30	29 30	29 30
+H1-05	averaging.12	claim	ok	number:148	diatoms fungi included bacteria	diatoms fungi included bacteria	diatoms fungi bacteria
+H1-05	averaging.13	claim	ok	number:148	critic check	critic check	
+H1-05	redundancy.1	claim	ok		review classification sources	review classification sources	review its
+H1-05	redundancy.2	claim	ok		3	3	3
+H1-05	redundancy.3	claim	ok		4	4	4
+H1-05	redundancy.4	claim	ok		abstract	abstract	
+H1-05	redundancy.5	claim	ok		against		
+H1-05	redundancy.6	claim	absent		review classification sources	review classification sources	review its
+H1-05	redundancy.7	claim	ok		22	22	22
+H1-05	redundancy.8	claim	ok				
+H1-05	redundancy.9	claim	ok				
+H1-05	redundancy.10	claim	ok		review classification sources	review classification sources	review its
+H1-05	dns.1	dns	ok	quote:In marine [36], function stays lower even under a strong contrast, unlike the soil cross-biome result [1].			
+H1-05	dns.2	dns	ok	quote:Covariation is replicated across three independent soil datasets.			
+H1-05	dns.3	dns	ok	quote:The precipitation experiment [22] is the only within-site test of contrast size.			
+H1-05	dns.4	dns	ok	quote:Ho and Huang null is the only null model that directly targets the functional-taxonomic difference in microbial data			
+H1-05	dns.5	dns	ok	quote:Functional similarity exceeded taxonomic similarity at SEED levels 1 and 2, so the gap widens as functions are aggregated.			
+H1-05	dns.6	dns	ok	quote:Aggregation alone lowers functional variability, so 'function lower' is not by itself evidence of redundancy; quote:Ho and Huang show analytically and by simulation			
+H1-05	dns.7	dns	ok				
+H1-05	dns.8	dns	ok				
+H1-05	dns.9	dns	ok				
+H1-05	dns.10	dns	ok	quote:The 148-dataset synthesis [48] is non-microbial			
+H1-05	dns.11	dns	ok	quote:The wetland study [28] is a soil result			
+H1-05	dns.12	dns	ok	name:Changbai; quote:On the Changbai gradient, functional turnover was stronger than taxonomic turnover			
+H1-05	dns.13	dns	ok	quote:Unannotated genes are shown to bias soil turnover comparisons.			
+H1-02	completeness-estimate.1	claim	ok				
+H1-02	completeness-estimate.2	claim	holds		human gut e coli mag isolate pairs critic	human gut e coli mag isolate pairs critic	human gut mag isolate
+H1-02	same-sample-isolate.1	claim	stronger		human critic li yin reuse	human critic li yin reuse	human li yin
+H1-02	same-sample-isolate.2	claim	holds		same eight e coli pairs human stool	eight e coli pairs human stool	human stool
+H1-02	same-sample-isolate.3	claim	ok	name:MAG			
+H1-02	same-sample-isolate.4	claim	ok				
+H1-02	same-sample-isolate.5	claim	ok		critic reading full text meziti et al	critic reading full text meziti et al	meziti
+H1-02	same-sample-isolate.6	claim	ok		critic reading full text meziti et al	critic reading full text meziti et al	meziti
+H1-02	same-sample-isolate.7	claim	ok				
+H1-02	same-sample-isolate.8	claim	ok	name:MAGs			
+H1-02	same-sample-isolate.9	claim	holds		conclusion eight e coli pairs	conclusion eight e coli pairs	
+H1-02	same-sample-isolate.10	claim	ok		human gut meziti et al critic	human gut meziti et al critic	human gut meziti
+H1-02	same-sample-isolate.11	claim	ok		review routes critic	review routes critic	review
+H1-02	chimerism.1	claim	ok		natural critic source	natural critic source	
+H1-02	chimerism.2	claim	ok	name:GUNC			
+H1-02	chimerism.3	claim	ok		mag catalogues	mag catalogues	mag
+H1-02	contaminated-pangenome.1	claim	ok		critic natural human	critic natural human	human
+H1-02	contaminated-pangenome.2	claim	ok		same cirrhosis cohort critic	cirrhosis cohort critic	
+H1-02	contaminated-pangenome.3	claim	ok				
+H1-02	contaminated-pangenome.4	claim	ok				
+H1-02	gene-class-loss.1	claim	ok		natural compared matched samples critic	natural compared matched samples critic	
+H1-02	gene-class-loss.2	claim	ok				
+H1-02	gene-class-loss.3	claim	ok		same catalogues	catalogues	
+H1-02	gene-class-loss.4	claim	ok		reference	reference	
+H1-02	gene-class-loss.5	claim	holds		short-read catalogues seawater human gut chicken gut rice phyllosphere	short-read catalogues seawater human gut chicken gut rice phyllosphere	short-read seawater human gut gut rice
+H1-02	gene-class-loss.6	claim	ok		critic full text source	critic full text source	
+H1-02	gene-class-loss.7	claim	ok		critic reading full text	critic reading full text	
+H1-02	gene-class-loss.8	claim	ok		critic reading full text	critic reading full text	
+H1-02	mobile-region-loss.1	claim	ok		engineered	engineered	engineered
+H1-02	mobile-region-loss.2	claim	ok		same enrichment consortia	enrichment consortia	
+H1-02	mobile-region-loss.3	claim	ok				
+H1-02	mobile-region-loss.4	claim	ok				
+H1-02	mobile-region-loss.5	claim	ok		one community	community	
+H1-02	mobile-region-loss.6	claim	ok		same simulated community	simulated community	simulated
+H1-02	mobile-region-loss.7	claim	ok		benchmark data	benchmark data	
+H1-02	mobile-region-loss.8	claim	ok				
+H1-02	mobile-region-loss.9	claim	ok		same biocrust soil	biocrust soil	soil
+H1-02	mobile-region-loss.10	claim	conf		biocrust soil	biocrust soil	soil
+H1-02	sequencing-depth.1	claim	ok		critic	critic	
+H1-02	sequencing-depth.2	claim	ok		natural marine	natural marine	marine
+H1-02	sequencing-depth.3	claim	absent	name:MAG	natural mag yield	natural mag yield	mag
+H1-02	sequencing-depth.4	claim	ok		natural data set	natural data set	
+H1-02	sequencing-depth.5	claim	ok				
+H1-02	sequencing-depth.6	claim	ok		simulated communities	simulated communities	simulated
+H1-02	read-technology.1	claim	ok		natural coastal critic	natural coastal critic	coastal
+H1-02	read-technology.2	claim	ok		same north sea dna extracts	north sea dna extracts	north sea dna
+H1-02	read-technology.3	claim	ok		natural coastal review critic	natural coastal review critic	coastal review
+H1-02	read-technology.4	claim	ok				
+H1-02	read-technology.5	claim	ok				
+H1-02	pathway-completeness.1	claim	ok				
+H1-02	pathway-completeness.2	claim	ok		same 11842 gtdb genomes	11842 gtdb genomes	11842 gtdb
+H1-02	pathway-completeness.3	claim	ok		same regression	regression	
+H1-02	pathway-completeness.4	claim	ok		one		
+H1-02	core-genome-inference.1	claim	absent		simulated incompleteness	simulated incompleteness	simulated
+H1-02	core-genome-inference.2	claim	ok		simulated	simulated	simulated
+H1-02	core-genome-inference.3	claim	ok		li yin simulations	li yin simulations	li yin simulations
+H1-02	core-genome-inference.4	claim	ok				
+H1-02	core-genome-inference.5	claim	ok				
+H1-02	core-genome-inference.6	claim	ok				
+H1-02	bounding-comparisons.1	claim	ok				
+H1-02	bounding-comparisons.2	claim	absent		natural human critic figures rest search-agent reads	natural human critic figures rest search-agent reads	human search-agent
+H1-02	bounding-comparisons.3	claim	holds		natural human gut	natural human gut	human gut
+H1-02	bounding-comparisons.4	claim	holds		human microbiome critic	human microbiome critic	human
+H1-02	bounding-comparisons.5	claim	ok		critic unverified second-hand	critic unverified second-hand	second-hand
+H1-02	bounding-comparisons.6	claim	ok		human-microbiome	human-microbiome	human-microbiome
+H1-02	bounding-comparisons.7	claim	ok	name:Meziti	comparisons above critic meziti et al	comparisons critic meziti et al	meziti
+H1-02	filters-corrections.1	claim	ok				
+H1-02	filters-corrections.2	claim	ok				
+H1-02	filters-corrections.3	claim	ok				
+H1-02	filters-corrections.4	claim	ok				
+H1-02	filters-corrections.5	claim	ok				
+H1-02	filters-corrections.6	claim	ok				
+H1-02	filters-corrections.7	claim	ok				
+H1-02	filters-corrections.8	claim	ok		critic	critic	
+H1-02	filters-corrections.9	claim	ok		spans four sources critic figures while sources	spans four sources critic figures sources	
+H1-02	filters-corrections.10	claim	ok		reference	reference	
+H1-02	community-diversity.1	claim	ok		simulated data	simulated data	simulated
+H1-02	community-diversity.2	claim	absent	name:CAMI; name:II	cami ii simulated data	cami ii simulated data	cami ii simulated
+H1-02	community-diversity.3	claim	ok				
+H1-02	community-diversity.4	claim	ok				
+H1-02	community-diversity.5	claim	ok				
+H1-02	community-diversity.6	claim	ok		natural critic unverified second-hand	natural critic unverified second-hand	second-hand
+H1-02	community-diversity.7	claim	ok		same danish agricultural soils critic unverified second-hand	danish agricultural soils critic unverified second-hand	danish agricultural soils second-hand
+H1-02	habitat.1	claim	ok		critic	critic	
+H1-02	habitat.2	claim	holds		real samples	real samples	
+H1-02	pipeline.1	claim	ok		natural human critic	natural human critic	human
+H1-02	pipeline.2	claim	ok		same 1554 gut samples	1554 gut samples	1554 gut
+H1-02	pipeline.3	claim	ok		critic	critic	
+H1-02	pipeline.4	claim	holds		real data across environments critic	real data environments critic	
+H1-02	pipeline.5	claim	ok		critic unverified second-hand	critic unverified second-hand	second-hand
+H1-02	annotation-coverage.1	claim	ok		human	human	human
+H1-02	annotation-coverage.2	claim	ok		critic	critic	
+H1-02	annotation-coverage.3	claim	ok				
+H1-02	artefact-size.1	claim	ok		delivered critic	delivered critic	
+H1-02	artefact-size.2	claim	ok		meziti et al orellana et al majernik et al critic	meziti et al orellana et al majernik et al critic	meziti orellana majernik
+H1-02	artefact-size.3	claim	ok				
+H1-02	artefact-size.4	claim	ok				
+H1-02	artefact-size.5	claim	ok		gene content recovered genomes	gene content recovered genomes	
+H1-02	artefact-size.6	claim	ok		review analysis	review analysis	review
+H1-02	sample-dependence.1	claim	ok		across sources	sources	
+H1-02	sample-dependence.2	claim	ok		natural critic	natural critic	
+H1-02	sample-dependence.3	claim	ok				
+H1-02	sample-dependence.4	claim	ok		natural coastal	natural coastal	coastal
+H1-02	sample-dependence.5	claim	ok		natural marine	natural marine	marine
+H1-02	sample-dependence.6	claim	ok		review sensitivity analysis	review sensitivity analysis	review
+H1-02	sample-dependence.7	claim	ok				
+H1-02	sample-dependence.8	claim	ok		here critic	critic	
+H1-02	sample-dependence.9	claim	absent		gut against soil	gut soil	gut soil
+H1-02	sample-dependence.10	claim	ok				
+H1-02	sample-dependence.11	claim	ok		review sensitivity analysis	review sensitivity analysis	review
+H1-02	sample-dependence.12	claim	absent				
+H1-02	sample-dependence.13	claim	ok		critic	critic	
+H1-02	dns.1	dns	ok				
+H1-02	dns.2	dns	ok				
+H1-02	dns.3	dns	ok				
+H1-02	dns.4	dns	ok				
+H1-02	dns.5	dns	absent				
+H1-02	dns.6	dns	ok				
+H1-02	dns.7	dns	ok	quote:The strongest evidence comes from three natural-sample sources that do not depend on each other			
+H1-02	dns.8	dns	ok				
+H1-02	dns.9	dns	ok	quote:The contamination produced apparent content differences between sample groups; quote:contamination-driven gains were measured directly.			
+H1-02	dns.10	dns	ok				
+H1-02	dns.11	dns	ok				
+H1-02	dns.12	dns	ok	quote:GEM: no major loss of gene content; name:Supp			
+H1-02	dns.13	dns	ok				
+H1-02	dns.14	dns	ok	name:Sections; quote:The gut artefact sizes in Sections 2.1 and 2.2 apply to soil.			
+H1-06	tau-d.1	claim	ok		method martiny et al 2013 define	method martiny et al 2013 define	martiny 2013
+H1-06	tau-d.2	claim	ok		stated bound estimates citing sun et al 2021	stated bound estimates citing sun et al 2021	sun 2021
+H1-06	signal-statistics.1	claim	ok		used ramoneda 2023 goberna verdú 2016 morrissey 2016	used ramoneda 2023 goberna verdú 2016 morrissey 2016	ramoneda 2023 goberna verdú 2016 morrissey 2016
+H1-06	taxonomies.1	claim	ok		review read lu 2016 ramoneda 2023 lennon 2012 isobe 2019 lópez-mondéjar 2022 royalty steen 2019 hoffert 2026 barnum 2024 mayjonade 2024 bay 2020 quiroga 2022 schmidt 2014	review read lu 2016 ramoneda 2023 lennon 2012 isobe 2019 lópez-mondéjar 2022 royalty steen 2019 hoffert 2026 barnum 2024 mayjonade 2024 bay 2020 quiroga 2022 schmidt 2014	review lu 2016 ramoneda 2023 lennon 2012 isobe 2019 lópez-mondéjar 2022 royalty steen 2019 hoffert 2026 barnum 2024 mayjonade 2024 bay 2020 quiroga 2022 schmidt 2014
+H1-06	preference-types.1	claim	ok		keeps throughout others	keeps throughout	
+H1-06	yardsticks.1	claim	absent		depth tau d signal statistics trees against rank-wise composition taxonomies	depth tau d signal statistics trees rank-wise composition taxonomies	rank-wise
+H1-06	yardsticks.2	claim	ok		every review	review	review
+H1-06	yardsticks.3	claim	ok		stated bound all rank-wise results	stated bound rank-wise results	rank-wise
+H1-06	ph-preference.1	claim	ok		optimum	optimum	
+H1-06	ph-preference.2	claim	ok				
+H1-06	ph-preference.3	claim	ok		same five	five	
+H1-06	ph-preference.4	claim	ok		figures critic reading corrects review	figures critic reading corrects review	review
+H1-06	ph-preference.5	claim	ok		ramoneda five	ramoneda five	ramoneda
+H1-06	ph-preference.6	claim	ok		conclusion five critic	conclusion five critic	
+H1-06	ph-preference.7	claim	ok		phylogeny predictor one validation	phylogeny predictor validation	
+H1-06	ph-preference.8	claim	ok		genome-based analysis	genome-based analysis	genome-based
+H1-06	ph-preference.9	claim	ok		ramoneda et al 2023 soil freshwater datasets	ramoneda et al 2023 soil freshwater datasets	ramoneda 2023 soil freshwater datasets
+H1-06	ph-preference.10	claim	absent		optima critic since	optima critic	
+H1-06	ph-preference.11	claim	ok				
+H1-06	ph-preference.12	claim	ok		preprint reporting design	preprint reporting design	
+H1-06	ph-preference.13	claim	ok	name:Ramoneda; name:Chakraverti-Wuerthwein	ph studies	ph studies	
+H1-06	ph-preference.14	claim	ok		critic	critic	
+H1-06	moisture-preference.1	claim	ok				
+H1-06	moisture-preference.2	claim	ok				
+H1-06	moisture-preference.3	claim	ok		isolates lennon 2012	isolates lennon 2012	lennon 2012
+H1-06	moisture-preference.4	claim	ok		search routes note provenance	search routes note provenance	in
+H1-06	salinity-preference.1	claim	ok				
+H1-06	salinity-preference.2	claim	ok		same reciprocal transplant	reciprocal transplant	
+H1-06	salinity-preference.3	claim	ok		same reciprocal transplant	reciprocal transplant	
+H1-06	temperature-preference.1	claim	ok				
+H1-06	temperature-preference.2	claim	ok				
+H1-06	temperature-preference.3	claim	ok				
+H1-06	trait-compilations.1	claim	ok				
+H1-06	trait-compilations.2	claim	ok				
+H1-06	trait-compilations.3	claim	ok				
+H1-06	trait-compilations.4	claim	ok				
+H1-06	trait-compilations.5	claim	ok				
+H1-06	trait-compilations.6	claim	ok				
+H1-06	trait-compilations.7	claim	ok				
+H1-06	perturbation-response.1	claim	ok		critic values	critic values	
+H1-06	perturbation-response.2	claim	ok		critic	critic	
+H1-06	perturbation-response.3	claim	ok	name:N-addition	13 n-addition experiments	13 n-addition experiments	13 n-addition experiments
+H1-06	perturbation-response.4	claim	ok	name:N-addition	13 n-addition experiments critic names	13 n-addition experiments critic names	13 n-addition experiments
+H1-06	perturbation-response.5	claim	ok		13 experiments critic left	13 experiments critic left	13 experiments
+H1-06	perturbation-response.6	claim	holds		soil experiments	soil experiments	soil experiments
+H1-06	perturbation-response.7	claim	ok				
+H1-06	perturbation-response.8	claim	ok		perturbations	perturbations	
+H1-06	perturbation-response.9	claim	ok	name:Blomberg; name:Pagel			
+H1-06	perturbation-response.10	claim	ok		one		
+H1-06	a1-environmental-preferences.1	claim	ok		provenance names several phrasings	provenance names several phrasings	
+H1-06	a1-environmental-preferences.2	claim	ok				
+H1-06	a1-environmental-preferences.3	claim	ok	year:2013; name:Martiny	behind deep-clade statement	behind deep-clade statement	deep-clade
+H1-06	a1-environmental-preferences.4	claim	ok		lennon 2012 martiny 2013	lennon 2012 martiny 2013	lennon 2012 martiny 2013
+H1-06	a1-environmental-preferences.5	claim	ok		all modelled together critic	modelled together critic	modelled
+H1-06	a1-environmental-preferences.6	claim	ok		soil freshwater	soil freshwater	soil freshwater
+H1-06	a1-environmental-preferences.7	claim	ok		review	review	review
+H1-06	a1-environmental-preferences.8	claim	ok		whole	whole	
+H1-06	a1-environmental-preferences.9	claim	ok	name:A1	sensitivity a1 remaining chakraverti-wuerthwein 2026	sensitivity a1 remaining chakraverti-wuerthwein 2026	a1 chakraverti-wuerthwein 2026
+H1-06	metabolic-depth.1	claim	ok		a2 sources	a2 sources	a2
+H1-06	metabolic-depth.2	claim	ok				
+H1-06	metabolic-depth.3	claim	ok		value	value	
+H1-06	metabolic-depth.4	claim	ok		value	value	
+H1-06	metabolic-depth.5	claim	ok		value	value	
+H1-06	metabolic-depth.6	claim	ok		value	value	
+H1-06	metabolic-depth.7	claim	ok				
+H1-06	metabolic-depth.8	claim	ok				
+H1-06	metabolic-depth.9	claim	ok				
+H1-06	metabolic-depth.10	claim	ok	name:Firmicutes_A			
+H1-06	metabolic-depth.11	claim	ok				
+H1-06	metabolic-depth.12	claim	ok		note spanning zimmerman berlemont	note spanning zimmerman berlemont	zimmerman berlemont
+H1-06	depth-dependence.1	claim	ok		3058	3058	3058
+H1-06	depth-dependence.2	claim	ok	name:Zimmerman	attribution	attribution	
+H1-06	depth-dependence.3	claim	ok		sun	sun	sun
+H1-06	depth-dependence.4	claim	ok		statement about own	statement	
+H1-06	depth-dependence.5	claim	ok		against		
+H1-06	depth-dependence.6	claim	ok		parras-moltó gene-content coherence analysis	parras-moltó gene-content coherence analysis	parras-moltó gene-content
+H1-06	depth-dependence.7	claim	ok		sun 2021 parras-moltó 2021 martiny 2013	sun 2021 parras-moltó 2021 martiny 2013	sun 2021 parras-moltó 2021 martiny 2013
+H1-06	rank-partitioning.1	claim	ok				
+H1-06	rank-partitioning.2	claim	ok		gtdb	gtdb	gtdb
+H1-06	rank-partitioning.3	claim	ok		royalty steen gtdb	royalty steen gtdb	royalty steen gtdb
+H1-06	rank-partitioning.4	claim	ok		six genome-inferred	six genome-inferred	genome-inferred
+H1-06	a2-metabolic-traits.1	claim	holds		annotation 16s gtdb	annotation 16s gtdb	16s gtdb
+H1-06	a2-metabolic-traits.2	claim	ok		sensitivity a2 verdict	sensitivity a2 verdict	a2
+H1-06	genome-incompleteness.1	claim	ok		provenance lists every critic	provenance lists critic	
+H1-06	genome-incompleteness.2	claim	ok		eisenhofer 2023 li yin 2022 albright louca 2023 critic	eisenhofer 2023 li yin 2022 albright louca 2023 critic	eisenhofer 2023 li yin 2022 albright louca 2023
+H1-06	genome-incompleteness.3	claim	ok				
+H1-06	genome-incompleteness.4	claim	ok		eisenhofer	eisenhofer	eisenhofer
+H1-06	genome-incompleteness.5	claim	ok		one		
+H1-06	genome-incompleteness.6	claim	ok				
+H1-06	genome-incompleteness.7	claim	ok				
+H1-06	genome-incompleteness.8	claim	ok	name:KEGG	eisenhofer 2023 li yin 2022 albright louca 2023	eisenhofer 2023 li yin 2022 albright louca 2023	eisenhofer 2023 li yin 2022 albright louca 2023
+H1-06	genome-incompleteness.9	claim	ok				
+H1-06	genome-incompleteness.10	claim	ok		bacdive organisms	bacdive organisms	bacdive
+H1-06	rankwise-structuring.1	claim	critic		critic	critic	
+H1-06	rankwise-structuring.2	claim	ok		surface greengenes 13 8	surface greengenes 13 8	greengenes 13 8
+H1-06	rankwise-structuring.3	claim	ok		four surface	four surface	
+H1-06	rankwise-structuring.4	claim	ok		four surface	four surface	
+H1-06	rankwise-structuring.5	claim	ok				
+H1-06	rankwise-structuring.6	claim	ok				
+H1-06	rankwise-structuring.7	claim	ok				
+H1-06	rankwise-structuring.8	claim	ok		design	design	
+H1-06	rankwise-structuring.9	claim	ok		eight datasets lu 2016	eight datasets lu 2016	datasets lu 2016
+H1-06	rankwise-structuring.10	claim	ok		four surface	four surface	
+H1-06	rankwise-structuring.11	claim	ok		interpretation	interpretation	
+H1-06	rankwise-structuring.12	claim	ok		lu 2016 critic calls	lu 2016 critic calls	lu 2016
+H1-06	rankwise-structuring.13	claim	ok		brief expected verdict	brief expected verdict	
+H1-06	rankwise-structuring.14	claim	ok		sensitivity b	sensitivity b	
+H1-06	uncontrolled-rank-studies.1	claim	ok				
+H1-06	uncontrolled-rank-studies.2	claim	ok		group numbers controlled	group numbers controlled	
+H1-06	uncontrolled-rank-studies.3	claim	ok				
+H1-06	uncontrolled-rank-studies.4	claim	ok		160 natural sites gyrb taxonomy	160 natural sites gyrb taxonomy	160
+H1-06	uncontrolled-rank-studies.5	claim	ok		ranks	ranks	
+H1-06	uncontrolled-rank-studies.6	claim	ok	name:Negev	critic	critic	
+H1-06	uncontrolled-rank-studies.7	claim	ok				
+H1-06	uncontrolled-rank-studies.8	claim	ok				
+H1-06	uncontrolled-rank-studies.9	claim	ok				
+H1-06	uncontrolled-rank-studies.10	claim	ok		mayjonade 2024 chakraverti-wuerthwein 2026	mayjonade 2024 chakraverti-wuerthwein 2026	mayjonade 2024 chakraverti-wuerthwein 2026
+H1-06	adjacent-metrics.1	claim	ok		measures other	measures	
+H1-06	adjacent-metrics.2	claim	ok		one		
+H1-06	adjacent-metrics.3	claim	ok				
+H1-06	ab-relation.1	claim	ok	name:R2	critic assessment review	critic assessment review	review
+H1-06	ab-relation.2	claim	ok		lu 2016 auladell 2022 natural composition set beside ramoneda 2023 isobe 2019	lu 2016 auladell 2022 natural composition set beside ramoneda 2023 isobe 2019	lu 2016 auladell 2022 ramoneda 2023 isobe 2019
+H1-06	ab-relation.3	claim	ok		sources review read	sources review read	review
+H1-06	dns.1	dns	ok				
+H1-06	dns.2	dns	ok				
+H1-06	dns.3	dns	ok				
+H1-06	dns.4	dns	ok				
+H1-06	dns.5	dns	absent	year:2020; name:Bay; quote:The rise in explained variance from otu97 to about otu94 and genus [23, 25]; year:2020			
+H1-06	dns.6	dns	absent	number:0.02; quote:The rise in explained variance from otu97 to about otu94 and genus matches where perturbation responses cluster (tau_D about 0.017 to 0.02, about genus).			
+H1-06	dns.7	dns	ok	name:Isobe			
+H1-06	dns.8	dns	ok				
+H1-06	dns.9	dns	ok				
+H1-06	dns.10	dns	ok	quote:Rank-wise partitioning is non-monotonic (GTDB: phylum 14.6%, order 9.2%, genus 5.5%)			
+H1-06	dns.11	dns	absent	quote:Measured with group number and size controlled			
+H1-06	dns.12	dns	ok				
+H1-06	dns.13	dns	ok				
+H1-06	dns.14	dns	ok	year:2026; name:Chakraverti-Wuerthwein			
+H1-06	dns.15	dns	ok	name:Verdú			
+GHOST	attribute-missing-graph.1	claim	ok		chen et al state note gives measurement setting	chen et al state note gives measurement setting	chen
+GHOST	attribute-missing-graph.2	claim	ok		review reading	review reading	review its
+GHOST	feature-propagation.1	claim	ok				
+GHOST	feature-propagation.2	claim	ok		given	given	
+GHOST	feature-propagation.3	claim	ok		2022	2022	2022
+GHOST	feature-propagation.4	claim	ok		field review read named references	field review read named references	field review
+GHOST	model-internal-imputation.1	claim	ok		method description setting given	method description setting given	
+GHOST	joint-reconstruction.1	claim	ok		description setting given	description setting given	
+GHOST	missingness-degradation.1	claim	ok		verification critic against range note own spanning	verification critic range note spanning	
+GHOST	missingness-degradation.2	claim	ok				
+GHOST	missingness-degradation.3	claim	ok		figures	figures	
+GHOST	missingness-degradation.4	claim	ok				
+GHOST	missingness-degradation.5	claim	ok				
+GHOST	missingness-degradation.6	claim	ok				
+GHOST	missingness-degradation.7	claim	ok		method	method	
+GHOST	benchmark-regime.1	claim	ok		propagation sghfp egs results review gathered	propagation sghfp egs results review gathered	sghfp egs review
+GHOST	benchmark-regime.2	claim	holds		sparse-feature january arxiv	sparse-feature january arxiv	sparse-feature january
+GHOST	benchmark-regime.3	claim	ok		review inference sparse	review inference sparse	review
+GHOST	benchmark-regime.4	claim	ok		use 2026	use 2026	in 2026
+GHOST	benchmark-regime.5	claim	ok				
+GHOST	low-variance-defect.1	claim	holds		icml iclr track both among	icml iclr track	icml iclr
+GHOST	low-variance-defect.2	claim	ok		review reading r5 r6	review reading r5 r6	review r5 r6
+GHOST	structure-only-embedding.1	claim	ok				
+GHOST	structure-only-embedding.2	claim	ok		comparisons	comparisons	
+GHOST	positional-structural.1	claim	ok				
+GHOST	positional-structural.2	claim	ok		claim two killed	claim killed	
+GHOST	positional-structural.3	claim	ok		review	review	review
+GHOST	contamination.1	claim	ok		review	review	review
+GHOST	contamination.2	claim	ok		argument measurement	argument measurement	
+GHOST	layout-distortion.1	claim	ok		retrieved corpus including visualisation	retrieved corpus including visualisation	corpus its
+GHOST	default-strategy.1	claim	ok		review reading brief	review reading brief	review
+GHOST	dns.1	dns	ok				
+GHOST	dns.2	dns	ok				
+GHOST	dns.3	dns	absent				
+GHOST	dns.4	dns	ok				
+GHOST	dns.5	dns	ok				
+GHOST	dns.6	dns	ok				
+CB3	accounting-boundary.1	claim	ok		figures	figures	
+CB3	accounting-boundary.2	claim	ok	name:AFOLU	footnote crippa et al 2021 tubiello et al 2022	footnote crippa et al 2021 tubiello et al 2022	crippa 2021 tubiello 2022
+CB3	gwp-metric.1	claim	ok		crippa et al 2021 tubiello et al 2022 ipcc wgiii ch 7	crippa et al 2021 tubiello et al 2022 ipcc wgiii ch 7	crippa 2021 tubiello 2022 ipcc wgiii ch 7
+CB3	gwp-metric.2	claim	ok		ipcc wgiii summary policymakers	ipcc wgiii summary policymakers	ipcc wgiii summary policymakers
+CB3	gwp-metric.3	claim	ok		argument about aggregation measured share	argument aggregation measured share	
+CB3	gwp-metric.4	claim	ok		lynch et al 2021 review read	lynch et al 2021 review read	lynch 2021 review
+CB3	gwp-metric.5	claim	ok				
+CB3	denominator.1	claim	ok		analytical brief 94 ipcc wgiii spm wgiii ch 7	analytical brief 94 ipcc wgiii spm wgiii ch 7	analytical brief 94 ipcc wgiii spm wgiii ch 7
+CB3	denominator.2	claim	ok		53.5 55.9 59 gt	53.5 55.9 59 gt	53.5 55.9 59 gt
+CB3	denominator.3	claim	ok	name:AR6	analytical 94 2025 release web summary cop30 takeaways	analytical 94 2025 release web summary cop30 takeaways	analytical 94 2025 cop30
+CB3	co2-accounting.1	claim	ok		2010-2019 ipcc wgiii ch 7	2010-2019 ipcc wgiii ch 7	2010-2019 ipcc wgiii ch 7
+CB3	co2-accounting.2	claim	ok		versus wgiii ch 7	versus wgiii ch 7	wgiii ch 7
+CB3	food-system.1	claim	ok		review definition	review definition	review
+CB3	food-system.2	claim	ok				
+CB3	food-system.3	claim	ok				
+CB3	food-system.4	claim	ok				
+CB3	food-system.5	claim	ok		database four	database four	
+CB3	food-system.6	claim	ok		four	four	
+CB3	food-system.7	claim	ok		2015 2019	2015 2019	2015 2019
+CB3	food-system.8	claim	ok		faostat	faostat	faostat
+CB3	food-system.9	claim	ok				
+CB3	food-system.10	claim	ok				
+CB3	food-system.11	claim	ok				
+CB3	food-system.12	claim	ok				
+CB3	food-system.13	claim	ok		2010 baseline	2010 baseline	2010
+CB3	food-system.14	claim	ok		2018 versus edgar-food our world data compares them	2018 versus edgar-food world data compares	2018 edgar-food our world in data
+CB3	food-system.15	claim	ok		faostat food-system estimate	faostat food-system estimate	faostat food-system
+CB3	food-system.16	claim	ok		review	review	review
+CB3	food-system.17	claim	ok		versus	versus	
+CB3	food-system.18	claim	ok		food-system	food-system	food-system
+CB3	food-system.19	claim	ok				
+CB3	afolu.1	claim	ok		mean gwp100 climate-carbon feedbacks	mean gwp100 climate-carbon feedbacks	gwp100 climate-carbon
+CB3	afolu.2	claim	ok		ch 7	ch 7	ch 7
+CB3	afolu.3	claim	ok	name:AFOLU	wgiii ch 7	wgiii ch 7	wgiii ch 7
+CB3	afolu.4	claim	ok				
+CB3	afolu.5	claim	ok		ar6 wgiii spm 2019 ch 7 2010-2019 mean	ar6 wgiii spm 2019 ch 7 2010-2019 mean	ar6 wgiii spm 2019 ch 7 2010-2019
+CB3	afolu.6	claim	ok				
+CB3	afolu.7	claim	ok	name:Our; name:World; name:Data	uncertainty	uncertainty	
+CB3	farm-gate.1	claim	ok		agricultural ch4 n2o	agricultural ch4 n2o	agricultural ch4 n2o
+CB3	farm-gate.2	claim	ok				
+CB3	farm-gate.3	claim	ok	name:AR6	ar6 wgiii ch 7 2010-2019	ar6 wgiii ch 7 2010-2019	ar6 wgiii ch 7 2010-2019
+CB3	farm-gate.4	claim	ok		four gases ar5 gwp100	four gases ar5 gwp100	ar5 gwp100
+CB3	farm-gate.5	claim	ok		including	including	
+CB3	farm-gate.6	claim	ok	number:14.6; name:FAOSTAT	two farm-gate figures above	farm-gate figures	farm-gate
+CB3	livestock.1	claim	ok				
+CB3	livestock.2	claim	ok				
+CB3	livestock.3	claim	ok		2013	2013	2013
+CB3	n2o.1	claim	ok		2010-2019 gwp100	2010-2019 gwp100	2010-2019 gwp100
+CB3	n2o.2	claim	ok		uncertainty	uncertainty	
+CB3	n2o.3	claim	ok				
+CB3	n2o.4	claim	ok		global	global	global
+CB3	n2o.5	claim	ok		n2o	n2o	n2o
+CB3	n2o.6	claim	ok				
+CB3	n2o.7	claim	ok		global total	global total	global
+CB3	soils.1	claim	ok		soils n2o figures review compares	soils n2o figures review compares	soils n2o review
+CB3	soils.2	claim	ok				
+CB3	soils.3	claim	ok				
+CB3	soils.4	claim	ok				
+CB3	soils.5	claim	ok				
+CB3	soils.6	claim	ok				
+CB3	soils.7	claim	ok	number:4.1	tian et al 2024 wgiii ch 7 figure 7.3 a.3.5	tian et al 2024 wgiii ch 7 figure 7.3 a.3.5	tian 2024 wgiii ch 7 figure 7.3 a.3.5
+CB3	soils.8	claim	ok		note own spanning srccl ar6 figure 7.3 2.4 climate watch wri	note spanning srccl ar6 figure 7.3 2.4 climate watch wri	srccl ar6 figure 7.3 2.4 climate watch wri
+CB3	synthetic-fertiliser.1	claim	ok		figure read image	figure read image	figure
+CB3	synthetic-fertiliser.2	claim	ok		ar5 gwp100 tubiello et al 2022	ar5 gwp100 tubiello et al 2022	ar5 gwp100 tubiello 2022
+CB3	synthetic-fertiliser.3	claim	ok		uncertainty	uncertainty	
+CB3	synthetic-fertiliser.4	claim	ok				
+CB3	synthetic-fertiliser.5	claim	ok		publisher metadata	publisher metadata	
+CB3	synthetic-fertiliser.6	claim	ok		2019 figure 7.3 footnote	2019 figure 7.3 footnote	2019 figure 7.3
+CB3	five-percent.1	claim	ok		sources review read	sources review read	review
+CB3	five-percent.2	claim	ok		owid ar6 wgiii ch 7 table 7.1 2010-2019 srccl a.3.6 2007-2016	owid ar6 wgiii ch 7 table 7.1 2010-2019 srccl a.3.6 2007-2016	owid ar6 wgiii ch 7 table 7.1 2010-2019 srccl a.3.6 2007-2016
+CB3	five-percent.3	claim	ok				
+CB3	five-percent.4	claim	ok		ar6	ar6	ar6
+CB3	five-percent.5	claim	ok		a.3.6 2007-2016 2018	a.3.6 2007-2016 2018	a.3.6 2007-2016 2018
+CB3	five-percent.6	claim	ok		note own ranges spanning ar6 ch 7 non-co2 faostat farm gate ar6 ch 7 spm srccl a.3.6 srccl ar6 ch 12	note ranges spanning ar6 ch 7 non-co2 faostat farm gate ar6 ch 7 spm srccl a.3.6 srccl ar6 ch 12	ar6 ch 7 non-co2 faostat ar6 ch 7 spm srccl a.3.6 srccl ar6 ch 12
+CB3	five-percent.7	claim	ok		ranges five-percent.6	ranges five-percent.6	in five-percent.6
+CB3	dns.1	dns	ok	quote:Agriculture accounts for about 5% of global greenhouse gas emissions.			
+CB3	dns.2	dns	ok	quote:Agricultural soils produce 5% of global greenhouse gas emissions.			
+CB3	dns.3	dns	ok	quote:About 5% of global emissions, whether counted as soil N2O, all N2O or emissions outside the farm gate.			
+CB3	dns.4	dns	ok	number:4.7; quote:Agriculture N2O is about 4.7% of global greenhouse gas emissions.; number:4.7			
+CB3	dns.5	dns	ok	name:AFOLU; quote:AR6 gives two rival estimates of AFOLU share: 22% and 13-21%.			
+CB3	dns.6	dns	ok	quote:The 13-21% range for AFOLU reflects statistical uncertainty.			
+CB3	dns.7	dns	ok	quote:Livestock produces 18% of global greenhouse gas emissions.			
+CB3	dns.8	dns	ok	quote:AFOLU accounts for 23% of total net anthropogenic emissions			
+CB3	dns.9	dns	ok	quote:EDGAR and FAOSTAT agree on field N2O from synthetic fertiliser.			
+CB3	dns.10	dns	ok	quote:EDGAR-FOOD one-third figure is accepted, since no one has disputed it.			
+TAXRES	gtdb.1	claim	ok		found single-pass web	found single-pass web	single-pass
+TAXRES	gtdb.2	claim	ok		found single-pass web	found single-pass web	single-pass
+TAXRES	gtdb.3	claim	ok				
+TAXRES	gtdb.4	claim	ok		found single-pass web	found single-pass web	single-pass
+TAXRES	ncbi-lpsn.1	claim	ok		found single-pass web	found single-pass web	single-pass
+TAXRES	gtdb-ncbi-divergence.1	claim	ok				
+TAXRES	gtdb-ncbi-divergence.2	claim	ok				
+TAXRES	gtdb-ncbi-divergence.3	claim	ok		release	release	
+TAXRES	gtdb-ncbi-divergence.4	claim	ok				
+TAXRES	gtdb-ncbi-divergence.5	claim	ok				
+TAXRES	gtdb-ncbi-divergence.6	claim	ok		phylum against	phylum	
+TAXRES	fungal-repositories.1	claim	ok		found single-pass web	found single-pass web	single-pass
+TAXRES	fungal-repositories.2	claim	ok		gbif backbone	gbif backbone	gbif
+TAXRES	cross-kingdom-backbone.1	claim	ok		found single-pass web	found single-pass web	single-pass
+TAXRES	cross-kingdom-backbone.2	claim	ok		found single-pass web	found single-pass web	single-pass
+TAXRES	cross-kingdom-backbone.3	claim	ok		gbif backbone taxonomy	gbif backbone taxonomy	gbif backbone taxonomy
+TAXRES	cross-kingdom-backbone.4	claim	ok		found single-pass web	found single-pass web	single-pass
+TAXRES	cross-kingdom-backbone.5	claim	ok		note does say what way	note say way	in
+TAXRES	taxonomy-integration.1	claim	ok		review provisional single-pass verdict	review provisional single-pass verdict	review single-pass
+TAXRES	name-resolution.1	claim	ok		provisional single-pass verdict separate research result	provisional single-pass verdict separate research result	single-pass
+TAXRES	name-resolution.2	claim	ok	name:TAXON_MATCH_FUZZY	found single-pass web match-rate figures captured	found single-pass web match-rate figures captured	single-pass match-rate
+TAXRES	name-resolution.3	claim	holds		biodiversity data	biodiversity data	
+TAXRES	name-resolution.4	claim	ok		reading tools found	reading tools found	
+TAXRES	name-resolution.5	claim	ok		review provisional single-pass verdict	review provisional single-pass verdict	review single-pass
+TAXRES	name-resolution.6	claim	ok		direct web	direct web	
+TAXRES	informal-labels.1	claim	ok		biblion listed note among what still needs	biblion listed note still needs	
+TAXRES	dns.1	dns	ok				
+H1-RES	pangenome.1	claim	ok		s	s	
+H1-RES	pangenome.2	claim	ok		extrapolated strains	extrapolated strains	
+H1-RES	pangenome.3	claim	ok		section goes list	section goes list	
+H1-RES	pangenome.4	claim	ok		b	b	
+H1-RES	pangenome.5	claim	ok		e	e	
+H1-RES	pangenome.6	claim	ok				
+H1-RES	pangenome.7	claim	ok				
+H1-RES	pangenome.8	claim	ok		stated citation example	stated citation example	
+H1-RES	pangenome.9	claim	ok				
+H1-RES	pangenome.10	claim	ok				
+H1-RES	pangenome.11	claim	ok				
+H1-RES	pangenome.12	claim	ok		pangenome.4 pangenome.11	pangenome.4 pangenome.11	in pangenome.4 pangenome.11
+H1-RES	pangenome.13	claim	ok				
+H1-RES	pangenome.14	claim	ok				
+H1-RES	pangenome.15	claim	ok		pangenome.13 pangenome.14	pangenome.13 pangenome.14	pangenome.13 pangenome.14
+H1-RES	pangenome.16	claim	ok		pangenome.17 pangenome.24	pangenome.17 pangenome.24	in pangenome.17 pangenome.24
+H1-RES	pangenome.17	claim	ok				
+H1-RES	pangenome.18	claim	ok		one		in
+H1-RES	pangenome.19	claim	ok				
+H1-RES	pangenome.20	claim	ok		e	e	
+H1-RES	pangenome.21	claim	ok				
+H1-RES	pangenome.22	claim	ok		sentence names taxon cites nothing	sentence names taxon cites nothing	
+H1-RES	pangenome.23	claim	ok				
+H1-RES	pangenome.24	claim	ok		taxa named	taxa named	
+H1-RES	pangenome.25	claim	ok		p	p	
+H1-RES	pangenome.26	claim	ok		pangenome.14	pangenome.14	pangenome.14
+H1-RES	pangenome.27	claim	ok		reviewed 1	reviewed 1	reviewed in 1
+H1-RES	accessory-function.1	claim	ok		one strain one recipient strain	strain recipient strain	
+H1-RES	accessory-function.2	claim	ok	name:CSV86T	one strain	strain	
+H1-RES	accessory-function.3	claim	ok		accessory-function.4 accessory-function.12	accessory-function.4 accessory-function.12	in accessory-function.4 accessory-function.12
+H1-RES	accessory-function.4	claim	ok		one		
+H1-RES	accessory-function.5	claim	ok				
+H1-RES	accessory-function.6	claim	ok		along gradient	along gradient	
+H1-RES	accessory-function.7	claim	ok				
+H1-RES	accessory-function.8	claim	ok		strains	strains	
+H1-RES	accessory-function.9	claim	ok		one		
+H1-RES	accessory-function.10	claim	ok		horizontal acquisition	horizontal acquisition	
+H1-RES	accessory-function.11	claim	ok		s versus	s versus	
+H1-RES	accessory-function.12	claim	ok				
+H1-RES	accessory-function.13	claim	ok		accessory-function.14 accessory-function.19	accessory-function.14 accessory-function.19	in accessory-function.14 accessory-function.19
+H1-RES	accessory-function.14	claim	ok				
+H1-RES	accessory-function.15	claim	ok		inferred b coahuilensis	inferred b coahuilensis	
+H1-RES	accessory-function.16	claim	ok				
+H1-RES	accessory-function.17	claim	ok		one		
+H1-RES	accessory-function.18	claim	ok		clades	clades	
+H1-RES	accessory-function.19	claim	ok		one		
+H1-RES	accessory-function.20	claim	ok		one		
+H1-RES	accessory-function.21	claim	ok				
+H1-RES	accessory-function.22	claim	ok		sub-claim studies	sub-claim studies	sub-claim
+H1-RES	accessory-function.23	claim	ok		counter-evidence	counter-evidence	counter-evidence
+H1-RES	accessory-function.24	claim	ok		sub-claim 2 studies	sub-claim 2 studies	sub-claim 2
+H1-RES	accessory-function.25	claim	ok		sub-claim studies	sub-claim studies	sub-claim
+H1-RES	accessory-function.26	claim	ok		2 studies	2 studies	2
+H1-RES	accessory-function.27	claim	ok		sub-claim 2 studies	sub-claim 2 studies	sub-claim 2
+H1-RES	n-cycle-hgt.1	claim	ok				
+H1-RES	n-cycle-hgt.2	claim	ok		340	340	340
+H1-RES	n-cycle-hgt.3	claim	ok		study types sub-claim 3	study types sub-claim 3	in sub-claim 3
+H1-RES	n-cycle-hgt.4	claim	ok		three	three	
+H1-RES	n-cycle-hgt.5	claim	ok		denitrification genes genomes	denitrification genes genomes	in
+H1-RES	n-cycle-hgt.6	claim	ok		related	related	
+H1-RES	n-cycle-hgt.7	claim	ok				
+H1-RES	n-cycle-hgt.8	claim	ok				
+H1-RES	n-cycle-hgt.9	claim	ok				
+H1-RES	n-cycle-hgt.10	claim	ok				
+H1-RES	n-cycle-hgt.11	claim	ok		n-cycle-hgt.12 n-cycle-hgt.16	n-cycle-hgt.12 n-cycle-hgt.16	n-cycle-hgt.12 n-cycle-hgt.16
+H1-RES	n-cycle-hgt.12	claim	ok				
+H1-RES	n-cycle-hgt.13	claim	ok		one		
+H1-RES	n-cycle-hgt.14	claim	ok		nirk-harbouring	nirk-harbouring	nirk-harbouring
+H1-RES	n-cycle-hgt.15	claim	ok				
+H1-RES	n-cycle-hgt.16	claim	ok				
+H1-RES	n-cycle-hgt.17	claim	ok				
+H1-RES	n-cycle-hgt.18	claim	ok				
+H1-RES	n-cycle-hgt.19	claim	ok		cultivated denitrifiers	cultivated denitrifiers	
+H1-RES	n-cycle-hgt.20	claim	ok		nirk-harbouring	nirk-harbouring	nirk-harbouring
+H1-RES	n-cycle-hgt.21	claim	ok				
+H1-RES	n-cycle-hgt.22	claim	ok				
+H1-RES	n-cycle-hgt.23	claim	ok		one strain	strain	
+H1-RES	n-cycle-hgt.24	claim	ok				
+H1-RES	n-cycle-hgt.25	claim	ok				
+H1-RES	n-cycle-hgt.26	claim	ok		3 studies	3 studies	3
+H1-RES	taxonomy-function.1	claim	ok		sub-claim 1 taxa	sub-claim 1 taxa	sub-claim 1
+H1-RES	taxonomy-function.2	claim	ok				
+H1-RES	taxonomy-function.3	claim	ok				
+H1-RES	taxonomy-function.4	claim	ok				
+H1-RES	taxonomy-function.5	claim	ok		pangenome.14	pangenome.14	pangenome.14
+H1-RES	taxonomy-function.6	claim	ok		sub-claim 1	sub-claim 1	sub-claim 1
+H1-RES	taxonomy-function.7	claim	ok		sub-claim 3	sub-claim 3	sub-claim 3
+H1-RES	capacity-expression.1	claim	ok				
+H1-RES	capacity-expression.2	claim	ok		metatranscriptomes	metatranscriptomes	
+H1-RES	capacity-expression.3	claim	ok		human	human	human
+H1-RES	capacity-expression.4	claim	ok		human gut franzosa et al	human gut franzosa et al	human gut franzosa
+H1-RES	capacity-expression.5	claim	ok				
+H1-RES	capacity-expression.6	claim	ok				
+H1-RES	capacity-expression.7	claim	ok				
+H1-RES	capacity-expression.8	claim	ok				
+H1-RES	capacity-expression.9	claim	ok				
+H1-RES	capacity-expression.10	claim	ok				
+H1-RES	capacity-expression.11	claim	absent		human gut cohorts murine inflammation ocean soil enzymes	human gut cohorts murine inflammation ocean soil enzymes	human gut murine ocean soil
+H1-RES	capacity-expression.12	claim	ok		named	named	
+H1-RES	capacity-expression.13	claim	ok		multi-omics studies above	multi-omics studies	multi-omics
+H1-RES	redundancy.1	claim	ok		metagenomes	metagenomes	
+H1-RES	redundancy.2	claim	ok				
+H1-RES	redundancy.3	claim	ok				
+H1-RES	redundancy.4	claim	ok	name:SOC-mineralisation-related			
+H1-RES	redundancy.5	claim	ok				
+H1-RES	redundancy.6	claim	ok				
+H1-RES	redundancy.7	claim	ok				
+H1-RES	redundancy.8	claim	ok		seven redundancy	seven redundancy	
+H1-RES	redundancy.9	claim	ok		soil redundancy studies	soil redundancy studies	soil
+H1-RES	redundancy.10	claim	ok				
+H1-RES	redundancy.11	claim	ok				
+H1-RES	redundancy.12	claim	ok				
+H1-RES	redundancy.13	claim	ok				
+H1-RES	redundancy.14	claim	ok		four	four	
+H1-RES	redundancy.15	claim	stronger		manually research	manually research	
+H1-RES	redundancy.16	claim	ok		soil manually research	soil manually research	soil
+H1-RES	dns.1	dns	ok	quote:Nitrogen-cycle genes are universally decoupled from taxonomy by horizontal gene transfer.			
+H1-RES	dns.2	dns	ok	quote:Bacterial species have open pangenomes with large accessory fractions.			
+H1-RES	dns.3	dns	ok	quote:The accessory genome encodes niche-adaptive functions.			
+H1-RES	dns.4	dns	ok	quote:The dominance of mobile elements in accessory genomes refutes the niche-adaptation claim.			
+H1-RES	dns.5	dns	ok	quote:Soil functional redundancy holds across environments, however different.			
+H1-RES	dns.6	dns	ok	quote:Genes present in a metagenome show which functions are active in situ.			

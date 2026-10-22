@@ -64,7 +64,9 @@ NUMWORDS = ("zero one two three four five six seven eight nine ten eleven twelve
 
 # ---------------------------------------------------------------- normalisation (rules.md)
 DASH = re.compile(r"[‐-―−]")
-WORD = re.compile(r"[a-z0-9À-ɏ]+(?:[.\-'][a-z0-9À-ɏ]+)*")
+# Mechanical fix after the first run (results.md): letters and digits as Python's \w sees them, so that a token
+# with sub- or superscript digits (CaCO₃, R²) is cut the same way in the entry and in the cited text.
+WORD = re.compile(r"[^\W_]+(?:[.\-'][^\W_]+)*")
 NUM = re.compile(r"(?<![A-Za-z0-9.])\d+(?:\.\d+)?(?![A-Za-z0-9])")
 BRACKET = re.compile(r"\[(\s*\d+(?:\s*[-,]\s*\d+)*\s*)\]")
 CAP = re.compile(r"(?<![\w'\-])[A-Z][\wÀ-ɏ'\-]*")

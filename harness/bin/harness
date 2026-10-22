@@ -5660,10 +5660,17 @@ def cmd_mark(a):
                         if j.get("kind") == "check"
                         and any((r or {}).get("node") == node for r in j.get("requested_by") or [])]
                 _job = mine[-1] if mine else None
-                if _job is None:
+                _done = read_check_report(ctx, node, rec["_presented_sha"]) if _job is None else None
+                if _job is None and _done is None:
                     die(REFUSED, "--after-check: no check of yours is queued or running. "
                                  "harness check first, then present")
-            rec["_after_check"] = _job["id"]
+                if _done is not None:
+                    # Reused whole, or nothing to check (log 206): its report is in.
+                    print(f"  --after-check: the check of {rec['_presented_sha'][:8]} has "
+                          f"already reported ({'passed' if _done.get('passed') else 'not passed'}"
+                          f"); nothing to wait for")
+            if _job is not None:
+                rec["_after_check"] = _job["id"]
         f.write_text(json.dumps(rec, indent=2) + "\n")
         # Presenting IS finishing with the node. The claim is on the worktree,
         # and a presented member has nothing left to write there, so holding it
@@ -7359,6 +7366,9 @@ def print_check_report(rep, base):
         print(caps_line(rep["caps"]))
     if stale_line(rep.get("behind")):
         print(stale_line(rep["behind"]))
+    if rep.get("reused"):
+        print(f"  reused, not run: {', '.join(rep['reused'])} (an earlier run at this commit, "
+              f"what it reads unchanged; harness check --again runs it afresh)")
     for r in rep.get("checks") or []:
         if r.get("held"):
             print(f"  NOT RUN (held: {r['held']})  {r['name']}"); continue
@@ -7378,7 +7388,7 @@ def print_check_report(rep, base):
               + ("" if r.get("exit") in (0, None) or r.get("timedOut") or r.get("memoryKilled")
                  else f"   exit {r['exit']}")
               + (f"   (earlier run, {(r.get('at') or '')[5:16].replace('T', ' ')}, job "
-                 f"{r.get('job')})" if r.get("job") and rep.get("job") and r["job"] != rep["job"]
+                 f"{r.get('job')})" if r.get("job") and r["job"] != rep.get("job")
                  and not r.get("carried") else ""))
         if v == "FAIL":
             for line in (r.get("stderr") or r.get("stdout") or "").strip().splitlines()[-6:]:
@@ -7410,6 +7420,107 @@ def earlier_rows(ctx, sha, ran):
     old = _read_json(shared_report_path(ctx, sha)) or {}
     return [dict(r, job=r.get("job") or old.get("job"), at=r.get("at") or old.get("at"))
             for r in old.get("checks") or [] if r.get("name") and r["name"] not in ran]
+
+
+# A finished arm is reused at the same commit for this long, while what it
+# reads is unchanged (log 206); older, it runs again.
+REUSE_HOURS = 24
+REUSE_FILES = 50_000            # a folder bigger than this is not fingerprinted
+
+
+def reads_print(reads):
+    """What an arm's `reads` are now, to tell whether a result still holds (log
+    206; obs 83's fix): per absolute path, a file's size and mtime, with its
+    SQLite -wal or -journal while that has anything in it, or a folder's file
+    count, total size and newest mtime. A relative path is in the commit, which
+    the sha covers. None when a folder is too big to read quickly."""
+    out = {}
+    for raw in reads or []:
+        p = _expand(raw)
+        if not os.path.isabs(p) or p in out:
+            continue
+        if os.path.isdir(p):
+            n = size = newest = 0
+            for root, _dirs, files in os.walk(p):
+                for name in files:
+                    try:
+                        st = os.stat(os.path.join(root, name))
+                    except OSError:
+                        continue
+                    n += 1; size += st.st_size; newest = max(newest, st.st_mtime_ns)
+                    if n > REUSE_FILES:
+                        return None
+            out[p] = [n, size, newest]
+            continue
+        try:
+            st = os.stat(p)
+            out[p] = [1, st.st_size, st.st_mtime_ns]
+        except OSError:
+            out[p] = None
+        for side in ("-wal", "-journal"):
+            # Written before the database itself; empty or gone reads the same.
+            try:
+                st = os.stat(p + side)
+            except OSError:
+                continue
+            if st.st_size:
+                out[p + side] = [1, st.st_size, st.st_mtime_ns]
+    return out
+
+
+def reusable_rows(ctx, sha, want, checks, holds):
+    """{arm: row} for the arms in `want` whose last result at `sha` still stands
+    (log 206): it ran to the end (no hold, timeout, exit 125 or memory kill), in
+    the last REUSE_HOURS, with the manifest's command as it is now, and what it
+    reads is as it was when it ran and is under no hold now. A row from before
+    reads were fingerprinted, or whose reads moved while it ran, never is."""
+    rep = _read_json(shared_report_path(ctx, sha)) or {}
+    spec = {c["name"]: c for c in checks}
+    out = {}
+    for r in rep.get("checks") or []:
+        n, c = r.get("name"), spec.get(r.get("name"))
+        if n not in want or not c or c.get("reuse") is False or r.get("inputs") is None:
+            continue
+        if r.get("held") or r.get("timedOut") or r.get("memoryKilled") \
+                or r.get("exit") in (None, 125) or r.get("command") != c.get("command"):
+            continue
+        at = _epoch(r.get("at") or rep.get("at"))
+        if not at or time.time() - at > REUSE_HOURS * 3600:
+            continue
+        reads = r.get("reads") or []
+        if not set(c.get("reads") or []) <= set(reads):
+            continue                    # the manifest names a read it didn't have
+        if hold_catching(dict(c, reads=reads), holds) or reads_print(reads) != r["inputs"]:
+            continue
+        out[n] = dict(r, job=r.get("job") or rep.get("job"), at=r.get("at") or rep.get("at"))
+    return out
+
+
+def check_reused(ctx, node, target, sha, arms, reused, scope, stale):
+    """Every arm asked for has a result at this commit that still stands (log
+    206): nothing is queued. The report is the requester's, printed here, and
+    rung to the node it was asked for and to a lead the commit was presented to."""
+    who = target or node
+    names = job_arm_names(ctx, list(reused))
+    rows = [reused[n] for n in names]
+    base = load_baseline(ctx)
+    rep = make_check_report(who, sha, rows, sum(row_failed(r) for r in rows), base,
+                            job=None, requested_by=[who], arms=arms,
+                            partial=bool(arms) and not scope, reused=names,
+                            **({"by": node} if target else {}),
+                            **({"scoped": scope} if scope and arms else {}),
+                            **({"behind": stale} if stale else {}))
+    f = check_report_path(ctx, who, sha)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(rep, indent=2) + "\n")
+    jobs = sorted({str(r["job"]) for r in rows if r.get("job")})
+    print(f"nothing queued: every arm asked for ran at {sha[:8]} in the last {REUSE_HOURS} h "
+          f"(job {', '.join(jobs) or '?'}), and what each reads is unchanged. The result "
+          f"is {who}'s report.\n  harness check --again runs them afresh.")
+    print_check_report(rep, base)
+    testq_ring(ctx, {"id": "reused", "kind": "check", "state": "done", "sha": sha,
+                     "requested_by": [{"node": who}]}, rep, None, quiet={node})
+    sys.exit(check_exit(rep))
 
 
 def make_check_report(node, sha, rows, failed, base, **extra):
@@ -7548,10 +7659,18 @@ def cmd_check(a):
     # 2026-10-09): it reserves +20% in the pool and is killed above twice it.
     want = arms or [c["name"] for c in checks]
     spec = {c["name"]: c for c in checks}
+    # A result already in at this commit whose inputs haven't moved is reused,
+    # not run again (log 206: 4.3% of arm time re-ran a finished arm, mostly a
+    # lead's check after its lane's at the same sha). --again runs it afresh.
+    reused = {} if getattr(a, "again", False) is True else reusable_rows(
+        ctx, sha, want, checks, live_holds(ctx))
+    if reused and set(reused) >= set(want):
+        return check_reused(ctx, node, target, sha, arms, reused, scope, stale)
+    asked, want = want, [n for n in want if n not in reused]
     if any(c.get("memory") for c in checks):
         print("note: the manifest's per-arm `memory` is retired; estimates come with the "
               "submission (--memory)")
-    est, bad = parse_estimates(a.memory, want)
+    est, bad = parse_estimates(a.memory, asked)      # a reused arm's estimate is no error
     missing = [n for n in want if n not in est]
     if bad or missing:
         sug = [f"{n}={usage_suggest(ctx, n) or '?'}" for n in want]
@@ -7576,10 +7695,14 @@ def cmd_check(a):
     job, how = testq_submit(ctx, "check", sha, target or node, "" if target else sid,
                             timeout=a.timeout, arms=arms, queue=queue, origin=origin,
                             scope=scope, tests=tests, behind=stale, root=ctx.rank(node) == 0,
-                            by=node if target else None)
+                            by=node if target else None, reused=reused)
     print(f"{how} {job['id']} — {'check' if not arms else 'arms ' + ', '.join(arms)} of "
           f"{sha[:8]}" + (f" for {target}" if target else "") + f", {job['queue']} queue"
           + testq_wait_phrase(ctx, job))
+    if reused:
+        print(f"  reused, not run: {', '.join(job_arm_names(ctx, list(reused)))} (an earlier run "
+              f"at this commit, what it reads unchanged); runs {', '.join(want)}. "
+              f"--again runs every arm afresh.")
     if halted(ctx):
         print("  The tree is halted; the runner still opens it, because rank 0 asked.")
     if not a.wait:
@@ -7876,6 +7999,8 @@ def testq_describe(j):
     what = ("check" if j.get("kind") == "check" and not j.get("arms") else
             f"arms {', '.join(j['arms'])}" if j.get("kind") == "check" else
             f"`{(j.get('command') or '')[:40]}`")
+    if j.get("reused"):
+        what += f" ({len(j['reused'])} reused)"
     if j.get("state") == "running":
         ra = j.get("running_arms") or []
         if len(ra) > 1 or any(r.get("cap") for r in ra):
@@ -7895,20 +8020,25 @@ def testq_describe(j):
 
 def testq_submit(ctx, kind, sha, node, sid, command=None, timeout=None, arms=None,
                  queue="normal", origin=None, scope=None, tests=None, behind=None,
-                 root=False, by=None):
-    """Queue a job, or join an identical one (same commit and arms) still queued
-    or running: that is one run, not a guess about a result. A finished report is
-    never reused; whether an old result still holds is the project's to say (obs
-    83: its tests read data git doesn't hold). Returns (job, "queued" | "joined").
+                 root=False, by=None, reused=None):
+    """Queue a job, or join one still queued or running at the same commit that
+    runs every arm this one would, in whatever order they were named (log 205):
+    that is one run. Returns (job, "queued" | "joined").
 
-    `root`: rank 0 asked, so the job runs under a halt (log 198); rank 0 joining
-    a node's queued job lets that one run too. `by`: who asked on `node`'s
-    behalf (`check --for`), rung with the result as well."""
+    `reused`: {arm: row} that `check` found still standing at this commit (log
+    206; obs 83's fingerprint of what each reads), put in the report as they
+    are; `tests` holds only the arms that run. `root`: rank 0 asked, so the job
+    runs under a halt (log 198); rank 0 joining a node's queued job lets that
+    one run too. `by`: who asked on `node`'s behalf (`check --for`), rung with
+    the result as well."""
     req = {"node": node, "session": sid, "at": _now()}
     if kind == "check":
+        # None is every arm. A job queued before tests were named runs `arms`.
+        need = set(tests or {}) or (set(arms) if arms else None)
         for j in testq_jobs(ctx, ("queued", "running")):
-            if (j.get("kind") == "check" and j.get("sha") == sha and j.get("arms") == arms
-                    and not j.get("rerun_of")):
+            have = set(j.get("tests") or {}) or (set(j["arms"]) if j.get("arms") else None)
+            if (j.get("kind") == "check" and j.get("sha") == sha and not j.get("rerun_of")
+                    and (have is None or (need is not None and need <= have))):
                 if not any(r.get("node") == node for r in j["requested_by"]):
                     j["requested_by"].append(req)
                 if queue == "priority" and j.get("queue") != "priority" and j["state"] == "queued":
@@ -7935,6 +8065,8 @@ def testq_submit(ctx, kind, sha, node, sid, command=None, timeout=None, arms=Non
         job["root"] = True
     if by:
         job["by"] = by
+    if reused:
+        job["reused"] = {n: {"row": r, "ok": not row_failed(r)} for n, r in reused.items()}
     testq_save(ctx, job)
     testq_ensure_runner(ctx)
     return job, "queued"
@@ -8160,7 +8292,8 @@ def testq_wait_estimate(ctx, job):
         return est
     total = 0
     for j in testq_ahead(ctx, job) + [job]:
-        d = testq_duration(ctx, j.get("kind"), j.get("arms"), j.get("command"))
+        d = testq_duration(ctx, j.get("kind"), list(j["tests"]) if j.get("reused")
+                           and j.get("tests") else j.get("arms"), j.get("command"))
         if d is None:
             return None
         if j.get("state") == "running":
@@ -8584,6 +8717,7 @@ def testd_start(ctx, S, job, name, reserved, pool, used, cores):
     job = o["job"]
     t = job_tests(job)[name]
     node = (job["requested_by"][0].get("node") or "operator")
+    reads = fp = None
     if job["kind"] == "check":
         c = o["checks"].get(name)
         if c is None:                             # gone from the manifest since it was asked
@@ -8604,6 +8738,8 @@ def testd_start(ctx, S, job, name, reserved, pool, used, cores):
             testq_save(ctx, job); return
         command, limit = c["command"], c.get("timeout") or job.get("timeout") or 900
         outf, errf = check_output_paths(ctx, node, name)
+        reads = c["reads"]
+        fp = reads_print(reads)                 # as it starts: log 206's reuse
     else:
         command, limit = job["command"], None
         run = Path(job["dir"])
@@ -8621,7 +8757,7 @@ def testd_start(ctx, S, job, name, reserved, pool, used, cores):
     S["running"][(job["id"], name)] = {"thread": th, "meter": meter, "res": res,
                                        "need": t.get("need") or 0, "threads": t.get("threads") or 1,
                                        "alone": alone, "node": node, "name": name,
-                                       "started": _now()}
+                                       "started": _now(), "reads": reads, "fp": fp}
     t.update(state="running", started=_now())
     need = t.get("need") or 0
     line = (f"start {name} ({job['id']}): asked {fmt_mem(t.get('estimate'))}, reserves "
@@ -8670,6 +8806,13 @@ def testd_finish(ctx, S, key):
         row, ok, lines = arm_result(o["checks"][name], res, meter, o["base"],
                                     shared_report_path(ctx, job["sha"]), t.get("estimate"),
                                     [h.get("peak") for h in hist])
+        if r.get("reads") is not None:
+            # What it read, as it was when it started: a later check at this
+            # commit reuses the row while that holds (log 206). Moved under it,
+            # the row is never reused.
+            row["reads"] = r["reads"]
+            row["inputs"] = (r["fp"] if r.get("fp") is not None
+                             and reads_print(r["reads"]) == r["fp"] else None)
         if not ok:
             try:
                 kept = keep_logs(ctx, o, name, row)
@@ -8757,13 +8900,18 @@ def testd_close(ctx, S, jid):
             r.setdefault("at", now)
         ran = list(o["rows"])
         failed, arms = o["failed"], job.get("arms")
+        # Arms `check` found standing at this commit (log 206), as they were.
+        reused = [n for n in job.get("reused") or {} if n not in o["rows"]]
+        for n in reused:
+            o["rows"][n] = dict(job["reused"][n].get("row") or {})
+            failed += not job["reused"][n].get("ok")
         partial = bool(arms) and not job.get("scope")
         earlier = []
         if arms:
             # Some arms only: the commit's other arms keep their last result
             # (log 199: a one-arm rerun replaced a nine-arm report, so a commit
             # with nine reds read 1/1 passed at sign-off).
-            earlier = earlier_rows(ctx, sha, ran)
+            earlier = earlier_rows(ctx, sha, ran + reused)
             for r in earlier:
                 o["rows"][r["name"]] = r
                 failed += row_failed(r)
@@ -8781,7 +8929,9 @@ def testd_close(ctx, S, jid):
                                 job=jid, requested_by=[r.get("node") for r in job["requested_by"]],
                                 arms=arms, partial=partial,
                                 **({"ran": ran, "ran_failed": o["failed"],
-                                    "earlier": [r["name"] for r in earlier]} if earlier else {}),
+                                    "earlier": [r["name"] for r in earlier]}
+                                   if earlier or reused else {}),
+                                **({"reused": reused} if reused else {}),
                                 **({"caps": S["caps"]} if S.get("caps") else {}),
                                 **({"behind": job["behind"]} if job.get("behind") else {}),
                                 **({"scoped": job["scope"]} if job.get("scope") and arms else {}),
@@ -8866,8 +9016,9 @@ def testq_teardown(ctx, job):
         pass
 
 
-def testq_ring(ctx, job, rep, code):
-    """Tell each requester the result, through its doorbell."""
+def testq_ring(ctx, job, rep, code, quiet=()):
+    """Tell each requester the result, through its doorbell; not those in
+    `quiet`, who read it on their own screen (a check reused whole, log 206)."""
     if job.get("state") != "done":
         text = (f"test job {job['id']} {job.get('state')}: {job.get('why') or ''} — harness test "
                 f"--log {job['id']}" + (f"; harness test --rerun {job['id']} runs what it didn't "
@@ -8876,16 +9027,18 @@ def testq_ring(ctx, job, rep, code):
         n = len(rep.get("checks") or [])
         text = ((partial_line(rep) + ". ") if partial_line(rep) else "") + (
                 (stale_line(rep.get("behind")) + " ") if rep.get("behind") else "") + (
-                (f"arms {', '.join(rep['ran'])}: {len(rep['ran']) - rep.get('ran_failed', 0)}/"
-                 f"{len(rep['ran'])} passed this run; with earlier runs, " if rep.get("earlier")
-                 else "")
+                ("every arm reused from an earlier run at this commit, what each reads "
+                 "unchanged; " if rep.get("reused") and "ran" not in rep else "")
+                + (f"arms {', '.join(rep['ran'])}: {len(rep['ran']) - rep.get('ran_failed', 0)}/"
+                 f"{len(rep['ran'])} passed this run; with earlier runs, " if "ran" in rep
+                 and rep["ran"] else "")
                 + f"check of {job['sha'][:8]}: {n - rep['failed'] - rep['held']}/{n} passed"
                 + (f", {rep['new']} new failure(s) against the baseline" if rep.get("new") else "")
                 + f" — harness check --report {job['sha'][:8]}")
     else:
         text = (f"test job {job['id']} (`{(job.get('command') or '')[:60]}`) exited {code} — "
                 f"output: {testq_dir(ctx) / (job['id'] + '.out')}")
-    told = set()
+    told = set(quiet)
     for r in job.get("requested_by") or []:
         n = r.get("node")
         if n and n not in ("operator", "owner") and n not in told:
@@ -26883,6 +27036,10 @@ def main():
                          "branch tip, or --sha); NODE is the requester and both of you are rung. "
                          "Runs --arms, else the full set. Rank 0's run under a halt")
     ck.add_argument("--sha", metavar="REF", help="with --for: the commit to check")
+    ck.add_argument("--again", action="store_true",
+                    help="run every arm asked for afresh: an arm that already ran at this "
+                         "commit, with what it reads unchanged, is otherwise reused (a flake "
+                         "hunt, a timing)")
     ck.add_argument("--memory", metavar="ARM=SIZE,...",
                     help="each arm's memory estimate, the least it may need (required; ARM=? for a never-run arm: alone, uncapped, measured)")
     tq = add("test", cmd_test)

@@ -1,7 +1,8 @@
 # consolidate v4: improvement plan, revision 3
 
-**Revision 3 (2026-10-22), after gate A.** Change 1 and stage B were revised on the owner's decisions at gate A,
-for review before stage B runs. The rest is revision 2, as approved (176eeeb), except that stage C now excludes the
+**Revision 3 (2026-10-22), after gate A and the owner's spot-check.** Change 1 and stage B were revised on the
+owner's decisions at gate A. After the spot-check, stage B gained a planted-fault test and change 2 a do-not-say
+sentence rule. All of this is for review before B0 runs. The rest is revision 2, as approved (176eeeb), except that stage C now excludes the
 writing set-aside.
 - Stage A is done: `stageA/results.md`.
 - The writing set-aside is drawn: `../writing-setaside/`.
@@ -130,6 +131,18 @@ by the adopted variant. If it is not, `holds` stays free text and stays the chec
 author and year in the text and the reference list).
 
 **Also:**
+- **Do-not-say entries are full sentences a writer can use** (owner, after the spot-check). The `dns` statement
+  is the wording not to use, written as a complete sentence a writer might write; `why` is a complete sentence;
+  the view prints "Say instead" with the full statements of the `instead` entries. The format gains this rule, and
+  the builder writes it; the view adds no words of its own.
+  - **Spot-check entry 20 (dns.27), as built:** `"About 2.2" as the community copy number of water.` · why: `the
+    EMP value pools free-living (soil, water, sediment) and plant-associated samples`. It is faithful, but a
+    writer cannot use it.
+  - **The same entry, as a writer could use it:** "Water communities carry about 2.2 16S copies per genome." ·
+    why: "The EMP's value of about 2.2 pools free-living samples (soil, water and sediment) with plant-associated
+    ones, so it is not a value for water." · say instead: community-copy-number.1.
+  - **The checker** still judges faithfulness. Making a sentence whole may rephrase the cited wording but must not
+    add to it.
 - Process wording is phrased for a writer ("not checked by a second reader", never "no critic checked it" or "the
   review").
 - Where an answer refers to the brief's options ("option (a)"), the view quotes the option.
@@ -334,13 +347,24 @@ approved the writing set-aside, drawn on 2026-10-22 (d7c1a9f).
 
 ### Stage B: build v4, re-score v3, rebuild the development set
 
-**Before it starts:** the owner's spot-check verdicts on `../v3/spot-check-16S.md` (20 entries). They are compared
-with the sealed first-pass checker verdicts (`spot-check-16S.checker.md`):
-- agreement;
-- each disagreement, and which way it goes: the checker stricter or more lenient than the owner;
-- the kinds involved.
+**The owner's spot-check** (20 entries, `../v3/spot-check-16S.md`), against the sealed first-pass checker
+verdicts. The owner's labels are mapped to fault kinds as the owner gave them. The owner had seen comments on
+entry 5 beforehand.
 
-This is reported before B1, since it bears on how far the checker is trusted. No agents.
+| Entry | Owner | Checker | Which way |
+|---|---|---|---|
+| 1 to 3, 7 to 9, 11 to 17, 19 | ok | ok | agree (11 and 16: language, a readability point, not a fault) |
+| 4 primers.5 | ok | `absent` ("abstract only" not in the text) | checker stricter: an addition |
+| 5 copy-number-correction.8 | `stronger` (drops "but not DNA mocks or most mock tests in one preprint") | ok | checker missed an omission (a dropped counter-clause) |
+| 6 copy-number-correction.15 | `conf`/`critic` (`src` shows `repl`, `conf` is `single`) | ok | checker missed a contradiction between fields |
+| 10 bias-consistency.1 | ok | `holds` (a setting not in the text) | checker stricter: an addition |
+| 18 compositional-analysis.3 | `holds` (omits McLaren 2022) | `holds` ("model" not in the text) | both fault it, for opposite reasons: the owner an omission, the checker an addition |
+| 20 dns.27 | ok for faithfulness, unreadable as do-not-say | ok | agree on faithfulness; readability goes to change 2 |
+
+They agree on 16 of 20 (ok or fault). Each found 3 faults, but only one entry is shared, and it is faulted for
+opposite reasons. **The checker catches additions and misses omissions** (dropped hedges and counter-evidence,
+fields that contradict each other), which is the riskier kind. Hence the planted-fault test, before the baseline
+is fixed. B0 records this table as `stageB/spotcheck.md`. No agents.
 
 **Inputs.**
 - The owner's decisions at gate A.
@@ -349,8 +373,44 @@ This is reported before B1, since it bears on how far the checker is trusted. No
 - The v3 code (66d17ef) for v3 inventories.
 
 **Work, in order.**
-1. **Build** changes 1 (hints) and 2 to 7, with tests and docs.
-2. **Re-score v3 (the new baseline).**
+1. **Build** changes 1 (hints) and 2 to 7, including the do-not-say sentence rule, with tests and docs.
+2. **Planted-fault test** (owner, after the spot-check). This tests whether the hint-equipped checker catches
+   known faults, by kind, especially omissions.
+   - **The pool:** a seeded draw of about 100 claims that the v3 first-pass checker passed, spread across the 14
+     notes. These are kept out of the baseline sample (step 3).
+   - **Screening:** a fresh screener, using change 5's wording without hints, confirms each claim is clean.
+     Claims it faults are set aside (and listed), because a planted fault on top of a real one would be caught
+     for the wrong reason.
+   - **Planting:** of the clean claims, about 60 get one known edit each, 12 per type, assigned by seed among the
+     claims where the type applies. About 40 stay unedited as controls. A fresh planter makes one minimal edit per
+     claim and records the before, the after and the intended fault kind:
+
+     | Edit type | What changes | Fault it should be | From |
+     |---|---|---|---|
+     | Hedge or scope removed | drop "may", "suggests", "in one soil", "on mocks", "in this model", a condition or a denominator | `stronger` | change 5's examples |
+     | Counter-clause dropped | drop the "but not …" or contrary finding the cited text gives | `stronger` | spot-check entry 5 |
+     | True setting added | add a setting from another sentence of the same result note that the entry does not cite: true in the source, unsupported by the cited text | `holds` | the checker's known strength, as a control on the method |
+     | Number changed slightly | 0.77 becomes 0.71, 36.6 becomes 33.6 | `numbers` | |
+     | Standing raised | in the statement ("one study found" becomes "studies find") or in a field (`conf` single becomes repl, or a `src` label made to disagree with `conf`) | `stronger` or `conf` | spot-check entry 6 |
+   - **Validation:** a fresh validator confirms that each planted claim differs from its clean version only by the
+     intended edit, and that the edit is a fault under change 5's wording. Failures are dropped and counted.
+   - **The judges:** two fresh hint-equipped checkers each judge all the claims (planted and controls), mixed in
+     seeded random order. They are told it is an ordinary check. Hints are recomputed for the edited claims by the
+     v4 code, as a real check would show them.
+   - **The report**, per edit type:
+     - claims planted;
+     - caught by each checker and by either;
+     - caught with the intended kind;
+     - whether a hint was present.
+
+     Omission edits carry no hints by construction, so their catch rate is the checker's unaided rate. The report
+     also gives the controls' false-fault rate, and Wilson intervals throughout (about 12 per type, so the
+     intervals are wide and are reported as such).
+   - **Checkpoint: stop and report after this step.** If a type's catch rate is poor, the checker's wording can
+     change before the baseline is scored with it. Changing it afterwards would mean re-scoring the baseline. If
+     the wording changes, the same planted set is re-judged by two fresh checkers with the new wording, to show
+     the change works.
+3. **Re-score v3 (the new baseline).**
    - **The sample:** about 300 entries from the 14 v3 as-built notes, by seeded stratified draw. At least 10 per
      note; the rest are allocated in proportion to each note's entries, by largest remainder.
    - **The packets:** made with the v3 inventories (the v3 code, so the `from` addresses resolve as the v3
@@ -358,7 +418,7 @@ This is reported before B1, since it bears on how far the checker is trusted. No
    - **The checkers:** fresh, with the v4 `checker.md` (change 5's wording and the hint paragraph), about 60
      entries each.
    - **The estimate:** the v3 rate is weighted back to each note's size.
-3. **Measure the hint effect.** A seeded subset of 100 of the 300, stratified 60 with at least one hint and 40
+4. **Measure the hint effect.** A seeded subset of 100 of the 300, stratified 60 with at least one hint and 40
    with none.
    - **The runs:** besides its with-hints verdicts from step 2 (W1), it is checked by one more fresh checker with
      hints (W2) and two fresh checkers without hints (N1, N2). Packets are identical apart from the hint lines.
@@ -370,24 +430,31 @@ This is reported before B1, since it bears on how far the checker is trusted. No
    - **The adjudicator:** one fresh adjudicator, without hints and blind to which verdict came from which
      condition, judges each discordant entry. That shows whether the hints found real faults, induced false ones,
      or both.
-4. **Rebuild** all 14 notes from scratch with fresh builders who have not seen the v3 notes. Each note is
+5. **Rebuild** all 14 notes from scratch with fresh builders who have not seen the v3 notes. Each note is
    first-pass checked by a fresh hint-equipped checker, fixed by its builder, and re-checked by a different fresh
    hint-equipped checker until clean, as in v3.
+6. **Do-not-say readability.** Every rebuilt note's writer's view is generated. One fresh reader, given only the
+   Do not say sections, marks each entry as usable by a writer as it stands, or a fragment, with a reason. This is
+   reported with a target of at least 90% usable. It is not a gate criterion unless the owner makes it one.
 
 **Outputs.**
 - `stageB/spotcheck.md`: the owner's spot-check against the checker.
+- `stageB/planted/`: the pool, screening, edits (sealed key), validation, both checkers' verdicts, catch rates by
+  type.
 - `stageB/baseline/`: sample, packets, verdicts, the re-scored v3 rates.
 - `stageB/hints/`: the four runs, agreement tables, adjudication.
-- `stageB/` rebuild: as-built notes, verdicts, re-checks, the omission report per note.
+- `stageB/` rebuild: as-built notes, verdicts, re-checks, the omission report per note, do-not-say readability.
 - `stageB/results.md`.
 - The rebuilt notes in the vault.
 
 **Agent runs:**
+- Planted faults: 1 screener, 1 planter, 1 validator and 2 checkers (2 more if the wording changes).
 - Re-score: 5 checkers.
 - Hint effect: 3 checkers and 1 adjudicator.
 - Rebuild: 7 builders, 16 first-pass checkers (16S needs two) and about 10 re-checkers.
+- Do-not-say readability: 1 reader.
 
-About 42, plus the builders' fix rounds.
+About 48, plus the builders' fix rounds.
 
 **Gate B: criteria** (fixed now). v4's first pass on the 14 rebuilt notes, against the re-scored v3, with the
 same checker setup:
@@ -492,17 +559,18 @@ Writers and fact-checkers are estimated at 80k to 130k each. In v3 the usage war
 
 | Session | Batch | Agent runs | Estimate |
 |---|---|---|---|
-| B0 | the owner's spot-check against the checker; build changes 1 to 7, tests, docs | none | small |
-| B1 | re-score about 300 v3 entries (5 checkers); hint effect on 100 (W2, N1, N2, then 1 adjudicator) | 9 | 0.8M |
-| B2 | 16S (MB-01 + MB-02): one builder, two checkers, re-checks | about 5 | 0.9M |
-| B3 | H2-01 + TSL; CB1 + CB2: two builders, four checkers, re-checks | about 8 | 1.0M |
-| B4 | NFERT + CB3; GHOST + TAXRES + H1-RES: two builders, five checkers, re-checks | about 9 | 1.0M |
-| B5 | H2-04 + H1-05: one builder, two checkers, re-checks | about 4 | 0.6M |
-| B6 | H1-02 + H1-06: one builder, two checkers, re-checks | about 4 | 0.6M |
-| B7 | compile `stageB/results.md`: rates, ratios and intervals against re-scored v3; every `stronger` and `numbers` fault listed | none | small |
+| B0 | record the spot-check; build changes 1 to 7 (with the do-not-say sentence rule), tests, docs | none | small |
+| B1 | planted-fault test: screener, planter, validator, two checkers; report and **stop (checkpoint)** | 5 | 0.4M |
+| B2 | re-score about 300 v3 entries (5 checkers); hint effect on 100 (W2, N1, N2, then 1 adjudicator) | 9 | 0.8M |
+| B3 | 16S (MB-01 + MB-02): one builder, two checkers, re-checks | about 5 | 0.9M |
+| B4 | H2-01 + TSL; CB1 + CB2: two builders, four checkers, re-checks | about 8 | 1.0M |
+| B5 | NFERT + CB3; GHOST + TAXRES + H1-RES: two builders, five checkers, re-checks | about 9 | 1.0M |
+| B6 | H2-04 + H1-05: one builder, two checkers, re-checks | about 4 | 0.6M |
+| B7 | H1-02 + H1-06: one builder, two checkers, re-checks | about 4 | 0.6M |
+| B8 | do-not-say readability (1 reader); compile `stageB/results.md`: rates, ratios and intervals against re-scored v3; every `stronger` and `numbers` fault listed | 1 | small |
 
-15 minutes between sessions B1 to B6. B1 reports its baseline and hint numbers in `state.md` before the rebuilds
-start, but does not stop for them: the gate is at the end of B7.
+15 minutes between sessions B2 to B8. B1 stops at its checkpoint for the owner. B2 reports its baseline and hint
+numbers in `state.md` and does not stop: the gate is at the end of B8.
 
 **Stage C:**
 
@@ -518,7 +586,7 @@ start, but does not stop for them: the gate is at the end of B7.
 
 15 minutes between sessions.
 
-**In all:** 2 runs in stage A (done), about 42 in stage B and 46 in stage C, plus builders' fix rounds, over 16
+**In all:** 2 runs in stage A (done), about 48 in stage B and 46 in stage C, plus builders' fix rounds, over 17
 sessions.
 
 ## Unseen-note budget

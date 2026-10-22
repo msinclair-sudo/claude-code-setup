@@ -45,9 +45,9 @@ From the note:
 > MB-01:C-002 [danger: Critic: answers partly supported] Most of it comes from full-text protocols, documentation and benchmarks; makers' statements are labelled as such.
 >
 
-**Verdict:** 
+**Verdict:** ok
 
-**Why:** 
+**Why:** text distiles the quotes
 
 ## 2. sampling-storage.4 (claim)
 
@@ -71,9 +71,9 @@ From the note:
 > MB-01:B-0052 [2. Steps from sample to table (D1) and departures from the sampled community (D2)] Otherwise not measured | Song 2016; Rubin 2013 |
 >
 
-**Verdict:** 
+**Verdict:** ok
 
-**Why:** 
+**Why:** text distiles the quotes
 
 ## 3. extraction.1 (claim)
 
@@ -91,9 +91,9 @@ From the note:
 > MB-01:A-004 [quote: Answers as delivered] DNA extraction: kit, bead-beating intensity, plate or single tube, and whether relic DNA is removed with PMA or DNase (Albertsen 2015; Minich 2019; Carini 2016; Lennon 2018).
 >
 
-**Verdict:** 
+**Verdict:** ok
 
-**Why:** 
+**Why:** text distiles the quotes
 
 ## 4. primers.5 (claim)
 
@@ -113,9 +113,9 @@ From the note:
 > MB-01:B-0106 [2.3 Primers and gene region] Even perfectly matched primers showed preferential amplification.
 >
 
-**Verdict:** 
+**Verdict:** ok
 
-**Why:** 
+**Why:** matches quotes near exact
 
 ## 5. copy-number-correction.8 (claim)
 
@@ -137,9 +137,9 @@ From the note:
 > MB-02:A-141 [Answers] Correction improves fit to simulated truth and some mocks [28,29,33] but not DNA mocks [32] or most mock tests in one preprint [31].
 >
 
-**Verdict:** 
+**Verdict:** bad
 
-**Why:** 
+**Why:** misses information, nuances aren't captured 
 
 ## 6. copy-number-correction.15 (claim)
 
@@ -167,9 +167,9 @@ From the note:
 > MB-02:C-005 [danger: Critic: answers partly supported] These soil-relevant low values are imprecise, and the soil correction example (Acidobacteria 50.1% to 66.0%) depends on them.
 >
 
-**Verdict:** 
+**Verdict:** holds
 
-**Why:** 
+**Why:** captures the relevant information. quotes numbers correctly, misses the  repeat warnings about low source material count
 
 ## 7. denoising-clustering.6 (claim)
 
@@ -187,9 +187,9 @@ From the note:
 > MB-01:I-0055 [2.10 Denoising and clustering] - The DADA2 developers report 93 output sequences on a 57-strain mock, against 249 for mothur and 378 for QIIME (Callahan 2016) [FT; meas; developer claim].
 >
 
-**Verdict:** 
+**Verdict:** okay
 
-**Why:** 
+**Why:** matches
 
 ## 8. workflow-bias.2 (claim)
 
@@ -217,9 +217,9 @@ From the note:
 > MB-01:C-149 [warning: Adversarial critique, full findings] The answer should say departures were measured at most steps examined.
 >
 
-**Verdict:** 
+**Verdict:** good
 
-**Why:** 
+**Why:** describes the gap in the searches
 
 ## 9. workflow-bias.4 (claim)
 
@@ -260,9 +260,9 @@ From the note:
 > MB-01:C-022 [danger: Critic: answers partly supported] Overall: strong qualitatively; moderate for the inflation of taxon counts; weak for per-step relative-abundance magnitudes and for consistency across samples.
 >
 
-**Verdict:** 
+**Verdict:** good
 
-**Why:** 
+**Why:** captures it well
 
 ## 10. bias-consistency.1 (claim)
 
@@ -290,9 +290,9 @@ From the note:
 > MB-01:B-0039 [1. Overview] Whether bias is consistent across samples is less settled.
 >
 
-**Verdict:** 
+**Verdict:** good
 
-**Why:** 
+**Why:** near verbose
 
 ## 11. bias-consistency.4 (claim)
 
@@ -320,9 +320,9 @@ From the note:
 > MB-01:B-0330 [6. Where the evidence conflicts] Bias composition dependence: Brooks 2015 versus McLaren 2019, on the same data.
 >
 
-**Verdict:** 
+**Verdict:** ok
 
-**Why:** 
+**Why:** gets the point across, but muddies it with use of bad language
 
 ## 12. abundance-distribution.22 (claim)
 
@@ -344,7 +344,7 @@ From the note:
 > MB-02:A-097 [quote: Answers as delivered] *Single-source sensitivity:* Removing Delgado-Baquerizo et al. 2018 [60] removes the only global amplicon-metagenome cross-check.
 >
 
-**Verdict:** 
+**Verdict:** good
 
 **Why:** 
 
@@ -368,7 +368,7 @@ From the note:
 > MB-01:C-054 [danger: Critic: answers partly supported] Verified against full text: McLaren 2019 per-step bias table (36.6 and 29.3 max, 5.5 and 5.6 mean), Silverman 2021 (2.6-fold, about 19% of taxa more than 4-fold, mis-set annealing machine), Sze and Schloss 2019 (R2 0.79, 0.044, 0.033; chimera rates 0.9 to 18.2%), Schloss 2024b (Table 1 read ranges, coverage-based iNEXT passage, Good's coverage 89.4 to 99.8%), Karstens 2019, Fitzpatrick 2018, Thompson 2017, Song 2016, Starke 2021, Louca 2018, Laursen 2017, Wen 2017, Weiss 2017, Nearing 2018 and 2022, Wirbel 2024, Zemb 2020, Glassman 2018, Chiarello 2022, Stoddard 2015, Vetrovsky 2013, Kembel 2012, Hornung 2019, Lennon 2018, Barlow 2020 and Dyrhovden 2021.
 >
 
-**Verdict:** 
+**Verdict:** yes
 
 **Why:** 
 
@@ -392,9 +392,9 @@ From the note:
 > MB-01:B-0355 [7. Bounds and negative results] - library normalisation, relative to metric choice (Thorsen 2016);
 >
 
-**Verdict:** 
+**Verdict:** good
 
-**Why:** 
+**Why:** near verbose
 
 ## 15. rarefying.1 (claim)
 
@@ -416,9 +416,9 @@ From the note:
 > MB-01:B-0326 [5.6 Summary by approach] | Rarefaction curves | Display of sampling completeness (ecology) | Not benchmarked as a comparison method in the sources found | Alpha |
 >
 
-**Verdict:** 
+**Verdict:** yes
 
-**Why:** 
+**Why:** near verbose
 
 ## 16. coverage-standardisation.3 (claim)
 
@@ -450,9 +450,9 @@ From the note:
 > MB-01:A-313 [8. Answers in brief] Coverage-based standardisation has almost no microbial benchmark.
 >
 
-**Verdict:** 
+**Verdict:** good
 
-**Why:** 
+**Why:** captures everything. just bad language 
 
 ## 17. richness-estimators.6 (claim)
 
@@ -472,9 +472,9 @@ From the note:
 > MB-01:A-241 [quote: Answers as delivered] Spurious singletons inflate them (Pinto and Raskin 2012; Chiu and Chao 2016).
 >
 
-**Verdict:** 
+**Verdict:** good
 
-**Why:** 
+**Why:** near verbose
 
 ## 18. compositional-analysis.3 (claim)
 
@@ -496,9 +496,9 @@ From the note:
 > MB-01:A-293 [quote: Answers as delivered] The bias-invariance of ratio-based methods rests on McLaren 2019.
 >
 
-**Verdict:** 
+**Verdict:** holds
 
-**Why:** 
+**Why:** misses a paper
 
 ## 19. absolute-quantification.4 (claim)
 
@@ -516,9 +516,9 @@ From the note:
 > MB-01:B-0314 [5.5 Absolute quantification of total load] - Absolute abundance could hold steady or rise while relative abundance fell (Tkacz 2018) [FT; soil].
 >
 
-**Verdict:** 
+**Verdict:** ok
 
-**Why:** 
+**Why:** verbose
 
 ## 20. dns.27 (do not say)
 
@@ -534,7 +534,7 @@ From the note:
 > MB-01:C-136 [warning: Adversarial critique, full findings] - D3 copy number by environment: the EMP ACN of about 2.2 pools free-living (soil, water, sediment) and plant-associated samples; the review notes this but still offers it in the 'water' row.
 >
 
-**Verdict:** 
+**Verdict:** bad
 
-**Why:** 
+**Why:** nosense
 

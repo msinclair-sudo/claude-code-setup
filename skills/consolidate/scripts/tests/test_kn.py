@@ -58,7 +58,7 @@ Lime is not scarce at current rates. Energy cost is small.
 """
 
 
-def knowledge(inputs, concepts, extra="", table=None, oos=""):
+def knowledge(inputs, concepts, extra="", table=None, oos="", gaps=""):
     rows = table or ""
     return f"""---
 type: knowledge
@@ -82,6 +82,7 @@ status: draft
 {extra}
 
 ## Gaps
+{gaps}
 
 ## Out of scope
 {oos}
@@ -122,13 +123,16 @@ class KnTests(unittest.TestCase):
         self.assertEqual(f2["critique"], "no (the note says none ran)")
         self.assertEqual(f2["citations"], "none found")   # two citations: too few to name a style
         self.assertTrue(f2["omission check"].startswith("fallback"))
-        self.assertEqual([x["text"] for x in inv2 if not x["id"].startswith("B-")],
+        self.assertEqual([x["text"] for x in inv2 if x["id"][0] not in "BR"],
                          ["Lime is not scarce at current rates.",
                                                      "Energy cost is small."])
 
-    def _plain(self, concepts, oos="- LIME:A-001..002: test"):
+    SECOND = ("- **gap.1** The verdict's figures were never checked by a second reader.\n"
+              "  blocks: none · origin: no critique ran · search: not stated")
+
+    def _plain(self, concepts, oos="- LIME:A-001..002: test", gaps=SECOND):
         row = "| LIME | [[plain]] | no (the note says none ran) | none found | no | no | fallback |"
-        return knowledge("  - LIME: R/plain.md", concepts, table=row, oos=oos)
+        return knowledge("  - LIME: R/plain.md", concepts, table=row, oos=oos, gaps=gaps)
 
     def test_not_stated_passes_and_inferred_fails(self):
         ok = "### lime: Lime\nneeds: none\n- **lime.1** Lime is not scarce at current rates.\n" \
@@ -170,7 +174,7 @@ class KnTests(unittest.TestCase):
 
     def test_labelled_marker_basis_and_index(self):
         f, inv = kn.detect(self.v / "R" / "lab.md")
-        ids = [x["id"] for x in inv if not x["id"].startswith("B-")]
+        ids = [x["id"] for x in inv if x["id"][0] not in "BR"]
         row = ("| AB-01 | [[lab]] | yes | labelled (access; class; standing) | yes (11 of 11 labels) | no | exact |")
         c = ("### copy: Copy number\nneeds: none\n- **copy.1** Genomes carry 1 to 15 copies.\n"
              "  conf: repl (marker) · class: meas (marker) · holds: genomes · src: rayGenomesCopies2015 (repl) · "
@@ -193,7 +197,8 @@ class KnTests(unittest.TestCase):
         self.assertEqual(f["answers section"], "yes")
         self.assertIn("Lime is cheap at St. Luce farms in most years.", [x["text"] for x in inv])
         self.assertEqual(sum(1 for x in inv if x["id"].startswith("I-")), 10)
-        self.assertFalse(any("Kim, A." in x["text"] for x in inv))      # the reference list is not inventoried
+        refs = [x for x in inv if "Kim, A." in x["text"]]                  # the reference list: R addresses only
+        self.assertTrue(refs and all(x["id"].startswith("R-") for x in refs))
 
     def test_from_none_critic_basis_rating_and_body_addresses(self):
         base = "### lime: Lime\nneeds: none\n- **lime.1** Rates vary from 1 to 5 t per hectare.\n" \
@@ -235,7 +240,7 @@ class KnTests(unittest.TestCase):
 
     def test_limit_src_correction_trail_comma_and_table_words(self):
         f, inv = kn.detect(self.v / "R" / "lab.md")
-        ids = [x["id"] for x in inv if not x["id"].startswith("B-")]
+        ids = [x["id"] for x in inv if x["id"][0] not in "BR"]
         row = "| AB-01 | [[lab]] | yes | labelled (access; class; standing) | yes (11 of 11 labels) | no | exact |"
         c = ("### copy: Copy number\nneeds: none\n- **copy.1** Genomes carry 1 to 15 copies.\n"
              "  conf: single (critic: C-002) · class: meas (marker) · holds: genomes · "
@@ -273,23 +278,120 @@ class KnTests(unittest.TestCase):
                                               "> **Directions:**\n> - **D1.** How much PCR bias does copy number "
                                               "explain?\n\n> [!note] ROUTING\n> - **D2.** project only\n")
         f, inv = kn.detect(self.v / "R" / "lab.md")
-        ids = [x["id"] for x in inv if not x["id"].startswith("B-")]
+        ids = [x["id"] for x in inv if x["id"][0] not in "BR"]
         row = "| AB-01 | [[lab]] | yes | labelled (access; class; standing) | yes (11 of 11 labels) | no | exact |"
         c = ("### copy: Copy number\nneeds: none\n- **copy.1** Genomes carry 1 to 15 copies.\n"
              "  conf: repl (marker) · class: meas (marker) · holds: genomes · src: rayGenomesCopies2015 (repl) · "
-             "trail: AB-01 §1. Copy · from: AB-01:I-0002")
-        oos = "- " + ", ".join(f"AB-01:{i}" for i in ids if i != "I-0002") + ": test"
+             "trail: AB-01 §1. Copy · from: AB-01:I-0002\n"
+             "- **copy.2** Correction worsened fit in ten mocks.\n"
+             "  conf: single (marker) · class: meas (marker) · holds: ten mocks · src: leeTitleWords2019 · "
+             'trail: AB-01 §1. Copy · from: AB-01:I-0003 · rating: "worsened fit" (critic: C-002: rests on one dataset)')
+        dns = ('- **dns.1** "Copy number explains about 60% of PCR bias."\n'
+               "  why: The critic says copy number explains part of the bias, in one mock only. · instead: copy.1 · "
+               "from: AB-01:C-001")
+        gaps = ("- **gap.1** Copy number in soil.\n  blocks: copy · origin: critic coverage gap · "
+                "search: not searched (critic: C-001) · from: AB-01:C-001")
+        oos = "- " + ", ".join(f"AB-01:{i}" for i in ids if i not in ("I-0002", "I-0003", "C-001")) + ": test"
         p = self.v / "K.md"
-        p.write_text(knowledge("  - AB-01: R/lab.md", c, table=row, oos=oos))
+        p.write_text(knowledge("  - AB-01: R/lab.md", c, extra=dns, table=row, oos=oos, gaps=gaps))
+        self.assertEqual(kn.lint(p), 0)
         kn.view(p, self.v / "W.md")
         w = (self.v / "W.md").read_text()
         self.assertIn("**D1. How much PCR bias does copy number explain?**", w)
         self.assertNotIn("project only", w)                       # ROUTING never reaches the view
-        self.assertIn("Answer to D1, as the review gave it; the critic did not reformulate it.", w)
+        self.assertIn("*Answer, as the research gave it; a second reader reviewed it and left it as given.*", w)
         self.assertIn("Copy number explains about 60% of PCR bias (Lee 2019).", w)   # label stripped
-        self.assertIn("- Genomes carry 1 to 15 copies. *(repl)*", w)
-        for prov in ("rayGenomesCopies2015", "trail:", "AB-01:I-0002", "holds:", "§"):
+        # everything with epistemic weight is content: who, setting, class in words, standing, rating and ruling
+        self.assertIn("- Genomes carry 1 to 15 copies. (Ray 2015)\n  Holds for: genomes.\n"
+                      "  Evidence: measured; replicated.", w)
+        self.assertIn('rated "worsened fit" by the research; a second reader disputes this: rests on one dataset', w)
+        self.assertIn('- Do not write: "Copy number explains about 60% of PCR bias."\n  Why: The critic says', w)
+        self.assertIn("  Say instead: Genomes carry 1 to 15 copies. (Ray 2015)", w)
+        self.assertIn("- Copy number in soil.\n  Not searched for.", w)
+        self.assertIn("## References\n\n- Lee, A. (2019). A title. J.\n- Ray, B. (2015). Genomes. J.", w)
+        for prov in ("rayGenomesCopies2015", "trail:", "AB-01:I-0002", "C-001", "§"):      # only navigation goes
             self.assertNotIn(prov, w)
+
+    def test_hints_go_to_checker_packets_only(self):
+        c = ("### lime: Lime\nneeds: none\n- **lime.1** Lime is not scarce at current Ethiopian rates of 7 t.\n"
+             "  conf: not stated · class: not stated · holds: Oregon coastal soils · src: leeTitleWords2019 · "
+             "trail: LIME §Verdict · from: LIME:A-001\n"
+             "- **lime.2** Energy cost is small.\n  conf: not stated · class: not stated · holds: current rates · "
+             "src: leeTitleWords2019 · trail: LIME §Verdict · from: LIME:A-002")
+        p = self.v / "K.md"
+        p.write_text(self._plain(c, oos=""))
+        r = subprocess.run([sys.executable, str(KN), "lint", str(p)], capture_output=True, text=True)
+        self.assertNotIn("Not found in the cited text", r.stdout)            # lint never prints hints
+        kn.packets(p, self.v / "plain-pk")
+        self.assertNotIn("Not found in the cited text", (self.v / "plain-pk" / "packet-01.md").read_text())
+        subprocess.run([sys.executable, str(KN), "packets", "--hints", str(p), str(self.v / "pk")], check=True,
+                       capture_output=True)
+        txt = (self.v / "pk" / "packet-01.md").read_text()
+        one, two = txt.split("## lime.2")
+        self.assertIn(f"{kn.HINT_LINE}: 7; Ethiopian; holds: oregon; holds: coastal; holds: soils", one)
+        self.assertNotIn(kn.HINT_LINE, two)                                  # everything found: no line
+        self.assertIn("where to look, not what is wrong", (KN.parents[1] / "references" / "checker.md").read_text())
+
+    def test_detection_misses_fail_loudly(self):
+        # a title that starts like a references heading is not one: the body still gets addresses
+        note = ("# Sources of functional covariation\n\n## Findings\n\nCovariation is strong in soils. "
+                "It is weak in water.\n\n## References\n\n1. Lee, A. (2019). A title. J 1: 1.\n")
+        (self.v / "R" / "src.md").write_text(note)
+        f, inv = kn.detect(self.v / "R" / "src.md", "SRC")
+        self.assertEqual(f["body addresses"], 2)
+        self.assertEqual([x["id"][0] for x in inv if "Lee, A." in x["text"]], ["R"])
+        # answers under 'Provisional verdicts' and 'Assessment' are answers
+        for head in ("## Provisional verdicts (single-pass)", "## Assessment: redundancy holds in soil"):
+            (self.v / "R" / "pv.md").write_text(f"# Scout\n\n## Findings\n\nA thing was found.\n\n{head}\n\n"
+                                                "Integrate several taxonomies.\n")
+            f, inv = kn.detect(self.v / "R" / "pv.md", "PV")
+            self.assertTrue(f["omission check"].startswith("fallback"), (head, f))
+            self.assertIn("Integrate several taxonomies.", [x["text"] for x in inv if x["id"].startswith("A-")])
+        # nothing detected: lint fails unless the answer sections are declared
+        (self.v / "R" / "free.md").write_text("# Review\n\n## Sub-claim 1\n\nPangenomes vary.\n\n"
+                                              "## Where it lands\n\nThe premise holds in soil.\n")
+        c = ("### pan: Pangenome\nneeds: none\n- **pan.1** Pangenomes vary.\n  conf: not stated · class: not stated · "
+             "holds: h · src: leeTitleWords2019 · trail: FREE §Sub-claim · from: FREE:B-0001")
+        row = "| FREE | [[free]] | no | none found | no | no | not run |"
+        k = knowledge("  - FREE: R/free.md", c, table=row, gaps=self.SECOND)
+        code, out = self.lint(k)
+        self.assertIn("omission check cannot run", out)
+        declared = k.replace("built: 2026-10-21", "answers:\n  - FREE: §Where it lands\nbuilt: 2026-10-21")
+        declared = declared.replace("| not run |", "| fallback |").replace(
+            "## Out of scope\n", "## Out of scope\n- FREE:A-001: test\n")
+        code, out = self.lint(declared)
+        self.assertNotIn("cannot run", out)
+        self.assertIn("omission FREE: fallback, 1/1", out)
+        # a section of refuted claims is not a second reader
+        (self.v / "R" / "ref.md").write_text("# H\n\n## Verdict\n\nIt works.\n\n## Refuted (killed in verification)\n\n"
+                                             "- It always works: killed 3-0.\n")
+        f, _ = kn.detect(self.v / "R" / "ref.md", "REF")
+        self.assertEqual(f["critique"], "refutations only")
+        # an uncritiqued note without the second-reader gap fails
+        code, out = self.lint(self._plain("### lime: Lime\nneeds: none\n- **lime.1** Lime is not scarce at current "
+                                          "rates.\n  conf: not stated · class: not stated · holds: current rates · "
+                                          "src: leeTitleWords2019 · trail: LIME §Verdict · from: LIME:A-001..002",
+                                          oos="", gaps=""))
+        self.assertIn("never checked by a second reader", out)
+
+    def test_splitter_search_status_rating_and_years(self):
+        self.assertEqual(kn.sentences("Shown by J. Smith in 2020. Then Supp. Fig. 3 shows it."),
+                         ["Shown by J. Smith in 2020.", "Then Supp. Fig. 3 shows it."])
+        base = ("### lime: Lime\nneeds: none\n- **lime.1** No study measured lime supply.\n"
+                '  conf: not stated · class: search (note: "Lime is not scarce") · holds: h · src: leeTitleWords2019 · '
+                "trail: LIME §Verdict · from: LIME:A-001..002{x}")
+        code, out = self.lint(self._plain(base.format(x=""), oos=""))
+        self.assertIn("class search needs its search status", out)
+        code, out = self.lint(self._plain(base.format(x=" · search: searched, not found"), oos=""))
+        self.assertIn("needs its basis", out)
+        code, out = self.lint(self._plain(base.format(x=' · search: searched, not found (note: "Lime is not scarce")'),
+                                          oos=""))
+        self.assertEqual(code, 0, out)
+        code, out = self.lint(self._plain(base.format(x=" · search: not stated · contrary: one-sided"), oos=""))
+        self.assertIn("one-sided rests on the critic", out)
+        code, out = self.lint(self._plain(base.format(x=' · search: not stated · rating: "Energy cost" '
+                                                         "(critic: C-009: weak)"), oos=""))
+        self.assertIn("rating basis LIME:C-009 is not in the inventory", out)
 
 
 if __name__ == "__main__":

@@ -25,6 +25,10 @@ tags:
 - `inputs`: one `ID: path` per result note, the path relative to the vault root. The ID is the brief ID the note
   names (MB-01); `kn.py detect` proposes one when it finds none.
 - `refs` (optional): an existing bibliography. A source whose DOI is in it keeps its key there.
+- `answers` (optional): for an input whose answers sit under headings detection does not know, the sections that
+  hold them, as heading starts: `- H1-RES: §Assessment, §Quantitative synthesis`. Or `- ID: none (reason)` when the
+  note has no answers at all. Lint fails when detection finds no answers, labels or critique and nothing is
+  declared, because the omission check would not run.
 
 ## Sections, in this order
 
@@ -66,6 +70,18 @@ The Inputs row copies what `kn.py detect` printed; lint compares them. A blank s
 - **Body addresses** `B-nnnn`: every other sentence of the note, callouts included (the references and the
   critique are not), each occurrence its own address, so a repeated line can be cited where it stands. Not
   required, but they are how an entry built from the body says where it came from.
+- **Reference addresses** `R-nnnn`: the reference list and the "Sources not obtained" list, sentence by sentence,
+  so that a finding that lives only in a reference annotation can be cited. Not required.
+
+Detection reports what it could not address, and lint fails loudly on a miss:
+- an input with no body addresses (a title taken for a references heading);
+- a reference list larger than the rest of the note;
+- a section with text that got no address;
+- an input whose omission check cannot run and declares nothing (frontmatter `answers`).
+
+The note's own title never decides what a section is. A section of refuted or killed claims is reported as
+`critique: refutations only`: its items are inventoried as critique items and become do-not-say entries, but no
+second reader checked the rest, so the note still gets the second-reader gap.
 
 ## Concepts
 
@@ -101,10 +117,20 @@ the words and the critic pull apart, the critic wins; when the critic gives no v
 | `src` | citekeys from Sources, comma-separated, each optionally followed by the note's labels for it in brackets: `mclarenConsistentCorrectableBias2019 (FT; single)`, `(AB; INDIRECT)`. Where the critic corrected a label, the corrected one, marked: `(AB; meas; single; critic: MB-01:C-019 was "FT; meas; repl")`. `none (<reason>)` when the note cites nothing for it: `none (the reviewer's synthesis)` |
 | `trail` | where the note verified it: `<ID> §<start of a heading or callout title>`, more after commas (`MB-01 §2.2, §2.14`); `§critic` and `§answers` reach those blocks |
 | `from` | the inventory items it comes from and accounts for: `MB-01:I-0012`, `MB-01:B-0340`, ranges `MB-01:I-0012..0015`, critique items `MB-01:C-004`. Never empty |
-| `rating` (optional) | the note's own grade for this claim, in its words and in quotes: `rating: "Moderate"`, `rating: "Confidence: high (3-0)"`, `rating: "well established"` |
+| `rating` (optional) | the note's own grade for this claim, in its words and in quotes: `rating: "Moderate"`, `rating: "Confidence: high (3-0)"`, `rating: "well established"`. The note's grade always stays; where the critic disputes it, its ruling goes beside it: `rating: "Moderate as a methodological point" (critic: C-050: rests on a summary of the preprint)` |
 | `limit` (optional) | `access`, or `access and evidence`, with its basis: the note says the claim's standing or verification is limited because a source was not accessed (abstract only, not obtained, known only second-hand or "not read in the original", a figure not confirmable from the text read). Only when the note gives that reason |
+| `search` | required on a `class: search` claim (and on every gap): `searched, not found`, `not searched` or `not stated`, with its basis (below) |
+| `contrary` (optional) | on a claim that states a conclusion: whether contrary evidence was looked for. `searched`, `one-sided` (basis: the critic's one-sided-handling finding) or `not stated`, with its basis |
 
-All but `rating` and `limit` are required, and none may be empty.
+All but `rating`, `limit`, `search` and `contrary` are required, and none may be empty.
+
+**Search status is never inferred.** An absence ("no study found", "not measured", "untested") says which it is,
+because a writer cannot tell "the literature has not shown it" from "this search did not look". The basis is:
+- `(note: "words")`: the note's own not-found or unsearched statement, or its named search routes;
+- `(critic: C-nnn)`: the critic's coverage gap or one-sided-handling finding;
+- `(run: ...)`: the run record (`bounding_or_contrary` findings, search routes).
+
+Where none says, `not stated`.
 
 **Basis** for `conf`, `class` and `limit` (required unless `not stated`):
 - `(marker)`: read from the citation labels (`[FT; meas; repl]`) of a note with labelled citations.
@@ -152,6 +178,9 @@ A method the note describes ("by construction", "a Monte Carlo study") is a basi
   range or total the note itself gives is the note's claim: keep it as a claim, with `holds` naming the sources
   it spans, beside the claims for each source.
 - Words and facts come from the note. No examples, explanations or numbers that are not in it.
+- Say what a finding is, never which entry it is: `holds`, `why`, `origin` and a `src: none (…)` reason do not
+  cite entry IDs (`symbiotic-fixation.5`). IDs are navigation, and the writer's view does not show them. Lint
+  warns.
 - A "not found" can be a claim (`class: search`, the routes in `holds`) as well as a gap.
 - Access and directness (`INDIRECT`, abstract only, "single-pass extraction") go with the source in `src`, in the
   note's own words.
@@ -186,6 +215,20 @@ not need a research run; they get a lighter check.
   why: one 7-taxon dataset (Brooks 2015 reanalysed by McLaren 2019); Fouhy 2016 found two extraction methods very similar; MBQC put specimen type first · instead: bias.2 · trail: MB-01 §critic · from: MB-01:C-045
 ```
 
+The statement is the wording not to use, **written as a full sentence a writer might write**, and `why` is a full
+sentence. A writer reads them in the writer's view as "Do not write: … Why: … Say instead: …", so a fragment is no
+use to them. As built in v3, and as it should be:
+
+```markdown
+- **dns.27** "About 2.2" as the community copy number of water.
+  why: the EMP value pools free-living (soil, water, sediment) and plant-associated samples
+- **dns.27** "Water communities carry about 2.2 16S copies per genome."
+  why: The EMP's value of about 2.2 pools free-living samples (soil, water and sediment) with plant-associated ones, so it is not a value for water. · instead: community-copy-number.1 · from: MB-01:C-136
+```
+
+Making a sentence whole may rephrase the note's wording but must not add to it: the checker still judges it
+against its `from` text.
+
 IDs `dns.<n>`. Wordings that the inputs themselves say are wrong or overstated, and nothing else:
 - the review's wording where the critic corrected it (single-source claims phrased as the field's, pooled
   figures, merged cases, the reviewer's reading presented as a finding);
@@ -201,15 +244,17 @@ gap, quoting both. `instead`: the entries to use, or `none`. A dispute in the fi
 
 ```markdown
 - **gap.2** Reads per sample within a run, and their relation to sample load.
-  blocks: depth · origin: critic coverage gap; two primary studies known only through Schloss 2024b · from: MB-01:C-071
+  blocks: depth · origin: critic coverage gap; two primary studies known only through Schloss 2024b · search: not stated · from: MB-01:C-071
 ```
+
+Every gap carries `search` (as for a `class: search` claim). `blocks` may be `none`.
 
 IDs `gap.<n>`. What the research did not establish and a later stage may need: critic coverage gaps, "not found"
 and "unsearched" results, sources not obtained that matter, a concept with no claim behind it, a note that
 contradicts itself, a follow-up the note's stage-2 check called for. A gap may cite the sources it names in
-`src`. A note with no critique gets one gap naming
-the figures its answers rest on: they were never checked by a second reader. `blocks`: the concepts or entries
-waiting on it. These go back to research; consolidation never fills them.
+`src`. A note with no critique, or with refutations only, gets one gap
+naming the figures its answers rest on: they were never checked by a second reader (lint fails without it).
+`blocks`: the concepts or entries waiting on it. These go back to research; consolidation never fills them.
 
 ## Out of scope
 
@@ -233,7 +278,9 @@ block can be collected into the bibliography.
 - Keys: `python3 scripts/kn.py citekey --author "<BibTeX author>" --title "<title>" --year <year> --doi <doi>
   --refs "<vault>/<refs>"`. It returns the key the source already has in `refs`, or the vault's rule
   (`auth.lower + shorttitle(3,3) + year`, as `PhD/Proposal/.hb/websearch/build_bibs.py` applies it). Lint warns
-  when a key differs. Add `a`, `b` when two sources would share a key.
+  when a key differs. Add `a`, `b` when two sources would share a key. A kept bibliography key whose year differs
+  from the note's (often online against issue year) is reported as information only: transcribe the note's year,
+  never look it up.
 - `note = {access: full_text (MB-01), abstract_only (MB-02); type: peer reviewed; cited as: MB-02 [3]}`. Access
   is `full_text`, `abstract_only`, `secondary`, `not_obtained` or `not stated` (the note gives none), followed by
   the note's own words in brackets when it says more ("full_text (single-pass extraction)"). Where the critic

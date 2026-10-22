@@ -4,9 +4,12 @@
   kn.py detect NOTE [--id ID] [--inventory OUT.md]   what the note has, which checks can run, and the
                                                      inventory of items the knowledge note must account for
   kn.py lint KNOWLEDGE.md                            check the knowledge note; write KNOWLEDGE.index.json
-  kn.py packets KNOWLEDGE.md OUTDIR [--only IDS]     each claim and do-not-say entry beside the note text it
+  kn.py packets KNOWLEDGE.md OUTDIR [--only IDS] [--hints]
+                                                     each claim and do-not-say entry beside the note text it
                                                      came from, for the faithfulness checker; --only takes
-                                                     comma-separated entry IDs (the fixed ones, for the re-check)
+                                                     comma-separated entry IDs (the fixed ones, for the re-check);
+                                                     --hints adds, under each entry, the words not found in its
+                                                     cited text (for the checker only, never the builder)
   kn.py spotcheck KNOWLEDGE.md OUT.md [--n 20 --seed S]
                                                      a random sample of entries, each with its from text and
                                                      trail, for a person to judge (the seed is recorded)
@@ -60,13 +63,19 @@ STYLES = {
         r"\b[A-Z][A-Za-z\-'\u00C0-\u017F]+(?: (?:and|&) [A-Z][A-Za-z\-'\u00C0-\u017F]+| et al\.?)? \(?\d{4}[a-z]?\b"),
 }
 CRITIC_TITLE = re.compile(r"critic|critique|adversarial|refuted|killed in verification", re.I)
-ANSWER_TITLE = re.compile(r"^(?:\d+\.\s*)?(?:answers?\b|verdicts?\b)|answers as delivered|answers in brief", re.I)
+REFUTED_TITLE = re.compile(r"refuted|killed in verification", re.I)      # refutations, not a second reader's critique
+ANSWER_TITLE = re.compile(r"^(?:\d+\.\s*)?(?:answers?\b|verdicts?\b|provisional verdicts?\b|assessment\b|"
+                          r"quantitative synthesis\b)|answers as delivered|answers in brief", re.I)
 NO_CRITIC = re.compile(r"\bno\b|not run|without|was not", re.I)
-REF_TITLE = re.compile(r"^(?:\d+\.\s*)?(?:references?|reference list|bibliography|sources)\b", re.I)
+# A references heading is the whole title ("References", "Sources (12)"), never the start of a longer one: a note
+# titled "Sources of functional covariation" is not its own reference list.
+REF_TITLE = re.compile(r"^(?:\d+\.\s*)?(?:references?|reference list|bibliography|sources|works cited)"
+                       r"(?:\s*\([^)]*\))?\s*:?$", re.I)
 SKIP_TITLE = re.compile(r"note role|provenance|search record|sources not obtained|references?$|reference list|"
                         r"bibliography|stage.?2|conventions|verification log", re.I)
 SENT = re.compile(r"(?<=[.!?])[\"')\]]*\s+(?=[A-Z(\[\"*])")
-ABBR = re.compile(r"(?:\b(?:St|Dr|Mr|Ms|Mrs|Prof|Fig|Figs|Eq|No|Vol|cf|vs|al|approx|ca|Inc|Ltd|Co|sp|spp|e\.g|i\.e)\.)$")
+ABBR = re.compile(r"(?:\b(?:St|Dr|Mr|Ms|Mrs|Prof|Fig|Figs|Eq|No|Vol|cf|vs|al|approx|ca|Inc|Ltd|Co|sp|spp|e\.g|i\.e|"
+                  r"Supp|Suppl|Tab|Ref|Refs|Ch|Sect)\.|(?<![\w.])[A-Z]\.)$")     # "J. Smith", "Supp. Fig. 3"
 
 
 def bare(kind, title):
@@ -105,17 +114,18 @@ def sections(body):
     return [tuple(s) for s in out]
 
 
-def region_lines(secs, want, default=False):
+def region_lines(secs, want, default=False, title_at=None):
     """Lines of the sections `want` picks. want(kind, title) is True, False, or None to inherit from the enclosing
     heading (default at the top), so an excluded section excludes its subsections and an included one includes
-    them. A callout belongs to the heading above it unless want decides it."""
+    them. A callout belongs to the heading above it unless want decides it. The note's own title (the heading at
+    line `title_at`) never decides: its words describe the note, not a section."""
     out, stack = [], []          # (level, included)
-    for kind, title, level, lines, _ in secs:
+    for kind, title, level, lines, at in secs:
         if kind == "heading":
             while stack and stack[-1][0] >= level:
                 stack.pop()
         parent = stack[-1][1] if stack else default
-        w = want(kind, title)
+        w = None if (kind == "heading" and at == title_at) else want(kind, title)
         inc = parent if w is None else bool(w)
         if kind == "heading":
             stack.append((level, inc))
@@ -169,10 +179,16 @@ def is_bullet(u):
     return bool(re.match(r"([-*+]|\d+[.)])\s+", u))
 
 
-def detect(path, nid=None):
+def detect(path, nid=None, declared=None):
+    """What a result note has, and its inventory. `declared`: answer sections the knowledge note's frontmatter names
+    for this input (heading starts, '§' optional), for answers under headings detection does not know; or
+    'none (reason)'."""
     full, body, _ = read(path)
     secs = sections(body)
     title = next((t for k, t, lv, _, _ in secs if k == "heading" and lv == 1), Path(path).stem)
+    title_at = next((at for k, t, lv, _, at in secs if k == "heading" and lv == 1), None)
+    decl = declared if isinstance(declared, list) else []
+    decl_none = isinstance(declared, str) and declared.strip().lower().startswith("none")
     labels = [label_parts(m.group(1)) for m in BRACKET.finditer(body)]
     labels = [st for ok, st in labels if ok]
     with_standing = sum(1 for st in labels if st)
@@ -181,11 +197,18 @@ def detect(path, nid=None):
     style = "labelled (access; class; standing)" if labelled else (
         max(style_counts, key=style_counts.get) if max(style_counts.values()) >= 5 else "none found")
     is_crit = lambda t: bool(CRITIC_TITLE.search(t)) and not re.search(r"stage.?2", t, re.I) and not NO_CRITIC.search(t)
-    is_ans = lambda k, t: bool(ANSWER_TITLE.search(bare(k, t))) or (k == "callout" and "answer" in t.lower())
-    crit = region_lines(secs, lambda k, t: True if is_crit(t) else (False if is_ans(k, t) else None))
+    is_decl = lambda k, t: any(bare(k, t).lower().startswith(d.lstrip("§ ").lower()) for d in decl if d.strip("§ "))
+    is_ans = lambda k, t: (bool(ANSWER_TITLE.search(bare(k, t))) or (k == "callout" and "answer" in t.lower())
+                           or is_decl(k, t))
+    crit = region_lines(secs, lambda k, t: True if is_crit(t) else (False if is_ans(k, t) else None),
+                        title_at=title_at)
     said_none = any(CRITIC_TITLE.search(t) and NO_CRITIC.search(t) for _, t, *_ in secs)
-    answers = region_lines(secs, lambda k, t: False if CRITIC_TITLE.search(t) else (True if is_ans(k, t) else None))
-    refs_only = lambda k, t: False if (REF_TITLE.search(bare(k, t)) or "not obtained" in t.lower()) else None
+    refuted_only = bool(crit) and all(REFUTED_TITLE.search(t) and not re.search(r"critic|critique|adversarial", t, re.I)
+                                      for t, _ in crit)
+    answers = region_lines(secs, lambda k, t: False if CRITIC_TITLE.search(t) else (True if is_ans(k, t) else None),
+                           title_at=title_at)
+    is_refs = lambda k, t: bool(REF_TITLE.search(bare(k, t).strip())) or "not obtained" in t.lower()
+    refs_only = lambda k, t: False if is_refs(k, t) else None
     bib = len(re.findall(r"^@\w+\{", body, re.M))
     if not nid:
         m = re.search(r"(?:review for|brief|Brief)\s+\*{0,2}([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+)\b", full) or \
@@ -208,7 +231,7 @@ def detect(path, nid=None):
     if labelled:
         ver = "exact (every labelled sentence, every answer sentence, and the critique)"
         keep = region_lines(secs, lambda k, t: False if (CRITIC_TITLE.search(t) or SKIP_TITLE.search(t)) else None,
-                            default=True)
+                            default=True, title_at=title_at)
         n = 0
         for where, lines in keep:
             for ui, u in enumerate(units(lines)):
@@ -240,13 +263,15 @@ def detect(path, nid=None):
                     inv.append({"id": f"A-{n:03d}", "where": where, "text": s})
     elif not labelled:
         ver = ("critique only (no labelled citations and no answers section found)" if crit
+               else "not run (declared: no answer sections)" if decl_none
                else "not run (no labelled citations, answers or critique found)")
     # every other sentence of the note gets an address: not required, but a claim's `from` can point to it. Each
     # occurrence gets its own, so a repeated line ("*Strength:* Moderate.") can be cited where it stands. The
-    # critique has its own addresses (C-nnn).
+    # critique has its own addresses (C-nnn); the reference list and the sources-not-obtained list theirs (R-nnnn),
+    # so a finding that lives only in a reference annotation can still be cited.
     in_crit = {id(lines) for _, lines in crit}
     n = 0
-    for where, lines in region_lines(secs, refs_only, default=True):
+    for where, lines in region_lines(secs, refs_only, default=True, title_at=title_at):
         if id(lines) in in_crit:
             continue
         for ui, u in enumerate(units(lines)):
@@ -254,9 +279,27 @@ def detect(path, nid=None):
                 if (id(lines), ui, k) not in occupied:
                     n += 1
                     inv.append({"id": f"B-{n:04d}", "where": where, "text": s})
+    n = 0
+    for where, lines in region_lines(secs, lambda k, t: True if is_refs(k, t) else None, title_at=title_at):
+        if id(lines) in in_crit:
+            continue
+        for u in units(lines):
+            for s in sentences(u):
+                n += 1
+                inv.append({"id": f"R-{n:04d}", "where": where, "text": s})
+    # coverage: every section with text should have given at least one address; a section that gave none (or a
+    # reference list that swallowed the body) is a detection miss, reported so that lint can fail loudly
+    addressed = {x["where"] for x in inv}
+    unaddressed = []
+    for kind, t, lv, lines, at in secs:
+        nsent = sum(len(sentences(u)) for u in units(lines))
+        if nsent and t not in addressed and at != title_at:
+            unaddressed.append(f"{bare(kind, t)[:60]} ({nsent} sentences)")
+    kinds = Counter(x["id"][0] for x in inv)
     feats = {
         "id": nid, "path": str(path), "title": title,
-        "critique": "yes" if crit else ("no (the note says none ran)" if said_none else "no"),
+        "critique": ("refutations only" if refuted_only else "yes") if crit else
+                    ("no (the note says none ran)" if said_none else "no"),
         "citations": style,
         "standing labels": f"yes ({with_standing} of {len(labels)} labels)" if with_standing else "no",
         "answers section": "yes" if answers else "no",
@@ -264,19 +307,25 @@ def detect(path, nid=None):
                                                      else "not found"),
         "run record": "yes" if sidecar.exists() else "no",
         "omission check": ver,
-        "inventory": Counter(x["id"][0] for x in inv if x["id"][0] != "B"),
-        "body addresses": sum(1 for x in inv if x["id"][0] == "B"),
+        "inventory": Counter(x["id"][0] for x in inv if x["id"][0] not in "BR"),
+        "body addresses": kinds["B"],
+        "reference addresses": kinds["R"],
+        "unaddressed sections": unaddressed,
     }
     return feats, inv
 
 
 # ---------------------------------------------------------------- questions and answers, for the writer's view
 
-ANS_LABEL = re.compile(r"^(?:[-*+]\s+)?\*\*((?:D\d+|Q(?:uestion)?\s*\d+)\b[^*]*?)[:.]?\*\*[:.]?\s*(.*)$", re.S)
+ANS_LABEL = re.compile(r"^(?:[-*+]\s+)?\*\*((?:(?:D\d+|Q(?:uestion)?\s*\d+)\b|\([a-z]\)\s)[^*]*?)[:.]?\*\*[:.]?\s*(.*)$",
+                       re.S)
 
 
 def ans_key(label):
-    """'D1 (a) 16S copies per genome' -> 'D1 (a)'; 'D2: definitions' -> 'D2'; 'Question 1 — ...' -> 'D1'."""
+    """'D1 (a) 16S copies per genome' -> 'D1 (a)'; 'D2: definitions' -> 'D2'; 'Question 1 — ...' -> 'D1';
+    '(a) Single authoritative taxonomy?' -> '(a)'."""
+    if re.match(r"\([a-z]\)\s", label.strip()):
+        return label.strip()[:3]
     m = re.match(r"(?:D|Q(?:uestion)?\s*)(\d+)(?:,?\s*case\s*([A-Za-z](?:/[A-Za-z])*)\b|,?\s*(?:case\s*)?\(([a-z])\))?",
                  label.strip())
     if not m:
@@ -316,33 +365,40 @@ def labelled_blocks(lines, stop_at_blank=False):
     return [tuple(x) for x in out if x[2].strip()]
 
 
-def note_answers(path):
-    """The note's answers: the critic's reformulated answers where it gave them, otherwise the note's answers
-    or verdict section. [{key, label, text, source}]."""
+def note_answers(path, declared=None):
+    """The note's answers: the critic's reformulated answers or verdict where it gave them, otherwise the note's
+    answers, verdict or assessment sections (and any declared ones). [{key, label, text, raw, source}]; `raw` keeps
+    the citation markers, which the writer's view turns into author and year."""
     _, body, _ = read(path)
     secs = sections(body)
+    decl = declared if isinstance(declared, list) else []
     crit = []
     for kind, title, _, lines, _ in secs:
         if kind == "callout" and CRITIC_TITLE.search(title) and not NO_CRITIC.search(title):
             joined = "\n".join(lines)
-            if re.search(r"reformulated answers", joined, re.I):
-                after = re.split(r"\*\*reformulated answers:?\*\*:?", joined, flags=re.I)[-1].splitlines()
-                crit = [b for b in labelled_blocks(after, stop_at_blank=True) if b[0]]
+            if re.search(r"reformulated (?:answers?|verdicts?)", joined, re.I):
+                after = re.split(r"\*\*reformulated (?:answers?|verdicts?):?\*\*:?", joined, flags=re.I)[-1].splitlines()
+                blocks = labelled_blocks(after, stop_at_blank=True)
+                crit = [b for b in blocks if b[0]] or blocks[:1]      # an unlabelled verdict is one answer
                 break
     body_ans = []
-    for kind, title, _, lines, _ in secs:      # the body's own answers section, then the answers callout
+    for kind, title, _, lines, _ in secs:      # every answers, verdict or assessment section of the body
         b = bare(kind, title)
-        if kind == "heading" and not CRITIC_TITLE.search(title) and (ANSWER_TITLE.search(b) or "answer" in b.lower()):
-            body_ans = labelled_blocks(lines)
-            break
+        if kind == "heading" and not CRITIC_TITLE.search(title) and (
+                ANSWER_TITLE.search(b) or "answer" in b.lower()
+                or any(b.lower().startswith(d.lstrip("§ ").lower()) for d in decl if d.strip("§ "))):
+            blocks = labelled_blocks(lines)
+            if blocks and not any(k for k, *_ in blocks):
+                blocks = [(None, b, "\n\n".join(t for _, _, t in blocks))]    # an unlabelled section: one answer
+            body_ans += blocks
     if not body_ans:
         for kind, title, _, lines, _ in secs:
             if kind == "callout" and "answer" in title.lower() and not CRITIC_TITLE.search(title):
                 body_ans = labelled_blocks(lines)
                 break
-    out = [{"key": k, "label": lb, "text": plain(t), "source": "critic"} for k, lb, t in crit]
+    out = [{"key": k, "label": lb, "text": plain(t), "raw": t, "source": "critic"} for k, lb, t in crit]
     have = {k for k, *_ in crit}
-    out += [{"key": k, "label": lb, "text": plain(t), "source": "review"} for k, lb, t in body_ans
+    out += [{"key": k, "label": lb, "text": plain(t), "raw": t, "source": "review"} for k, lb, t in body_ans
             if not (k and (k in have or k.split(" (")[0] in {h.split(" (")[0] for h in have}))]
     return out
 
@@ -396,11 +452,16 @@ def cmd_detect(argv):
             f.write(f"# Inventory of {feats['id']}\n\nOmission check: {feats['omission check']}\n\n"
                     "## Required: every item below must be accounted for\n\n")
             for x in inv:
-                if x["id"][0] != "B":
+                if x["id"][0] not in "BR":
                     f.write(f"- {feats['id']}:{x['id']} [{x['where'][:50]}] {x['text']}\n")
             f.write("\n## Body addresses: not required; cite them in `from` for findings the list above lacks\n\n")
             for x in inv:
                 if x["id"][0] == "B":
+                    f.write(f"- {feats['id']}:{x['id']} [{x['where'][:50]}] {x['text']}\n")
+            f.write("\n## Reference addresses: not required; the reference list and sources not obtained, for a "
+                    "finding that lives only there\n\n")
+            for x in inv:
+                if x["id"][0] == "R":
                     f.write(f"- {feats['id']}:{x['id']} [{x['where'][:50]}] {x['text']}\n")
         print(f"inventory        {len(inv)} items -> {out}")
 
@@ -408,6 +469,11 @@ def cmd_detect(argv):
 # ---------------------------------------------------------------- the knowledge note
 
 CONF = re.compile(r"^(repl|single|cont|unclear|mixed|not stated)(?:\s*\((marker|critic: [^)]+|inputs: [^)]+|note: \"[^\"]+\")\))?$")
+# Search status of an absence or a gap, and whether contrary evidence was looked for: never inferred.
+SEARCH = re.compile(r"^(searched, not found|not searched|not stated)(?:\s*\((note: \"[^\"]+\"|critic: [^)]+|run: [^)]+)\))?$")
+CONTRARY = re.compile(r"^(searched|one-sided|not stated)(?:\s*\((note: \"[^\"]+\"|critic: [^)]+|run: [^)]+)\))?$")
+RATING = re.compile(r'^"([^"]+)"(?:\s*\(critic:\s*((?:[A-Za-z0-9][A-Za-z0-9-]*:)?C-\d+):\s*([^)]+)\))?$')
+SECOND_READER = re.compile(r"second reader|never checked|not checked by|no critic", re.I)
 KLASS = re.compile(r"^(meas|deriv|model|assert|reading|search|not stated)(?:/(meas|deriv|model|assert))?"
                    r"(?:\s*\((marker|critic: [^)]+|note: \"[^\"]+\")\))?$")
 LIMIT = re.compile(r"^(access|access and evidence)\s*\((critic: [^)]+|note: \"[^\"]+\")\)$")
@@ -420,15 +486,15 @@ TABLE = {"repl": r"replicat|consistent|converg|independent",
          "cont": r"contest|disput|conflict|disagree|contradict",
          "unclear": r"unclear|unsettled|poorly constrained|cannot tell|unknown|uncertain|unresolved"}
 FIELDS = {
-    "claim": ({"conf", "class", "holds", "src", "trail", "from"}, {"rating", "limit"}),
+    "claim": ({"conf", "class", "holds", "src", "trail", "from"}, {"rating", "limit", "search", "contrary"}),
     "background": ({"kind", "ref", "check"}, set()),
     "dns": ({"why", "instead", "from"}, {"trail"}),
-    "gap": ({"blocks", "origin"}, {"from", "trail", "src"}),
+    "gap": ({"blocks", "origin", "search"}, {"from", "trail", "src", "contrary"}),
 }
 INPUT_COLS = ("id", "note", "critique", "citations", "standing labels", "run record", "omission check")
 ENTRY = re.compile(r"^- \*\*([a-z0-9][a-z0-9._-]*)\*\*\s+(.*)$")
 FIELDLINE = re.compile(r"^\s{2,}(\w+):\s")
-IDREF = re.compile(r"([A-Za-z0-9][A-Za-z0-9-]*):([ABCI])-(\d+)(?:\.\.(\d+))?")
+IDREF = re.compile(r"([A-Za-z0-9][A-Za-z0-9-]*):([ABCIR])-(\d+)(?:\.\.(\d+))?")
 
 
 def vault_root(p):
@@ -552,7 +618,7 @@ def expand(ref):
     if not m:
         return None
     a, kind, lo, hi = m.group(1), m.group(2), int(m.group(3)), int(m.group(4) or m.group(3))
-    w = 4 if kind in "IB" else 3
+    w = 4 if kind in "IBR" else 3
     return [f"{a}:{kind}-{n:0{w}d}" for n in range(lo, hi + 1)]
 
 
@@ -560,7 +626,7 @@ def critic_refs(fields, default):
     """Critique items an entry names as a basis (conf, class, limit) or as a label correction (src), each with its
     input ID (the ID may be left off when there is one input)."""
     out = []
-    for fld in ("conf", "class", "limit", "src"):
+    for fld in ("conf", "class", "limit", "src", "rating", "search", "contrary"):
         for m in CRITREF.finditer(fields.get(fld, "")):
             out += [r if re.match(r"[A-Za-z0-9][A-Za-z0-9-]*:", r) else f"{default}:{r}"
                     for r in re.split(r"\s*,\s*", m.group(1))]
@@ -641,6 +707,18 @@ def sccs(nodes, edges):
     return out
 
 
+def declared_answers(fm):
+    """{input ID: [heading starts] or 'none (reason)'}: the answer sections a knowledge note declares for inputs
+    whose answers detection does not find (frontmatter `answers:`)."""
+    out = {}
+    for item in fm.get("answers") or []:
+        nid, v = (next(iter(item.items())) if isinstance(item, dict) else
+                  [x.strip() for x in str(item).split(":", 1)])
+        v = str(v).strip()
+        out[str(nid).strip()] = v if v.lower().startswith("none") else [x.strip() for x in v.split(",") if x.strip()]
+    return out
+
+
 def lint(path):
     path = Path(path)
     text = path.read_text(encoding="utf-8")
@@ -651,6 +729,8 @@ def lint(path):
         err("frontmatter: type: knowledge")
     root = vault_root(path)
     inputs, feats, invs, secs_by, texts = {}, {}, {}, {}, {}
+    infos = []
+    decls = declared_answers(fm)
     for item in fm.get("inputs") or []:
         if isinstance(item, dict):
             (nid, rel), = item.items()
@@ -661,7 +741,21 @@ def lint(path):
             err(f"input {nid}: {rel} not found under {root}")
             continue
         inputs[nid] = p
-        feats[nid], inv = detect(p, nid)
+        feats[nid], inv = detect(p, nid, decls.get(nid))
+        ft = feats[nid]
+        if ft["omission check"].startswith("not run (no "):
+            err(f"input {nid}: detection found no answers, labelled citations or critique, so the omission check "
+                "cannot run. Declare the sections that hold its answers in the frontmatter (answers: - "
+                f"{nid}: §Heading, §Heading), or write '{nid}: none (reason)'")
+        if not ft["body addresses"]:
+            err(f"input {nid}: no body addresses: detection read the whole body as something else (a title taken "
+                "for a references heading?). Nothing in the body can be cited")
+        elif ft["reference addresses"] > ft["body addresses"] + sum(ft["inventory"].values()):
+            err(f"input {nid}: {ft['reference addresses']} reference addresses against {ft['body addresses']} body "
+                "addresses: the reference list seems to have swallowed the body")
+        for s in ft["unaddressed sections"]:
+            if not SKIP_TITLE.search(s):
+                err(f"input {nid}: section '{s}' has text but no address: a detection miss")
         invs[nid] = {x["id"]: x for x in inv}
         texts[nid] = read(p)[1]
         secs_by[nid] = sections(texts[nid])
@@ -819,11 +913,40 @@ def lint(path):
         if f.get("src", "").startswith("none") and not re.match(r"none \(.+\)$", f["src"]):
             err(f"{eid}: src: none needs its reason in brackets, e.g. 'none (the reviewer's synthesis)'")
         if "rating" in f:
-            q = re.fullmatch(r'"([^"]+)"', f["rating"].strip())
+            q = RATING.match(f["rating"].strip())
             if not q:
-                err(f"{eid}: rating is the note's own words in quotes: rating: \"Moderate\"")
-            elif where_is(q.group(1), ptext):
-                err(f'{eid}: rating "{q.group(1)}" {where_is(q.group(1), ptext)}')
+                err(f"{eid}: rating is the note's own words in quotes, with the critic's ruling beside it if the "
+                    "critic disputes it: rating: \"Moderate\" (critic: C-050: rests on a summary)")
+            else:
+                if where_is(q.group(1), ptext):
+                    err(f'{eid}: rating "{q.group(1)}" {where_is(q.group(1), ptext)}')
+                if q.group(2):
+                    check_basis(eid, "rating", f"critic: {q.group(2)}", None, ptext)
+        for fld, rx in (("search", SEARCH), ("contrary", CONTRARY)):
+            if fld not in f:
+                continue
+            mm = rx.match(f[fld].strip())
+            if not mm:
+                err(f"{eid}: {fld} '{f[fld]}' (values and basis: see references/format.md, Search status)")
+                continue
+            basis = mm.group(2)
+            if fld == "contrary" and mm.group(1) == "one-sided" and not (basis or "").startswith("critic:"):
+                err(f"{eid}: contrary: one-sided rests on the critic's one-sided-handling finding: (critic: C-nnn)")
+            elif mm.group(1) != "not stated" and not basis:
+                err(f"{eid}: {fld} {mm.group(1)} needs its basis: (note: \"words\"), (critic: C-nnn) or (run: ...); "
+                    "never inferred")
+            elif basis and basis.startswith("run:") and not any(ft["run record"] == "yes" for ft in feats.values()):
+                err(f"{eid}: {fld} basis (run: ...) but no input has a run record")
+            elif basis and not basis.startswith("run:"):
+                check_basis(eid, fld, basis, None, ptext)
+        for fld in ("holds", "why", "src", "origin"):          # entry IDs are navigation; a writer can't follow them
+            ids_in = [x for x in re.findall(r"(?<![\w.-])([a-z][a-z0-9-]*\.\d+)(?![\w-])", f.get(fld, "")) if x in known]
+            if ids_in:
+                warn(f"{eid}: {fld} cites {', '.join(ids_in)}: say what the finding is instead; entry IDs are "
+                     "navigation, and the writer's view does not show them")
+        if e["type"] == "claim" and f.get("class", "").startswith("search") and "search" not in f:
+            err(f"{eid}: class search needs its search status: search: searched, not found (basis) | not searched "
+                "(basis) | not stated")
         if "limit" in f:
             mm = LIMIT.match(f["limit"])
             if not mm:
@@ -874,7 +997,7 @@ def lint(path):
             for x in re.split(r",\s*", f["instead"]):
                 if x not in known:
                     err(f"{eid}: instead {x} is not an entry")
-        if f.get("blocks"):
+        if f.get("blocks") and f["blocks"].strip() != "none":
             for x in re.split(r",\s*", f["blocks"]):
                 if x not in known and x not in concepts:
                     err(f"{eid}: blocks {x} is neither an entry nor a concept")
@@ -904,7 +1027,7 @@ def lint(path):
                 covered[g].append(f"out of scope: {reason[:40]}")
 
     # omission: every inventory item is a claim, a do-not-say entry, a gap, or out of scope with a reason
-    required = {nid: [i for i in inv if not i.startswith("B-")] for nid, inv in invs.items()}
+    required = {nid: [i for i in inv if i[0] not in "BR"] for nid, inv in invs.items()}
     omitted = {nid: [i for i in req if f"{nid}:{i}" not in covered] for nid, req in required.items()}
     for nid, miss in omitted.items():
         if miss:
@@ -921,9 +1044,16 @@ def lint(path):
         if re.sub(r"[a-z]$", "", k) != want and k != want:
             warn(f"source {k}: the key rule gives {want}" + (" (its key in the refs bibliography)" if reuse else ""))
         ky = re.search(r"(\d{4})[a-z]?$", reuse or "")
-        if ky and year and ky.group(1) != year.group(0):
-            warn(f"source {k}: its DOI is in the refs bibliography as {reuse}, whose year is not the entry's "
-                 f"{year.group(0)}: check which is right")
+        if ky and year and ky.group(1) != year.group(0):     # information only: the year is transcribed, never looked up
+            infos.append(f"source {k}: kept the refs bibliography's key {reuse}, whose year differs from the note's "
+                         f"{year.group(0)} (often online against issue year); nothing to do")
+
+    # a note no second reader checked says so, in a gap
+    if any(not ft["critique"].startswith("yes") for ft in feats.values()) and not any(
+            e["type"] == "gap" and SECOND_READER.search(e["statement"] + " " + e["fields"].get("origin", ""))
+            for e in entries):
+        err("an input has no critique (or refutations only): add a gap saying its findings were never checked by a "
+            "second reader, naming the figures its answers rest on")
 
     # the Inputs table must report what detection found
     head = next((k for k, ln in enumerate(lines) if ln.startswith("|") and re.search(r"\|\s*id\s*\|", ln, re.I)), None)
@@ -961,7 +1091,7 @@ def lint(path):
     }
     for nid, p in inputs.items():          # the questions asked and the answers already checked, for the writer
         qs, where = brief_questions(p, nid, root)
-        ans = note_answers(p)
+        ans = note_answers(p, decls.get(nid))
         for a in ans:
             if a["key"] is None and len(qs) <= 1:
                 a["key"] = next(iter(qs), "D1")
@@ -976,6 +1106,12 @@ def lint(path):
     for nid in invs:
         print(f"  omission {nid}: {feats[nid]['omission check'].split(' (')[0]}, "
               f"{len(required[nid]) - len(omitted[nid])}/{len(required[nid])} accounted for")
+    for nid, ft in feats.items():
+        print(f"  coverage {nid}: {sum(ft['inventory'].values())} required, {ft['body addresses']} body, "
+              f"{ft['reference addresses']} reference addresses; unaddressed sections: "
+              f"{', '.join(ft['unaddressed sections']) or 'none'}")
+    for i in infos:
+        print("  info:", i)
     for w in warns:
         print("  warn:", w)
     for e in errs:
@@ -992,28 +1128,167 @@ def load_index(path):
         lint(path)
     index = json.loads(idx.read_text(encoding="utf-8"))
     root = vault_root(path)
+    decls = declared_answers(frontmatter(path.read_text(encoding="utf-8")))
     items = {}
     for nid, ft in index["inputs"].items():
-        for x in detect(root / ft["path"], nid)[1]:
+        for x in detect(root / ft["path"], nid, decls.get(nid))[1]:
             items[f"{nid}:{x['id']}"] = x
     return index, items
 
 
-def entry_block(e, items, default, trail=False):
-    """One entry as the checker sees it: statement, fields, and the note text of its `from` and named critique."""
+# ---------------------------------------------------------------- hints for the checker (never for the builder)
+# The words and tokens of an entry not found in its cited text. They show the checker where to look, not what is
+# wrong. Rules as scored in v4 stage A (eval/consolidate/v4/stageA/rules.md): R1, every number, year, [n] marker,
+# capitalised name and quoted phrase in the statement (and a do-not-say `why`), a name or year also accepted when it
+# belongs to a source in `src`; and R2-setting, the setting-type words of `holds`. Neither met the thresholds for a
+# lint gate, so they are hints, shown only in checker packets (`packets --hints`).
+HINT_CAPS_COMMON = set("I DNA RNA rRNA mRNA tRNA PCR qPCR OTU OTUs ASV ASVs CO2 CH4 N2O NH3 GHG GHGs".split())
+HINT_SETTING = set("""soil sediment marine ocean seawater sea freshwater lake river stream estuarine estuary coastal
+wetland peat permafrost desert steppe grassland forest cropland agricultural arable paddy pasture rhizosphere root leaf
+plant tree crop cereal legume maize wheat rice soybean gut stool faecal fecal human mouse murine animal host oral skin
+vaginal wastewater sludge bioreactor reactor engineered compost arctic antarctic tropical temperate boreal alpine global
+continental regional local site single-site plot field greenhouse laboratory lab mesocosm microcosm culture cultured
+isolate in vitro vivo mock simulated simulation synthetic model modelled bacteria bacterial archaea archaeal fungi fungal
+prokaryote prokaryotic eukaryote eukaryotic diatom protist virus phage genome metagenome metagenomic mag amplicon shotgun
+transcriptome metatranscriptome proteome 16s its illumina miseq nanopore pacbio time-series longitudinal season seasonal
+year decade experiment experimental survey review meta-analysis corpus dataset sample""".split())
+_NUMWORDS = ("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen "
+             "seventeen eighteen nineteen twenty").split()
+_HDASH = re.compile(r"[‐-―−]")
+_HWORD = re.compile(r"[^\W_]+(?:[.\-'][^\W_]+)*")
+_HNUM = re.compile(r"(?<![A-Za-z0-9.])\d+(?:\.\d+)?(?![A-Za-z0-9])")
+_HBRACKET = re.compile(r"\[(\s*\d+(?:\s*[-,]\s*\d+)*\s*)\]")
+_HCAP = re.compile(r"(?<![\w'\-])[A-Z][\wÀ-ɏ'\-]*")
+_HQUOTE = re.compile(r'"([^"]{3,}?)"')
+
+
+def _hnorm(s):
+    s = s.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
+    s = re.sub(r"[*`]", "", _HDASH.sub("-", s))
+    s = re.sub(r"(?<=\d),(?=\d{3}(?!\d))", "", s)
+    return re.sub(r"'s\b", "", s)
+
+
+def _hstem(w):
+    for suf in ("ing", "ed", "es", "s"):
+        if w.endswith(suf) and len(w) - len(suf) >= 3:
+            return w[:-len(suf)]
+    return w
+
+
+def _hcanon(x):
+    try:
+        return format(float(x), ".10g")
+    except ValueError:
+        return x
+
+
+def _hmarkers(text):
+    out = set()
+    for m in _HBRACKET.finditer(text):
+        for part in re.split(r"\s*,\s*", m.group(1).strip()):
+            a, _, b = part.partition("-")
+            a, b = a.strip(), (b.strip() or a.strip())
+            if a.isdigit() and b.isdigit() and int(b) - int(a) < 200:
+                out.update(str(n) for n in range(int(a), int(b) + 1))
+    return out
+
+
+def hints(e, cited_texts, bib):
+    """The words and tokens of an entry (statement, a do-not-say `why`, the setting words of `holds`) that are not in
+    its cited text, for the checker. A list of short strings; empty when everything is found."""
+    n = _hnorm("\n".join(cited_texts))
+    low = re.sub(r"\s+", " ", n.lower())
+    words = set()
+    for w in _HWORD.findall(low):
+        words |= {w, _hstem(w)} | ({_hstem(p) for p in w.split("-") if p} if "-" in w else set())
+    nums = {_hcanon(x) for x in _HNUM.findall(n)}
+    marks = _hmarkers(n)
+
+    def has_word(w):
+        w = w.strip(".'-")
+        return (not w or w in words or _hstem(w) in words or
+                ("-" in w and all(_hstem(p) in words for p in w.split("-") if p)))
+
+    def has_num(x):
+        c = _hcanon(x)
+        return c in nums or (c.isdigit() and int(c) <= 20 and bool(re.search(rf"\b{_NUMWORDS[int(c)]}\b", low)))
+
+    f = e["fields"]
+    names, years = set(), set()
+    for k, src in bib.items():
+        if re.search(rf"(?<![\w]){re.escape(k)}(?![\w])", f.get("src", "")):
+            for a in re.split(r"\s+and\s+", src.get("author", "")):
+                s = fold(surname(a)).lower().strip("{} ")
+                names |= {re.sub(r"[^a-z]", "", s)} | {re.sub(r"[^a-z]", "", w) for w in re.split(r"[\s\-]+", s)}
+            if src.get("year"):
+                years.add(_hcanon(re.sub(r"\D", "", src["year"])[:4]))
+    names.discard("")
+    out = []
+    for t in [e["statement"]] + ([f.get("why", "")] if e["type"] == "dns" else []):
+        tn = _hnorm(t)
+        for x in sorted(_hmarkers(tn), key=int):
+            if x not in marks:
+                out.append(f"[{x}]")
+        for x in _HNUM.findall(_HBRACKET.sub(" ", tn)):
+            yr = x.isdigit() and 1800 <= int(x) <= 2099
+            if not has_num(x) and not (yr and _hcanon(x) in years):
+                out.append(x)
+        for m in _HCAP.finditer(tn):
+            w = m.group(0).rstrip("'-")
+            pre = tn[:m.start()].rstrip(" \"'([")
+            if len(w) < 2 or w in HINT_CAPS_COMMON or w.rstrip("s") in HINT_CAPS_COMMON:
+                continue
+            if pre == "" or re.search(r"[.!?][\"')\]]*$", pre):
+                continue
+            key = re.sub(r"[^a-z]", "", fold(w.lower()))
+            parts = [re.sub(r"[^a-z]", "", fold(p)) for p in w.lower().split("-")]
+            if not has_word(w.lower()) and key not in names and not (len(parts) > 1 and all(p in names for p in parts if p)):
+                out.append(w)
+        for m in _HQUOTE.finditer(tn):
+            parts = [x.strip(" .,;:") for x in re.split(r"\.\.\.|…", re.sub(r"\s+", " ", m.group(1).lower()))]
+            if not all(x in low for x in parts if x):
+                out.append(f'"{m.group(1)}"')
+    holds = f.get("holds", "") if e["type"] == "claim" else ""
+    if holds:
+        hn = _hnorm(holds)
+        caps = {m.group(0).lower().rstrip("'-") for m in _HCAP.finditer(hn) if len(m.group(0)) >= 2}
+        for w in _HWORD.findall(hn.lower()):
+            w = w.strip(".'-")
+            numeric = bool(re.fullmatch(r"\d+(?:\.\d+)?", w))
+            setting = w in caps or numeric or bool(re.search(r"\d", w)) or "-" in w or w in HINT_SETTING or \
+                _hstem(w) in {_hstem(x) for x in HINT_SETTING}
+            if w and setting and not (has_num(w) if numeric else has_word(w)):
+                out.append(f"holds: {w}")
+    return list(dict.fromkeys(out))
+
+
+HINT_LINE = "Not found in the cited text (where to look, not what is wrong)"
+
+
+def entry_block(e, items, default, trail=False, bib=None):
+    """One entry as the checker sees it: statement, fields, and the note text of its `from` and named critique.
+    With `bib`, the hints line (checker packets only)."""
     fl = e["fields"]
     out = [f"{e['statement']}\n\n", "".join(f"- {k}: {v}\n" for k, v in fl.items() if k != "from")]
     if trail and e.get("trail_links"):
         out.append(f"- trail links: {', '.join(e['trail_links'])}\n")
+    texts = []
     out.append("\nFrom the note:\n\n")
     for ref in entry_refs(fl, default):
         for g in expand(ref) or []:
             x = items.get(g)
             out.append(f"> {g} [{x['where']}] {x['text']}\n>\n" if x else f"> {g}: not in inventory\n>\n")
+            if x:
+                texts.append(x["text"])
+    if bib is not None:
+        h = hints(e, texts, bib)
+        if h:
+            out.append(f"\n{HINT_LINE}: {'; '.join(h)}\n")
     return "".join(out)
 
 
-def packets(path, outdir, per=60, only=None):
+def packets(path, outdir, per=60, only=None, with_hints=False):
     """For the faithfulness check: each entry beside the exact note text it says it came from."""
     index, items = load_index(path)
     default = next(iter(index["inputs"])) if len(index["inputs"]) == 1 else "?"
@@ -1028,7 +1303,7 @@ def packets(path, outdir, per=60, only=None):
         with f.open("w", encoding="utf-8") as w:
             for e in ents[k:k + per]:
                 w.write(f"## {e['id']} ({'do not say' if e['type'] == 'dns' else 'claim'})\n\n")
-                w.write(entry_block(e, items, default) + "\n")
+                w.write(entry_block(e, items, default, bib=index["sources"] if with_hints else None) + "\n")
         files.append(f)
     print(f"{len(ents)} entries in {len(files)} packets -> {outdir}")
 
@@ -1061,11 +1336,62 @@ def spotcheck(path, out, n=20, seed=None):
     print(f"seed {seed}: {', '.join(ents[k]['id'] for k in pick)} -> {out}")
 
 
+CLASS_WORDS = {"meas": "measured", "deriv": "derived", "model": "modelled", "assert": "asserted",
+               "reading": "the reviewer's reading", "search": "a search result"}
+CONF_WORDS = {"repl": "replicated", "single": "a single source", "cont": "contested", "unclear": "unclear",
+              "mixed": "the sources differ"}
+SEARCH_WORDS = {"searched, not found": "searched for and not found", "not searched": "not searched for",
+                "not stated": "the research does not say whether this was searched for"}
+CONTRARY_WORDS = {"searched": "contrary evidence was searched for",
+                  "one-sided": "a second reader found the search for contrary evidence one-sided",
+                  "not stated": "the research does not say whether contrary evidence was searched for"}
+
+
+def _value(v):
+    """A field's value without its basis: 'single (critic: C-012)' -> 'single'."""
+    return re.sub(r"\s*\((?:marker|critic:|note:|inputs:|run:)[^)]*\)\s*$", "", v or "").strip()
+
+
+def _authors_year(src):
+    """'Smith 2020', 'Smith and Lee 2020', 'Smith et al. 2020' from a BibTeX entry."""
+    au = [re.sub(r"[{}]", "", fold(surname(a))).strip() for a in re.split(r"\s+and\s+", src.get("author", "")) if a.strip()]
+    who = (au[0] if len(au) == 1 else f"{au[0]} and {au[1]}" if len(au) == 2 else f"{au[0]} et al." if au else
+           re.sub(r"[{}]", "", src.get("title", "Anonymous"))[:40])
+    year = re.search(r"\d{4}", src.get("year", "") or src.get("date", ""))
+    return f"{who} {year.group(0) if year else 'n.d.'}"
+
+
+def _keys_in(text, bib):
+    return [k for k in bib if re.search(rf"(?<![\w]){re.escape(k)}(?![\w])", text or "")]
+
+
+def _reference(src):
+    """One reference-list line from a BibTeX entry, with only the fields it has."""
+    clean = lambda s: re.sub(r"\s+", " ", re.sub(r"[{}]", "", fold(s or ""))).strip()
+    year = re.search(r"\d{4}", src.get("year", "") or src.get("date", "") or "")
+    authors = clean(src.get("author", "")).replace(" and ", "; ") or "Anonymous"
+    parts = [f"{authors} ({year.group(0) if year else 'n.d.'})."]
+    if src.get("title"):
+        parts.append(clean(src["title"]).rstrip(".") + ".")
+    venue = clean(src.get("journal") or src.get("booktitle") or src.get("publisher") or src.get("howpublished") or "")
+    if venue:
+        vol = clean(src.get("volume", "")) + (f"({clean(src['number'])})" if src.get("number") else "")
+        parts.append(venue + (f" {vol}" if vol else "") + (f": {clean(src['pages'])}" if src.get("pages") else "") + ".")
+    if src.get("doi"):
+        parts.append(f"https://doi.org/{clean(src['doi'])}")
+    elif src.get("url"):
+        parts.append(clean(src["url"]))
+    return " ".join(parts)
+
+
 def view(path, out):
-    """The writer's view, from the index: the answer to each question the research asked (the critic's
-    reformulation where there is one), then the concepts in dependency order with each claim's statement and
-    standing, then what not to say and the gaps. No trails, links, keys or other provenance; the full note stays
-    the audit version."""
+    """The writer's view, from the index. Everything that carries epistemic weight is content the writer needs;
+    only navigation is stripped. For each claim: the statement, who found it (author and year), the setting it
+    holds for, the kind of evidence in words, its standing with the note's own rating (and a second reader's
+    ruling beside it), and for an absence whether it was searched for. The answers to the questions the research
+    asked come first (a second reader's correction where there is one), then the concepts in dependency order,
+    then what not to say (full sentences), the gaps with their search status, and a reference list. No trails,
+    sentence addresses or citation keys; the knowledge note stays the audit version."""
     path = Path(path)
     idx = path.with_suffix(".index.json")
     if (not idx.exists() or idx.stat().st_mtime < path.stat().st_mtime
@@ -1073,25 +1399,108 @@ def view(path, out):
         lint(path)
     index = json.loads(idx.read_text(encoding="utf-8"))
     fm = frontmatter(path.read_text(encoding="utf-8"))
-    ents = index["entries"]
+    ents, bib = index["entries"], index.get("sources", {})
     by_id = {e["id"]: e for e in ents}
     names = {c["id"]: c["name"] for c in index["concepts"]}
+    cited = []                                       # sources the view cites, for the reference list
+    concept_of = {e["id"]: names.get(e["concept"], "") for e in ents if e.get("concept")}
+
+    def deid(text):
+        """An entry ID in builder text is navigation: 'from symbiotic-fixation.5' -> 'from the finding on ...'."""
+        return re.sub(r"(?<![\w.-])([a-z][a-z0-9-]*\.(?:\d+|bg\d+))(?![\w-])",
+                      lambda m: (f"the finding on {concept_of[m.group(1)]}" if concept_of.get(m.group(1)) else
+                                 "a do-not-say entry" if m.group(1).startswith("dns.") else
+                                 "a gap" if m.group(1).startswith("gap.") else m.group(1)), text or "")
+
+    def who(f):
+        src = f.get("src", "") or f.get("ref", "")
+        if src.startswith("none"):
+            m = re.match(r"none \((.+)\)$", src.strip())
+            return deid(m.group(1)) if m else ""
+        keys = _keys_in(src, bib)
+        cited.extend(keys)
+        return "; ".join(_authors_year(bib[k]) for k in keys)
+
+    # "[3]" in an answer -> the source the note's reference list numbers 3 (the BibTeX note's "cited as: MB-02 [3]")
+    marker = {}
+    for k, src in bib.items():
+        for nid, nums in re.findall(r"([A-Za-z0-9][A-Za-z0-9-]*)\s*\[([\d,\s–-]+)\]", src.get("note", "")):
+            for n in re.findall(r"\d+", nums):
+                marker[(nid, n)] = k
+
+    def answer_text(nid, raw):
+        def sub(m):
+            keys = [marker.get((nid, n)) for n in re.findall(r"\d+", m.group(1))]
+            keys = [k for k in keys if k]
+            cited.extend(keys)
+            return f" ({'; '.join(_authors_year(bib[k]) for k in keys)})" if keys else ""
+        return plain(re.sub(r"\s*\[(\d+(?:\s*[,–-]\s*\d+)*)(?:,\s*(?:FT|AB|SEC)[^\]]*)?\]", sub, raw))
+
+    def evidence(f):
+        parts = []
+        k = _value(f.get("class", ""))
+        if k and k != "not stated":
+            parts.append(" and ".join(CLASS_WORDS.get(x, x) for x in k.split("/")))
+        c = _value(f.get("conf", ""))
+        if c in CONF_WORDS:
+            parts.append(CONF_WORDS[c])
+        r = RATING.match(f.get("rating", "").strip()) if f.get("rating") else None
+        if r:
+            parts.append(f"rated \"{r.group(1)}\" by the research" +
+                         (f"; a second reader disputes this: {r.group(3).strip()}" if r.group(3) else ""))
+        if f.get("limit"):
+            parts.append("limited by access (a source was not read in full; not the same as weak evidence)"
+                         if f["limit"].startswith("access (") else "limited by access and by the evidence")
+        return "; ".join(parts)
+
+    def search_line(f):
+        s = []
+        if f.get("search"):
+            s.append(SEARCH_WORDS.get(_value(f["search"]), _value(f["search"])).capitalize())
+        if f.get("contrary"):
+            s.append(CONTRARY_WORDS.get(_value(f["contrary"]), _value(f["contrary"])).capitalize())
+        return ". ".join(s)
+
+    def claim_lines(e, bullet="- "):
+        f = e["fields"]
+        src = who(f)
+        lines = [f"{bullet}{e['statement']}" + (f" ({src})" if src else "")]
+        if e["type"] == "background":
+            lines.append("  Background, not from the research.")
+        if f.get("holds"):
+            lines.append(f"  Holds for: {deid(f['holds']).rstrip('.')}.")
+        ev = evidence(f)
+        if ev:
+            lines.append(f"  Evidence: {ev}.")
+        sl = search_line(f)
+        if sl:
+            lines.append(f"  {sl}.")
+        return "\n".join(lines) + "\n"
+
     w = [f"# {fm.get('title') or path.stem}: writer's view\n\n",
          "> [!abstract] About this view\n"
-         "> What the research found, for writing from. It is generated from the knowledge note "
-         f"`{path.name}`, which stays the audit version: every claim here is checked there against the research, "
-         "with its setting, sources and trail. Standing is given in brackets where the research stated one "
-         "(`repl` replicated, `single` one source, `cont` contested, `unclear`, `mixed` the inputs differ); a claim "
-         "with no bracket has no standing stated. \"Limited by access\" means the research says a source was not "
-         "read in full, not that the evidence is weak.\n\n",
+         "> What the research found, for writing from. Each claim gives who found it, the setting it holds for, "
+         "the kind of evidence, its standing where the research stated one, and for an absence whether it was "
+         "searched for. A claim with no standing given has none stated in the research; \"limited by access\" means "
+         "a source was not read in full, which is not the same as weak evidence. Sources are listed at the end. "
+         f"The view is generated from the knowledge note `{path.name}`, where every claim is checked against the "
+         "research.\n\n",
          "## What the research found, by question\n\n"]
     for nid, a in index.get("answers", {}).items():
         qs, ans = a["questions"], a["answers"]
-        crit = not a["critique"].startswith("no")
+        checked = a["critique"].startswith("yes")
         w.append(f"### {nid}\n\n")
         if not qs:
             w.append(f"The questions are {a['questions_from']}.\n\n")
         keys = list(qs) + [k for k in dict.fromkeys(x["key"] for x in ans) if k and k.split(" (")[0] not in qs]
+
+        def put(x):
+            how = ("as corrected by a second reader" if x["source"] == "critic" else
+                   "as the research gave it; a second reader reviewed it and left it as given" if checked else
+                   "as the research gave it; not checked by a second reader")
+            head = x["label"] if x["label"] and not re.fullmatch(r"D\d+|Q(?:uestion)?\s*\d+", x["label"]) else ""
+            w.append(f"*Answer, {how}.*" + (f" **{head}**" if head else "") + "\n\n")
+            w.append(answer_text(nid, x.get("raw", x["text"])) + "\n\n")
         for q in keys:
             base = q.split(" (")[0]
             if q in qs:
@@ -1100,12 +1509,12 @@ def view(path, out):
             if not mine:
                 w.append("*No answer to this question in the research.*\n\n")
             for x in mine:
-                who = ("as the critic reformulated it" if x["source"] == "critic" else
-                       "as the review gave it; the critic did not reformulate it" if crit else
-                       "as the review gave it; no critic checked it")
-                head = x["label"] if x["label"] and not re.fullmatch(r"D\d+|Q(?:uestion)?\s*\d+", x["label"]) else ""
-                w.append(f"*Answer to {x['key']}, {who}.*" + (f" **{head}**" if head else "") + "\n\n")
-                w.append(x["text"] + "\n\n")
+                put(x)
+        loose = [x for x in ans if not x["key"]]
+        if loose:
+            w.append("**Answers and verdicts not tied to a listed question**\n\n")
+            for x in loose:
+                put(x)
     w.append("## Concepts\n\nIn an order where each concept comes after the ones it builds on; the order means "
              "nothing more.\n\n")
     for c in sorted(index["concepts"], key=lambda c: c["order"]):
@@ -1113,33 +1522,30 @@ def view(path, out):
         if c.get("needs"):
             w.append(f"Builds on: {', '.join(names.get(n, n) for n in c['needs'])}.\n\n")
         for e in ents:
-            if e["concept"] != c["id"] or e["type"] not in ("claim", "background"):
-                continue
-            f = e["fields"]
-            tags = []
-            conf = re.match(r"(repl|single|cont|unclear|mixed)", f.get("conf", ""))
-            if conf:
-                tags.append(conf.group(1))
-            if f.get("limit"):
-                tags.append("limited by access" if f["limit"].startswith("access (") else
-                            "limited by access and evidence")
-            if e["type"] == "background":
-                tags.append("background, not from the research")
-            w.append(f"- {e['statement']}" + (f" *({'; '.join(tags)})*" if tags else "") + "\n")
+            if e["concept"] == c["id"] and e["type"] in ("claim", "background"):
+                w.append(claim_lines(e))
         w.append("\n")
-    w.append("## Do not say\n\nWordings the research itself says are wrong or overstated.\n\n")
+    w.append("## Do not say\n\nWordings the research itself says are wrong or overstated, each with the reason and "
+             "what to say instead.\n\n")
     for e in ents:
         if e["type"] == "dns":
             f = e["fields"]
-            inst = [by_id[x]["statement"] for x in re.split(r",\s*", f.get("instead", "")) if x in by_id]
-            w.append(f"- {e['statement']}\n  Why: {f.get('why', '')}\n" +
-                     (f"  Say instead: {' / '.join(inst)}\n" if inst else ""))
+            inst = [x for x in re.split(r",\s*", f.get("instead", "")) if x in by_id]
+            w.append(f"- Do not write: {e['statement']}\n  Why: {deid(f.get('why', ''))}\n")
+            for x in inst:
+                w.append(claim_lines(by_id[x], bullet="  Say instead: "))
     w.append("\n## Gaps\n\nWhat the research did not establish.\n\n")
     for e in ents:
         if e["type"] == "gap":
-            w.append(f"- {e['statement']}\n")
+            f = e["fields"]
+            src = who(f) if f.get("src") else ""
+            sl = search_line(f)
+            w.append(f"- {e['statement']}" + (f" ({src})" if src else "") + (f"\n  {sl}." if sl else "") + "\n")
+    keys = sorted(dict.fromkeys(cited), key=lambda k: _reference(bib[k]).lower())
+    if keys:
+        w.append("\n## References\n\n" + "".join(f"- {_reference(bib[k])}\n" for k in keys))
     Path(out).write_text("".join(w), encoding="utf-8")
-    print(f"writer's view -> {out} ({sum(1 for e in ents if e['type'] == 'claim')} claims)")
+    print(f"writer's view -> {out} ({sum(1 for e in ents if e['type'] == 'claim')} claims, {len(keys)} references)")
 
 
 def cmd_citekey(argv):
@@ -1161,6 +1567,8 @@ if __name__ == "__main__":
         print(__doc__)
         sys.exit(2)
     a = sys.argv[2:]
+    with_hints = "--hints" in a
+    a = [x for x in a if x != "--hints"]
     opt = lambda k, d=None: a[a.index(k) + 1] if k in a else d
     pos = [x for i, x in enumerate(a) if not x.startswith("--") and (i == 0 or not a[i - 1].startswith("--"))]
     if sys.argv[1] == "detect":
@@ -1170,7 +1578,7 @@ if __name__ == "__main__":
     if sys.argv[1] == "packets":
         only = opt("--only")
         only = set(re.split(r"[,\s]+", only.strip())) if only else None
-        sys.exit(packets(pos[0], pos[1] if len(pos) > 1 else "packets", only=only) or 0)
+        sys.exit(packets(pos[0], pos[1] if len(pos) > 1 else "packets", only=only, with_hints=with_hints) or 0)
     if sys.argv[1] == "view":
         sys.exit(view(pos[0], pos[1] if len(pos) > 1 else Path(pos[0]).with_suffix(".writer.md")) or 0)
     if sys.argv[1] == "spotcheck":

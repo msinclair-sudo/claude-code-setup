@@ -22,7 +22,8 @@ Any result note with a review body and references. Everything else is detected, 
 | a critique | applied: its corrections win over the body and the answers |
 | labelled citations (an access label with a standing: `[FT; meas; repl]`, research-brief rule 3a, or `[Key; FT; measured; SINGLE SOURCE]`) | `conf` and `class` read from the labels; exact omission check over every labelled sentence, the answers and the critique |
 | no labels | claims read as written; `conf: not stated` wherever the note gives no standing in words; omission check falls back to the answers plus the critique |
-| a section of refuted claims | read as critique: its items become do-not-say entries |
+| a section of refuted claims | `critique: refutations only`: its items become do-not-say entries; no second reader checked the rest, so the note still gets the second-reader gap |
+| answers under headings detection does not know | declare them in the frontmatter (`answers: - ID: §Heading`), so the omission check runs; lint fails rather than skip it silently |
 | a `run.json` sidecar | reported; nothing requires it |
 
 `kn.py detect` reports all of this, and the knowledge note's Inputs table records it.
@@ -49,20 +50,37 @@ written from it. It covers everything the research found: never trim.
    one standard reference and its check. This is the only step that may use the web: to find and check that
    one reference, and nothing else.
 7. **Lint** until clean: `python3 scripts/kn.py lint "<knowledge note>"`. It checks the fields, the sources, the
-   trails, the `needs` graph and groups, the quoted bases, the Inputs table against detection, and omission
-   (every inventory item accounted for).
-8. **Faithfulness check.** `python3 scripts/kn.py packets "<knowledge note>" <tmp>/packets`, then one fresh agent
-   per packet with `references/checker.md`. Fix every fault and lint again. Then a fresh agent that made none of
-   the fixes re-checks the fixed entries: `kn.py packets "<knowledge note>" <tmp>/recheck --only <ids>`. Repeat
-   until the re-check finds nothing; never grade your own corrections.
+   trails, the `needs` graph and groups, the quoted bases, search status, the Inputs table against detection, and
+   omission (every inventory item accounted for). It fails loudly on a detection miss: no body addresses, a section
+   with text but no address, or an omission check that cannot run.
+8. **Faithfulness check.** Whoever runs the check, not the builder, makes the checker packets: `python3
+   scripts/kn.py packets "<knowledge note>" <tmp>/packets --hints`. Then one fresh agent per packet with
+   `references/checker.md`.
+   - **The hints** list the words in each entry not found in its cited text. They are for the checker only: the
+     builder never sees packets or hints, only the verdict lines.
+   - **Fix and re-check.** Fix every fault and lint again. Then a fresh agent that made none of the fixes
+     re-checks the fixed entries: `kn.py packets "<knowledge note>" <tmp>/recheck --only <ids> --hints`. Repeat
+     until the re-check finds nothing; never grade your own corrections.
 
 Each check the inputs allow is run, and the Inputs table says which ran.
 
-**The writer's view** (`kn.py view "<knowledge note>"`, written beside it as `<topic>.writer.md`): generated
-from the index, never edited by hand. It gives the answer to each question the research asked (the question
-verbatim from the linked AGENT BRIEF, the critic's reformulated answer where there is one, labelled as such),
-then the concepts in dependency order with each claim's statement and standing, then Do not say and Gaps. No
-trails, keys or other provenance: the knowledge note stays the audit version, for fact-checking.
+**The writer's view** (`kn.py view "<knowledge note>"`, written beside it as `<topic>.writer.md`) is generated
+from the index and never edited by hand. Its principle: everything that carries epistemic weight is content the
+writer needs; only navigation is stripped.
+- **The answers come first:** the answer to each question the research asked, with the question verbatim from
+  the linked AGENT BRIEF. A second reader's correction is used where there is one; answers, verdict and assessment
+  sections are all read.
+- **Then the concepts** in dependency order. For each claim:
+  - the statement;
+  - who found it (author and year);
+  - the setting it holds for;
+  - the kind of evidence in words;
+  - its standing, with the note's own rating and any second reader's ruling beside it;
+  - for an absence, whether it was searched for, and whether contrary evidence was.
+- **Then the rest:** Do not say (full sentences, with why and what to say instead), the gaps with their search
+  status, and a reference list.
+
+No trails, sentence addresses or citation keys: the knowledge note stays the audit version, for fact-checking.
 
 ## Hard rules
 
@@ -70,6 +88,8 @@ trails, keys or other provenance: the knowledge note stays the audit version, fo
   `not stated`. Quote only words from the sentences the entry cites in `from`.
 - **Not accessed is not weak.** Where the note says a claim is limited because a source was not accessed, keep
   that reason (`limit: access`); where it does not say, add nothing.
+- **Never infer a search status.** Every absence and every gap says whether it was searched for, from the note's
+  not-found and unsearched results, the critic's coverage gaps or the run record; otherwise `not stated`.
 - **The critic wins.** Its corrections become the claims; the wording it corrected goes to Do not say.
 - **Only the inputs say what not to say.** A do-not-say entry rests on the critic, a refutation or the note's own
   warning. Without a critic, overstatements you notice are not yours to flag: the note gets a gap saying it was

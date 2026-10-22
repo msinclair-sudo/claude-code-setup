@@ -1,7 +1,11 @@
-# consolidate v4: improvement plan, revision 2 (plan only, nothing built or run)
+# consolidate v4: improvement plan, revision 3
 
-Revised 2026-10-22 after the owner's review of revision 1 (in git history, 0e4495d). For review before anything is
-built or run, stage A included.
+**Revision 3 (2026-10-22), after gate A.** Change 1 and stage B were revised on the owner's decisions at gate A,
+for review before stage B runs. The rest is revision 2, as approved (176eeeb), except that stage C now excludes the
+writing set-aside.
+- Stage A is done: `stageA/results.md`.
+- The writing set-aside is drawn: `../writing-setaside/`.
+- Revision 1 is in git history (0e4495d).
 
 **What the diagnostics settled.** Consolidation is not losing information: nothing the raw writers used was
 lost in consolidation (D = 0 in all three topics). Every loss happened when the writer's view dropped a field:
@@ -18,9 +22,52 @@ navigation is stripped.
 Priorities: **1** large expected effect on faults or writer usefulness; **2** correctness of the checks and the
 measurements; **3** small or local.
 
-### 1. Provenance by lint (priority 1; how it is built is decided at gate A)
+### 1. Provenance hints for the checker (priority 1; decided at gate A)
 
-Two rule families, scored separately against the v3 verdicts before anything is built (stage A):
+**Decision (owner, gate A).** No lint rule met its threshold, so none becomes a lint gate. Instead the lint's
+findings become **hints for the checker**: under each entry in a checker packet, the words and tokens not found in
+its cited text. R1's number, year and marker check is folded into the hints; there is no exception to the
+thresholds.
+
+**What the hints contain.** For each claim and do-not-say entry, as scored in stage A (`stageA/rules.md`, with the
+tokeniser fix):
+- **R1 tokens not found:** numbers, years, `[n]` markers, capitalised names and quoted phrases, with the `src`
+  author and year allowance;
+- **R2-setting words not found** in `holds`.
+
+Of the three R2 variants, the setting variant gives the checker the most to work with per flag. In stage A's
+sample, 9 of the 19 setting flags on checker-passed entries were real faults, against 11 of 28 for the content
+variant. It also flags about half as many entries (32% against 58%), so the hints do not drown the packet. This is
+a choice for the owner's review; the hint-effect measurement in stage B tests it.
+
+**Rules for the hints.**
+- **Hints go to the checker only, never to builders.** Only `kn.py packets --hints` produces them; `lint` never
+  prints them. The checker packets are made by whoever runs the check, and the builder receives only the verdict
+  lines. SKILL.md's step 8 says so. In the evaluation, the orchestrating session makes all packets.
+- **The checker's instructions (`checker.md`) gain:**
+
+  > Under some entries, "Not found in the cited text" lists words or numbers a script could not find in the quoted
+  > text. They show where to look, not what is wrong. A paraphrase, another word form, an abbreviation spelled out,
+  > or a word that adds nothing is fine. Judge, as always, whether the entry says anything its cited text does not
+  > support. An entry with no hint gets the same care as one with hints.
+- **The hint code lives in kn.py**, so v3 and v4 packets get identical hints. It reuses the stage A rules, moved
+  from the eval script into the skill without change.
+
+**Motivation (stage A).**
+- As gates, R1 caught 28% of `absent` and `numbers` faults with 9.3% false flags, and R2 caught 81% to 99% of
+  `holds` faults with 32% to 60%. A gate would push builders to copy text.
+- In the false-positive sample, about half of R1's flags and a third of R2's on checker-passed entries were faults
+  the checker had missed. The hints aim the checker at those, and nothing blocks the builder.
+
+**How we'll know.** Stage B measures it directly: the same 100 entries are checked with and without hints, and
+the verdict changes are reported (stage B, the hint-effect measurement).
+
+**Baselines.** No addresses change. The v3 notes are re-scored with the same hint-equipped checker (stage B), so
+v3 and v4 are compared on equal terms.
+
+#### Stage A record (the rules scored as gates)
+
+Two rule families, scored separately against the v3 verdicts before anything was built:
 
 - **R1, numbers and names.** Every number, year, `[n]` reference marker, capitalised name and quoted phrase in a
   statement (and in a do-not-say `why`) occurs in the entry's `from` items. A name or year is also accepted when it
@@ -58,10 +105,7 @@ by the adopted variant. If it is not, `holds` stays free text and stays the chec
   kept and `holds` is left to the checker with change 5's wording.
 - The owner decides at the gate. The thresholds only say what the numbers recommend.
 
-**How we'll know (after stage B).** First-pass `holds` and `absent` faults fall by the amounts in gate B. Lint
-errors at first lint are counted, as what lint caught before any checker.
-
-**Baselines.** No addresses change. v3 notes fail the adopted rules until rebuilt; they stay as v3 baselines.
+**Result (stage A):** no rule met its thresholds (`stageA/results.md`).
 
 ### 2. Writer's view: everything with epistemic weight (priority 1)
 
@@ -186,9 +230,9 @@ with:
 checker passed added settings (about 6 faults, 7%, under the other reading). The second batch of re-checks faulted
 them, including text two earlier checkers had passed. The new wording must not weaken `stronger`.
 
-**How we'll know.** At the start of stage B, two fresh checkers re-score a seeded sample of 100 v3 entries that
-the first-pass checkers passed, under the new wording. This gives a corrected v3 rate to compare v4 with, and the
-checkers' agreement. Target: 90% agreement or better.
+**How we'll know.** Stage B re-scores about 300 v3 entries with this wording and the hints (change 1). The
+result is the corrected v3 baseline that v4 is compared with. The hint-effect measurement, two checkers per
+condition, also gives the checkers' agreement under the new wording.
 
 **Baselines.** No addresses change. v3's reported rates stand, with the re-scored rate beside them.
 
@@ -285,39 +329,91 @@ their thresholds, and the decision rule's recommendation.
 
 **Gate A:** the owner decides which rules change 1 is built with. Stop.
 
-### Stage B: build v4, rebuild the development set
+**Done (6046eb2).** No rule met its thresholds. The owner chose hints for the checker (change 1, revision 3), and
+approved the writing set-aside, drawn on 2026-10-22 (d7c1a9f).
 
-**Inputs.** Gate A's decision; the 14 development notes' result notes; the v3 numbers.
+### Stage B: build v4, re-score v3, rebuild the development set
 
-**Work.**
-- Build changes 1 (as decided), 2 to 7, with tests and docs.
-- Re-score 100 v3 entries under change 5's wording (two checkers).
-- Rebuild all 14 notes from scratch with fresh builders who have not seen the v3 notes. Each note is first-pass
-  checked by a fresh checker, fixed by its builder, and re-checked by a different fresh checker until clean, as in
-  v3.
+**Before it starts:** the owner's spot-check verdicts on `../v3/spot-check-16S.md` (20 entries). They are compared
+with the sealed first-pass checker verdicts (`spot-check-16S.checker.md`):
+- agreement;
+- each disagreement, and which way it goes: the checker stricter or more lenient than the owner;
+- the kinds involved.
+
+This is reported before B1, since it bears on how far the checker is trusted. No agents.
+
+**Inputs.**
+- The owner's decisions at gate A.
+- The 14 development notes' result notes.
+- The 14 v3 as-built notes and their first-pass verdicts.
+- The v3 code (66d17ef) for v3 inventories.
+
+**Work, in order.**
+1. **Build** changes 1 (hints) and 2 to 7, with tests and docs.
+2. **Re-score v3 (the new baseline).**
+   - **The sample:** about 300 entries from the 14 v3 as-built notes, by seeded stratified draw. At least 10 per
+     note; the rest are allocated in proportion to each note's entries, by largest remainder.
+   - **The packets:** made with the v3 inventories (the v3 code, so the `from` addresses resolve as the v3
+     checkers saw them) and the v4 hint code.
+   - **The checkers:** fresh, with the v4 `checker.md` (change 5's wording and the hint paragraph), about 60
+     entries each.
+   - **The estimate:** the v3 rate is weighted back to each note's size.
+3. **Measure the hint effect.** A seeded subset of 100 of the 300, stratified 60 with at least one hint and 40
+   with none.
+   - **The runs:** besides its with-hints verdicts from step 2 (W1), it is checked by one more fresh checker with
+     hints (W2) and two fresh checkers without hints (N1, N2). Packets are identical apart from the hint lines.
+   - **The report:**
+     - agreement within each condition (W1 and W2, N1 and N2): the noise floor;
+     - agreement across conditions;
+     - fault rates and kinds with and without hints, overall and on hinted and unhinted entries;
+     - every entry whose verdict differs across conditions.
+   - **The adjudicator:** one fresh adjudicator, without hints and blind to which verdict came from which
+     condition, judges each discordant entry. That shows whether the hints found real faults, induced false ones,
+     or both.
+4. **Rebuild** all 14 notes from scratch with fresh builders who have not seen the v3 notes. Each note is
+   first-pass checked by a fresh hint-equipped checker, fixed by its builder, and re-checked by a different fresh
+   hint-equipped checker until clean, as in v3.
 
 **Outputs.**
-- `stageB/`: as-built notes, verdicts, re-checks, the omission report per note, lint errors at first lint, and
-  `stageB/results.md`.
+- `stageB/spotcheck.md`: the owner's spot-check against the checker.
+- `stageB/baseline/`: sample, packets, verdicts, the re-scored v3 rates.
+- `stageB/hints/`: the four runs, agreement tables, adjudication.
+- `stageB/` rebuild: as-built notes, verdicts, re-checks, the omission report per note.
+- `stageB/results.md`.
 - The rebuilt notes in the vault.
 
-**Agent runs:** 7 builders, 16 first-pass checkers (16S needs two), about 10 re-checkers and 2 re-scorers: about
-35, plus the builders' fix rounds.
+**Agent runs:**
+- Re-score: 5 checkers.
+- Hint effect: 3 checkers and 1 adjudicator.
+- Rebuild: 7 builders, 16 first-pass checkers (16S needs two) and about 10 re-checkers.
 
-**Gate B: pass criteria** (fixed now). Measured on the 14 notes, against v3 on the same notes (206 faults on
-1,697 entries, 12.1%):
-1. The first-pass fault rate is at most 8%, about a third below v3. It is also below the re-scored v3 rate from
-   change 5's sample.
-2. `holds` and `absent` faults fall by at least half per 100 entries (v3: 188 on 1,697, 11.1 per 100; v4 at most
-   5.5).
-3. `stronger` and `numbers` together do not rise (v3: 3; allowed up to 5, given the counts), and `conf` does not
-   rise (v3: 9).
-4. The omission report: every note runs the omission check or has a declared reason; no note has 0 body addresses;
-   no excluded region outside the allow-list.
-5. Re-check: at most 15% of fixed entries still faulted in round 1 (v3: 11% development, 14% held-out).
+About 42, plus the builders' fix rounds.
 
-The development notes informed this plan, so passing here is necessary, not sufficient: stage C is the real
-test. Report, then stop.
+**Gate B: criteria** (fixed now). v4's first pass on the 14 rebuilt notes, against the re-scored v3, with the
+same checker setup:
+1. **First-pass fault rate:** v4 at most two thirds of re-scored v3 (a third lower).
+2. **`holds` plus `absent` faults** per 100 entries: v4 at most half of re-scored v3.
+3. **`stronger` plus `numbers`** per 100 entries does not rise above re-scored v3, and `conf` does not either.
+   Every `stronger` and `numbers` fault, in v4 and in the re-scored v3, is listed individually (note, entry,
+   checker's reason).
+4. **Omission:** every note runs the omission check or has a declared reason; no note has 0 body addresses; no
+   excluded region outside the allow-list.
+5. **Re-check:** at most 15% of fixed entries still faulted in round 1 (v3: 11% development, 14% held-out).
+
+The absolute 8% target is dropped.
+
+**Confidence intervals** (95%), reported for every rate and ratio in criteria 1 to 3:
+- **For each rate:** Wilson intervals.
+- **For each v4/v3 ratio:** a bootstrap with 10,000 resamples and a fixed seed, resampling v3's entries within
+  each note (its stratified sample) and v4's notes as clusters. Entries from one note share a builder, so they
+  are not independent.
+
+The criteria are judged on the point estimates. Where a ratio's interval reaches 1 (no difference), the report
+says so plainly. v3's reported 12.1% is shown beside the re-scored rate, to show how far it understated.
+
+**A missed criterion means stop and report the numbers.** It is not an automatic fail: the owner decides. The
+development notes informed this plan, so passing here is necessary, not sufficient; stage C is the real test.
+Report, then stop.
 
 ### Stage C: held-out evaluation and usability re-test (only if stage B passes)
 
@@ -330,8 +426,8 @@ test. Report, then stop.
 - **Held-out set.**
   - `heldout-v4/criteria.md` is written and committed before the draw.
   - The frame is rebuilt by a metadata-only script.
-  - It excludes every note read so far: the 14 development notes, EX-01, NP-01 and FD-01, and the five read in
-    part.
+  - It excludes every note read so far (the 14 development notes, EX-01, NP-01 and FD-01, and the five read in
+    part) and the six writing set-aside units (`../writing-setaside/setaside.md`).
   - Notes are assigned to categories by script, with one seeded draw per category.
   - **Category 5 (critiqued harness note) is dropped:** GHOST was its only note, and a note for it will come from
     future runs.
@@ -396,15 +492,17 @@ Writers and fact-checkers are estimated at 80k to 130k each. In v3 the usage war
 
 | Session | Batch | Agent runs | Estimate |
 |---|---|---|---|
-| B0 | build changes 1 to 7, tests, docs; re-score 100 v3 entries | 2 re-scorers | 0.2M |
-| B1 | 16S (MB-01 + MB-02): one builder, two checkers, re-checks | about 5 | 0.9M |
-| B2 | H2-01 + TSL; CB1 + CB2: two builders, four checkers, re-checks | about 8 | 1.0M |
-| B3 | NFERT + CB3; GHOST + TAXRES + H1-RES: two builders, five checkers, re-checks | about 9 | 1.0M |
-| B4 | H2-04 + H1-05: one builder, two checkers, re-checks | about 4 | 0.6M |
-| B5 | H1-02 + H1-06: one builder, two checkers, re-checks | about 4 | 0.6M |
-| B6 | compile `stageB/results.md` against v3 and the gate criteria | none | small |
+| B0 | the owner's spot-check against the checker; build changes 1 to 7, tests, docs | none | small |
+| B1 | re-score about 300 v3 entries (5 checkers); hint effect on 100 (W2, N1, N2, then 1 adjudicator) | 9 | 0.8M |
+| B2 | 16S (MB-01 + MB-02): one builder, two checkers, re-checks | about 5 | 0.9M |
+| B3 | H2-01 + TSL; CB1 + CB2: two builders, four checkers, re-checks | about 8 | 1.0M |
+| B4 | NFERT + CB3; GHOST + TAXRES + H1-RES: two builders, five checkers, re-checks | about 9 | 1.0M |
+| B5 | H2-04 + H1-05: one builder, two checkers, re-checks | about 4 | 0.6M |
+| B6 | H1-02 + H1-06: one builder, two checkers, re-checks | about 4 | 0.6M |
+| B7 | compile `stageB/results.md`: rates, ratios and intervals against re-scored v3; every `stronger` and `numbers` fault listed | none | small |
 
-15 minutes between sessions B1 to B5.
+15 minutes between sessions B1 to B6. B1 reports its baseline and hint numbers in `state.md` before the rebuilds
+start, but does not stop for them: the gate is at the end of B7.
 
 **Stage C:**
 
@@ -420,38 +518,43 @@ Writers and fact-checkers are estimated at 80k to 130k each. In v3 the usage war
 
 15 minutes between sessions.
 
-**In all:** about 2 runs in stage A, 35 in stage B and 46 in stage C, plus builders' fix rounds, over 14 sessions.
+**In all:** 2 runs in stage A (done), about 42 in stage B and 46 in stage C, plus builders' fix rounds, over 16
+sessions.
 
 ## Unseen-note budget
 
 Unseen notes are counted in units (a set in parts counts once), excluding everything read. The vault's result
 folders hold the same 75 notes the v3 frame listed: none new since 2026-10-21.
 
-| # | Category | v3 frame | Drawn in v3 | Unseen now | Stage C draws | Unseen after stage C |
-|---|---|---|---|---|---|---|
-| 1 | Critiqued, labelled, with standing | 3 | 1 | 2 | 1 | 1 |
-| 2 | Critiqued, labelled, without standing | 2 | 1 | 1 | 1 | **0** |
-| 3 | Critiqued, numbered (research workflow) | 26 | 1 | 25 | 1 | 24 |
-| 4 | Critiqued, author-year (research workflow) | 4 | 1 | 3 | 1 | 2 |
-| 5 | Critiqued harness note | 1 | 1 | **0** | dropped | 0 |
-| 6 | Uncritiqued, with answers | 5 | 1 | 4 | 1 | 3 |
-| 7 | Uncritiqued harness note | 7 | 1 | 6 | 1 | 5 |
-| 8 | Uncritiqued, no answers | 11 | 1 | 10 | 1 | 9 |
-| | **All** | **59** | **8** | **51** | **7** | **44** |
+| # | Category | v3 frame | Drawn in v3 | Unseen before the set-aside | Writing set-aside (drawn) | Stage C draws | Unseen after stage C |
+|---|---|---|---|---|---|---|---|
+| 1 | Critiqued, labelled, with standing | 3 | 1 | 2 | 0 | 1 | 1 |
+| 2 | Critiqued, labelled, without standing | 2 | 1 | 1 | 0 | 1 | **0** |
+| 3 | Critiqued, numbered (research workflow) | 26 | 1 | 25 | 2 | 1 | 22 |
+| 4 | Critiqued, author-year (research workflow) | 4 | 1 | 3 | 0 | 1 | 2 |
+| 5 | Critiqued harness note | 1 | 1 | **0** | 0 | dropped | 0 |
+| 6 | Uncritiqued, with answers | 5 | 1 | 4 | 1 | 1 | 2 |
+| 7 | Uncritiqued harness note | 7 | 1 | 6 | 2 | 1 | 3 |
+| 8 | Uncritiqued, no answers | 11 | 1 | 10 | 1 | 1 | 8 |
+| | **All** | **59** | **8** | **51** | **6** | **7** | **38** |
 
 The usability topics are taken from stage C's seven drawn notes, so they use up nothing extra. If they were drawn
 separately, three more would go, from categories 3, 7 and 8 at the v3 rule.
 
-**What the backlog supports.** Category 2 runs out at stage C, and category 1 has one note left after it. So one
-more full evaluation after v4 is possible only with category 2 dropped, and none after that, unless new research
-runs add notes. Labelled-citation notes (categories 1 and 2) come only from runs under the current research
-workflow, and category 5 needs a critiqued harness run. Categories 3, 7 and 8 have plenty.
+**What the backlog supports.**
+- Category 2 runs out at stage C, and category 1 has one note left after it. So one more full evaluation after v4
+  is possible only with category 2 dropped, and none after that, unless new research runs add notes.
+- Category 1 is refilled only by standard or deep runs under the current research workflow. Category 2 cannot be
+  refilled, because rule 3a never leaves standing out. Category 5 needs a critiqued harness run.
+- Categories 3 and 8 have plenty.
+- The owner will choose fresh topics for evaluation later. The triggered follow-ups (MB-01 first) are to be run
+  for their content.
 
 ## What changes for the baselines
 
 | Change | Renumbers addresses | v3 notes |
 |---|---|---|
-| 1 provenance lint | no | fail the adopted rules; scored read-only in stage A |
+| 1 provenance hints | no | re-scored with the hint-equipped checker in stage B |
 | 2 view | no | the view runs on them as they are |
 | 3 search status | no | lack the new field |
 | 4 omission | yes, in H2-04, TAXRES and H1-RES | kept as they are; v4 rebuilds |

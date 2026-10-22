@@ -376,14 +376,31 @@ is fixed. B0 records this table as `stageB/spotcheck.md`. No agents.
 1. **Build** changes 1 (hints) and 2 to 7, including the do-not-say sentence rule, with tests and docs.
 2. **Planted-fault test** (owner, after the spot-check). This tests whether the hint-equipped checker catches
    known faults, by kind, especially omissions.
-   - **The pool:** a seeded draw of about 100 claims that the v3 first-pass checker passed, spread across the 14
-     notes. These are kept out of the baseline sample (step 3).
+   - **The pool:** a seeded draw of about 130 claims that the v3 first-pass checker passed, spread across the 14
+     notes. That is enough for about 64 plants and 40 controls after screening. These claims are kept out of the
+     baseline sample (step 3).
    - **Screening:** a fresh screener, using change 5's wording without hints, confirms each claim is clean.
      Claims it faults are set aside (and listed), because a planted fault on top of a real one would be caught
      for the wrong reason.
-   - **Planting:** of the clean claims, about 60 get one known edit each, 12 per type, assigned by seed among the
-     claims where the type applies. About 40 stay unedited as controls. A fresh planter makes one minimal edit per
-     claim and records the before, the after and the intended fault kind:
+   - **Planting:** of the clean claims, about 64 get one known edit each, weighted towards omissions (owner):
+     about 20 with a hedge removed, about 20 with a counter-clause dropped, and about 8 each for the other three
+     types. Types are assigned by seed among the claims where each applies; about 40 stay unedited as controls. A
+     fresh planter makes one minimal edit per claim and records the before, the after and the intended fault
+     kind.
+   - **The plants must be realistic** (owner). Omissions drop words that actually appear in the cited sentences:
+     spot-check entry 5 is the model, a "but not DNA mocks or most mock tests in one preprint" present in the
+     cited text and left out of the entry. Additions are ones a builder might plausibly make. The report notes
+     that planted faults may still be easier to catch than natural ones.
+
+     | Edit type | Plants | What changes | Fault it should be | From |
+     |---|---|---|---|---|
+     | Hedge or scope removed | about 20 | a hedge or scope present in the cited sentences ("may", "suggests", "in one soil", "on mocks", "in this model", a condition or a denominator) is left out of the entry | `stronger` | change 5's examples |
+     | Counter-clause dropped | about 20 | a "but not …" or contrary finding present in the cited sentences is left out | `stronger` | spot-check entry 5 |
+     | True setting added | about 8 | a setting from another sentence of the same result note, one the entry does not cite (true in the source, unsupported by the cited text) | `holds` | the checker's known strength, as a control on the method |
+     | Number changed slightly | about 8 | 0.77 becomes 0.71, 36.6 becomes 33.6 | `numbers` | |
+     | Standing raised | about 8 | in the statement ("one study found" becomes "studies find") or in a field (`conf` single becomes repl, or a `src` label made to disagree with `conf`) | `stronger` or `conf` | spot-check entry 6 |
+
+     The first-version table, kept for its "From" notes:
 
      | Edit type | What changes | Fault it should be | From |
      |---|---|---|---|
@@ -404,12 +421,17 @@ is fixed. B0 records this table as `stageB/spotcheck.md`. No agents.
      - whether a hint was present.
 
      Omission edits carry no hints by construction, so their catch rate is the checker's unaided rate. The report
-     also gives the controls' false-fault rate, and Wilson intervals throughout (about 12 per type, so the
-     intervals are wide and are reported as such).
-   - **Checkpoint: stop and report after this step.** If a type's catch rate is poor, the checker's wording can
-     change before the baseline is scored with it. Changing it afterwards would mean re-scoring the baseline. If
-     the wording changes, the same planted set is re-judged by two fresh checkers with the new wording, to show
-     the change works.
+     also gives the controls' false-fault rate, and Wilson intervals throughout (about 20 or 8 per type, so the
+     intervals are wide and are reported as such). It notes that planted faults may be easier to catch than
+     natural ones.
+   - **Checkpoint: stop and report after this step.** If a type's catch rate is poor, the checker's setup can
+     change before the baseline is scored with it; changing it afterwards would mean re-scoring the baseline.
+     - **The first fix to test, if omissions are caught poorly** (owner): an **omission hint** for the checker. It
+       lists the hedge, negation and contrast words in the cited sentences that are missing from the entry ("may",
+       "suggests", "not", "but", "only", "however", "one study", "in this model"). Checker only, like the other
+       hints.
+     - **Any change is confirmed on a freshly planted set**, not the same one (owner): a new seeded draw of clean
+       claims, newly planted and validated, judged by two fresh checkers with the new setup.
 3. **Re-score v3 (the new baseline).**
    - **The sample:** about 300 entries from the 14 v3 as-built notes, by seeded stratified draw. At least 10 per
      note; the rest are allocated in proportion to each note's entries, by largest remainder.
@@ -448,7 +470,8 @@ is fixed. B0 records this table as `stageB/spotcheck.md`. No agents.
 - The rebuilt notes in the vault.
 
 **Agent runs:**
-- Planted faults: 1 screener, 1 planter, 1 validator and 2 checkers (2 more if the wording changes).
+- Planted faults: 1 screener, 1 planter, 1 validator and 2 checkers. If the setup changes, a fresh set needs a
+  screener, planter, validator and 2 checkers again.
 - Re-score: 5 checkers.
 - Hint effect: 3 checkers and 1 adjudicator.
 - Rebuild: 7 builders, 16 first-pass checkers (16S needs two) and about 10 re-checkers.

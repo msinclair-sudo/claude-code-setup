@@ -1,4 +1,18 @@
-# consolidate v4: improvement plan, revision 6
+# consolidate v4: improvement plan, revision 7
+
+**Revision 7 (2026-10-24, after gate B).** Gate B passed on all five criteria (41f5150); criterion 3 was met on the
+point estimate only. Owner's rulings:
+- **v4 is frozen as built, builder and checker, through stage C.** There are no fixes before it, so stage C measures
+  the version gate B passed: skill content as at b59851f, checker as at 7b5a0b3.
+- **Stage C runs as planned:**
+  - sequential sessions;
+  - pieces blinded by topic and letter, with the key sealed;
+  - the owner grades all 12 pieces with the marking scheme (`stageC/usability/marking-scheme.md`), on a blank
+    per-piece sheet for each piece and a per-pair sheet for each pair;
+  - the blind readers score Part A of the same scheme, so their scores and the owner's compare criterion by
+    criterion;
+  - near-copying is reported for the stage C notes.
+- **Six rulings for v5** are recorded under "For v5 (owner, 2026-10-24)".
 
 **Revision 6 (2026-10-23, after B3).** Owner's rulings; B4 to B8 run straight through, sessions 15 minutes apart.
 - **`src` against `conf`, fixed on the builder side.** `src` shows the critic-corrected standing, marked as the
@@ -363,6 +377,36 @@ The checker is frozen through stage C, so none of these change v4.
 3. **Decision rules compare conditions.** A rule about an intervention compares the conditions on the same claims,
    never an absolute level for the checker. B1b's rule tripped on "either W judge faults more than 5% of controls",
    though the judges without the hint faulted as many.
+
+### For v5 (owner, 2026-10-24, after gate B; recorded, not in this round)
+
+v4 is frozen through stage C, so none of these change it.
+
+4. **Access is its own dimension of claim strength, separate from standing.** Access limits how sure we are of what
+   a paper says; standing limits how strong the evidence is.
+   - Every claim carries its access level, in the knowledge note and in the writer's view.
+   - Abstract-only or second-hand findings are reported as what the authors state, without added interpretation.
+   - Full-text findings can be summarised and interpreted, within their standing.
+   - "Not confirmable from the text read" is an access reason only when the note says the text read was incomplete
+     (abstract, secondary, partial). Otherwise it is an evidence limit.
+   - **Where v4 stands:** v4's writer's view does not show access per claim.
+     - A claim's source line gives authors and year only (`view()`'s `who()`). The `src` label (`AB`, `FT`, `SEC`)
+       and each source's BibTeX `access:` value never reach the view, not even its reference list.
+     - The only access signal is "limited by access (a source was not read in full; not the same as weak
+       evidence)", printed where a claim has a `limit:` field. In the 14 stage B views that is 0 to 22 claims per
+       note.
+5. **Section headings get addresses**, so a setting that only a heading gives can be cited rather than dropped (B5,
+   H1-RES "sub-claim 1").
+6. **Author names are never replaced by descriptions.** Keep the name and add the address (B7, H1-02 `holds`).
+7. **Short citation keys for provenance.** Builders and writers use short readable keys, to save tokens: author
+   abbreviation plus two-digit year, with a letter suffix for clashes (`mcl19`, `mcl19b`).
+   - A lookup table in each note maps short keys to full BibTeX keys, and is expanded mechanically at the end.
+   - Lint checks that every short key resolves.
+   - Readable keys, not opaque hashes, so that misattribution stays visible.
+8. **Detection fix for critique-like headings.** The test case is H1-05: its §3.4 heading "Functional redundancy as
+   an explanation: for, against, critiques" was inventoried as critique items C-112 to C-128.
+9. **Do-not-say entries about the review's own process** are left out of the writer's view, or tagged so the view
+   skips them (6 of B8's 15 readability fragments).
 
 ## The evaluation, in gated stages
 

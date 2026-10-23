@@ -5970,16 +5970,17 @@ class TestQueue(unittest.TestCase):
         self.assertEqual(as_node("dev_1", cancel="all")[0], 0)                     # its own only
         self.assertEqual([j["id"] for j in hz.testq_jobs(c, ("queued",))], [a["id"]])
 
-    def test_same_commit_joins_but_a_finished_one_is_never_reused(self):
+    def test_same_commit_joins_a_job_that_runs_every_arm_asked(self):
         j1, how1 = hz.testq_submit(self.ctx, "check", self.sha, "dev_1", "s1")
         j2, how2 = hz.testq_submit(self.ctx, "check", self.sha, "dev", "s2")
         self.assertEqual((how1, how2, j1["id"]), ("queued", "joined", j2["id"]))
         self.assertEqual([r["node"] for r in hz.testq_jobs(self.ctx)[0]["requested_by"]],
                          ["dev_1", "dev"])
         self.run_queue()
+        # testq_submit itself never reuses a finished job; `check` decides that.
         self.assertEqual(hz.testq_submit(self.ctx, "check", self.sha, "qa", "s3")[1], "queued")
         _, how = hz.testq_submit(self.ctx, "check", self.sha, "qa", "s3", arms=["good"])
-        self.assertEqual(how, "queued")                         # another arm set: its own job
+        self.assertEqual(how, "joined")                         # the full check runs it
 
     def test_priority_goes_first_and_a_lead_promotes_a_lane_job(self):
         log = self.state / "order.txt"
@@ -6713,6 +6714,179 @@ class PartialKeepsTheRest(unittest.TestCase):
         self.run_queue()
         rep = json.loads(hz.shared_report_path(self.ctx, self.sha).read_text())
         self.assertEqual((rep["partial"], rep["arms"], "earlier" in rep), (True, ["good"], False))
+
+
+class ReuseAtACommit(unittest.TestCase):
+    """Log 206, owner 2026-10-22: "is that happening often? if so thats a harness
+    bug". 126 of 2,924 arm runs re-ran an arm already finished at the same sha,
+    107 of the pairs asked for by a second node; obs 83 says a result is reused
+    only while what the arm reads is unchanged."""
+
+    run_queue = TestQueue.run_queue
+
+    def setUp(self):
+        TestQueue.setUp(self)
+        self.data = self.root / "live.db"
+        self.data.write_text("v1")
+        self.runs_of = self.root / "runs.txt"
+        (self.repo / ".harness" / "manifest.json").write_text(json.dumps({"checks": [
+            {"name": "good", "command": f"echo good >> {self.runs_of}; echo fine",
+             "blindSpot": "-", "reads": [str(self.data)]},
+            {"name": "bad", "command": f"echo bad >> {self.runs_of}; exit 1",
+             "blindSpot": "-"}]}))
+        g = lambda *a: self.sp.run(["git", "-C", str(self.repo), *a], capture_output=True,
+                                   text=True)
+        g("add", "-A"); g("commit", "-qm", "reads")
+        self.sha = g("rev-parse", "HEAD").stdout.strip()
+        c = self.ctx
+        c.require_enrolled = lambda: None
+        c.rank = lambda n: 0 if n == "main" else 1 if n == "dev" else 2
+        c.tree = {"nodes": {"main": {}, "dev": {"parent": "main"}, "dev_1": {"parent": "dev"}}}
+
+    def ran(self):
+        return self.runs_of.read_text().split() if self.runs_of.exists() else []
+
+    def check(self, node="dev", **k):
+        self.ctx.node = lambda: (node, {})
+        a = mock.Mock(**dict(dict(known=None, set_baseline=False, for_node=None, sha=None,
+                                  report=None, arms=None, priority=False, normal=False,
+                                  changed=False, all=True, memory="good=10M,bad=10M",
+                                  timeout=60, wait=False, again=False), **k))
+        with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
+             mock.patch.object(hz, "own_catchup", return_value=("ok", {})), \
+             mock.patch.object(hz, "default_queue", return_value="normal"), \
+             mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "s" * 36}), \
+             redirect_stdout(io.StringIO()) as o:
+            try:
+                hz.cmd_check(a); return 0, o.getvalue()
+            except SystemExit as e:
+                return e.code, o.getvalue()
+
+    def inbox(self, n):
+        return [json.loads(f.read_text())["text"] for f in
+                sorted((self.state / "doorbell" / n / "inbox").glob("*.json"))]
+
+    def test_a_second_check_at_the_commit_reuses_what_stands_and_runs_the_rest(self):
+        code, out = self.check("dev_1")
+        self.assertIn("queued", out)
+        self.run_queue()
+        self.assertEqual(sorted(self.ran()), ["bad", "good"])
+        rows = {r["name"]: r for r in json.loads(
+            hz.shared_report_path(self.ctx, self.sha).read_text())["checks"]}
+        self.assertEqual(rows["good"]["reads"], [str(self.data)])
+        self.assertEqual(rows["good"]["inputs"], hz.reads_print([str(self.data)]))
+        self.assertEqual(rows["bad"]["inputs"], {})          # reads nothing outside the commit
+        first = rows["good"]["job"]
+        # The lead checks the same commit after its fast-forward: nothing runs.
+        code, out = self.check("dev")
+        self.assertEqual(code, hz.REFUSED, out)              # bad failed, and still does
+        self.assertIn("nothing queued", out)
+        self.assertIn(first, out)
+        self.assertEqual(hz.testq_jobs(self.ctx, ("queued", "running")), [])
+        self.assertEqual(sorted(self.ran()), ["bad", "good"])
+        rep = json.loads(hz.check_report_path(self.ctx, "dev", self.sha).read_text())
+        self.assertEqual((rep["reused"], rep["failed"], rep["node"]), (["good", "bad"], 1, "dev"))
+        self.assertEqual(self.inbox("dev"), [])              # it was on dev's own screen
+        # Live data moved: good runs again, bad is still reused.
+        self.data.write_text("v2, written in place")
+        code, out = self.check("dev")
+        self.assertIn("reused, not run: bad", out)
+        (job,) = hz.testq_jobs(self.ctx, ("queued",))
+        self.assertEqual((list(job["tests"]), list(job["reused"])), (["good"], ["bad"]))
+        self.run_queue()
+        self.assertEqual(sorted(self.ran()), ["bad", "good", "good"])
+        rep = json.loads(hz.check_report_path(self.ctx, "dev", self.sha).read_text())
+        self.assertEqual(([r["name"] for r in rep["checks"]], rep["reused"], rep["ran"],
+                          rep["failed"]), (["good", "bad"], ["bad"], ["good"], 1))
+        (rung,) = self.inbox("dev")
+        self.assertIn("arms good: 1/1 passed this run; with earlier runs", rung)
+        # --again is the deliberate repeat.
+        code, out = self.check("dev", again=True)
+        (job,) = hz.testq_jobs(self.ctx, ("queued",))
+        self.assertEqual((sorted(job["tests"]), job.get("reused")), (["bad", "good"], None))
+
+    def test_an_arm_whose_reads_moved_while_it_ran_is_not_reused(self):
+        m = json.loads((self.repo / ".harness" / "manifest.json").read_text())
+        m["checks"][0]["command"] += f"; echo more >> {self.data}"
+        (self.repo / ".harness" / "manifest.json").write_text(json.dumps(m))
+        hz.testq_submit(self.ctx, "check", self.sha, "dev_1", "s",
+                        tests={"good": hz.test_spec(10 << 20)})
+        self.run_queue()
+        (row,) = json.loads(hz.shared_report_path(self.ctx, self.sha).read_text())["checks"]
+        self.assertIsNone(row["inputs"])
+        self.assertEqual(hz.reusable_rows(self.ctx, self.sha, ["good"], m["checks"], []), {})
+
+    def test_age_a_changed_command_a_hold_or_a_memory_kill_stops_reuse(self):
+        self.check("dev_1")
+        self.run_queue()
+        checks = hz.load_checks(self.ctx)
+        reuse = lambda checks=checks, holds=(): sorted(
+            hz.reusable_rows(self.ctx, self.sha, ["good", "bad"], checks, list(holds)))
+        self.assertEqual(reuse(), ["bad", "good"])
+        self.assertEqual(reuse(holds=[{"path": str(self.data)}]), ["bad"])
+        self.assertEqual(reuse([dict(c, command="echo new") if c["name"] == "good" else c
+                                for c in checks]), ["bad"])
+        self.assertEqual(reuse([dict(c, reuse=False) if c["name"] == "bad" else c
+                                for c in checks]), ["good"])
+        f = hz.shared_report_path(self.ctx, self.sha)
+        rep = json.loads(f.read_text())
+        rep["checks"][1]["memoryKilled"] = True
+        f.write_text(json.dumps(rep))
+        self.assertEqual(reuse(), ["good"])
+        old = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() - 25 * 3600))
+        for r in rep["checks"]:
+            r["at"] = old
+        f.write_text(json.dumps(rep))
+        self.assertEqual(reuse(), [])
+
+    def test_a_sqlite_write_waiting_in_its_wal_counts_as_a_change(self):
+        before = hz.reads_print([str(self.data), "relative/in/the/commit.txt"])
+        self.assertEqual(list(before), [str(self.data)])
+        wal = Path(str(self.data) + "-wal")
+        wal.write_text("")
+        self.assertEqual(hz.reads_print([str(self.data)]), before)   # empty: the same
+        wal.write_text("page")
+        self.assertNotEqual(hz.reads_print([str(self.data)]), before)
+        d = self.root / "mirror"
+        d.mkdir()
+        (d / "a").write_text("1")
+        one = hz.reads_print([str(d) + "/"])
+        (d / "b").write_text("2")
+        self.assertNotEqual(hz.reads_print([str(d) + "/"]), one)
+        with mock.patch.object(hz, "REUSE_FILES", 1):
+            self.assertIsNone(hz.reads_print([str(d)]))
+
+    def test_a_check_for_a_node_reused_whole_rings_that_node_not_the_asker(self):
+        self.check("dev_1")
+        self.run_queue()
+        for f in (self.state / "doorbell").glob("*/inbox/*.json"):
+            f.unlink()
+        with mock.patch.object(hz, "check_for_target",
+                               return_value=("dev_1", self.sha, str(self.repo))):
+            code, out = self.check("main", for_node="dev_1")
+        self.assertIn("nothing queued", out)
+        self.assertIn("dev_1's report", out)
+        (rung,) = self.inbox("dev_1")
+        self.assertIn("every arm reused from an earlier run at this commit", rung)
+        self.assertEqual(self.inbox("main"), [])
+
+    def test_a_queued_job_is_joined_whatever_order_its_arms_were_named(self):
+        # Log 205: a partial `check --for` under a halt queued a copy of the
+        # node's job, its arms named sorted, and the original would run them again.
+        spec = lambda *ns: {n: hz.test_spec(10 << 20) for n in ns}
+        j1, _ = hz.testq_submit(self.ctx, "check", self.sha, "dev_1", "s",
+                                arms=["good", "bad"], tests=spec("good", "bad"))
+        j2, how = hz.testq_submit(self.ctx, "check", self.sha, "main", "", root=True, by="main",
+                                  arms=["bad", "good"], tests=spec("bad", "good"))
+        self.assertEqual((how, j2["id"]), ("joined", j1["id"]))
+        self.assertTrue(hz._read_json(hz.testq_dir(self.ctx) / f"{j1['id']}.json")["root"])
+        self.assertEqual(hz.testq_submit(self.ctx, "check", self.sha, "dev", "s", arms=["bad"],
+                                         tests=spec("bad"))[1], "joined")
+        other = self.sha[::-1]
+        self.assertEqual(hz.testq_submit(self.ctx, "check", other, "dev", "s", arms=["bad"],
+                                         tests=spec("bad"))[1], "queued")
+        self.assertEqual(hz.testq_submit(self.ctx, "check", other, "dev", "s",
+                                         tests=spec("bad", "good"))[1], "queued")   # wider
 
 
 class StreamFeature(unittest.TestCase):
@@ -8783,6 +8957,26 @@ class Log185to190(unittest.TestCase):
                           if e["frm"] == "dev_1"], [("signoff", "dev")])
         code, out = self.run_as("dev", "mark", "t", "--close", **self.op)
         self.assertNotIn("after its check", out)
+
+    def test_a_presentation_whose_check_already_reported_waits_for_nothing(self):
+        # Log 206: a check reused whole queues no job, so there is none to wait on.
+        self.assertEqual(self.run_as("dev_1", "mark", "t", **self.op)[0], 0)
+        sha = self.commit("dev_1", "w.py")
+        f = hz.check_report_path(self.ctx, "dev_1", sha)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps({"node": "dev_1", "sha": sha, "passed": True, "checks": []}))
+        code, out = self.run_as("dev_1", "mark", "t", "--done", "--note", "n", "--after-check",
+                                **self.op)
+        self.assertEqual(code, 0, out)
+        self.assertIn("has already reported (passed); nothing to wait for", out)
+        self.assertNotIn("_after_check", hz._read_json(self.ctx.dir / "marks" / "t.json"))
+
+    def test_a_presentation_with_no_check_at_all_is_still_refused(self):
+        self.assertEqual(self.run_as("dev_1", "mark", "t", **self.op)[0], 0)
+        self.commit("dev_1", "w.py")
+        code, out = self.run_as("dev_1", "mark", "t", "--done", "--note", "n", "--after-check",
+                                **self.op)
+        self.assertEqual(code, hz.REFUSED)
 
     def test_a_pending_part_stays_open_after_the_close(self):
         # Log 188: Part 2 had no open record once Part 1 was signed off.

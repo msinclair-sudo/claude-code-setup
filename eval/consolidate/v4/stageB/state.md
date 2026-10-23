@@ -387,3 +387,36 @@ This follows a 15-minute wait after B5. One builder builds H2-04 and then H1-05,
 ## B7: started (2026-10-23, 23:03)
 
 This follows a 15-minute wait after B6. One builder builds H1-02 and then H1-06, with prompts as in B4.
+
+## B7: done (2026-10-23, 23:49)
+
+| Note | Entries | First pass | v3 estimate | `stronger` + `numbers` | Settings v4/v3 | Near-copies v3, v4 | Re-checks |
+|---|---|---|---|---|---|---|---|
+| H1-02 | 124 | 14 (11.3%) | 52% | 0 | 1.09 (90% to 98%) | 54%, 44% | 0 of 14 still faulted |
+| H1-06 | 103 | 10 (9.7%) | 38% | 2 | 1.07 (89% to 95%) | 48%, 50% | 2 of 10, then 1 of 2, then 0 of 1 |
+
+**Stop checks: none met.**
+- Both notes are below their v3 estimates.
+- Pooled `stronger` plus `numbers` over all 14 notes is 26 in 1,847 entries: 1.4 per 100.
+- Both setting ratios are above 1.
+
+**H1-06's `stronger` and `numbers` faults:**
+- perturbation-response-depth.9 (`numbers`) pooled two studies' tau_D ranges and extended them to a litter study that gives none.
+- env-preference-depth.2 (`stronger`, `absent`) dropped the critic's "or a preprint" clause.
+
+**Builder** (one, about 435k tokens):
+- **Before submitting:** it removed only wording it had added ("simulated data", "before MAG yield rose", "natural" and "in simulation"). In H1-06 it first deleted setting words, then restored them all with reference-title addresses.
+- **In H1-02 it replaced author names in `holds` with descriptions** of the sources (for example "same-sample isolate pairs") instead of adding the reference addresses. It reasoned that the writer's view shows authors from `src`. Names are details under the rule, so this is a removal, recorded here.
+- **In the fixes:** almost all added addresses. Two detail removals: "than real pairs" (its own comparison), and "ASVs against 97% OTUs only" (the note's wording, which the critic corrects; the statement keeps the corrected contrast).
+- **Re-check rounds 2 and 3, H1-06:**
+  - genome-incompleteness.6 restored a "modelled" scope.
+  - rankwise-structuring.9 first narrowed "uncontrolled for group number and size" to the note's words. In round 3 it gained A-021's address, the sentence that names Bay among the uncontrolled studies.
+
+**Raised by the builder (for the owner):**
+- Class markers at the end of a paragraph ("(measured; natural)") were used as the basis for the study's earlier sentences.
+- "inferred" has no class value, so `deriv` was used.
+- The note calls mock-community subsampling "modelled", while format.md says mock communities are `meas`; the builder kept `model`.
+- The critic contradicting the note on provenance has no rule.
+- The critic's "Expectation echo" block and positive rulings have no field.
+
+**Next: B8**, after a 15-minute wait.

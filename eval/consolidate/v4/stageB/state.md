@@ -291,3 +291,7 @@ Both builders found the `class: search` basis duplicating `search`.
 
 **Next: B5** (NFERT plus CB3; GHOST plus TAXRES plus H1-RES), after a 15-minute wait. All nine remaining vault
 notes equal their saved v3 copies.
+
+## B5: started (2026-10-23, 20:25)
+
+Resumed after the owner's pause until 8:11 pm. There are two builders: NFERT plus CB3, and GHOST plus TAXRES plus H1-RES. Prompts are as in B4.

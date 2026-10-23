@@ -1,0 +1,62 @@
+accounting-boundary.1: ok
+ghg-metric.1: ok
+ghg-metric.2: ok
+ghg-metric.3: ok
+ghg-metric.4: ok
+ghg-metric.5: ok
+ghg-metric.6: ok
+global-denominator.1: ok
+global-denominator.2: ok
+global-denominator.3: ok
+co2-accounting.1: ok
+co2-accounting.2: ok
+food-system.1: ok
+food-system.2: ok
+food-system.3: ok
+food-system.4: ok
+food-system.5: ok
+food-system.6: ok
+food-system.7: ok
+food-system.8: ok
+food-system.9: ok
+food-system.10: holds: `holds` places the component in "the FAOSTAT food-system estimate", but the quoted text says only "their own land-use-change component" and "the food-related land use change component" and never names FAOSTAT.
+food-system.11: ok
+food-system.12: ok
+food-system.13: ok
+food-system.14: ok
+food-system.15: ok
+food-system.16: ok
+food-system.17: ok
+food-system.18: ok
+food-system.19: ok
+afolu.1: ok
+afolu.2: ok
+afolu.3: ok
+afolu.4: ok
+afolu.5: ok
+afolu.6: ok
+afolu.7: conf: `limit: access` rests on "I read these shares off the rendered figure, not the text", which says how the figure was read, not that the source was abstract only, not obtained, second-hand or not read in the original.
+farm-gate.1: ok
+farm-gate.2: ok
+farm-gate.3: ok
+farm-gate.4: ok
+farm-gate.5: ok
+farm-gate.6: ok
+farm-gate.7: ok
+livestock.1: absent: the `src` label says the 18% came "via Gerber et al. 2013's Annex", but the quoted text gives "Livestock's Long Shadow (2006) put livestock at 18% of total GHG" without saying it was read through Gerber's Annex.
+livestock.2: ok
+livestock.3: ok
+livestock.4: ok
+livestock.5: ok
+anthropogenic-n2o.1: ok
+anthropogenic-n2o.2: ok
+anthropogenic-n2o.3: ok
+anthropogenic-n2o.4: ok
+anthropogenic-n2o.5: ok
+anthropogenic-n2o.6: ok
+anthropogenic-n2o.7: ok
+anthropogenic-n2o.8: ok
+soil-n2o.1: ok
+soil-n2o.2: conf: `limit: access` rests on "I read these shares off the rendered figure, not the text", which says how the figure was read, not that the source was abstract only, not obtained, second-hand or not read in the original.
+
+Count: 60 entries; 56 ok; stronger 0, conf 2, numbers 0, absent 1, critic 0, merged 0, holds 1.

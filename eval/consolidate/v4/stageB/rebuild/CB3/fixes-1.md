@@ -1,0 +1,20 @@
+# Faults to fix (11 entries)
+
+food-system.10: holds: `holds` places the component in "the FAOSTAT food-system estimate", but the quoted text says only "their own land-use-change component" and "the food-related land use change component" and never names FAOSTAT.
+afolu.7: conf: `limit: access` rests on "I read these shares off the rendered figure, not the text", which says how the figure was read, not that the source was abstract only, not obtained, second-hand or not read in the original.
+livestock.1: absent: the src label "(via Gerber et al. 2013's Annex)" says the 18% figure was taken second-hand through Gerber's Annex, but the quoted text gives Livestock's Long Shadow's 18% with no source route at all.
+livestock.1: absent: the `src` label says the 18% came "via Gerber et al. 2013's Annex", but the quoted text gives "Livestock's Long Shadow (2006) put livestock at 18% of total GHG" without saying it was read through Gerber's Annex.
+soil-n2o.2: conf: `limit: access` rests on "I read these shares off the rendered figure, not the text", which says how the figure was read, not that the source was abstract only, not obtained, second-hand or not read in the original.
+soil-n2o.4: stronger: the cited table row gives the 795 MtCO2 eq input "*medium confidence*", but the entry and its holds drop that standing and state the ~1.5% without it.
+soil-n2o.4: stronger: the table row gives the 795 MtCO2 eq share "*medium confidence*", but the entry states "~1.5%" with no hedge and conf "not stated", and holds omits it.
+soil-n2o.7: absent: holds attributes the 4.1% end to "Climate Watch/WRI's agricultural soils line via Our World in Data", but the quoted text names that end only as "the full inventory 'agricultural soils' line" and "a single unverified source", never its source.
+soil-n2o.7: holds: holds attributes the 4.1% end to "Climate Watch/WRI's agricultural soils line via Our World in Data", but the cited text names no source for 4.1%, only "the full inventory 'agricultural soils' line" and "a single unverified source".
+synthetic-fertiliser.1: holds: holds says the shares were read off "the rendered AR6 Figure 7.3", but the quoted text says only "I read these shares off the rendered figure" and names no figure number (and reading off a figure is not an access reason, so "limit: access" is also unsupported).
+synthetic-fertiliser.1: holds: holds says the shares were read "off the rendered AR6 Figure 7.3", but the cited text says only "I read these shares off the rendered figure" and never names Figure 7.3.
+synthetic-fertiliser.2: conf: "limit: access" rests on "I read these shares off the rendered figure, not the text", which describes how the figure was read, not an access restriction such as abstract only or not obtained.
+synthetic-fertiliser.2: conf: "limit: access" rests on "I read these shares off the rendered figure, not the text", which is a reading method, not an access reason (abstract only, not obtained, second-hand, not read in the original).
+dns.1: stronger: the why says no boundary "produces five per cent for agriculture", dropping the text's "produces exactly five per cent", which goes on to say three boundaries "land close enough that a 'roughly 5%' claim could have originated from any of them".
+dns.2: stronger: the why says "No boundary produces five per cent for agricultural soils", dropping the text's "exactly", although the same quoted sentence says boundaries "land close enough that a 'roughly 5%' claim could have originated from any of them".
+dns.2: stronger: the why says "No boundary produces five per cent for agricultural soils", dropping "exactly" from the text's "produces exactly five per cent ... and none produces it for agricultural soils".
+dns.12: absent: the why calls the 32% source "FAO's web summary", but the quoted text says only that "The 2025 release for 2023 ... states the share 'fell from 38 to 32 percent'" and never identifies it as a web summary.
+dns.12: absent: the why credits the 32% to "FAO's web summary", but the cited text says only that "The 2025 release for 2023 ... states the share 'fell from 38 to 32 percent'" and never calls it a web summary.

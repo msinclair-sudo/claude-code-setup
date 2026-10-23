@@ -1,0 +1,11 @@
+# Faults to fix (7 entries)
+
+taxonomy-as-predictor.1: holds: the text attributes the finding to "The counter-evidence reveals", but holds gives "the sub-claim 1 evidence", a wider basis the quoted text does not name.
+accessory-niche-function.7: holds: holds says "one *B. cereus* strain from contaminated subsurface", but neither quoted sentence (B-0057, A-011) mentions a contaminated subsurface; they give only "strain CPTF" and "geochemically heterogeneous microniches".
+accessory-niche-assessment.9: absent: the entry says elements carrying "habitat-linked metabolic and stress-response genes, are enriched and maintained", but A-015 says only elements "carrying clear metabolic functions are enriched and maintained" and A-019 says only that accessory genomes "do carry" such genes, so stress-response genes being enriched and maintained is not in the text.
+accessory-niche-assessment.9: absent: the entry says "habitat-linked metabolic and stress-response genes, are enriched and maintained", but the text says only that elements carrying "clear metabolic functions are enriched and maintained" and that accessory genomes "do carry" habitat-linked metabolic and stress-response genes, never that stress-response genes are enriched and maintained.
+n-cycle-hgt.16: holds: holds gives "denitrifier strains with cnorB and qnorB", but the text speaks only of "strains from different bacterial classes" and never calls them denitrifiers.
+n-cycle-vertical.4: stronger: the entry says Anand and Chanway "found ... that nifH was transmitted horizontally while nifD was transmitted vertically", dropping the hedge in "phylogenetic analyses suggested nifH was transmitted horizontally".
+n-cycle-vertical.4: stronger: the entry says Anand and Chanway "found ... that nifH was transmitted horizontally while nifD was transmitted vertically", dropping the hedge in the text, where "phylogenetic analyses suggested" this.
+n-cycle-gene-patterns.6: holds: the setting "the sub-claim 3 evidence" is not in the quoted text, which says only "Clade-specific patterns are equally pronounced" and ties it to no sub-claim.
+n-cycle-gene-patterns.13: holds: the setting "the sub-claim 3 counter-evidence" adds a sub-claim the quoted text never names; it speaks only of "the counter-evidence showing vertical inheritance for core nif operons".

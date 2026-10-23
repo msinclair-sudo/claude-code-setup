@@ -1,0 +1,62 @@
+accessory-niche-function.18: ok
+accessory-mge-content.1: ok
+accessory-mge-content.2: ok
+accessory-mge-content.3: ok
+accessory-mge-content.4: ok
+accessory-mge-content.5: ok
+accessory-mge-content.6: ok
+accessory-mge-content.7: ok
+accessory-mge-content.8: ok
+accessory-mge-content.9: ok
+accessory-mge-content.10: ok
+accessory-mge-content.11: ok
+accessory-mge-content.12: ok
+accessory-niche-assessment.1: ok
+accessory-niche-assessment.2: ok
+accessory-niche-assessment.3: ok
+accessory-niche-assessment.4: ok
+accessory-niche-assessment.5: ok
+accessory-niche-assessment.6: ok
+accessory-niche-assessment.7: ok
+accessory-niche-assessment.8: ok
+accessory-niche-assessment.9: absent: the entry says elements carrying "habitat-linked metabolic and stress-response genes, are enriched and maintained", but A-015 says only elements "carrying clear metabolic functions are enriched and maintained" and A-019 says only that accessory genomes "do carry" such genes, so stress-response genes being enriched and maintained is not in the text.
+accessory-niche-assessment.10: ok
+accessory-niche-assessment.11: ok
+accessory-niche-assessment.12: ok
+accessory-niche-assessment.13: ok
+accessory-niche-assessment.14: ok
+accessory-niche-assessment.15: ok
+n-cycle-hgt.1: ok
+n-cycle-hgt.2: ok
+n-cycle-hgt.3: ok
+n-cycle-hgt.4: ok
+n-cycle-hgt.5: ok
+n-cycle-hgt.6: ok
+n-cycle-hgt.7: ok
+n-cycle-hgt.8: ok
+n-cycle-hgt.9: ok
+n-cycle-hgt.10: ok
+n-cycle-hgt.11: ok
+n-cycle-hgt.12: ok
+n-cycle-hgt.13: ok
+n-cycle-hgt.14: ok
+n-cycle-hgt.15: ok
+n-cycle-hgt.16: holds: holds gives "denitrifier strains with cnorB and qnorB", but the text speaks only of "strains from different bacterial classes" and never calls them denitrifiers.
+n-cycle-hgt.17: ok
+n-cycle-hgt.18: ok
+n-cycle-hgt.19: ok
+n-cycle-hgt.20: ok
+n-cycle-hgt.21: ok
+n-cycle-vertical.1: ok
+n-cycle-vertical.2: ok
+n-cycle-vertical.3: ok
+n-cycle-vertical.4: stronger: the entry says Anand and Chanway "found ... that nifH was transmitted horizontally while nifD was transmitted vertically", dropping the hedge in "phylogenetic analyses suggested nifH was transmitted horizontally".
+n-cycle-vertical.5: ok
+n-cycle-vertical.6: ok
+n-cycle-vertical.7: ok
+n-cycle-vertical.8: ok
+n-cycle-vertical.9: ok
+n-cycle-gene-patterns.1: ok
+n-cycle-gene-patterns.2: ok
+
+Count: 60 entries; ok 57, stronger 1, conf 0, numbers 0, absent 1, critic 0, merged 0, holds 1.

@@ -113,6 +113,16 @@ NOTES = {  # note -> its knowledge note, vault-relative
     "TSL": "PhD/biblion/research/knowledge/Term specificity and multi-level labelling.md",
     "CB1": "PhD/Proposal/Research/Knowledge/Agricultural liming rates, supply, energy and carbon dioxide.md",
     "CB2": "PhD/Proposal/Research/Knowledge/Recovery of rRNA genes from metagenome assemblies and MAGs.md",
+    "NFERT": "PhD/Proposal/Research/Knowledge/Synthetic nitrogen fertiliser and soil microbial nitrogen cycling.md",
+    "CB3": "PhD/Proposal/Research/Knowledge/Agriculture's share of global greenhouse gas emissions.md",
+    "GHOST": "PhD/biblion/research/knowledge/Positioning graph nodes that lack features.md",
+    "TAXRES": "PhD/biblion/research/knowledge/Reference taxonomies and taxon-name resolution.md",
+    "H1-RES": "PhD/Proposal/Research/Knowledge/Decoupling of microbial function from taxonomy.md",
+    "H2-04": "PhD/Proposal/Research/Knowledge/Sources of functional covariation and cross-level functional axes.md",
+    "H1-05": "PhD/Proposal/Research/Knowledge/Functional and taxonomic turnover in soil microbial communities.md",
+    "H1-02": "PhD/Proposal/Research/Knowledge/Recovery artefacts in the gene content of metagenome-assembled genomes.md",
+    "H1-06": "PhD/Proposal/Research/Knowledge/Phylogenetic depth of prokaryotic traits and rank-wise environmental "
+             "structuring.md",
 }
 
 

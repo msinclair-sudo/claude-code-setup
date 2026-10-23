@@ -261,3 +261,33 @@ overwritten.
 ## B4: started (2026-10-23)
 
 This follows a 15-minute wait after B3 and the rulings. There are two builders: H2-01 plus TSL, and CB1 plus CB2.
+
+## B4: done (2026-10-23)
+
+First passes use two checkers per 60-entry packet (`rebuild/<NOTE>/first-pass.md`). Each "v3 estimate" is the
+re-scored baseline for that note.
+
+| Note | Entries | First pass | v3 estimate | `stronger` + `numbers` | Settings v4/v3 | Near-copies v3, v4 | Re-checks |
+|---|---|---|---|---|---|---|---|
+| H2-01 | 143 | 10 (7.0%) | 61% | 1 | 0.91 (90% to 82%) | 51%, 44% | 0 of 10 still faulted |
+| TSL | 31 | 6 (19.4%) | 36% | 3 | 0.87 (97% to 84%) | 45%, 24% | 0 of 6 |
+| CB1 | 145 | 4 (2.8%) | 18% | 1 | 1.00 (93% to 93%) | 59%, 59% | 0 of 4 |
+| CB2 | 81 | 2 (2.5%) | 32% | 1 | 1.09 (84% to 92%) | 61%, 48% | 0 of 2 |
+
+**Stop checks: none met.**
+- Every note is below its v3 estimate.
+- Pooled `stronger` plus `numbers`, over 16S and B4, is 16 in 960 entries: 1.7 per 100, against the 3.6 threshold.
+- Every setting ratio is at least 0.87.
+
+**Builders:**
+- **H2-01 and TSL** (about 380k tokens): deleted details at first, then reread the rule and restored them with
+  addresses (about 30).
+- **CB1 and CB2** (about 380k tokens): CB1 kept details with addresses. In CB2 it removed eight details while
+  rewording, before submitting ("tropical", "activated sludge", "METASEED" and others). All fixes added addresses
+  and removed nothing.
+
+The H2-01 builder reports that lint's match for "the only direct empirical test" is narrow (a warning left on TSL).
+Both builders found the `class: search` basis duplicating `search`.
+
+**Next: B5** (NFERT plus CB3; GHOST plus TAXRES plus H1-RES), after a 15-minute wait. All nine remaining vault
+notes equal their saved v3 copies.

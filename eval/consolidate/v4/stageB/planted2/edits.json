@@ -1,0 +1,444 @@
+{
+  "16S/scaling-normalisation.1": {
+    "type": "hedge",
+    "statement": "Total-count scaling biases differential-expression estimates in RNA-seq; TMM and DESeq's negative binomial model also come from RNA-seq, and both assume most features are unchanged between conditions.",
+    "fields": {},
+    "changed": "\"can bias\" -> \"biases\"",
+    "from_text": "Total-count scaling can bias differential-expression estimates in RNA-seq (Bullard 2010) [AB; INDIRECT].",
+    "intended": "stronger"
+  },
+  "GHOST/benchmark-regime.3": {
+    "type": "hedge",
+    "statement": "The dominance of propagation on standard benchmarks is an artefact of the benchmarks, not a regime-general property.",
+    "fields": {},
+    "changed": "\"may be an artefact\" -> \"is an artefact\"",
+    "from_text": "so the dominance of propagation on standard benchmarks may be an artifact, not a regime-general property [R7]",
+    "intended": "stronger"
+  },
+  "16S/abundance-occupancy.2": {
+    "type": "hedge",
+    "statement": "Nemergut's authors note that abundant taxa are simply easier to detect, and that undersampling could hide intermediate distributions.",
+    "fields": {},
+    "changed": "\"may simply be easier\" -> \"are simply easier\"",
+    "from_text": "The authors note that abundant taxa may simply be easier to detect, and that undersampling could hide intermediate distributions.",
+    "intended": "stronger"
+  },
+  "H1-RES/redundancy.16": {
+    "type": "hedge",
+    "statement": "The counter-evidence bounds soil redundancy rather than overturning it: function and taxonomy are reported to covary closely where environments differ most strongly (across biomes, precipitation extremes and contamination gradients), so redundancy is real within moderate environmental ranges but weakens as environmental contrast grows, with selection then shaping taxa and functions together.",
+    "fields": {},
+    "changed": "\"appears to weaken\" -> \"weakens\"",
+    "from_text": "In other words, redundancy is real within moderate environmental ranges but appears to weaken as the environmental contrast grows, with selection then shaping taxa and functions together.",
+    "intended": "stronger"
+  },
+  "H1-RES/n-cycle-hgt.13": {
+    "type": "hedge",
+    "statement": "Anand & Chanway (2013), in *Paenibacillus polymyxa* strain P2b-2R, found phylogenetic analyses showing nifH was transmitted horizontally and nifD vertically, a gene-specific pattern within the same operon.",
+    "fields": {},
+    "changed": "\"suggesting\" -> \"showing\"",
+    "from_text": "found that phylogenetic analyses suggested nifH was transmitted horizontally while nifD was transmitted vertically",
+    "intended": "stronger"
+  },
+  "H1-02/same-sample-isolate.5": {
+    "type": "hedge",
+    "statement": "The paper attributes the low-identity share of missed genes to sequence divergence from the isolate or to assembly errors, so part of the loss is biology and not recovery.",
+    "fields": {},
+    "changed": "\"may be biology\" -> \"is biology\"",
+    "from_text": "[1] attributes low-identity missed genes to sequence differences from the isolate or to assembly errors, so part of the 'loss' may be biology and not recovery.",
+    "intended": "stronger"
+  },
+  "NFERT/mineralisation.2": {
+    "type": "hedge",
+    "statement": "Quantifying soil nitrogen supply improves fertiliser-use efficiency and trims rates, but the lever is the measured soil supply, not a demonstrated property of microbial-community efficiency.",
+    "fields": {},
+    "changed": "\"can improve ... and trim\" -> \"improves ... and trims\"",
+    "from_text": "Quantifying soil nitrogen supply can improve fertiliser-use efficiency and trim rates",
+    "intended": "stronger"
+  },
+  "H1-RES/n-cycle-hgt.8": {
+    "type": "hedge",
+    "statement": "Garbeva et al. (2007) detected nirK and norB in *Nitrosospira* species, with phylogenetic analysis suggesting lateral transfer of these denitrification genes into ammonia-oxidising bacteria; in some strains they were not phylogenetically distinct from classical denitrifiers and were less conserved than 16S rRNA or amoA genes.",
+    "fields": {},
+    "changed": "\"appeared less conserved\" -> \"were less conserved\"",
+    "from_text": "these genes appeared less conserved than 16S rRNA or amoA genes [7]",
+    "intended": "stronger"
+  },
+  "16S/copy-number-correction.9": {
+    "type": "counter",
+    "statement": "Correction changed the identity of the most abundant OTU in about 20% of Human Microbiome Project and 31% of Earth Microbiome Project communities, but against predicted, not measured, truth; in simulations it reduced sample shifts in ordinations.",
+    "fields": {},
+    "changed": "dropped \"but left PERMANOVA variance explained essentially unchanged (5.27 to 19.65% true versus 5.27 to 19.82% uncorrected)\"",
+    "from_text": "In simulations it reduced sample shifts in ordinations but left PERMANOVA variance explained essentially unchanged (5.27 to 19.65% true versus 5.27 to 19.82% uncorrected).",
+    "intended": "absent"
+  },
+  "CB2/linking-tools.1": {
+    "type": "counter",
+    "statement": "Linking tools recover the gap: MarkerMAG, on benchmark datasets at 100% linking accuracy, recovered 88.2% (15/17 MAGs, low-complexity MBARC-26), 53.5% (23/43, medium) and 46.7% (14/30, high complexity); on real data the improvement over baseline ranged from 1.1-fold (macroalgae) to 14.2-fold (pig gut).",
+    "fields": {},
+    "changed": "dropped \"part but not most of\" (\"recover part but not most of the gap\" -> \"recover the gap\")",
+    "from_text": "Linking tools recover part but not most of the gap.",
+    "intended": "absent"
+  },
+  "16S/ploidy.11": {
+    "type": "counter",
+    "statement": "Single-cell measurements in H. salinarum showed wide cell-to-cell variation in genome copy number, larger in exponential than in stationary phase; the review read only the abstract, which gives no per-cell shares.",
+    "fields": {},
+    "changed": "dropped \"although the open full text reports single-cell CLSM and FACS distributions\"",
+    "from_text": "Its full text reports single-cell CLSM and FACS distributions of genome copy number in H. salinarum, which bear directly on the brief's 'share of cells' question.",
+    "intended": "absent"
+  },
+  "H2-04/within-between-partition.9": {
+    "type": "counter",
+    "statement": "The plant partitions are measured and partly replicated.",
+    "fields": {},
+    "changed": "dropped \"but concern species traits, not gene content\"",
+    "from_text": "The plant partitions are measured and partly replicated but concern species traits, not gene content..",
+    "intended": "absent"
+  },
+  "H2-01/levels-within.4": {
+    "type": "counter",
+    "statement": "On a macroalgal host, similarity was about 15% in species composition against 70% in COG composition.",
+    "fields": {},
+    "changed": "dropped \"the contrast compares a species table with a coarser COG table, and the taxonomic figure is from an earlier study\"",
+    "from_text": "The contrast compares a species table with a coarser COG table, and the taxonomic figure is from an earlier study.",
+    "intended": "absent"
+  },
+  "H2-01/taxonomy-fixed.2": {
+    "type": "counter",
+    "statement": "Salazar2019 separate regulatory change (metatranscriptome) from community turnover in the ocean, and per the search agent's reading turnover dominated at global scale.",
+    "fields": {},
+    "changed": "dropped \"this concerns expression, not gene content\"",
+    "from_text": "That is the nearest item and concerns expression, not gene content.",
+    "intended": "absent"
+  },
+  "H1-02/filters-corrections.5": {
+    "type": "counter",
+    "statement": "CELEBRIMBOR was validated on simulations.",
+    "fields": {},
+    "changed": "dropped \"and the authors state that non-random loss violates its missing-at-random assumption\"",
+    "from_text": "the authors state that non-random loss violates its missing-at-random assumption",
+    "intended": "absent"
+  },
+  "16S/sampling-storage.5": {
+    "type": "counter",
+    "statement": "Storage of a single soil for 1 to 14 days at room temperature, 4 C or -20 C changed its community, most at 3 to 7 days and least when frozen.",
+    "fields": {"holds": "one soil, 1 to 14 days, three temperatures; not shown for other soils"},
+    "changed": "dropped \"these changes were small relative to differences among more than 500 Earth Microbiome Project soils\" from the statement and \"compared with more than 500 EMP soils\" from holds",
+    "from_text": "These changes were small relative to differences among more than 500 Earth Microbiome Project soils (Rubin 2013) [FT; meas; repl].",
+    "intended": "absent"
+  },
+  "16S/relic-dna.2": {
+    "type": "counter",
+    "statement": "Relic DNA averaged 33% (over 80% in some samples) across soil, sediment, water and mammalian gut; models predict bias only when relic and intact abundance distributions differ.",
+    "fields": {},
+    "changed": "dropped \"but had minimal effect on diversity estimates\"",
+    "from_text": "Relic DNA averaged 33% across soil, sediment, water and mammalian gut but had minimal effect on diversity estimates.",
+    "intended": "absent"
+  },
+  "H2-01/other-field-transfer.1": {
+    "type": "counter",
+    "statement": "Sparse module dictionaries learned on 5% of samples recovered expression of the same TCGA tumour type at about 87% (Spearman, SMAF), and a dictionary from a different tumour type gave 68% on average, related tumour types doing better.",
+    "fields": {},
+    "changed": "dropped \"this is recovery of expression from 25 random composite measurements through a learned dictionary (compressed sensing), not a direct covariance-reproduction score\"",
+    "from_text": "Cleary2017's 87% to 68% is recovery of expression from 25 random composite measurements through a learned dictionary (compressed sensing). It is not a direct covariance-reproduction score, and the answer should say so.",
+    "intended": "absent"
+  },
+  "H2-01/transfer-dependencies.1": {
+    "type": "counter",
+    "statement": "There is no direct conflict on the same quantity: reproduction is high in some tests (Subramanian 81%; Chen reductive TCA 94.7%).",
+    "fields": {"src": "subramanianNextGenerationConnectivity2017 (FT), chenGutMicrobialCoabundance2020 (FT)"},
+    "changed": "dropped \"and low in others (Cleary cross-type drop; pooled networks in Pierson; sign reversals across scales in plant traits)\"; removed clearyEfficientGenerationTranscriptomic2017, piersonSharingSpecificityCoexpression2015 and andereggWithinspeciesPatternsChallenge2018 from src",
+    "from_text": "Reproduction is high in some tests (Subramanian 81%; Chen reductive TCA 94.7%) and low in others (Cleary cross-type drop; pooled networks in Pierson; sign reversals across scales in plant traits [Anderegg2018])",
+    "intended": "absent"
+  },
+  "CB1/scarcity-claim.7": {
+    "type": "counter",
+    "statement": "Two observations could be read as consistent with scarcity: USGS's urban shortages from planning and land-use pressure, and Beerling et al.'s reliance on existing crushed-limestone infrastructure, which implies a mature, large-scale extractive industry.",
+    "fields": {},
+    "changed": "dropped \"but do not evidence it\" and \"which cuts against scarcity rather than for it\" (with light rewording of the two items: \"are planning and land-use pressure\" -> \"from planning and land-use pressure\")",
+    "from_text": "Two observations could be read as *consistent with* scarcity but do not evidence it. ... implies a mature, large-scale extractive industry, which cuts against scarcity rather than for it.",
+    "intended": "absent"
+  },
+  "GHOST/feature-propagation.3": {
+    "type": "setting",
+    "fields": {"holds": "seven benchmarks, 2022; partially-attributed / cold-start graphs; homophilous + sparse + MCAR, and mostly author-reported"},
+    "changed": "added \"partially-attributed / cold-start graphs\" to holds",
+    "from_text": "Its motivating setting is explicitly the partially-attributed / cold-start case (\"age and gender available only for a small subset of users\") [R1].",
+    "intended": "holds"
+  },
+  "TSL/altitude-ordering.6": {
+    "type": "setting",
+    "fields": {"holds": "is-a taxonomy induction over WordNet, not cluster-label ordering"},
+    "changed": "added \"over WordNet\" to holds",
+    "from_text": "The closest tests [S4, S5] are over WordNet / taxonomy induction — indirect for the label-ordering task.",
+    "intended": "holds"
+  },
+  "CB2/marker-gap.1": {
+    "type": "setting",
+    "fields": {"holds": "soil (SMAG; 3,304 metagenomes, 40,039 MAGs)"},
+    "changed": "added \"3,304 metagenomes, 40,039 MAGs\" to holds",
+    "from_text": "| SMAG | soil, 3,304 metagenomes | 40,039 MAGs | 3,641 (9.1%) high quality | Ma et al. 2023 |",
+    "intended": "holds"
+  },
+  "CB3/gwp-metric.4": {
+    "type": "setting",
+    "fields": {"holds": "Lynch et al. 2021 as the review read it; GWP100 CO2-equivalent reporting"},
+    "changed": "added \"GWP100 CO2-equivalent reporting\" to holds",
+    "from_text": "Lynch et al. argue that GWP100 CO2-equivalent reporting misrepresents agriculture's warming contribution, because agriculture is dominated by CH4 and N2O rather than CO2",
+    "intended": "holds"
+  },
+  "H1-02/artefact-size.5": {
+    "type": "standing",
+    "statement": "Natural biocrust soils show systematic short-read assembly loss of variable regions, which is indirect support only for soil.",
+    "fields": {},
+    "changed": "\"One natural biocrust soil shows\" -> \"Natural biocrust soils show\"",
+    "from_text": "One natural biocrust soil shows systematic short-read assembly loss of variable regions [26], which is indirect support only.",
+    "intended": "stronger"
+  },
+  "16S/compositional-analysis.4": {
+    "type": "standing",
+    "fields": {"conf": "repl (marker)"},
+    "changed": "conf \"single (marker)\" -> \"repl (marker)\"",
+    "from_text": "Proportion-based differential-abundance results err when the community's mean efficiency is associated with the condition (McLaren 2022) [AB; PREPRINT; model; single].",
+    "intended": "conf"
+  },
+  "H1-RES/redundancy.11": {
+    "type": "standing",
+    "statement": "Soil studies along precipitation gradients, such as Tripathi et al. (2017) in Israel, observe distinct taxonomic and functional communities across precipitation zones, with lower functional diversity in arid environments, showing coordinated taxonomic and functional shifts with climate.",
+    "fields": {},
+    "changed": "\"Tripathi et al. (2017): distinct ... were observed across precipitation zones in Israel\" -> \"Soil studies along precipitation gradients, such as Tripathi et al. (2017) in Israel, observe distinct ...\"",
+    "from_text": "Trends in taxonomic and functional composition of soil microbiome along a precipitation gradient in Israel, Binu M. Tripathi et al., 2017 | Distinct taxonomic and functional communities were observed across precipitation zones",
+    "intended": "stronger"
+  },
+  "H1-02/artefact-size.6": {
+    "type": "standing",
+    "statement": "Removing Meziti et al. would leave Part A as measured and material on Majernik et al. and Orellana et al., but would remove one of the natural same-sample isolate comparisons and every figure for missed core and variable genes, since Li and Yin reuse its data.",
+    "fields": {},
+    "changed": "\"the only natural same-sample isolate comparison\" -> \"one of the natural same-sample isolate comparisons\"",
+    "from_text": "but would remove the only natural same-sample isolate comparison and every figure for missed core and variable genes ([2] reuses [1]'s data)",
+    "intended": "stronger"
+  },
+  "H1-06/depth-dependence.1": {
+    "type": "number",
+    "statement": "In 2,730 marine genomes, chitinase tau_D was 0.0281 on a 16S tree and 0.0414 on a core-gene tree, three to five times Zimmerman's 0.008.",
+    "fields": {},
+    "changed": "0.0444 -> 0.0414",
+    "from_text": "In 2,730 marine genomes, chitinase tau_D was 0.0281 on a 16S tree and 0.0444 on a core-gene tree [4]",
+    "intended": "numbers"
+  },
+  "TSL/c-tf-idf.1": {
+    "type": "number",
+    "statement": "c-TF-IDF (BERTopic, Grootendorst 2022) treats each cluster as one document, L2-normalises tf for cluster size, and down-weights via log(1 + A/f_t).",
+    "fields": {},
+    "changed": "L1 -> L2",
+    "from_text": "treat each cluster as one document, L1-normalise tf for cluster size, down-weight via log(1 + A/f_t)",
+    "intended": "numbers"
+  },
+  "H1-06/genome-incompleteness.7": {
+    "type": "number",
+    "statement": "For 116,488 MAGs against RefSeq, raw gene detection rates fell below model-corrected prevalences, and most KEGG orthologs were biased between culture-heavy and MAG references.",
+    "fields": {},
+    "changed": "116,884 -> 116,488",
+    "from_text": "For 116,884 MAGs against RefSeq, raw gene detection rates fell below model-corrected prevalences",
+    "intended": "numbers"
+  },
+  "16S/abundance-distribution.2": {
+    "type": "number",
+    "statement": "In one Brazilian soil, 26,079 reads and 2,860 observed species were fitted equally well by communities of 10^4, 10^5 and 10^6 species, so the tail cannot be identified from sample data.",
+    "fields": {},
+    "changed": "2,880 -> 2,860",
+    "from_text": "In the Brazil soil, 26,079 reads and 2,880 observed species were fitted equally well by communities of 10^4, 10^5 and 10^6 species",
+    "intended": "numbers"
+  },
+  "16S/technical-variation.3": {
+    "type": "scope",
+    "statement": "In a staggered mock, 12 species appeared in only 2 of 4 PCR replicates.",
+    "fields": {},
+    "changed": "removed \"At 1:10^5 dilution of\" (\"At 1:10^5 dilution of a staggered mock\" -> \"In a staggered mock\")",
+    "from_text": "At 1:10^5 dilution of a staggered mock, 12 species appeared in only 2 of 4 PCR replicates.",
+    "intended": "stronger"
+  },
+  "H1-05/ordering.24": {
+    "type": "scope",
+    "statement": "The reverse ordering (function responds where taxonomy does not) rests on two GeoChip studies [5][15], one abstract only, plus a reviewer's reading of [6]; removing [5] would leave it supported only by the abstract-only [15] and the reading of [6].",
+    "fields": {},
+    "changed": "removed \"from one group\"",
+    "from_text": "The reverse ordering rests on two GeoChip studies from one group [5][15] (one abstract only) plus a reviewer's reading of [6].",
+    "intended": "stronger"
+  },
+  "H1-06/perturbation-response.9": {
+    "type": "scope",
+    "statement": "In situ growth in one forest soil had Blomberg's K 0.38 to 0.54 and Pagel's lambda 0.96 to 0.98.",
+    "fields": {},
+    "changed": "removed \"measured by qSIP\"",
+    "from_text": "In situ growth measured by qSIP in one forest soil had K 0.38 to 0.54 and lambda 0.96 to 0.98 [22].",
+    "intended": "stronger"
+  },
+  "16S/abundance-distribution.17": {
+    "type": "scope",
+    "statement": "DNA reassociation kinetics were best fitted by a power law, implying over a million distinct genomes in a pristine soil; metal pollution cut diversity by over 99.9%. This is the main contrary result on the shape of the distribution, and removing it removes the power-law side of the conflict.",
+    "fields": {"holds": "abstract only"},
+    "changed": "removed \", which measure whole-community DNA rather than reads or cells,\" from the statement and \"whole-community DNA;\" from holds",
+    "from_text": "DNA reassociation kinetics. This measures whole-community DNA, neither reads nor cells.",
+    "intended": "stronger"
+  },
+  "CB2/marker-gap.4": {
+    "type": "scope",
+    "statement": "In UHGG, 3,207 of 4,644 species representatives were >90% complete and <5% contaminated; 573 additionally had 5S/16S/23S, and only 38 of those 573 were MAGs. The paper attributes this to the rRNA operon being \"a problematic region to assemble from short-read metagenomic datasets\".",
+    "fields": {},
+    "changed": "removed \"plus ≥18 tRNAs\"",
+    "from_text": "573 additionally had 5S/16S/23S plus ≥18 tRNAs — and only 38 of those 573 were MAGs.",
+    "intended": "stronger"
+  },
+  "16S/bias-consistency.10": {
+    "type": "scope",
+    "statement": "Evidence on whether bias is consistent across samples is weak: it rests on one reanalysis of 7 taxa, with contrary or limiting field evidence.",
+    "fields": {},
+    "changed": "removed \"mainly\"",
+    "from_text": "it rests mainly on one reanalysis of 7 taxa, with contrary or limiting field evidence",
+    "intended": "stronger"
+  },
+  "16S/core-microbiome.5": {
+    "type": "scope",
+    "statement": "In 4,866 maize rhizosphere samples, seven OTUs were present in all and were responsive to host genotype.",
+    "fields": {},
+    "changed": "\"five of them responsive\" -> \"and were responsive\" (restrictor \"five of them\" removed)",
+    "from_text": "in 4,866 samples, seven OTUs were present in all, five of them responsive to host genotype.",
+    "intended": "stronger"
+  },
+  "16S/copy-number.13": {
+    "type": "scope",
+    "statement": "The Acidobacteria mean of 1.0 rests on 4 genomes from 4 species, and the rrnDB v5.10 Acidobacteriota mean of 1.4 on 29 species; these soil-relevant values are imprecise.",
+    "fields": {},
+    "changed": "removed \"low\" (\"these soil-relevant low values\" -> \"these soil-relevant values\")",
+    "from_text": "These soil-relevant low values are imprecise",
+    "intended": "stronger"
+  },
+  "H2-01/covariation-stability.12": {
+    "type": "scope",
+    "statement": "Community-weighted traits across 1.1 million plots showed the same two covariation axes as species-level traits, \"unexpected\" per the authors, while climate and soil explained only 10.8 to 14.0% of CWM variation.",
+    "fields": {"holds": "communities worldwide; removing it removes the only large-scale case of covariation more stable than levels"},
+    "changed": "removed \"plant\" from the statement (\"Community-weighted plant traits\") and from holds (\"plant communities worldwide\")",
+    "from_text": "community-weighted plant traits across 1.1 million plots showed the same two covariation axes as species-level traits",
+    "intended": "stronger"
+  },
+  "H1-02/sample-dependence.7": {
+    "type": "scope",
+    "statement": "In soil, dependence of the gene or pathway content of recovered genomes on sample properties was not measured in this setting, and there is indirect recovery-quality evidence only; none of the soil evidence measures the gene or pathway content of related genomes recovered from different soil samples.",
+    "fields": {},
+    "changed": "removed \"related\" in the first clause (\"related recovered genomes\" -> \"recovered genomes\")",
+    "from_text": "Dependence on sample properties: soil (natural)**: NOT MEASURED IN THIS SETTING for gene or pathway content of related recovered genomes.",
+    "intended": "stronger"
+  },
+  "NFERT/symbiotic-fixation.2": {
+    "type": "scope",
+    "statement": "In a legume-based rotation in Europe, 87% of total nitrogen inputs came from fixation, and the rotation matched conventional productivity at a surplus of only 21 kg N per hectare per year against 40 to 100 for fertilised systems.",
+    "fields": {"holds": "a legume-based rotation in Europe"},
+    "changed": "removed \"organic\" from the statement and holds",
+    "from_text": "In an organic legume-based rotation in Europe, 87% of total nitrogen inputs came from fixation",
+    "intended": "stronger"
+  },
+  "CB1/ghg-balance.4": {
+    "type": "scope",
+    "statement": "The soil-carbon term, which drives the difference between these balances, is itself unsettled.",
+    "fields": {},
+    "changed": "removed \"much of\"",
+    "from_text": "The soil-carbon term, which drives much of the difference, is itself unsettled.",
+    "intended": "stronger"
+  },
+  "16S/ploidy.21": {
+    "type": "scope",
+    "statement": "Flow cytometric cell-cycle analyses of Prochlorococcus (and Synechococcus) in situ are by method taxon-specific measurements of the share of cells with replicated DNA (G1 versus S/G2), so the review's statement that no such share exists for any natural community is not established; nothing comparable exists for soil.",
+    "fields": {},
+    "changed": "\"nothing comparable was found for soil\" -> \"nothing comparable exists for soil\" (search scope removed)",
+    "from_text": "Nothing comparable was found for soil.",
+    "intended": "stronger"
+  },
+  "H1-02/mobile-region-loss.8": {
+    "type": "scope",
+    "fields": {"holds": "the reference is long-read bins, not isolates; concerns assembly, not the gene content of binned genomes compared across samples"},
+    "changed": "removed \"one site;\" from holds",
+    "from_text": "(measured; natural; one site; the reference is long-read bins, not isolates)",
+    "intended": "holds"
+  },
+  "H1-06/uncontrolled-rank-studies.1": {
+    "type": "scope",
+    "statement": "Studies across ranks agree in part and conflict in part with the controlled study.",
+    "fields": {},
+    "changed": "removed \"that do not control group number and size\"",
+    "from_text": "Uncontrolled studies agree in part and conflict in part",
+    "intended": "stronger"
+  },
+  "H2-01/covariation-stability.10": {
+    "type": "scope",
+    "statement": "Community genomic traits covaried, possibly for technical reasons.",
+    "fields": {},
+    "changed": "removed \"some\"",
+    "from_text": "covariation among community genomic traits, some possibly technical in origin [Barberan2012; AB]",
+    "intended": "stronger"
+  },
+  "H1-06/ph-preference.5": {
+    "type": "scope",
+    "statement": "A phylum-level tendency in pH preference seen in one dataset (acidophilic Acidobacteria) did not recur in the others.",
+    "fields": {},
+    "changed": "removed \"in freshwater\" from the parenthesis",
+    "from_text": "A phylum-level tendency seen in one dataset (acidophilic Acidobacteria in freshwater) did not recur.",
+    "intended": "stronger"
+  },
+  "CB2/recovery-variation.1": {
+    "type": "scope",
+    "statement": "Of the four axes of variation in rRNA recovery, direct evidence exists for three (read length and sequencing technology, assembler choice, sequencing depth) and none for the fourth (study of origin); the four have very different evidentiary status.",
+    "fields": {},
+    "changed": "\"direct evidence was found for three\" -> \"direct evidence exists for three\" (search scope removed)",
+    "from_text": "Direct evidence found for three of the four axes",
+    "intended": "stronger"
+  },
+  "16S/copy-number-correction.5": {
+    "type": "scope",
+    "statement": "Phylogenetic copy-number prediction had a leave-one-out error of about one copy, and correction raised the correlation with true organism abundance from r = 0.70 to 0.81.",
+    "fields": {"holds": "figures checked by MB-02's critic"},
+    "changed": "removed \"in 100 simulated communities\" from the statement and \"simulated communities;\" from holds",
+    "from_text": "In 100 simulated communities, correction raised the correlation with true abundance from r = 0.70 to 0.81.",
+    "intended": "stronger"
+  },
+  "H1-02/mobile-region-loss.5": {
+    "type": "scope",
+    "statement": "In a 30-genome short-read metagenome, across 12 assembler and binner combinations, 82% to 94% of chromosomes were recovered, against 38% to 44% of genomic islands and 1% to 29% of plasmids.",
+    "fields": {"holds": "one 30-genome community"},
+    "changed": "removed \"simulated\" from the statement and from holds",
+    "from_text": "Maguire et al. [4] simulated a 30-genome short-read metagenome.",
+    "intended": "stronger"
+  },
+  "16S/differential-abundance.1": {
+    "type": "scope",
+    "statement": "Fourteen differential-abundance methods on 38 datasets gave 0.8% to 40.5% significant ASVs (unfiltered means); ALDEx2 and ANCOM-II were the most consistent, and edgeR and LEfSe produced many false positives.",
+    "fields": {},
+    "changed": "removed \"on random splits\"",
+    "from_text": "edgeR and LEfSe produced many false positives on random splits (Nearing 2022) [FT; meas; single].",
+    "intended": "stronger"
+  },
+  "H1-RES/pangenome.11": {
+    "type": "scope",
+    "statement": "The nitrogen-fixing *Rhizobiales* pangenome contained 37,364 total loci with only 700 core genes, representing 10.2% of single genomes.",
+    "fields": {"holds": "*Rhizobiales* symbionts"},
+    "changed": "removed \"(12 symbionts)\" from the statement and \"12\" from holds",
+    "from_text": "The nitrogen-fixing *Rhizobiales* pangenome (12 symbionts) contained 37,364 total loci with only 700 core genes",
+    "intended": "stronger"
+  },
+  "CB2/depth-axis.2": {
+    "type": "scope",
+    "statement": "Philip et al. report a coverage floor: more than 40 read pairs are needed to reconstruct a 16S with some substantial length.",
+    "fields": {},
+    "changed": "quotation paraphrased without \"in most cases\" (and without the 10-read-pair minimum): \"we need more than 10 read pairs, and in most cases more then 40, ...\" -> \"more than 40 read pairs are needed ...\"",
+    "from_text": "\"we need more than 10 read pairs, and in most cases more then 40, to be able to reconstruct a 16S with some substantial length\"",
+    "intended": "stronger"
+  },
+  "H2-01/functional-profile.2": {
+    "type": "scope",
+    "statement": "Trait ecology supplies community-weighted means (CWMs) and species-by-trait matrices from plants.",
+    "fields": {},
+    "changed": "removed \"mostly\"",
+    "from_text": "Trait ecology supplies community-weighted means (CWMs) and species-by-trait matrices, mostly from plants.",
+    "intended": "stronger"
+  }
+}

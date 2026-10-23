@@ -1,0 +1,518 @@
+{
+ "NFERT/symbiotic-fixation.2": {
+  "type": "scope",
+  "hint": false,
+  "omit": false,
+  "visible": false
+ },
+ "H2-04/shared-environment.5": {
+  "type": "control",
+  "hint": true,
+  "omit": false,
+  "visible": false
+ },
+ "16S/denoising-clustering.7": {
+  "type": "control",
+  "hint": false,
+  "omit": true,
+  "visible": false
+ },
+ "H1-06/genome-incompleteness.7": {
+  "type": "number",
+  "hint": true,
+  "omit": true,
+  "visible": false
+ },
+ "H1-02/sequencing-depth.5": {
+  "type": "control",
+  "hint": false,
+  "omit": false,
+  "visible": false
+ },
+ "CB2/targeted-reconstruction.1": {
+  "type": "control",
+  "hint": true,
+  "omit": false,
+  "visible": false
+ },
+ "16S/denoising-clustering.8": {
+  "type": "control",
+  "hint": false,
+  "omit": true,
+  "visible": false
+ },
+ "NFERT/mineralisation.2": {
+  "type": "hedge",
+  "hint": true,
+  "omit": false,
+  "visible": false
+ },
+ "16S/technical-variation.6": {
+  "type": "control",
+  "hint": false,
+  "omit": true,
+  "visible": false
+ },
+ "CB1/scarcity-claim.7": {
+  "type": "counter",
+  "hint": false,
+  "omit": true,
+  "visible": true
+ },
+ "TSL/c-tf-idf.1": {
+  "type": "number",
+  "hint": true,
+  "omit": false,
+  "visible": false
+ },
+ "16S/rare-biosphere.8": {
+  "type": "control",
+  "hint": true,
+  "omit": true,
+  "visible": false
+ },
+ "H2-04/shared-environment.6": {
+  "type": "control",
+  "hint": false,
+  "omit": false,
+  "visible": false
+ },
+ "16S/overdispersion.1": {
+  "type": "control",
+  "hint": false,
+  "omit": false,
+  "visible": false
+ },
+ "H1-02/core-genome-inference.3": {
+  "type": "control",
+  "hint": true,
+  "omit": false,
+  "visible": false
+ },
+ "H2-01/other-field-transfer.1": {
+  "type": "counter",
+  "hint": false,
+  "omit": true,
+  "visible": true
+ },
+ "CB2/marker-gap.1": {
+  "type": "setting",
+  "hint": true,
+  "omit": false,
+  "visible": false
+ },
+ "16S/quality-filtering.6": {
+  "type": "control",
+  "hint": false,
+  "omit": false,
+  "visible": false
+ },
+ "H1-06/perturbation-response.9": {
+  "type": "scope",
+  "hint": true,
+  "omit": true,
+  "visible": true
+ },
+ "H1-02/mobile-region-loss.5": {
+  "type": "scope",
+  "hint": false,
+  "omit": false,
+  "visible": false
+ },
+ "GHOST/benchmark-regime.3": {
+  "type": "hedge",
+  "hint": true,
+  "omit": true,
+  "visible": false
+ },
+ "H2-04/association-networks.12": {
+  "type": "control",
+  "hint": false,
+  "omit": true,
+  "visible": false
+ },
+ "16S/pcr.15": {
+  "type": "control",
+  "hint": false,
+  "omit": false,
+  "visible": false
+ },
+ "H1-02/chimerism.1": {
+  "type": "control",
+  "hint": false,
+  "omit": false,
+  "visible": false
+ },
+ "H1-RES/pangenome.2": {
+  "type": "control",
+  "hint": false,
+  "omit": false,
+  "visible": false
+ },
+ "16S/coverage-standardisation.3": {
+  "type": "control",
+  "hint": false,
+  "omit": true,
+  "visible": false
+ },
+ "16S/abundance-occupancy.2": {
+  "type": "hedge",
+  "hint": false,
+  "omit": true,
+  "visible": true
+ },
+ "H1-RES/n-cycle-hgt.8": {
+  "type": "hedge",
+  "hint": false,
+  "omit": true,
+  "visible": true
+ },
+ "H2-04/genome-linkage.2": {
+  "type": "control",
+  "hint": false,
+  "omit": true,
+  "visible": false
+ },
+ "H2-01/levels-within.12": {
+  "type": "control",
+  "hint": false,
+  "omit": true,
+  "visible": false
+ },
+ "16S/pcr.14": {
+  "type": "control",
+  "hint": false,
+  "omit": false,
+  "visible": false
+ },
+ "CB3/food-system.1": {
+  "type": "control",
+  "hint": true,
+  "omit": false,
+  "visible": false
+ },
+ "16S/copy-number-correction.9": {
+  "type": "counter",
+  "hint": false,
+  "omit": true,
+  "visible": true
+ },
+ "16S/relic-dna.2": {
+  "type": "counter",
+  "hint": false,
+  "omit": true,
+  "visible": true
+ },
+ "H1-02/sequencing-depth.6": {
+  "type": "control",
+  "hint": true,
+  "omit": false,
+  "visible": false
+ },
+ "TSL/altitude-ordering.6": {
+  "type": "setting",
+  "hint": true,
+  "omit": false,
+  "visible": false
+ },
+ "H1-05/contrast-size.1": {
+  "type": "control",
+  "hint": true,
+  "omit": false,
+  "visible": false
+ },
+ "CB2/targeted-reconstruction.5": {
+  "type": "control",
+  "hint": true,
+  "omit": false,
+  "visible": false
+ },
+ "16S/core-microbiome.5": {
+  "type": "scope",
+  "hint": false,
+  "omit": true,
+  "visible": false
+ },
+ "16S/scaling-normalisation.1": {
+  "type": "hedge",
+  "hint": false,
+  "omit": true,
+  "visible": false
+ },
+ "H2-04/covariation-sources.2": {
+  "type": "control",
+  "hint": false,
+  "omit": true,
+  "visible": false
+ },
+ "CB2/depth-axis.2": {
+  "type": "scope",
+  "hint": true,
+  "omit": true,
+  "visible": true
+ },
+ "16S/ploidy.11": {
+  "type": "counter",
+  "hint": true,
+  "omit": true,
+  "visible": false
+ },
+ "NFERT/manufacturing-energy.1": {
+  "type": "control",
+  "hint": false,
+  "omit": false,
+  "visible": false
+ },
+ "16S/differential-abundance.1": {
+  "type": "scope",
+  "hint": false,
+  "omit": true,
+  "visible": true
+ },
+ "H1-06/uncontrolled-rank-studies.1": {
+  "type": "scope",
+  "hint": false,
+  "omit": true,
+  "visible": false
+ },
+ "16S/abundance-distribution.2": {
+  "type": "number",
+  "hint": true,
+  "omit": true,
+  "visible": false
+ },
+ "CB3/soils.6": {
+  "type": "control",
+  "hint": false,
+  "omit": true,
+  "visible": false
+ },
+ "16S/compositional-analysis.4": {
+  "type": "standing",
+  "hint": false,
+  "omit": true,
+  "visible": false
+ },
+ "16S/beta-diversity.1": {
+  "type": "control",
+  "hint": false,
+  "omit": true,
+  "visible": false
+ },
+ "H1-RES/pangenome.11": {
+  "type": "scope",
+  "hint": false,
+  "omit": false,
+  "visible": false
+ },
+ "16S/sampling-storage.5": {
+  "type": "counter",
+  "hint": false,
+  "omit": true,
+  "visible": true
+ },
+ "H1-02/sample-dependence.7": {
+  "type": "scope",
+  "hint": false,
+  "omit": true,
+  "visible": false
+ },
+ "16S/sequencing-platform.1": {
+  "type": "control",
+  "hint": false,
+  "omit": false,
+  "visible": false
+ },
+ "16S/technical-variation.3": {
+  "type": "scope",
+  "hint": true,
+  "omit": false,
+  "visible": false
+ },
+ "H1-06/depth-dependence.1": {
+  "type": "number",
+  "hint": true,
+  "omit": false,
+  "visible": false
+ },
+ "H2-01/covariation-stability.12": {
+  "type": "scope",
+  "hint": false,
+  "omit": true,
+  "visible": false
+ },
+ "H1-05/measurement-artefacts.2": {
+  "type": "control",
+  "hint": false,
+  "omit": true,
+  "visible": false
+ },
+ "H1-02/same-sample-isolate.5": {
+  "type": "hedge",
+  "hint": true,
+  "omit": true,
+  "visible": true
+ },
+ "H2-01/levels-across.9": {
+  "type": "control",
+  "hint": false,
+  "omit": true,
+  "visible": false
+ },
+ "H1-06/tau-d.1": {
+  "type": "control",
+  "hint": true,
+  "omit": false,
+  "visible": false
+ },
+ "H1-05/ordering.24": {
+  "type": "scope",
+  "hint": true,
+  "omit": true,
+  "visible": true
+ },
+ "TSL/altitude-ordering.3": {
+  "type": "control",
+  "hint": true,
+  "omit": true,
+  "visible": false
+ },
+ "H1-RES/accessory-function.20": {
+  "type": "control",
+  "hint": false,
+  "omit": false,
+  "visible": false
+ },
+ "H2-04/shared-ancestry.1": {
+  "type": "control",
+  "hint": false,
+  "omit": true,
+  "visible": false
+ },
+ "H2-04/axis-agreement.4": {
+  "type": "control",
+  "hint": false,
+  "omit": true,
+  "visible": false
+ },
+ "NFERT/symbiotic-fixation.4": {
+  "type": "control",
+  "hint": false,
+  "omit": false,
+  "visible": false
+ },
+ "H1-RES/redundancy.16": {
+  "type": "hedge",
+  "hint": true,
+  "omit": true,
+  "visible": true
+ },
+ "H2-01/levels-within.4": {
+  "type": "counter",
+  "hint": false,
+  "omit": false,
+  "visible": false
+ },
+ "H1-RES/redundancy.11": {
+  "type": "standing",
+  "hint": false,
+  "omit": false,
+  "visible": false
+ },
+ "H1-06/metabolic-depth.8": {
+  "type": "control",
+  "hint": false,
+  "omit": true,
+  "visible": false
+ },
+ "CB3/gwp-metric.4": {
+  "type": "setting",
+  "hint": true,
+  "omit": false,
+  "visible": false
+ },
+ "TAXRES/cross-kingdom-backbone.3": {
+  "type": "control",
+  "hint": true,
+  "omit": true,
+  "visible": false
+ },
+ "16S/copy-number-correction.5": {
+  "type": "scope",
+  "hint": true,
+  "omit": true,
+  "visible": false
+ },
+ "CB1/soil-carbon.2": {
+  "type": "control",
+  "hint": false,
+  "omit": false,
+  "visible": false
+ },
+ "GHOST/feature-propagation.3": {
+  "type": "setting",
+  "hint": true,
+  "omit": true,
+  "visible": false
+ },
+ "16S/ploidy.21": {
+  "type": "scope",
+  "hint": true,
+  "omit": true,
+  "visible": false
+ },
+ "CB1/ghg-balance.4": {
+  "type": "scope",
+  "hint": true,
+  "omit": false,
+  "visible": false
+ },
+ "CB3/n2o.2": {
+  "type": "control",
+  "hint": false,
+  "omit": true,
+  "visible": false
+ },
+ "H1-05/redundancy.1": {
+  "type": "control",
+  "hint": true,
+  "omit": true,
+  "visible": false
+ },
+ "H1-RES/n-cycle-hgt.13": {
+  "type": "hedge",
+  "hint": false,
+  "omit": true,
+  "visible": true
+ },
+ "H2-01/gene-set-aggregation.9": {
+  "type": "control",
+  "hint": true,
+  "omit": true,
+  "visible": false
+ },
+ "H1-RES/taxonomy-function.1": {
+  "type": "control",
+  "hint": true,
+  "omit": false,
+  "visible": false
+ },
+ "H2-01/other-field-transfer.5": {
+  "type": "control",
+  "hint": false,
+  "omit": true,
+  "visible": false
+ },
+ "CB2/marker-gap.4": {
+  "type": "scope",
+  "hint": false,
+  "omit": false,
+  "visible": false
+ },
+ "TAXRES/gtdb-ncbi-divergence.3": {
+  "type": "control",
+  "hint": false,
+  "omit": true,
+  "visible": false
+ }
+}

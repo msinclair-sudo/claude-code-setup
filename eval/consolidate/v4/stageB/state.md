@@ -75,3 +75,23 @@ The parity check still gives 743/743.
   tail is not identifiable…". "Reported as a distribution" would not be.
 
 `planted2/checker-N.md` is checker.md as at 7b5a0b3, for the N judges.
+
+## B1b: done, not adopted, stopped (2026-10-23)
+
+`planted2/results.md`.
+- **The set.** 200 drawn, 176 screened clean, 56 planted, 41 validated. 86 claims judged by four fresh checkers: W1
+  and W2 with the omission hint, N1 and N2 with B1's setup.
+- **Omissions caught (either):** W 26 of 31 (84%), N 25 of 31 (81%). Summed over two judges, 50 against 50. The one
+  W-only catch had no omission line.
+- **Controls faulted (either):** W 3 of 45, N 4 of 45. A blind adjudicator read all four faulted controls as real
+  faults the screener missed.
+- **The pre-set rule says not adopted, stop.** It tripped on the absolute clause: W2 faulted 3 of 45, over 5%. N1
+  and N2 faulted 3 each too, so the hint did not raise false alarms. It also gave no gain, so the other branch says
+  not adopted as well.
+
+**The checker is frozen through stage C at B1's setup.** That is `checker.md`, `hints()` and `packets --hints`, with
+content identical to 7b5a0b3. The skill files were restored from 7b5a0b3 (14 tests pass), and the tested hint code is
+in `tools/omission_hint.py` (v3notes and planted2 import it from there). Parity is still 743/743, and the moved code
+regenerates the committed packets and hint information unchanged.
+
+**Next: B2**, on the owner's go. Its sample excludes both planted pools (B1 130, B1b 200).

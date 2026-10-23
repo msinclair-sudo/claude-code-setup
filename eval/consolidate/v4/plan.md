@@ -471,6 +471,10 @@ is fixed. B0 records this table as `stageB/spotcheck.md`. No agents.
    - **Then the checker is frozen through stage C.** That means `checker.md`, `hints()`, `omission_hints()` and
      `packets --hints`, at the commit recorded in `stageB/state.md`. If the hint is not adopted, its code is
      reverted.
+   - **Done: not adopted** (`stageB/planted2/results.md`). It gave no gain: omission catches were 50 against 50
+     over two judges. It raised no false alarms: control faults were 5 against 6, all four faulted controls were real
+     faults, and the rule tripped only on its absolute 5% clause. **The checker is frozen at B1's setup**, with
+     content identical to 7b5a0b3. The tested code is kept in `stageB/tools/omission_hint.py`.
 3. **Re-score v3 (the new baseline).**
    - **The sample:** about 300 entries from the 14 v3 as-built notes, excluding the B1 and B1b planted pools, by
      seeded stratified draw. At least 10 per note; the rest are allocated in proportion to each note's entries, by largest remainder.

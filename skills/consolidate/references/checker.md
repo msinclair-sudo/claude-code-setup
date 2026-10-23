@@ -45,10 +45,5 @@ text. They show where to look, not what is wrong. A paraphrase, another word for
 a word that adds nothing is fine. Judge, as always, whether the entry says anything its cited text does not support.
 An entry with no hint gets the same care as one with hints: the script cannot see what an entry leaves out.
 
-Under some claims, "In the cited text, not in the entry" lists hedge, negation, contrast and scope words ("may",
-"not", "but", "only", "by this corpus") from the quoted text that the entry does not carry, each with the words after
-it. If the dropped words limit what the entry still says, the entry is `stronger`. If they qualify only a detail the
-entry left out, it is ok.
-
 Citekeys in `src` are identifiers, not claims: a key may carry another year (an existing bibliography's key is
 kept), so judge the labels beside a key, never the key itself. End with a count of each fault.

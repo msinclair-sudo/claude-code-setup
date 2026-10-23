@@ -13,6 +13,7 @@ sys.path[:0] = [str(HERE), str(ROOT / "eval" / "consolidate" / "v4" / "stageA"),
 import kn_v3  # noqa: E402
 import kn as kn4  # noqa: E402
 import score_lint  # noqa: E402
+import omission_hint  # noqa: E402   (B1b's tested hint; not in the skill)
 
 score_lint.kn = kn_v3            # stage A's loader, on v3 detection: the addresses the v3 checkers saw
 
@@ -26,7 +27,7 @@ def load():
     for r in rows:
         r["bib"] = bibs[r["note"]]
         r["hints"] = kn4.hints(r["entry"], r["cited"], r["bib"])
-        r["omit"] = kn4.omission_hints(r["entry"], r["cited"])
+        r["omit"] = omission_hint.omission_hints(r["entry"], r["cited"])
     return rows
 
 
@@ -39,7 +40,7 @@ def block(r, with_hints, omit=False):
     if with_hints and r["hints"]:
         out.append(f"\n{kn4.HINT_LINE}: {'; '.join(r['hints'])}\n")
     if with_hints and omit and r.get("omit"):
-        out.append(f"\n{kn4.OMIT_LINE}: {'; '.join(r['omit'])}\n")
+        out.append(f"\n{omission_hint.OMIT_LINE}: {'; '.join(r['omit'])}\n")
     return "".join(out)
 
 

@@ -46,7 +46,7 @@ def edited(r, ed):
         e["fields"].update(ed.get("fields", {}))
         rr["entry"] = e
         rr["hints"] = kn4.hints(e, r["cited"], r["bib"])
-        rr["omit"] = kn4.omission_hints(e, r["cited"])
+        rr["omit"] = v3notes.omission_hint.omission_hints(e, r["cited"])
     return rr
 
 

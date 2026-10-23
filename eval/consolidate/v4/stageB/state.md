@@ -383,3 +383,7 @@ This follows a 15-minute wait after B5. One builder builds H2-04 and then H1-05,
   - source dependence (shared data or authors) has no field.
 
 **Next: B7** (H1-02 plus H1-06, one builder), after a 15-minute wait.
+
+## B7: started (2026-10-23, 23:03)
+
+This follows a 15-minute wait after B6. One builder builds H1-02 and then H1-06, with prompts as in B4.

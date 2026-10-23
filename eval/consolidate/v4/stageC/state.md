@@ -168,3 +168,11 @@ Results are by letter and are not summarised here until the owner has graded.
 ## C4: started (2026-10-24, 07:00)
 
 T2 (C-GHOSTFUS): writer folders made, and the view generated.
+
+## C4: done (2026-10-24, 07:22)
+
+T2 is complete: 4 pieces, 4 fact-checks, and 2 blind readers (4 Part A sheets and 2 pair sheets).
+
+Three writers saved their files to the shared working directory, and one left them there. Every file was traced to its writer and moved before collection; the protocol amendment records it. From T3 the prompt gains the logistics line "Save both files in that folder."
+
+**Next: C5** (T3, C-STEPDEN), after a 15-minute wait.

@@ -72,3 +72,36 @@ One builder for C-DENIT then C-ANALOG, with the B4 prompt. The notes are new, so
 ## C1b: started (2026-10-24, 04:22)
 
 One builder for C-RANKNET then C-PREDICT, with the same prompt as C1a.
+
+## C1b: done (2026-10-24, 05:17)
+
+| ID | Knowledge note | Entries | First pass | `stronger` + `numbers` | Claims with a setting | Near-copies | Re-checks |
+|---|---|---|---|---|---|---|---|
+| C-RANKNET | `PhD/Proposal/Research/Knowledge/Rank-based association networks against known truth.md` | 143 | 26 (18.2%, Wilson 12.7 to 25.3) | 1 | 109 of 126 (87%) | 55 (44%) | 1 of 26 still faulted, then 0 of 1 |
+| C-PREDICT | `PhD/Proposal/Research/Knowledge/Held-out prediction of taxonomic versus gene or trait profiles from environment.md` | 130 | 18 (13.8%, Wilson 8.9 to 20.8) | 2 | 104 of 114 (91%) | 51 (45%) | 2 of 18, then 1 of 2, 1 of 1, 1 of 1, then 0 of 1 |
+
+- **Re-check, round 1:** 3 of 44 fixed entries still faulted (7%).
+- **averill.9 took four rounds**, and the rounds conflicted:
+  - round 1 faulted an unsupported "(supplement)" label, and the builder had earlier removed "site scale" as unsupported;
+  - round 2 faulted the figures for losing their definition, "site-scale out-of-sample R2";
+  - round 3 faulted the dropped word "medians";
+  - round 4 passed it once B-0013 and B-0034's wording were in.
+
+  Successive single re-checkers read the same sentences differently. This is the checker noise B2 measured.
+
+**Builder** (one, about 530k tokens):
+- **Before submitting:** it again deleted settings from reference titles first, then restored them with R- addresses.
+- **In the fixes:** almost all added addresses. Its removals were:
+  - "Arabidopsis" for Liesecke 2018, in expression-benchmarks.8;
+  - "site scale" in averill.9, restored in round 3.
+- **A known unflagged error:** "Arabidopsis" also sits in `holds` of C-RANKNET expression-benchmarks.5 and .10. Neither entry was faulted, so under the procedure they were left as built.
+
+**Raised by the builder (for the owner):**
+- **A detection misfire, the mirror of H1-05:** in C-RANKNET the critic's "Verdict assessment" and "Verdict the body actually supports" sections were inventoried as answers (A-022 to A-048), duplicating C-002 to C-009. The writer's view may present the critic's assessment as the research's answers. This belongs with v5 item 8.
+- **Labels on a line of their own**, as in C-PREDICT's `*Evidence class: …; Setting: …; Standing: …*` blocks, are applied to the study's claims.
+- **Settings found only in reference titles** need R- addresses. The skill says reference addresses are only "for a finding that lives only there".
+- **No search value for "searched, routes not named".**
+- **`limit: access` where it was the critic, not the note, that lacked access.**
+- **C-PREDICT was detected as author-year** although it also uses numbered markers.
+
+**Next: C2** (C-STEPDEN, C-GHOSTFUS and C-COVDIST, one builder), after a 15-minute wait.

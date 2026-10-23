@@ -109,3 +109,43 @@ One builder for C-RANKNET then C-PREDICT, with the same prompt as C1a.
 ## C2: started (2026-10-24, 05:33)
 
 One builder for C-STEPDEN, C-GHOSTFUS and C-COVDIST, with the same prompt.
+
+## C2: done (2026-10-24, 06:19)
+
+| ID | Knowledge note | Entries | First pass | `stronger` + `numbers` | Claims with a setting | Near-copies | Re-checks |
+|---|---|---|---|---|---|---|---|
+| C-STEPDEN | `PhD/Proposal/Research/Knowledge/Stepwise denitrification and N2O output in constraint-based models.md` | 67 | 4 (6.0%) | 0 | 57 of 65 (88%) | 37 (57%) | 0 of 4 still faulted |
+| C-GHOSTFUS | `PhD/biblion/research/knowledge/Featureless ghost nodes in anchored graph-diffusion fusion.md` | 81 | 8 (9.9%) | 2 | 55 of 76 (72%) | 40 (53%) | 0 of 8 |
+| C-COVDIST | `PhD/Proposal/Research/Knowledge/Distance from training data to test points in continuous covariate space.md` | 69 | 1 (1.4%) | 0 | 52 of 64 (81%) | 40 (62%) | 0 of 1 |
+
+**Builder** (one, about 350k tokens):
+- **Before submitting:** it again deleted details first, then restored them with addresses. It removed only its own wording.
+- **In the fixes:** 11 added addresses and 2 restored dropped counter-clauses. It removed nothing.
+
+**Raised by the builder (for the owner):**
+- **Reference headings missed.** "Full reference list" (C-STEPDEN) and "Citations" (C-GHOSTFUS, a BibTeX block) do not match the references pattern.
+  - Both lists became body addresses, so the notes have 0 reference addresses, and C-STEPDEN reports "references: not found".
+  - Lint does not flag this.
+- **The step 1 inventory is stale once answers are declared.** `kn.py detect` cannot take declared answers. Lint re-detects with them and renumbers every B-address (C-GHOSTFUS went from 160 to 145).
+- **Undetected answers.** For C-GHOSTFUS and C-COVDIST the builder declared §TL;DR and §Key Findings. The view therefore shows those as the answers, not the per-question verdicts.
+- **Sentence splitting:** "Ind. Eng. Chem. Res." was split in two; a sentence starting with lower-case "biblion" was merged into the one before; a leading `[arxiv](url)` belongs to the previous sentence.
+- **Calls with no rule:**
+  - `class` for claims about what a model contains;
+  - compound verdict grades;
+  - "limited independent replication" matching lint's `repl` pattern;
+  - citekeys such as `anon` and `anona` to `anond` for URL-only sources.
+
+## C1 and C2 together: the seven held-out notes
+
+| | Entries | First pass | Wilson 95% | `stronger` + `numbers` per 100 | Round-1 re-check still faulted |
+|---|---|---|---|---|---|
+| Seven held-out notes | 809 | 108 (13.3%) | 11.2 to 15.9 | 1.1 (9) | 9 of 108 (8.3%) |
+| Stage B, 14 development notes (same procedure) | 1,847 | 179 (9.7%) | 8.4 to 11.1 | 1.4 | 7 of 179 (3.9%) |
+| v3 held-out (one checker per entry; not the same procedure) | 804 | 84 (10%) | | | |
+
+- **The first pass is higher on held-out notes** (13.3% against 9.7%), and the intervals barely overlap. C-DENIT (20.4%) and C-RANKNET (18.2%), both large deep critiqued runs, carry most of it.
+- **Near-copies** are 27% to 62% of claims; **claims with a setting** are 72% to 91%.
+- **Every note's omission check ran** (exact or fallback), and every note lints to 0 errors.
+- The re-check took up to four rounds, on single entries where successive fresh checkers read the same sentences differently.
+
+**Next: C3** (topic T1, C-PREDICT), after a 15-minute wait.

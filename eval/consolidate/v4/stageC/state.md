@@ -41,3 +41,30 @@ C3 to C6 are as planned. There are 15 minutes between sessions.
 ## C1a: started (2026-10-24, 03:03)
 
 One builder for C-DENIT then C-ANALOG, with the B4 prompt. The notes are new, so the builder picks titles and reports the paths.
+
+## C1a: done (2026-10-24, 04:06)
+
+| ID | Knowledge note | Entries | First pass | `stronger` + `numbers` | Claims with a setting | Near-copies | Re-checks |
+|---|---|---|---|---|---|---|---|
+| C-DENIT | `PhD/Proposal/Research/Knowledge/Denitrification genes against organism phylogeny, habitat and within-genus variation.md` | 191 | 39 (20.4%, Wilson 15.3 to 26.7) | 4 | 141 of 171 (82%) | 60 (35%) | 4 of 39 still faulted, then 2 of 4, then 0 of 2 |
+| C-ANALOG | `PhD/Proposal/Research/Knowledge/Present-day analogues for changed climate and changed soil conditions.md` | 128 | 12 (9.4%) | 0 | 100 of 110 (91%) | 30 (27%) | 2 of 12, then 2 of 2, then 0 of 2 |
+
+- **Comparison:** C-DENIT's first pass is about twice stage B's pooled 9.7%; C-ANALOG's matches it. C-DENIT's faults are mostly `holds` (22) and `absent` (11).
+- **Re-check, round 1:** 6 of 51 fixed entries still faulted (12%).
+- **Later rounds:** in rounds 2 and 3, each fresh checker raised new points on the same few entries, not the ones already fixed.
+
+**Builder** (one, about 520k tokens):
+- **Before submitting:** its every-detail pass again *deleted* details first, then restored them with addresses, many from reference titles. It removed details of its own: a species attribution from its own knowledge, an inference about primers, and a `src` key inferred from a neighbouring sentence.
+- **In the fixes:** almost all added addresses. It removed 5 details that no input sentence gives.
+- **Constraint breach:** it ran `ls` on the Knowledge folder once, filtered to its own filenames. It read nothing else.
+
+**Raised by the builder (for the owner; the skill stays frozen):**
+- **A heading that carries a standing.** The critique's section heading "Single-source claims (11)" gives the standing for C-081, but headings have no address, so the checker never sees it. This is another case for v5 item 5.
+- **Bracket labels without an access token** (`[Pold2024; derived; single study]`) are not detected as labels.
+- **Standing words in a separate sentence** ("SINGLE SOURCE.") at the end of a paragraph.
+- **The critic correcting the version read** (a preprint against the published version).
+- **The critic's positive verification** of figures has no field.
+- **A `src` label cannot hold brackets** (lint's key check breaks on them).
+- **`class: search` needs a basis** (as in stage B).
+
+**Next: C1b** (C-RANKNET and C-PREDICT, one builder), after a 15-minute wait.

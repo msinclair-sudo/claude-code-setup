@@ -108,9 +108,10 @@ def cmd_draw():
           f"{ {n: per_note[n] for n in notes} }; hinted {sum(bool(by[k]['hints']) for k, _ in sample)}")
 
 
-def baseline_verdicts(sample):
+def baseline_verdicts(sample, d=B):
+    """One checker set's verdicts: d = B (the first checker per packet) or B / "second"."""
     v = {}
-    for f in sorted(B.glob("verdicts-*.md")):
+    for f in sorted(d.glob("verdicts-*.md")):
         v.update(verdict_lines(f))
     miss = [k for k, _ in sample if k not in v]
     if miss:
@@ -147,7 +148,10 @@ def boot(sample_rows, plan, test, reps=10000):
 def cmd_score():
     s = json.loads((B / "sample.json").read_text())
     plan, sample = s["strata"], s["sample"]
-    v = baseline_verdicts(sample)
+    v1 = baseline_verdicts(sample)
+    two = bool(list((B / "second").glob("verdicts-*.md")))
+    v2 = baseline_verdicts(sample, B / "second") if two else {}
+    v = {k: v1[k] | v2.get(k, set()) for k in v1}            # the measurement: a fault from either checker counts
     rows = {key(r): r for r in v3notes.load()}
     sr = [(k, st, k.split("/")[0], v[k]) for k, st in sample]
     faulted = lambda ver: bool(ver)
@@ -157,14 +161,30 @@ def cmd_score():
     wl, wh = boot(sr, plan, faulted)
     v3 = sum(bool(r["verdict"]) for r in rows.values())
     L = ["# B2: the re-scored v3 baseline\n",
-         f"Checker: frozen B1 setup (checker.md as at 7b5a0b3, with hints). {len(sr)} entries, five fresh checkers, "
-         f"seeds draw {SEED_DRAW}, order {SEED_ORDER}, bootstrap {SEED_BOOT} (10,000 resamples within note and "
-         f"stratum).\n",
+         f"Checking procedure (frozen): checker.md and hints as at 7b5a0b3; 60-entry packets; "
+         f"{'two fresh checkers per packet, a fault from either counted' if two else 'one fresh checker per packet'}. "
+         f"{len(sr)} entries, seeds draw {SEED_DRAW}, order {SEED_ORDER}, bootstrap {SEED_BOOT} (10,000 resamples "
+         f"within note and stratum).\n",
          "## First-pass fault rate\n",
          f"- **Re-scored v3, whole-note estimate (strata weighted): {w:.1%} (bootstrap 95% {wl:.1%} to {wh:.1%}).**",
          f"- In the sample, unweighted: {k_f}/{len(sr)} = {k_f / len(sr):.1%} (Wilson {lo:.1%} to {hi:.1%}).",
          f"- v3 as reported (its own first-pass checkers, all {len(rows)} entries): {v3}/{len(rows)} = "
-         f"{v3 / len(rows):.1%}.", "",
+         f"{v3 / len(rows):.1%}.", ""]
+    if two:
+        s1 = [(k, st, k.split("/")[0], v1[k]) for k, st in sample]
+        s2 = [(k, st, k.split("/")[0], v2[k]) for k, st in sample]
+        agree_n = sum(bool(v1[k]) == bool(v2[k]) for k, _ in sample)
+        L += [f"- Each checker set alone (whole-note estimate): first {weighted(s1, plan, faulted):.1%}, second "
+              f"{weighted(s2, plan, faulted):.1%}. In the sample: first {sum(bool(x[3]) for x in s1)}, second "
+              f"{sum(bool(x[3]) for x in s2)}, either {k_f}, both {sum(bool(v1[k]) and bool(v2[k]) for k, _ in sample)}.",
+              f"- The two checkers agree (ok against fault) on {agree_n} of {len(sample)} entries.", "",
+              "| Packet | First checker | Second checker | Either | Agree |", "|---|---|---|---|---|"]
+        for i in range(0, len(sample), PER_PACKET):
+            ks = [k for k, _ in sample[i:i + PER_PACKET]]
+            L.append(f"| {i // PER_PACKET + 1} | {sum(bool(v1[k]) for k in ks)} | {sum(bool(v2[k]) for k in ks)} | "
+                     f"{sum(bool(v[k]) for k in ks)} | {sum(bool(v1[k]) == bool(v2[k]) for k in ks)} |")
+        L.append("")
+    L += [
          "## Per 100 entries, by fault kind (whole-note estimate, bootstrap 95%)\n",
          "| Kinds | Per 100 | 95% interval | In the sample |", "|---|---|---|---|"]
     for name, ks in (("holds + absent", {"holds", "absent"}), ("stronger + numbers", {"stronger", "numbers"}),
@@ -192,13 +212,14 @@ def cmd_score():
     L.append(f"- of v3-faulted entries in the sample, faulted again: {sum(bool(x[3]) for x in vf)}/{len(vf)}")
     L += ["", "## Every `stronger` and `numbers` fault (gate B, criterion 3)\n", "| Entry | Kinds | Checker's reason |",
           "|---|---|---|"]
-    reasons = {}
-    for f in sorted(B.glob("verdicts-*.md")):
+    reasons = defaultdict(list)
+    for f in sorted(B.glob("verdicts-*.md")) + sorted((B / "second").glob("verdicts-*.md")):
         for ln in f.read_text(encoding="utf-8").splitlines():
             ln = ln.strip().lstrip("-* ").replace("`", "")
             k = ln.split(":", 1)[0]
-            if k in v:
-                reasons[k] = ln.split(":", 1)[1].strip()
+            if k in v and ln.split(":", 1)[1].strip() != "ok":
+                reasons[k].append(ln.split(":", 1)[1].strip())
+    reasons = {k: " / ".join(x) for k, x in reasons.items()}
     for x in sorted(sr):
         if x[3] & {"stronger", "numbers"}:
             L.append(f"| {x[0]} | {', '.join(sorted(x[3]))} | {reasons.get(x[0], '').replace('|', '/')} |")

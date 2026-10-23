@@ -141,9 +141,10 @@ Where none says, `not stated`.
 
 **Everything quoted sits in the entry's own text.** A quoted basis, a `rating`, and a label's `was "..."` must be
 words from the items in the entry's `from` (or the critique items it names), because that is all the checker
-sees. If the words are in a neighbouring sentence, add that sentence to `from`. The same goes for `holds`: the
-setting comes from the cited sentences, or the sentence it comes from is cited. Lint checks the quotes; the
-checker checks `holds`.
+sees. If the words are in a neighbouring sentence, add that sentence to `from`. The same goes for everything else
+in the entry: every setting, name or detail in the statement, `holds` or any other field comes from a sentence
+listed in `from`. If it comes from elsewhere in the note, add that sentence's address to `from`. Lint checks the
+quotes; the checker checks the rest.
 
 A label covers the sentence it is in, not its neighbours: another sentence about the same source has its own
 label or none. The exception is a bullet whose only label ends it: the label covers the bullet, and detection

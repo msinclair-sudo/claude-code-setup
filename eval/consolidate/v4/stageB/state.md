@@ -146,3 +146,40 @@ Options:
 - accept the noise and read the gate's intervals.
 
 **Next: B3**, on the owner's go.
+
+## B2: completed under revision 5 (2026-10-23)
+
+**The owner's decisions** (`../plan.md`, revision 5):
+- two checkers per entry on both sides, a fault from either counted;
+- 60-entry packets, now part of the frozen procedure;
+- the baseline re-checked to match;
+- one builder rule before the rebuild.
+
+**What v4 had for `holds` and `absent` faults on the builder side: nothing new.**
+- The only rule was format.md's sentence from v3 (4f28b9c): "The same goes for `holds`: the setting comes from the
+  cited sentences, or the sentence it comes from is cited." It covers `holds` only, and the v3 notes were built
+  under it.
+- The provenance lint was dropped at stage A, and the hints reach only the checker.
+
+**What was added:**
+- A SKILL.md hard rule, "Every detail comes from `from`": every setting, name or detail in an entry, in its
+  statement, `holds` or any other field, comes from a sentence listed in its `from`. If it comes from elsewhere in
+  the note, that sentence's address is added.
+- format.md's sentence widened to match.
+
+checker.md and kn.py are unchanged since 7b5a0b3, and the 14 tests pass.
+
+**Baseline, two checkers per 60-entry packet** (`baseline/results.md`). The second checker set is in
+`baseline/second/`.
+- **First-pass fault rate: 38.6%** (bootstrap 95% 33.4% to 43.9%); in the sample, 118 of 300. Each set alone: 35.9%
+  and 35.6%.
+- **The two checkers agree on 282 of 300 entries** (94%; 56 to 60 per packet). On the same packets, single-checker
+  noise is much smaller than the hint runs suggested.
+- **Per 100 entries:**
+  - `holds` plus `absent`: 36.1 (31.1 to 41.3);
+  - `stronger` plus `numbers`: 1.9 (0.5 to 3.6; 4 `stronger` and 2 `numbers` entries, all listed);
+  - `conf`: 0.4;
+  - `critic`: 1.0.
+
+**Next: B3** (16S, MB-01 plus MB-02). The vault's 16S knowledge note equals `../v3/notes/` (the fixed v3 version),
+so the rebuild may overwrite it.

@@ -1,4 +1,13 @@
-# consolidate v4: improvement plan, revision 4
+# consolidate v4: improvement plan, revision 5
+
+**Revision 5 (2026-10-23), after B2.** Two owner decisions.
+- **Measurement.** Every first pass, on the v3 baseline and on v4, is two fresh checkers per entry, and a fault from
+  either counts. Both sides use packets of 60 entries. Packet size is part of the frozen checking procedure. The
+  baseline is re-checked to match: a second checker on each of its five packets.
+- **One builder instruction**, before the rebuild. Every setting, name or detail in an entry comes from a sentence
+  listed in its `from`; if it comes from elsewhere in the note, that sentence's address is added to `from`. It is a
+  hard rule in SKILL.md and widens format.md's existing rule for `holds`. It is builder-side only, and the checker
+  stays frozen.
 
 **Revision 4 (2026-10-23), at the B1 checkpoint.** The owner chose option 2: add the omission hint and confirm it on
 a fresh planted set before B2 (stage B, step 2b below). The checker is then frozen through stage C. B2's sample
@@ -519,6 +528,9 @@ is fixed. B0 records this table as `stageB/spotcheck.md`. No agents.
 5. **Rebuild** all 14 notes from scratch with fresh builders who have not seen the v3 notes. Each note is
    first-pass checked by a fresh hint-equipped checker, fixed by its builder, and re-checked by a different fresh
    hint-equipped checker until clean, as in v3.
+   - **Revision 5:** the first pass is two fresh checkers per 60-entry packet (`kn.py packets --hints`, its
+     default size). The builder fixes every fault from either, getting only verdict lines. Re-checks stay at one fresh
+     checker per round, as in v3, whose re-check rates (11% and 14%) criterion 5 is compared with.
 6. **Do-not-say readability.** Every rebuilt note's writer's view is generated. One fresh reader, given only the
    Do not say sections, marks each entry as usable by a writer as it stands, or a fragment, with a reason. This is
    reported with a target of at least 90% usable. It is not a gate criterion unless the owner makes it one.

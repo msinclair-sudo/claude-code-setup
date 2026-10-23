@@ -314,6 +314,27 @@ Unchanged from revision 1:
 
 Not consolidation's job: the view writers' selection, and background the research never gives.
 
+### For v5 (owner, 2026-10-23, after B1b; recorded, not in this round)
+
+The checker is frozen through stage C, so none of these change v4.
+1. **Detail versus scope, in the checker wording.** Add worked examples showing that limits on method, site, sample
+   count or relatedness ("measured by qSIP", "in one forest soil", "(12 symbionts)", "related recovered genomes")
+   are scope, not detail. The test cases are the five B1b plants all four judges missed
+   (`stageB/planted2/results.md`):
+   - H1-06/perturbation-response.9;
+   - H2-01/other-field-transfer.1;
+   - H1-02/sample-dependence.7;
+   - H1-RES/pangenome.11;
+   - 16S/ploidy.11.
+
+   Any new wording is confirmed on a freshly planted set, as in B1b.
+2. **Two independent checkers per entry, a fault from either counted.** Test the catch rate against the cost on a
+   planted set. B1 and B1b give a first reading: the "either" rate against each judge alone (B1b omissions: 26 and
+   25 either, against 24 to 26 per judge), at twice the checker tokens.
+3. **Decision rules compare conditions.** A rule about an intervention compares the conditions on the same claims,
+   never an absolute level for the checker. B1b's rule tripped on "either W judge faults more than 5% of controls",
+   though the judges without the hint faulted as many.
+
 ## The evaluation, in gated stages
 
 Each stage reports, then stops for the owner's go-ahead.

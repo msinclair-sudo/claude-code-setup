@@ -95,3 +95,15 @@ in `tools/omission_hint.py` (v3notes and planted2 import it from there). Parity 
 regenerates the committed packets and hint information unchanged.
 
 **Next: B2**, on the owner's go. Its sample excludes both planted pools (B1 130, B1b 200).
+
+## B2: started (2026-10-23)
+
+The owner agreed: not adopted, checker frozen through stage C; go ahead with B2. Three v5 items are recorded in
+`../plan.md` ("For v5"). Tool: `tools/baseline.py`.
+
+**The sample** (`baseline/sample.json`, committed before checking). 300 entries, between 12 and 56 per note. Seeds:
+draw 20261032, order 20261033, hint subset 20261034 and 20261035, adjudication 20261036, bootstrap 20261037.
+- Each note is split into its v3-passed claims and the rest. Each stratum is drawn from its entries outside the two
+  planted pools, then weighted back to its full size.
+- That gives 230 v3-passed claims and 70 from the rest, and 141 of the 300 carry a hint line.
+- The work is five packets of 60, checked by five fresh checkers using the frozen checker.md.

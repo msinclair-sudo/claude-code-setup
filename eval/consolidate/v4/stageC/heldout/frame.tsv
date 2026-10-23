@@ -1,0 +1,76 @@
+path	id	words	critique	citations	labels	answers	run	size_hint	excluded
+Apps/Research/Results/Directing language models and coding agents that produce visual output as code practices, their assessment, and documented faults.md	FD-01	19338	yes	bracket keys	no	yes	no	quick	v3 frame: read
+Apps/Research/Results/Explaining scientific and technical material across formats comparisons, design features, narration, production and depiction. A literature review.md	EX-01	26362	yes	labelled (access; class; standing)	no	yes	yes	deep	v3 frame: read
+Apps/Research/Results/Pacing, wording, structure and motion in spoken and animated explanation, a literature review.md	NP-01	22489	yes	labelled (access; class; standing)	yes (11 of 24 labels)	yes	no	standard	v3 frame: read
+PhD/Proposal/Research/Results/Aggregating Per-Genome Functional Content to a Community Measure.md	BRIEF-07	11987	yes	narrative author-year	no	yes	no		v3 frame: read
+PhD/Proposal/Research/Results/Agricultural Liming - Rates, Supply, Energy Cost and Emitted Carbon Dioxide.md	CB1-LIMING	6026	no (the note says none ran)	numbered	no	yes	no	three-agent	v3 frame: dev
+PhD/Proposal/Research/Results/Agriculture's Share of Global Greenhouse Gas Emissions by Accounting Boundary.md	CB3-AG-EMISSIONS-SHARE	5493	no (the note says none ran)	numbered	no	yes	no	three-agent	v3 held-out
+PhD/Proposal/Research/Results/Ancestry, habitat and gene co-occurrence in prokaryotic genome networks what has been measured.md	CM-6	14392	yes	numbered	no	yes	no	deep	
+PhD/Proposal/Research/Results/Annotation resolution and the taxonomy-function relationship in microbial communities, and the genomic level of within-lineage habitat structure a literature review.md	H1-04	10363	yes	numbered	no	yes	no	deep	
+PhD/Proposal/Research/Results/Co-occurrence, habitat distribution and gain-loss of complete metabolic pathways in prokaryotic genomes a literature review.md	H2-02	8961	yes	numbered	no	yes	no	deep	
+PhD/Proposal/Research/Results/Computational Tools for Metagenomic Analysis_ A Five-Step Field-.md	Computational-Tools-for	5105	no	narrative author-year	no	no	no		writing set-aside
+PhD/Proposal/Research/Results/Constraint-Based vs. Parameter-Fitted Forecasting on Short Series, and Resolution-Preserving High-Dimensional Forecasting.md	Constraint-Based-vs-Para	3613	no	narrative author-year	no	no	no		
+PhD/Proposal/Research/Results/Defining the Held-Out Unit in Cross-Cohort and Cross-Environment Generalisation Tests.md	Defining-the-Held-Out-Un	3756	no	narrative author-year	no	no	no		
+PhD/Proposal/Research/Results/Denitrification and N2O-reduction genes against organism phylogeny and habitat congruence, habitat association and within-genus variation (literature review).md	H1-03	14080	yes	labelled (access; class; standing)	yes (9 of 22 labels)	yes	no	deep	
+PhD/Proposal/Research/Results/Dimensionality of microbial functional profiles, and the cross-habitat stability of functional covariation, function levels and taxonomic composition a literature review.md	H2-01	14185	yes	labelled (access; class; standing)	yes (14 of 39 labels)	yes	no	deep	v3 frame: dev
+PhD/Proposal/Research/Results/Direct modelling of community aggregates versus member-first prediction what the literature has measured on withheld sites.md	HA-01	9164	yes	numbered	no	yes	no	deep	
+PhD/Proposal/Research/Results/Distributed Pathway Completion Dechlorination and Polysaccharide Hydrolysate.md	BRIEF-08	14910	yes	numbered	no	yes	no		
+PhD/Proposal/Research/Results/Do changed conditions at a location fall within the range present elsewhere Evidence on present-day analogues for changed climate and changed soil conditions.md	HA-04	12664	yes	labelled (access; class; standing)	no	yes	no	deep	
+PhD/Proposal/Research/Results/Does Direct Head-to-Head Evidence Exist Comparing Mechanistic-Exchange vs Composition-Only Predictors of Microbial Community Function Under Spatial Structure.md	Does-Direct-Head-to-Head	2976	no	narrative author-year	no	yes	no		writing set-aside
+PhD/Proposal/Research/Results/Does a spatially estimated environment-community relationship predict temporal change at a site A review of direct space-time comparisons, with the soil microbial case.md	H3-01	11247	yes	numbered	no	yes	no	deep	
+PhD/Proposal/Research/Results/Environmental explanation and null-model reproduction of across-sample variation in community functional capacity, by how widely a function is held a literature review.md	H2-05	7956	yes	numbered	no	yes	no	deep	writing set-aside
+PhD/Proposal/Research/Results/Error with elapsed time in covariate-driven ecological prediction, and what three forecast-horizon frameworks count as sources of forecast error a literature review.md	H3-06	13625	yes	numbered	no	yes	no	deep	
+PhD/Proposal/Research/Results/Functional gene content of field soil after a single application of lime or mineral nitrogen, and how planted and plant-free soil compare a literature review.md	H3-04	16993	yes	narrative author-year	no	yes	no	deep	
+PhD/Proposal/Research/Results/Functional versus taxonomic turnover in soil microbial communities comparisons, dependence on functional unit and metric, and what null models conclude.md	H1-05	10423	yes	labelled (access; class; standing)	no	yes	no	deep	v3 held-out
+PhD/Proposal/Research/Results/Gene and pathway abundance against measured process rates, and the added value of microbial data beyond environmental variables a literature review.md	HA-03	10854	yes	numbered	no	yes	no	deep	
+PhD/Proposal/Research/Results/Guild in microbial ecology two incompatible definitions in current use, and what has actually been measured about function-defined versus co-occurrence-defined groups.md	CM-3	14773	yes	numbered	no	yes	no	deep	v3 frame: read
+PhD/Proposal/Research/Results/H1_research.md	H1-research	6099	no	numbered	no	yes	no		v3 held-out
+PhD/Proposal/Research/Results/H2_research.md	H2-research	5102	no	narrative author-year	no	no	no		v3 frame: read
+PhD/Proposal/Research/Results/H3_insight_pre_output.md	H3-insight-pre-output	3897	no	narrative author-year	no	no	no		
+PhD/Proposal/Research/Results/H3_research.md	H3-research	4042	no	narrative author-year	no	no	no		
+PhD/Proposal/Research/Results/Habitat versus relatedness in the metabolic gene content of genomes within prokaryotic species and genera a literature review.md	H1-01	10017	yes	numbered	no	yes	no	deep	
+PhD/Proposal/Research/Results/Held-out prediction of taxonomic versus gene or trait community profiles from environment a literature review.md	H1-07	12203	yes	narrative author-year	no	yes	no	deep	
+PhD/Proposal/Research/Results/How fast DNA-based measures of soil microbial communities track a change in conditions, and how much history adds beyond present conditions a literature review.md	H3-03	11655	yes	numbered	no	yes	no	deep	
+PhD/Proposal/Research/Results/How well does function inferred from taxonomy reproduce measured gene content Evidence under permutation-robust measures, by reference distance, rank, habitat and function class.md	HA-02	9547	yes	numbered	no	yes	no	deep	
+PhD/Proposal/Research/Results/MIxS_terms.md	BRIEF-01	21298	no	numbered	no	yes	no	one agent	
+PhD/Proposal/Research/Results/MIxS_terms_set_size.md	BRIEF-05	6247	no	numbered	no	yes	no		
+PhD/Proposal/Research/Results/N-fertiliser_microbial-cycling_review.md	N-fertiliser-microbial-c	2440	no	narrative author-year	no	yes	no		v3 frame: dev
+PhD/Proposal/Research/Results/Output-structure constraints in multi-output prediction accuracy within the training domain and under shift to unseen domains.md	H2-06	8485	yes	numbered	no	yes	no	deep	
+PhD/Proposal/Research/Results/Overlap or complementarity among co-occurring microorganisms what has been measured, what has not, and how far incomplete genomes can carry the inference.md	CM-2	18986	yes	numbered	no	yes	no	deep	
+PhD/Proposal/Research/Results/Partial pathways in annotated prokaryotic genomes and the dependence of draft-network connectivity on genome and reconstruction quality a literature review.md	H2-03	9274	yes	numbered	no	yes	no	deep	
+PhD/Proposal/Research/Results/Phylogenetic depth of prokaryotic trait and preference conservation, and how environmental structuring of community composition changes from species to phylum a literature review.md	H1-06	7971	yes	narrative author-year	no	yes	no	deep	v3 held-out
+PhD/Proposal/Research/Results/Physicochemical measurements, metadata standard compliance and value recovery for public sequenced environmental samples a literature review.md	INTRO-06	11922	yes	numbered	no	yes	no	deep	
+PhD/Proposal/Research/Results/Prediction targets in microbial community modelling, and models that predict community functional gene or pathway content from environmental conditions a literature review.md	HA-05	12735	yes	numbered	no	yes	no	deep	
+PhD/Proposal/Research/Results/Public genome collections recovered from soil contents, metadata practice, reuse and judged adequacy (literature review).md	INTRO-07	12214	yes	numbered	no	yes	no	standard	v3 frame: read
+PhD/Proposal/Research/Results/Quantifying Distance from Training Data to Test Points in Continuous Covariate Space.md	Quantifying-Distance-fro	3420	no	narrative author-year	no	no	no		
+PhD/Proposal/Research/Results/Rank-based association networks what exists, what has been benchmarked against known truth, and where the comparison has not been made.md	CM-4	15193	yes	numbered	no	yes	no	deep	
+PhD/Proposal/Research/Results/Recovery artefacts in the gene and pathway content of related metagenome-assembled genomes what has been measured, and how it depends on sample properties.md	H1-02	10182	yes	numbered	no	yes	no	deep	v3 held-out
+PhD/Proposal/Research/Results/Recovery of rRNA Genes from Metagenome Assemblies and MAGs.md	CB2-RRNA-RECOVERY	4312	no (the note says none ran)	narrative author-year	no	yes	no	three-agent	v3 frame: dev
+PhD/Proposal/Research/Results/Shared member genes in pathway and gene-set definitions bias in single-pathway calls and in statistics computed between pathways.md	CM-5	12536	yes	numbered	no	yes	no	deep	
+PhD/Proposal/Research/Results/Slice1_part1.md	Slice1-part1	3369	no	narrative author-year	no	no	no		
+PhD/Proposal/Research/Results/Slice1_part2.md	Slice1-part2	5111	no	narrative author-year	no	no	no		
+PhD/Proposal/Research/Results/Soil temperature, moisture and chemistry under climate change, chemical responses to climatic drivers, and soil microbial responses a literature review.md	INTRO-02	21456	yes	labelled (access; class; standing)	yes (8 of 11 labels)	yes	no	deep	
+PhD/Proposal/Research/Results/Sources of functional covariation across microbial community samples, their partition, and the relation between genome-level and community-level functional axes a literature review.md	H2-04	11564	yes	labelled (access; class; standing)	yes (12 of 47 labels)	yes	no	deep	v3 held-out
+PhD/Proposal/Research/Results/Stepwise Denitrification with N2O Output in Constraint-Based Metabolic Models.md	Stepwise-Denitrification	3200	no	narrative author-year	no	yes	no		
+PhD/Proposal/Research/Results/Technical effects (study, DNA extraction, sequencing depth, assembly and binning pipeline) on metagenome-derived functional profiles, compared with habitat and with taxonomic profiles a literature review.md	H2-07	9695	yes	numbered	no	yes	no	deep	
+PhD/Proposal/Research/Results/Temporal versus between-site variation in microbial functional gene content soils, with other habitats for comparison.md	H3-05	8288	yes	numbered	no	yes	no	deep	
+PhD/Proposal/Research/Results/Trajectories of soil microbial communities after perturbation, and how gene content moves relative to taxonomic composition a literature review.md	H3-02	15018	yes	numbered	yes (1 of 2 labels)	yes	no	deep	
+PhD/Proposal/Research/Results/Transfer of Metabolic Pathway Intermediates Between Microbial Community Members.md	BRIEF-06	10104	yes	numbered	no	yes	no		
+PhD/Proposal/Research/Results/What Coverage-Based Relative Abundance Measures.md	BRIEF-09	12175	yes	numbered	no	yes	no		v3 frame: read
+PhD/Proposal/Research/Results/What do modules in microbial association networks correspond to A review of the empirical tests.md	CM-1	15822	yes	narrative author-year	no	yes	no	deep	
+PhD/Proposal/Research/Results/What grouping procedures return on discrete, continuous and structureless data, and how null models and other controls are used to read a grouping a literature review.md	What-grouping-procedures	22087	yes	numbered	no	yes	no	deep	
+PhD/Proposal/Research/Results/Who does the work in soil Attribution of nutrient cycling, carbon cycling and disease suppression among microbes, plants, fauna, abiotic processes and management, and how soil health frameworks measure it a literature review.md	INTRO-01	18899	yes	numbered	no	yes	no	deep	writing set-aside
+PhD/Proposal/Research/Results/slice2.md	slice2	4339	no	narrative author-year	no	no	no		
+PhD/Proposal/Research/Results/slice3.md	slice3	6247	no	narrative author-year	no	no	no		
+PhD/Proposal/Research/Results/soil-microbial-governance_resource-efficiency_review.md	soil-microbial-governanc	3205	no	narrative author-year	no	no	no		
+PhD/biblion/research/results/Featureless Ghost Nodes in Anchored Graph-Diffusion Fusion_ A Ve.md	Featureless-Ghost-Nodes	3929	no	narrative author-year	no	no	no		
+PhD/biblion/research/results/biogeochemical-cycle-gene-databases-and-guild-mappers-result.md	biogeochemical-cycle-gen	1707	no	numbered	no	yes	no	deep	writing set-aside
+PhD/biblion/research/results/fallworm-normalization.md	CYP-450	1918	no	none found	no	no	no		
+PhD/biblion/research/results/gene-function-hierarchical-classification-result.md	gene-function-hierarchic	1921	no	numbered	no	yes	no	deep	writing set-aside
+PhD/biblion/research/results/ghost-node-positioning-result.md	ghost-node-positioning-r	1759	refutations only	bracket keys	no	yes	no	deep	v3 held-out
+PhD/biblion/research/results/microbial-gene-name-resolution-and-access-result.md	BGC-3	877	no	numbered	no	yes	no	harness	
+PhD/biblion/research/results/pytest-test-suite-standards-result.md	pytest-test-suite-standa	2310	no	bracket keys	no	yes	no	deep	
+PhD/biblion/research/results/taxonomy-classification-and-name-resolution-result.md	taxonomy-classification	1033	no	numbered	no	yes	no	harness	v3 held-out
+PhD/biblion/research/results/term-specificity-labelling-result.md	term-specificity-labelli	1790	refutations only	bracket keys	no	yes	no	deep	v3 frame: dev
+Topics/Biology/Research/Results/16S rRNA gene copies per genome and per cell, abundance and rarity terms, and abundance in soil. A literature review.md	MB-02	16200	yes	numbered	no	yes	no	standard	v3 frame: dev
+Topics/Biology/Research/Results/From sample to count table in 16S rRNA gene amplicon sequencing where counts depart from community composition, what the workflow's quantities measure, and how samples with unequal depth or load are compared. A literature review.md	MB-01	26637	yes	labelled (access; class; standing)	yes (130 of 147 labels)	yes	yes	deep	v3 frame: dev

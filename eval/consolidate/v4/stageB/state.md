@@ -107,3 +107,42 @@ draw 20261032, order 20261033, hint subset 20261034 and 20261035, adjudication 2
   planted pools, then weighted back to its full size.
 - That gives 230 v3-passed claims and 70 from the rest, and 141 of the 300 carry a hint line.
 - The work is five packets of 60, checked by five fresh checkers using the frozen checker.md.
+
+## B2: done (2026-10-23), stopped for the owner
+
+**Baseline** (`baseline/results.md`). One checker per entry. Checker 2 skipped two entries; it judged them on
+request, both `ok`.
+- **Re-scored v3 first-pass fault rate: 35.9%** (bootstrap 95% 30.8% to 41.2%), a whole-note estimate weighted by
+  stratum. The unweighted sample rate is 108 of 300 (36.0%). v3 as reported was 12.1%.
+- **Per 100 entries:**
+  - `holds` plus `absent`: 33.6 (28.7 to 38.7);
+  - `stronger` plus `numbers`: 1.4 (0.2 to 3.0; 4 `stronger`, 0 `numbers`, all listed);
+  - `conf`: 0.4.
+- **The faults are almost all additions:** `holds` 79, `absent` 23. 65 of 230 v3-passed claims are faulted now, and
+  40 of the 44 v3-faulted entries are faulted again.
+- **By note:** from 15% (GHOST, NFERT) to 58% (TAXRES). The intervals are wide, with 12 to 56 entries per note.
+
+**Hint effect** (`hints/results.md`). 100 entries, 60 hinted and 40 not. W1 is the baseline checkers; W2 is fresh
+with hints; N1 and N2 are fresh without.
+- **Faults found:** W1 45, W2 23, N1 36, N2 25. On the 40 unhinted entries, every run faulted 2 to 6.
+- **Agreement (ok against fault):** within condition, 78 (W) and 81 (N); across conditions, 78 to 89. The hints do
+  not separate the conditions beyond checker-to-checker noise.
+- **The 30 discordant entries**, read by a blind adjudicator, who found faults in 26:
+  - real faults passed: W runs 22, N runs 25;
+  - faults the adjudicator did not see: W runs 4, N runs 0. All 4 came from W1.
+
+  So the hints trade about 3 more catches for up to 4 false faults.
+
+**The open item, for the owner before B3.** On the same 100 entries, single checkers in the frozen setup faulted
+between 23 and 45. Two checkers in the same condition disagree on about one entry in five. Gate B compares one
+checker per entry on v4 against one checker per entry on v3. A difference of 10 points can therefore come from which
+checkers ran rather than from v4.
+- The baseline checkers (60-entry packets) were the strictest run.
+- The v4 first-pass checkers are planned at about 100 to 120 entries each.
+
+Options:
+- match packet sizes;
+- two checkers per entry on both sides (v5 item 2 as an evaluation design, not a checker change);
+- accept the noise and read the gate's intervals.
+
+**Next: B3**, on the owner's go.

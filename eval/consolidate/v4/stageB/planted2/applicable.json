@@ -1,0 +1,689 @@
+{
+ "H2-01/taxonomy-fixed.2": [
+  "counter",
+  "standing",
+  "setting"
+ ],
+ "H2-01/dimension-estimate.2": [
+  "standing",
+  "setting"
+ ],
+ "16S/sampling-storage.5": [
+  "scope",
+  "counter",
+  "number"
+ ],
+ "16S/absolute-quantification.10": [
+  "setting"
+ ],
+ "16S/absolute-quantification.13": [],
+ "H1-RES/capacity-expression.10": [
+  "standing"
+ ],
+ "H2-01/levels-within.12": [
+  "scope",
+  "counter",
+  "standing"
+ ],
+ "16S/denoising-clustering.8": [
+  "scope",
+  "number",
+  "standing"
+ ],
+ "H1-02/contaminated-pangenome.4": [
+  "number",
+  "standing",
+  "setting"
+ ],
+ "16S/abundance-occupancy.2": [
+  "hedge",
+  "standing",
+  "setting"
+ ],
+ "H1-02/mobile-region-loss.8": [
+  "scope",
+  "number"
+ ],
+ "16S/intragenomic-variation.4": [
+  "scope",
+  "number",
+  "standing"
+ ],
+ "CB3/livestock.2": [
+  "number",
+  "standing"
+ ],
+ "16S/pcr.15": [
+  "counter",
+  "setting"
+ ],
+ "16S/quality-filtering.6": [
+  "scope",
+  "standing"
+ ],
+ "CB1/emission-factor.5": [
+  "number",
+  "setting"
+ ],
+ "H2-01/gene-set-aggregation.8": [],
+ "H2-04/shared-environment.5": [
+  "counter",
+  "standing"
+ ],
+ "H1-RES/capacity-expression.9": [
+  "standing"
+ ],
+ "CB3/co2-accounting.2": [],
+ "16S/global-classes.1": [
+  "scope",
+  "number",
+  "setting"
+ ],
+ "16S/ploidy.11": [
+  "counter",
+  "setting"
+ ],
+ "H1-02/sample-dependence.3": [
+  "scope"
+ ],
+ "H2-01/transfer-dependencies.2": [
+  "scope",
+  "number",
+  "standing"
+ ],
+ "H2-01/transfer-dependencies.1": [
+  "scope",
+  "counter",
+  "number",
+  "setting"
+ ],
+ "NFERT/mineralisation.2": [
+  "hedge",
+  "counter"
+ ],
+ "TAXRES/cross-kingdom-backbone.4": [
+  "scope",
+  "number"
+ ],
+ "16S/coverage-standardisation.3": [
+  "scope",
+  "counter",
+  "standing",
+  "setting"
+ ],
+ "H1-02/mobile-region-loss.1": [
+  "scope",
+  "number"
+ ],
+ "H2-01/covariation-stability.12": [
+  "scope",
+  "number",
+  "standing"
+ ],
+ "16S/coverage-standardisation.4": [
+  "scope",
+  "counter"
+ ],
+ "16S/overdispersion.1": [
+  "number"
+ ],
+ "H2-01/temporal-covariation.2": [
+  "scope"
+ ],
+ "16S/read-depth.8": [
+  "scope",
+  "number"
+ ],
+ "16S/sequencing-platform.1": [
+  "number"
+ ],
+ "16S/relic-dna.2": [
+  "scope",
+  "counter",
+  "number",
+  "standing"
+ ],
+ "H1-06/ph-preference.5": [
+  "scope",
+  "number",
+  "setting"
+ ],
+ "16S/scaling-normalisation.1": [
+  "scope",
+  "hedge"
+ ],
+ "16S/copy-number.18": [
+  "number",
+  "standing"
+ ],
+ "H2-01/gene-set-aggregation.9": [
+  "scope"
+ ],
+ "H1-02/sequencing-depth.6": [
+  "scope",
+  "number",
+  "setting"
+ ],
+ "H1-RES/taxonomy-function.1": [],
+ "TSL/c-tf-idf.1": [
+  "number"
+ ],
+ "H1-06/perturbation-response.9": [
+  "scope",
+  "number"
+ ],
+ "16S/denoising-clustering.7": [
+  "scope",
+  "number",
+  "standing"
+ ],
+ "CB1/lime-access.2": [
+  "standing",
+  "setting"
+ ],
+ "16S/abundance-distribution.17": [
+  "scope",
+  "number",
+  "standing"
+ ],
+ "16S/term-sensitivity.7": [
+  "scope",
+  "standing",
+  "setting"
+ ],
+ "16S/technical-variation.6": [
+  "scope",
+  "counter",
+  "number",
+  "standing"
+ ],
+ "H1-05/other-habitats.7": [
+  "scope",
+  "number"
+ ],
+ "H1-05/ordering.24": [
+  "scope",
+  "number",
+  "standing",
+  "setting"
+ ],
+ "CB1/delivered-cost.4": [
+  "number",
+  "standing",
+  "setting"
+ ],
+ "16S/abundance-distribution.2": [
+  "scope",
+  "number"
+ ],
+ "TAXRES/informal-labels.1": [
+  "hedge"
+ ],
+ "H1-06/a1-environmental-preferences.3": [
+  "setting"
+ ],
+ "NFERT/manufacturing-energy.1": [
+  "number",
+  "setting"
+ ],
+ "16S/abundance-distribution.8": [
+  "scope",
+  "counter"
+ ],
+ "H2-01/other-field-transfer.1": [
+  "scope",
+  "counter",
+  "number",
+  "standing"
+ ],
+ "16S/zeros.2": [
+  "standing"
+ ],
+ "H1-02/sequencing-depth.5": [
+  "scope",
+  "number"
+ ],
+ "CB1/consumption.12": [
+  "scope",
+  "counter",
+  "number",
+  "standing",
+  "setting"
+ ],
+ "H1-02/filters-corrections.5": [
+  "scope",
+  "counter",
+  "setting"
+ ],
+ "16S/coverage-standardisation.2": [
+  "scope",
+  "standing"
+ ],
+ "CB2/recovery-variation.1": [
+  "scope",
+  "counter",
+  "number"
+ ],
+ "H1-RES/redundancy.3": [
+  "standing"
+ ],
+ "H2-01/other-field-transfer.5": [
+  "number",
+  "standing"
+ ],
+ "CB1/dissolution-pathway.3": [
+  "setting"
+ ],
+ "CB3/gwp-metric.4": [
+  "setting"
+ ],
+ "16S/copy-number.13": [
+  "scope",
+  "number",
+  "setting"
+ ],
+ "CB2/marker-gap.4": [
+  "scope",
+  "number"
+ ],
+ "CB2/targeted-reconstruction.1": [
+  "standing",
+  "setting"
+ ],
+ "H2-01/levels-across.9": [
+  "standing"
+ ],
+ "16S/bias-consistency.10": [
+  "scope",
+  "counter",
+  "number",
+  "standing",
+  "setting"
+ ],
+ "H2-01/processing-dimension.1": [
+  "scope",
+  "number"
+ ],
+ "16S/compositional-analysis.4": [
+  "standing"
+ ],
+ "H1-02/mobile-region-loss.5": [
+  "scope",
+  "number",
+  "setting"
+ ],
+ "H1-RES/n-cycle-hgt.8": [
+  "scope",
+  "hedge",
+  "standing"
+ ],
+ "H1-02/artefact-size.2": [
+  "scope",
+  "number",
+  "standing"
+ ],
+ "16S/extraction.1": [],
+ "H1-02/core-genome-inference.3": [
+  "hedge",
+  "standing",
+  "setting"
+ ],
+ "TSL/altitude-ordering.3": [
+  "scope",
+  "number",
+  "standing"
+ ],
+ "H1-06/a1-environmental-preferences.1": [
+  "scope",
+  "number"
+ ],
+ "NFERT/symbiotic-fixation.1": [],
+ "NFERT/emission-share.3": [
+  "number"
+ ],
+ "H1-06/metabolic-depth.8": [
+  "number"
+ ],
+ "H1-RES/pangenome.19": [
+  "setting"
+ ],
+ "H2-04/covariation-sources.2": [
+  "scope",
+  "number"
+ ],
+ "H1-05/null-model.1": [
+  "scope"
+ ],
+ "GHOST/benchmark-regime.3": [
+  "scope",
+  "hedge"
+ ],
+ "CB1/scarcity-claim.7": [
+  "hedge",
+  "counter",
+  "number"
+ ],
+ "CB2/targeted-reconstruction.5": [
+  "counter",
+  "number",
+  "setting"
+ ],
+ "TSL/altitude-ordering.5": [
+  "scope",
+  "counter"
+ ],
+ "H2-01/levels-within.4": [
+  "scope",
+  "counter",
+  "number"
+ ],
+ "16S/chimeras.1": [],
+ "H1-05/contrast-size.1": [
+  "scope"
+ ],
+ "16S/denoising-clustering.1": [
+  "number"
+ ],
+ "CB3/accounting-boundary.2": [
+  "scope",
+  "number",
+  "setting"
+ ],
+ "TAXRES/cross-kingdom-backbone.3": [],
+ "H2-01/shared-mean.6": [
+  "scope"
+ ],
+ "H1-06/trait-compilations.5": [
+  "scope",
+  "number"
+ ],
+ "H2-04/aggregation-artefacts.4": [
+  "scope",
+  "number",
+  "standing",
+  "setting"
+ ],
+ "H1-05/redundancy.1": [],
+ "16S/pcr.14": [
+  "number",
+  "setting"
+ ],
+ "H1-02/artefact-size.6": [
+  "scope",
+  "counter",
+  "standing"
+ ],
+ "H1-RES/pangenome.11": [
+  "scope",
+  "number"
+ ],
+ "CB1/application-frequency.2": [
+  "scope",
+  "number",
+  "standing",
+  "setting"
+ ],
+ "16S/core-microbiome.5": [
+  "scope",
+  "number"
+ ],
+ "16S/rare-biosphere.8": [],
+ "H2-04/complementarity-overlap.18": [
+  "scope",
+  "number",
+  "setting"
+ ],
+ "H2-01/covariation-stability.10": [
+  "scope",
+  "hedge"
+ ],
+ "H1-06/depth-dependence.1": [
+  "scope",
+  "number"
+ ],
+ "H1-06/ab-relation.2": [
+  "setting"
+ ],
+ "16S/ploidy.21": [
+  "scope",
+  "setting"
+ ],
+ "H2-04/shared-environment.6": [],
+ "TSL/altitude-ordering.6": [
+  "scope",
+  "number",
+  "standing",
+  "setting"
+ ],
+ "H1-02/same-sample-isolate.5": [
+  "scope",
+  "hedge",
+  "setting"
+ ],
+ "H1-RES/accessory-function.26": [
+  "scope",
+  "counter",
+  "standing"
+ ],
+ "H2-04/genome-linkage.2": [
+  "scope",
+  "number",
+  "standing"
+ ],
+ "16S/scaling-normalisation.4": [
+  "standing"
+ ],
+ "H1-RES/pangenome.8": [],
+ "GHOST/feature-propagation.3": [
+  "scope",
+  "number",
+  "standing",
+  "setting"
+ ],
+ "H1-RES/capacity-expression.1": [
+  "standing"
+ ],
+ "H1-06/depth-dependence.6": [
+  "standing",
+  "setting"
+ ],
+ "H2-04/axis-agreement.4": [
+  "scope",
+  "number"
+ ],
+ "16S/abundance-distribution.24": [],
+ "H1-06/rankwise-structuring.14": [
+  "setting"
+ ],
+ "H1-05/functional-unit.6": [],
+ "H1-RES/pangenome.2": [
+  "scope",
+  "setting"
+ ],
+ "H1-06/adjacent-metrics.1": [
+  "scope",
+  "number"
+ ],
+ "H1-RES/pangenome.24": [
+  "number"
+ ],
+ "H1-06/rankwise-structuring.11": [
+  "standing",
+  "setting"
+ ],
+ "H2-04/shared-ancestry.1": [
+  "scope",
+  "standing"
+ ],
+ "H2-04/covariation-sources.4": [],
+ "16S/primers.10": [
+  "scope",
+  "number",
+  "standing"
+ ],
+ "H1-06/genome-incompleteness.7": [
+  "scope",
+  "number",
+  "standing"
+ ],
+ "GHOST/missingness-degradation.1": [
+  "scope",
+  "number"
+ ],
+ "H1-RES/n-cycle-hgt.13": [
+  "hedge",
+  "standing"
+ ],
+ "CB1/soil-carbon.2": [
+  "scope",
+  "standing"
+ ],
+ "H2-04/within-between-partition.9": [
+  "scope",
+  "counter",
+  "standing"
+ ],
+ "H1-02/artefact-size.5": [
+  "scope",
+  "standing"
+ ],
+ "CB1/ghg-balance.5": [
+  "standing"
+ ],
+ "16S/technical-variation.3": [
+  "scope",
+  "number",
+  "setting"
+ ],
+ "16S/differential-abundance.1": [
+  "scope",
+  "number",
+  "standing"
+ ],
+ "H1-RES/accessory-function.20": [],
+ "H2-01/trait-dimension.4": [
+  "scope",
+  "counter",
+  "standing",
+  "setting"
+ ],
+ "H2-04/association-networks.12": [
+  "hedge"
+ ],
+ "CB1/ghg-balance.4": [
+  "scope",
+  "standing",
+  "setting"
+ ],
+ "H1-06/tau-d.1": [
+  "number"
+ ],
+ "H1-06/uncontrolled-rank-studies.9": [
+  "scope",
+  "number"
+ ],
+ "CB1/application-frequency.5": [
+  "scope",
+  "number"
+ ],
+ "CB3/soils.6": [
+  "number",
+  "standing"
+ ],
+ "H1-02/chimerism.1": [
+  "scope",
+  "number"
+ ],
+ "16S/beta-diversity.1": [
+  "scope",
+  "standing"
+ ],
+ "CB2/depth-axis.2": [
+  "scope",
+  "number",
+  "standing",
+  "setting"
+ ],
+ "16S/copy-number-correction.5": [
+  "scope",
+  "number",
+  "standing"
+ ],
+ "H2-01/covariation-stability.15": [
+  "standing"
+ ],
+ "H1-05/measurement-artefacts.2": [
+  "scope"
+ ],
+ "CB2/linking-tools.1": [
+  "scope",
+  "counter",
+  "number"
+ ],
+ "16S/rare-biosphere.9": [
+  "number",
+  "standing",
+  "setting"
+ ],
+ "H1-RES/redundancy.16": [
+  "scope",
+  "hedge",
+  "counter"
+ ],
+ "CB2/marker-gap.1": [
+  "number",
+  "setting"
+ ],
+ "NFERT/symbiotic-fixation.2": [
+  "scope",
+  "number"
+ ],
+ "16S/copy-number-correction.9": [
+  "scope",
+  "counter",
+  "number",
+  "standing"
+ ],
+ "CB3/food-system.2": [
+  "number",
+  "standing"
+ ],
+ "CB3/n2o.2": [
+  "counter",
+  "number"
+ ],
+ "16S/copy-number.7": [
+  "counter",
+  "number"
+ ],
+ "H1-06/metabolic-depth.4": [
+  "number"
+ ],
+ "TAXRES/gtdb-ncbi-divergence.3": [
+  "number"
+ ],
+ "CB1/measured-emissions.2": [
+  "standing",
+  "setting"
+ ],
+ "CB3/food-system.1": [],
+ "H1-RES/redundancy.11": [
+  "standing"
+ ],
+ "H1-02/sample-dependence.7": [
+  "scope"
+ ],
+ "NFERT/symbiotic-fixation.4": [],
+ "CB1/delivered-cost.1": [
+  "number",
+  "standing",
+  "setting"
+ ],
+ "H1-06/uncontrolled-rank-studies.1": [
+  "scope",
+  "counter"
+ ],
+ "H2-01/functional-profile.2": [
+  "scope"
+ ]
+}

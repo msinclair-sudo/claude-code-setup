@@ -58,9 +58,11 @@ def v3_rows():
 def v3_reasons(keys):
     out = defaultdict(list)
     for f in sorted(baseline.B.glob("verdicts-*.md")) + sorted((baseline.B / "second").glob("verdicts-*.md")):
-        for k, (ks, txt) in rebuild.read(f).items():
-            if ks and f"{k}" in keys:
-                out[k].append(txt)
+        for ln in f.read_text(encoding="utf-8").splitlines():   # baseline IDs are <NOTE>/<id>, as baseline.py reads
+            ln = ln.strip().lstrip("-* ").replace("`", "")
+            k, _, rest = ln.partition(":")
+            if k in keys and rest.strip() != "ok":
+                out[k].append(rest.strip())
     return out
 
 

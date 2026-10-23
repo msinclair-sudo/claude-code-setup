@@ -420,3 +420,52 @@ This follows a 15-minute wait after B6. One builder builds H1-02 and then H1-06,
 - The critic's "Expectation echo" block and positive rulings have no field.
 
 **Next: B8**, after a 15-minute wait.
+
+## B8: started (2026-10-24, 00:05)
+
+This follows a 15-minute wait after B7. Steps: do-not-say readability with one reader (`tools/dns.py`), then `tools/results.py`, which writes `results.md`.
+
+## B8: done (2026-10-24). Gate B: all five criteria met; stopped for the owner
+
+The full report is `results.md`, from `tools/results.py`. Its ratio bootstrap seed, 20261038, was fixed before scoring, in c69db8a.
+
+| Criterion | v4 (14 notes, 1,847 entries) | Re-scored v3 | v4/v3 (95%) | Threshold | Met |
+|---|---|---|---|---|---|
+| 1. First-pass fault rate | 9.7% (Wilson 8.4 to 11.1) | 38.6% (33.4 to 43.9) | 0.25 (0.17 to 0.32) | at most 2/3 | yes |
+| 2. `holds` + `absent` per 100 | 7.9 | 36.1 | 0.22 (0.14 to 0.29) | at most 1/2 | yes |
+| 3. `stronger` + `numbers` per 100 | 1.4 | 1.9 | 0.75 (0.31 to 2.67) | not above v3 | yes |
+| 3. `conf` per 100 | 0.3 | 0.4 | 0.82 (0.00 to unbounded) | not above v3 | yes |
+| 4. Omission | all 15 inputs run it (5 exact, 10 fallback); every input has body addresses; no unaddressed section outside the allow-list | | | | yes |
+| 5. Re-check, round 1 | 7 of 179 fixed entries still faulted, 3.9% | v3: 11%, 14% | | at most 15% | yes |
+
+- **Criterion 3 is met on the point estimate only.** Both ratio intervals reach well above 1, so the data cannot distinguish v4 from v3 on `stronger` plus `numbers` or on `conf`.
+- **Every note is below its v3 estimate.**
+- **Settings:** every setting ratio is at least 0.87; the lowest are TSL 0.87 and H2-01 0.91.
+- **Near-copies** fell in 8 notes, rose in 5 and were flat in 1. The largest rises are H1-RES (53% to 63%) and TAXRES (50% to 61%).
+- **Do-not-say readability** (information, one reader): 184 of 199 usable (92.5%), against the 90% target.
+  - The reader marked 14 more entries usable as borderline. A strict reading would make them fragments, giving 170 of 199 (85.4%).
+  - The fragments are mostly a missing "Say instead" (4), or a "Do not write" about the review's own process (6).
+
+**Open items for the owner**, collected from B4 to B7:
+1. **`limit: access`: format.md and checker.md disagree** on "a figure not confirmable from the text read" (B5, CB3).
+2. **Headings have no address**, so a setting only a heading gives cannot be cited (B5, H1-RES).
+3. **A detection misfire:** a body heading containing "critiques" is inventoried as critique items, and a `critic:` basis on them would pass lint (B6, H1-05 C-112 to C-128).
+4. **`class: search` needs a basis**, which lint enforces but format.md doesn't show (raised in B4 to B6). Lint's match for "the only direct empirical test" is narrow (B4).
+5. **Fields the format lacks:**
+   - a positive second-reader ruling or verification;
+   - the critic's verdict headers;
+   - source dependence;
+   - who produced a finding;
+   - search routes for a whole review;
+   - the critic's "Expectation echo" block.
+6. **Calls with no rule:**
+   - a class marker at the end of a paragraph;
+   - "inferred" with no class value;
+   - mock communities called "modelled";
+   - the critic contradicting the note on provenance;
+   - access values with no match;
+   - citekeys for works with no title or year.
+7. **Builders sometimes deleted details on their first self-check** and then restored them with addresses (B4, B6, B7). In H1-02, author names in `holds` were replaced by descriptions, not given addresses.
+8. **Do-not-say entries:** a missing "Say instead" and process-level "Do not write" sentences account for 10 of the 15 fragments.
+
+The checker is frozen at 7b5a0b3, and `kn.py`, `checker.md` and the tests are unchanged since then. All 14 tests pass. **Stage C does not start without the owner's go.**

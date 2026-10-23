@@ -295,3 +295,49 @@ notes equal their saved v3 copies.
 ## B5: started (2026-10-23, 20:25)
 
 Resumed after the owner's pause until 8:11 pm. There are two builders: NFERT plus CB3, and GHOST plus TAXRES plus H1-RES. Prompts are as in B4.
+
+## B5: done (2026-10-23, 21:36)
+
+First passes use two checkers per 60-entry packet (`rebuild/<NOTE>/first-pass.md`). Each "v3 estimate" is the
+re-scored baseline for that note.
+
+| Note | Entries | First pass | v3 estimate | `stronger` + `numbers` | Settings v4/v3 | Near-copies v3, v4 | Re-checks |
+|---|---|---|---|---|---|---|---|
+| NFERT | 54 | 1 (1.9%) | 20% | 0 | 1.00 (88% to 88%) | 63%, 58% | 0 of 1 still faulted |
+| CB3 | 92 | 11 (12.0%) | 55% | 3 | 0.96 (97% to 94%) | 56%, 48% | 0 of 11 |
+| GHOST | 46 | 2 (4.3%) | 23% | 0 | 0.98 (87% to 85%) | 39%, 39% | 0 of 2 |
+| TAXRES | 30 | 6 (20.0%) | 66% | 1 | 1.10 (85% to 93%) | 50%, 61% | 0 of 6 |
+| H1-RES | 177 | 7 (4.0%) | 18% | 1 | 0.94 (83% to 78%) | 53%, 63% | 0 of 7 |
+
+**Stop checks: none met.**
+- Every note is below its v3 estimate.
+- Pooled `stronger` plus `numbers` over 16S, B4 and B5 is 21 in 1,359 entries: 1.5 per 100, against the 3.6 threshold.
+- Every setting ratio is at least 0.94.
+
+**The five `stronger` and `numbers` faults:**
+
+| Note | Entry | Fault |
+|---|---|---|
+| CB3 | soil-n2o.4 | dropped IPCC's "medium confidence" |
+| CB3 | dns.1, dns.2 | dropped "exactly" from "produces exactly five per cent" (the builder had flagged this wording as borderline) |
+| TAXRES | fungal-repositories.1 | Index Fungorum's 114,301 names lost the "entering the backbone" context |
+| H1-RES | n-cycle-vertical.4 | "suggested" became "found" |
+
+**Builders:**
+- **NFERT and CB3** (about 310k tokens).
+  - **Before submitting:** it removed eight pieces of its own wording that no sentence in the entry's `from` gave. Examples: "AR6 WGIII Summary for Policymakers" from a `holds`, "Tubiello et al. 2022, Table 1", and "2013" from a `why`. Its other checks added addresses.
+  - **In the fixes:** six added an address, and three restored a hedge or counter-clause. Four removed `limit: access` (below). One deleted an inferred `src` label, "(via Gerber et al. 2013's Annex)".
+- **GHOST, TAXRES and H1-RES** (about 320k tokens).
+  - **Before submitting:** it removed only wording it had added (for example a computed "340 genomes", restored to "88 newly sequenced and 252 public"), never a detail from the input.
+  - **In the fixes:** about ten added an address, and one restored a hedge. Four removed a detail no addressable sentence gives. Two of those were "sub-claim 1" and "sub-claim 3", which only headings give. The other two were the label "neighbour feature propagation" for option (a), and "denitrifier".
+
+**Open items for the owner** (the checker stays frozen; nothing changed):
+- **`limit: access`: format.md and checker.md disagree.** format.md lists "a figure not confirmable from the text read" as an access reason, and checker.md does not. CB3's "I read these shares off the rendered figure, not the text" was faulted on four entries under checker.md's list, and the builder removed the limits.
+- **Headings have no address.** A setting that only a heading gives ("the sub-claim 1 evidence") cannot be cited under "every detail comes from `from`", so it has to be dropped. The H1-RES builder counted a few more unflagged entries of this kind.
+- **Both builders raised:**
+  - access values with no match (for example a reference in neither access list);
+  - citekeys for works with no title or year;
+  - no field for the note's own search routes, or for who produced a finding;
+  - H1-RES has citations with no reference list (`src: none (...)`).
+
+**Next: B6** (H2-04 plus H1-05), after a 15-minute wait.

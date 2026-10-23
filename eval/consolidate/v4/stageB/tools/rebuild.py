@@ -105,6 +105,51 @@ def cmd_recheck(d, n):
                                              "\n".join(f"{i}: {v[i][1]}" for i in still) + "\n", encoding="utf-8")
 
 
+VAULT = Path("/mnt/a/Obsidian Vault/Michael.md")
+NOTES = {  # note -> its knowledge note, vault-relative
+    "16S": "Topics/Biology/Research/Knowledge/16S amplicon sequencing from sample to count table.md",
+    "H2-01": "PhD/Proposal/Research/Knowledge/Dimensionality and cross-habitat stability of microbial functional "
+             "profiles.md",
+    "TSL": "PhD/biblion/research/knowledge/Term specificity and multi-level labelling.md",
+    "CB1": "PhD/Proposal/Research/Knowledge/Agricultural liming rates, supply, energy and carbon dioxide.md",
+    "CB2": "PhD/Proposal/Research/Knowledge/Recovery of rRNA genes from metagenome assemblies and MAGs.md",
+}
+
+
+def kn():
+    sys.path.insert(0, str(HERE.parents[4] / "skills" / "consolidate" / "scripts"))
+    import kn as k
+    return k
+
+
+def cmd_prep(note, rel=None):
+    """Copy the first-pass note to rebuild/<note>/as-built.md, cut its 60-entry packets with hints, make the verdict
+    folders."""
+    rel = rel or NOTES[note]
+    d = HERE.parent / "rebuild" / note
+    for sub in ("verdicts-a", "verdicts-b"):
+        (d / sub).mkdir(parents=True, exist_ok=True)
+    src = VAULT / rel
+    (d / "as-built.md").write_bytes(src.read_bytes())
+    (d / "vault-path.txt").write_text(rel + "\n", encoding="utf-8")
+    kn().packets(src, d / "packets", with_hints=True)
+
+
+def cmd_repack(note, n):
+    """Re-check packets for the entries in fixes-<n>.md, from the note as it now stands in the vault."""
+    d = HERE.parent / "rebuild" / note
+    rel = (d / "vault-path.txt").read_text(encoding="utf-8").strip() if (d / "vault-path.txt").exists() else NOTES[note]
+    ids = [ln.split(":", 1)[0] for ln in (d / f"fixes-{n}.md").read_text(encoding="utf-8").splitlines() if LINE.match(ln)]
+    kn().packets(VAULT / rel, d / f"recheck-{n}", only=set(ids), with_hints=True)
+
+
+def cmd_final(note):
+    d = HERE.parent / "rebuild" / note
+    rel = (d / "vault-path.txt").read_text(encoding="utf-8").strip() if (d / "vault-path.txt").exists() else NOTES[note]
+    (d / "final.md").write_bytes((VAULT / rel).read_bytes())
+    print(f"{note}: final.md saved")
+
+
 def cmd_ids(d, n):
     """The IDs in fixes-<n>.md, comma-separated, for `kn.py packets --only`."""
     ids = [ln.split(":", 1)[0] for ln in (Path(d) / f"fixes-{n}.md").read_text(encoding="utf-8").splitlines()
@@ -114,4 +159,6 @@ def cmd_ids(d, n):
 
 if __name__ == "__main__":
     {"first": lambda: cmd_first(sys.argv[2]), "recheck": lambda: cmd_recheck(sys.argv[2], sys.argv[3]),
-     "ids": lambda: cmd_ids(sys.argv[2], sys.argv[3])}[sys.argv[1]]()
+     "ids": lambda: cmd_ids(sys.argv[2], sys.argv[3]),
+     "prep": lambda: cmd_prep(*sys.argv[2:4]), "repack": lambda: cmd_repack(sys.argv[2], sys.argv[3]),
+     "final": lambda: cmd_final(sys.argv[2])}[sys.argv[1]]()

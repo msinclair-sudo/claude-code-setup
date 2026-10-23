@@ -1,0 +1,62 @@
+evidence-bodies.1: ok
+evidence-bodies.2: ok
+evidence-bodies.3: ok
+evidence-bodies.4: ok
+shared-mean-profile.1: ok
+shared-mean-profile.2: ok
+shared-mean-profile.3: ok
+shared-mean-profile.4: ok
+processing-effects.1: ok
+processing-effects.2: ok
+processing-effects.3: ok
+processing-effects.4: holds: holds gives "soil bacteria", but the text says only "In soils, genome size tracked ... across 2,650 genomes" and never restricts it to bacteria.
+processing-effects.5: ok
+processing-effects.6: ok
+processing-effects.7: ok
+processing-effects.8: ok
+processing-effects.9: ok
+processing-effects.10: ok
+community-weighted-means.1: ok
+community-weighted-means.2: ok
+community-weighted-means.3: ok
+community-weighted-means.4: ok
+community-weighted-means.5: ok
+community-weighted-means.6: ok
+dimensionality.1: ok
+dimensionality.2: ok
+dimensionality.3: ok
+dimensionality.4: ok
+dimensionality.5: ok
+dimensionality.6: ok
+dimensionality.7: ok
+dimensionality.8: ok
+dimensionality.9: ok
+dimensionality.10: ok
+dimensionality.11: ok
+dimensionality.12: ok
+dimensionality.13: ok
+dimensionality.14: ok
+dimensionality.15: ok
+dimensionality.16: ok
+dimensionality.17: ok
+dimension-elsewhere.1: ok
+dimension-elsewhere.2: ok
+dimension-elsewhere.3: ok
+dimension-elsewhere.4: ok
+dimension-elsewhere.5: ok
+dimension-elsewhere.6: ok
+dimension-elsewhere.7: ok
+dimension-elsewhere.8: ok
+dimension-elsewhere.9: ok
+dimension-elsewhere.10: holds: holds gives "plant trait gap-filling", but the quoted text says only "The gap-filling (BHPMF) imputes from trait-trait correlations" and does not mention plants.
+dimension-elsewhere.11: holds: holds gives "gap-filled plant trait matrices", but the quoted text speaks only of "covariation in imputed matrices" and does not mention plants.
+dimension-elsewhere.12: ok
+dimension-elsewhere.13: ok
+dimension-elsewhere.14: ok
+dimension-elsewhere.15: ok
+covariation-transfer.1: ok
+covariation-transfer.2: ok
+covariation-transfer.3: ok
+covariation-transfer.4: ok
+
+Count: 60 entries; 57 ok; stronger 0, conf 0, numbers 0, absent 0, critic 0, merged 0, holds 3.

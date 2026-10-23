@@ -68,3 +68,7 @@ One builder for C-DENIT then C-ANALOG, with the B4 prompt. The notes are new, so
 - **`class: search` needs a basis** (as in stage B).
 
 **Next: C1b** (C-RANKNET and C-PREDICT, one builder), after a 15-minute wait.
+
+## C1b: started (2026-10-24, 04:22)
+
+One builder for C-RANKNET then C-PREDICT, with the same prompt as C1a.

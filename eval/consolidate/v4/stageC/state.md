@@ -105,3 +105,7 @@ One builder for C-RANKNET then C-PREDICT, with the same prompt as C1a.
 - **C-PREDICT was detected as author-year** although it also uses numbered markers.
 
 **Next: C2** (C-STEPDEN, C-GHOSTFUS and C-COVDIST, one builder), after a 15-minute wait.
+
+## C2: started (2026-10-24, 05:33)
+
+One builder for C-STEPDEN, C-GHOSTFUS and C-COVDIST, with the same prompt.

@@ -149,3 +149,18 @@ One builder for C-STEPDEN, C-GHOSTFUS and C-COVDIST, with the same prompt.
 - The re-check took up to four rounds, on single entries where successive fresh checkers read the same sentences differently.
 
 **Next: C3** (topic T1, C-PREDICT), after a 15-minute wait.
+
+## C3: started (2026-10-24, 06:36)
+
+T1 (C-PREDICT): writer folders made, and the view generated (`usability/T1.view.md`).
+
+## C3: done (2026-10-24, 06:45)
+
+T1 is complete:
+- 4 pieces (`usability/pieces/T1-*`), with the writers' notes;
+- 4 fact-checks (`usability/factchecks/`);
+- 2 blind readers, 4 Part A sheets and 2 pair sheets (`usability/blind/`).
+
+Results are by letter and are not summarised here until the owner has graded.
+
+**Next: C4** (T2, C-GHOSTFUS), after a 15-minute wait.

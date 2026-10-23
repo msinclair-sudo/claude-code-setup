@@ -176,3 +176,18 @@ T2 is complete: 4 pieces, 4 fact-checks, and 2 blind readers (4 Part A sheets an
 Three writers saved their files to the shared working directory, and one left them there. Every file was traced to its writer and moved before collection; the protocol amendment records it. From T3 the prompt gains the logistics line "Save both files in that folder."
 
 **Next: C5** (T3, C-STEPDEN), after a 15-minute wait.
+
+## C5: started (2026-10-24, 07:25)
+
+T3 (C-STEPDEN): writer folders made, and the view generated. The prompt adds the save-location line.
+
+## C5: done (2026-10-24)
+
+T3 is complete: 4 pieces (each saved in its own folder, with no strays), 4 fact-checks, and 2 blind readers.
+
+## C6: done (2026-10-24, 07:35). Gate C: stopped for the owner
+
+- `tools/compile.py` wrote `heldout/results.md` (the seven notes, near-copying and settings) and `usability/results.md` (fact-checks, blind Part A scores and pair preferences, by letter only).
+- The owner's packet is in the vault's `temp/stage-C/`: 12 pieces, 12 blank per-piece sheets, 6 blank per-pair sheets and the marking scheme (31 files). No piece names its input.
+- The key, `usability/ab-key.sealed.md`, is unopened. It is opened only after the owner says grading is done, for scores by condition and the owner's scores against the blind readers', criterion by criterion.
+- **Blinding slip:** during C3, my messages gave the fact-check counts for T1-1A and T1-1B before I stopped reporting per-piece results. No condition was disclosed.

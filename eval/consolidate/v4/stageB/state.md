@@ -52,3 +52,26 @@ passed, 4 to 29 per note (`planted/pool.json`), committed (765fad0) before scree
 
 Recommendation: proceed to B2 without the omission hint; the owner decides. **Next: B2** (re-score about 300 v3
 entries, excluding the 130 planted-pool claims; hint effect on 100), on the owner's go.
+
+## B1b: started (2026-10-23)
+
+**The owner chose option 2:** add the omission hint, confirm it on a fresh planted set weighted to scope-type
+omissions, with and without the hint, then freeze the checker through stage C. If the hint noticeably raises false
+alarms on controls, report it, don't adopt it, and stop. Plan: `../plan.md`, stage B step 2b (revision 4).
+
+**Built before drawing:**
+- `kn.omission_hints`, `OMIT_WORDS` and `OMIT_LINE`;
+- the checker.md paragraph;
+- one new test (15 pass);
+- `v3notes.block(..., omit=)`;
+- `tools/planted2.py`.
+
+The parity check still gives 743/743.
+
+**Hint information, development data only** (`planted2/hint-info.md`):
+- It fires on 824 of 1,516 v3 claims (54%), 2.6 items on average.
+- It would have listed new items for 8 of B1's 20 hedge plants and all 6 counter plants.
+- Three of B1's four double misses would be listed: "by this corpus", "nearest precedent only", and "argues the
+  tail is not identifiable…". "Reported as a distribution" would not be.
+
+`planted2/checker-N.md` is checker.md as at 7b5a0b3, for the N judges.

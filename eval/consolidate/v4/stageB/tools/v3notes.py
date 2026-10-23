@@ -26,16 +26,20 @@ def load():
     for r in rows:
         r["bib"] = bibs[r["note"]]
         r["hints"] = kn4.hints(r["entry"], r["cited"], r["bib"])
+        r["omit"] = kn4.omission_hints(r["entry"], r["cited"])
     return rows
 
 
-def block(r, with_hints):
-    """An entry as the v4 checker sees it: statement, fields, cited text, and the hints line if asked for."""
+def block(r, with_hints, omit=False):
+    """An entry as the v4 checker sees it: statement, fields, cited text, and the hints line if asked for; with
+    `omit`, also the omission-hint line (B1b). Without it, the packet is exactly B1's."""
     e, f = r["entry"], r["entry"]["fields"]
     out = [f"{e['statement']}\n\n", "".join(f"- {k}: {v}\n" for k, v in f.items() if k != "from"), "\nFrom the note:\n\n"]
     out += [f"> {t}\n>\n" for t in r["cited"]]
     if with_hints and r["hints"]:
         out.append(f"\n{kn4.HINT_LINE}: {'; '.join(r['hints'])}\n")
+    if with_hints and omit and r.get("omit"):
+        out.append(f"\n{kn4.OMIT_LINE}: {'; '.join(r['omit'])}\n")
     return "".join(out)
 
 

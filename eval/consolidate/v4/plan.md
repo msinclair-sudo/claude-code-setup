@@ -1,4 +1,8 @@
-# consolidate v4: improvement plan, revision 3
+# consolidate v4: improvement plan, revision 4
+
+**Revision 4 (2026-10-23), at the B1 checkpoint.** The owner chose option 2: add the omission hint and confirm it on
+a fresh planted set before B2 (stage B, step 2b below). The checker is then frozen through stage C. B2's sample
+excludes both planted pools. Nothing else changes.
 
 **Revision 3 (2026-10-22), after gate A and the owner's spot-check.** Change 1 and stage B were revised on the
 owner's decisions at gate A. After the spot-check, stage B gained a planted-fault test and change 2 a do-not-say
@@ -432,9 +436,44 @@ is fixed. B0 records this table as `stageB/spotcheck.md`. No agents.
        hints.
      - **Any change is confirmed on a freshly planted set**, not the same one (owner): a new seeded draw of clean
        claims, newly planted and validated, judged by two fresh checkers with the new setup.
+   - **Done (7b5a0b3):** `stageB/planted/results.md`. The owner chose the omission hint (revision 4).
+
+2b. **B1b: the omission hint, confirmed on a fresh planted set** (owner, at the checkpoint). The four double misses in
+   B1 were scope qualifiers that do not look like hedges ("by this corpus", "only as a nearest precedent", "reported
+   as a distribution", a second source's contrary argument).
+   - **The hint** (`kn.omission_hints`, checker packets only, like the other hints). It covers hedge, negation,
+     contrast and scope words in the cited text (the fixed list `OMIT_WORDS`). A word counts as carried only when the
+     entry's own wording has it followed, within four words, by the next content word after it in the cited text.
+     The entry's own wording is the statement and the free-text fields: not `from`, `src`, `trail`, `conf`,
+     `class`, `search` or `contrary`. Each word not carried is listed with up to four following words, stopping at
+     punctuation. Overlapping windows merge, and at most 8 are listed. The list and rule were fixed before the
+     fresh set was drawn and are not tuned on it.
+   - **The fresh set** (`stageB/tools/planted2.py`, `stageB/planted2/`): 200 v3-passed claims outside B1's pool, by
+     seed (pool 20261028, assignment 20261029, judging order 20261030, controls 20261031), screened, planted and
+     validated as in B1. Plants are weighted to scope-type omissions:
+     - scope qualifier 24;
+     - counter or contrary 12;
+     - hedge 8;
+     - setting, number and standing 4 each.
+
+     Up to 45 controls. The planter never sees the word list.
+   - **Judges:** four fresh checkers, all claims, same order, packets identical apart from the omission line. W1
+     and W2 get the omission hint and the new checker.md paragraph. N1 and N2 get B1's setup (checker.md at
+     7b5a0b3). One fresh adjudicator, without hints and blind to condition, reads every control any judge faulted
+     (information only).
+   - **Decision rule, fixed before drawing:**
+     - **Noticeably more false alarms:** W's control faults (summed over its two judges) exceed N's by 3 or more,
+       or either W judge faults more than 5% of controls. Then report, do not adopt, and stop.
+     - **Adopt** if W's two judges together catch more omission plants (scope, counter, hedge) than N's, without
+       noticeably more false alarms.
+     - **Otherwise** do not adopt; the checker stays at B1's setup.
+     - Raw counts decide. The adjudicator's reading is reported beside them.
+   - **Then the checker is frozen through stage C.** That means `checker.md`, `hints()`, `omission_hints()` and
+     `packets --hints`, at the commit recorded in `stageB/state.md`. If the hint is not adopted, its code is
+     reverted.
 3. **Re-score v3 (the new baseline).**
-   - **The sample:** about 300 entries from the 14 v3 as-built notes, by seeded stratified draw. At least 10 per
-     note; the rest are allocated in proportion to each note's entries, by largest remainder.
+   - **The sample:** about 300 entries from the 14 v3 as-built notes, excluding the B1 and B1b planted pools, by
+     seeded stratified draw. At least 10 per note; the rest are allocated in proportion to each note's entries, by largest remainder.
    - **The packets:** made with the v3 inventories (the v3 code, so the `from` addresses resolve as the v3
      checkers saw them) and the v4 hint code.
    - **The checkers:** fresh, with the v4 `checker.md` (change 5's wording and the hint paragraph), about 60

@@ -332,6 +332,34 @@ class KnTests(unittest.TestCase):
         self.assertNotIn(kn.HINT_LINE, two)                                  # everything found: no line
         self.assertIn("where to look, not what is wrong", (KN.parents[1] / "references" / "checker.md").read_text())
 
+    def test_omission_hint_lists_dropped_scope_words(self):
+        cited = ["No direct test was found by this corpus, which reports it only as a nearest precedent.",
+                 "Haegeman 2013 argues the tail is not identifiable from sample data."]
+        claim = lambda s, holds="soils": {"type": "claim", "statement": s,
+                                          "fields": {"holds": holds, "src": "a not obtained", "from": "X:A-001"}}
+        dropped = kn.omission_hints(claim("No direct test was found; it is reported as a precedent."), cited)
+        self.assertEqual(dropped, ["by this corpus",                     # "by" is in the entry, "corpus" is not
+                                   "only as a nearest precedent",        # overlapping windows merge
+                                   "argues the tail is not identifiable from sample data"])   # "no direct" carried
+        kept = kn.omission_hints(claim("By this corpus no direct test was found, which reports it only as a "
+                                       "nearest precedent; Haegeman argues the tail is not identifiable."), cited)
+        self.assertEqual(kept, [])
+        self.assertEqual(kn.omission_hints(dict(claim("x"), type="dns"), cited), [])   # claims only
+        # the line reaches checker packets only, never lint or the view
+        c = ("### lime: Lime\nneeds: none\n- **lime.1** Lime is scarce.\n"
+             "  conf: not stated · class: not stated · holds: soils · src: leeTitleWords2019 · "
+             "trail: LIME §Verdict · from: LIME:A-001")
+        p = self.v / "K.md"
+        p.write_text(self._plain(c, oos="- LIME:A-002: test"))
+        r = subprocess.run([sys.executable, str(KN), "lint", str(p)], capture_output=True, text=True)
+        self.assertNotIn(kn.OMIT_LINE, r.stdout)
+        kn.packets(p, self.v / "plain-pk")
+        self.assertNotIn(kn.OMIT_LINE, (self.v / "plain-pk" / "packet-01.md").read_text())
+        kn.packets(p, self.v / "pk", with_hints=True)
+        self.assertIn(kn.OMIT_LINE, (self.v / "pk" / "packet-01.md").read_text())
+        v = subprocess.run([sys.executable, str(KN), "view", str(p)], capture_output=True, text=True)
+        self.assertNotIn(kn.OMIT_LINE, v.stdout)
+
     def test_detection_misses_fail_loudly(self):
         # a title that starts like a references heading is not one: the body still gets addresses
         note = ("# Sources of functional covariation\n\n## Findings\n\nCovariation is strong in soils. "

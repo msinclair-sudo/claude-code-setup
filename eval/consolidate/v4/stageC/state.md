@@ -37,3 +37,7 @@ sizing of 1M. So the build becomes:
 C3 to C6 are as planned. There are 15 minutes between sessions.
 
 **Next: C1a**, after a 15-minute wait.
+
+## C1a: started (2026-10-24, 03:03)
+
+One builder for C-DENIT then C-ANALOG, with the B4 prompt. The notes are new, so the builder picks titles and reports the paths.

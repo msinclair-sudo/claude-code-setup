@@ -1,0 +1,62 @@
+soil-novelty-methods.1: ok
+soil-novelty-methods.2: ok
+soil-novelty-methods.3: ok
+soil-novelty-methods.4: ok
+soil-novelty-methods.5: ok
+soil-site-coverage.1: ok
+soil-site-coverage.2: ok
+soil-site-coverage.3: ok
+soil-site-coverage.4: ok
+soil-site-coverage.5: ok
+soil-analogue-uses.1: ok
+soil-analogue-uses.2: ok
+soil-analogue-uses.3: holds: holds gives "German soils", but the quoted text ("The authors' own conclusion concerns depth: about 30% of land-use-change-driven SOC change occurs at 30-90 cm") names no country or setting.
+soil-analogue-uses.4: ok
+soil-analogue-uses.5: ok
+soil-analogue-uses.6: ok
+soil-analogue-uses.7: ok
+soil-driver-magnitudes.1: ok
+soil-driver-magnitudes.2: ok
+soil-driver-magnitudes.3: ok
+soil-driver-magnitudes.4: ok
+soil-driver-magnitudes.5: ok
+soil-driver-magnitudes.6: ok
+soil-driver-magnitudes.7: ok
+soil-driver-magnitudes.8: ok
+soil-driver-magnitudes.9: ok
+soil-driver-magnitudes.10: ok
+soil-driver-magnitudes.11: ok
+soil-driver-magnitudes.12: ok
+soil-driver-magnitudes.13: holds: the entry and its holds place the result "at Park Grass" / "the Park Grass Experiment", but the quoted text ("Ammonium sulphate also raises soil carbon and C/N [36, asserted in the abstract]") names no site.
+soil-driver-magnitudes.14: ok
+soil-driver-magnitudes.15: ok
+soil-driver-magnitudes.16: ok
+soil-driver-magnitudes.17: ok
+soil-driver-magnitudes.18: ok
+soil-driver-magnitudes.19: ok
+soil-driver-magnitudes.20: ok
+soil-driver-magnitudes.21: ok
+soil-driver-magnitudes.22: holds: the entry reads "the Chinese change" with holds "Chinese croplands", but the quoted text speaks only of "Reviewer's reading of [46]" and classes "already occupied nationally", naming no country or land use.
+soil-driver-magnitudes.23: ok
+soil-driver-magnitudes.24: ok
+soil-driver-magnitudes.25: ok
+soil-driver-magnitudes.26: ok
+soil-driver-magnitudes.27: ok
+soil-failure-modes.1: ok
+soil-failure-modes.2: ok
+soil-failure-modes.3: ok
+climate-soil-relation.1: ok
+climate-soil-relation.2: ok
+climate-soil-relation.3: ok
+dns.1: ok
+dns.2: ok
+dns.3: ok
+dns.4: ok
+dns.5: ok
+dns.6: ok
+dns.7: ok
+dns.8: ok
+dns.9: ok
+dns.10: ok
+
+Count: 60 entries; ok 57; stronger 0; conf 0; numbers 0; absent 0; critic 0; merged 0; holds 3.

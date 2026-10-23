@@ -1,0 +1,62 @@
+contamination.1: ok
+contamination.2: ok
+contamination.3: ok
+contamination.4: ok
+contamination.5: ok
+contamination.6: holds: The setting "holds: neighbouring wells" is not a setting the text gives; "mostly into neighbouring wells (rarely up to 10 wells away)" is a finding, and the claim itself covers wells up to 10 away.
+contamination.7: ok
+contamination.8: ok
+contamination.9: absent: The text says only "A review proposes the RIDE checklist"; "for low-biomass studies" is not in it.
+contamination.10: ok
+dominant-steps.1: ok
+dominant-steps.2: ok
+dominant-steps.3: ok
+dominant-steps.4: ok
+dominant-steps.5: ok
+dominant-steps.6: ok
+bias-consistency.1: ok
+bias-consistency.2: ok
+bias-consistency.3: ok
+bias-consistency.4: ok
+bias-consistency.5: ok
+bias-consistency.6: ok
+bias-consistency.7: holds: "holds: soils, 454" adds "454", which the quoted text does not state for Zhou 2011.
+bias-consistency.8: ok
+bias-consistency.9: ok
+bias-consistency.10: ok
+bias-consistency.11: ok
+bias-consistency.12: ok
+bias-consistency.13: ok
+reads-per-sample.1: ok
+reads-per-sample.2: ok
+reads-per-sample.3: ok
+reads-per-sample.4: ok
+reads-per-sample.5: ok
+reads-per-sample.6: ok
+reads-per-sample.7: ok
+reads-per-sample.8: ok
+reads-per-sample.9: ok
+reads-per-sample.10: ok
+reads-per-sample.11: ok
+reads-per-sample.12: ok
+microbial-load.1: ok
+microbial-load.2: ok
+microbial-load.3: ok
+abundance-distribution.1: ok
+abundance-distribution.2: ok
+abundance-distribution.3: ok
+abundance-distribution.4: ok
+abundance-distribution.5: ok
+abundance-distribution.6: ok
+abundance-distribution.7: ok
+abundance-distribution.8: ok
+abundance-distribution.9: ok
+abundance-distribution.10: ok
+abundance-distribution.11: ok
+abundance-distribution.12: ok
+abundance-distribution.13: ok
+abundance-distribution.14: ok
+abundance-distribution.15: ok
+abundance-distribution.16: ok
+
+Count: 60 entries; 57 ok; stronger 0, conf 0, numbers 0, absent 1, critic 0, merged 0, holds 2.

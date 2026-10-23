@@ -1,0 +1,62 @@
+contamination.1: ok
+contamination.2: ok
+contamination.3: ok
+contamination.4: ok
+contamination.5: ok
+contamination.6: ok
+contamination.7: ok
+contamination.8: ok
+contamination.9: absent: the entry says the review proposes RIDE "for low-biomass studies", but the text says only "A review proposes the RIDE checklist (Eisenhofer 2019)".
+contamination.10: ok
+dominant-steps.1: ok
+dominant-steps.2: ok
+dominant-steps.3: ok
+dominant-steps.4: ok
+dominant-steps.5: ok
+dominant-steps.6: ok
+bias-consistency.1: stronger: the closing clause "bias behaves as a multiplicative factor per taxon that calibration controls can correct" is stated as a general property, dropping the "one dataset modelled for this question" scope the text gives (I-0002 "One reanalysis finds it consistent") and the field evidence of inconsistency in C-129.
+bias-consistency.2: ok
+bias-consistency.3: ok
+bias-consistency.4: ok
+bias-consistency.5: ok
+bias-consistency.6: ok
+bias-consistency.7: holds: "holds: soils, 454" adds "454", which the quoted text does not give for Zhou 2011.
+bias-consistency.8: ok
+bias-consistency.9: ok
+bias-consistency.10: ok
+bias-consistency.11: ok
+bias-consistency.12: ok
+bias-consistency.13: ok
+reads-per-sample.1: ok
+reads-per-sample.2: ok
+reads-per-sample.3: ok
+reads-per-sample.4: ok
+reads-per-sample.5: ok
+reads-per-sample.6: ok
+reads-per-sample.7: ok
+reads-per-sample.8: ok
+reads-per-sample.9: ok
+reads-per-sample.10: ok
+reads-per-sample.11: ok
+reads-per-sample.12: ok
+microbial-load.1: ok
+microbial-load.2: ok
+microbial-load.3: ok
+abundance-distribution.1: ok
+abundance-distribution.2: ok
+abundance-distribution.3: ok
+abundance-distribution.4: ok
+abundance-distribution.5: ok
+abundance-distribution.6: ok
+abundance-distribution.7: ok
+abundance-distribution.8: ok
+abundance-distribution.9: ok
+abundance-distribution.10: ok
+abundance-distribution.11: ok
+abundance-distribution.12: ok
+abundance-distribution.13: ok
+abundance-distribution.14: ok
+abundance-distribution.15: ok
+abundance-distribution.16: ok
+
+Count: 60 entries; 57 ok; stronger 1, conf 0, numbers 0, absent 1, critic 0, merged 0, holds 1.

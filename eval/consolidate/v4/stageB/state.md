@@ -341,3 +341,7 @@ re-scored baseline for that note.
   - H1-RES has citations with no reference list (`src: none (...)`).
 
 **Next: B6** (H2-04 plus H1-05), after a 15-minute wait.
+
+## B6: started (2026-10-23, 21:53)
+
+This follows a 15-minute wait after B5. One builder builds H2-04 and then H1-05, with prompts as in B4.

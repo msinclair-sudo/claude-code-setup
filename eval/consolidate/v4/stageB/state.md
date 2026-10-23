@@ -227,3 +227,37 @@ The builder followed format.md, and chimeras.1 and copy-number.26 drew `conf` fa
 critic-corrected form.
 
 **Next: B4** (H2-01 plus TSL; CB1 plus CB2), after a 15-minute wait, on the owner's go.
+
+## Owner's rulings after B3 (2026-10-23): plan revision 6
+
+- **`src` against `conf`.** format.md now says `src` shows the critic's standing, marked, with the review's label
+  as `was "..."` (the form lint already checks). The checker is unchanged. 16S was built before this and is not
+  rebuilt.
+- **Builder rule.** Add the sentence's address; never delete the detail. This is in SKILL.md and format.md.
+- **B8 information:**
+  - settings kept;
+  - the 16S removals;
+  - near-copies;
+  - `stronger` and `numbers` per note.
+
+  The tool is `tools/notestats.py`, with definitions in its docstring.
+- **Early stops,** checked after each note's first pass:
+  - a note above its v3 estimate;
+  - pooled `stronger` plus `numbers` above 3.6 per 100;
+  - a note's setting share below 0.75 of its v3 share.
+
+**16S under the new measures (information):**
+- **Claims with a real setting:** v3 341 of 410 (83%); v4 411 of 505 (81%); ratio 0.98.
+- **Near-copies:** v3 148 (36%); v4 205 (41%).
+- **The builder's list of its pre-submission removals** (`rebuild/16S/removed-settings.md`, from its edit scripts):
+  76 removals in 72 entries, all dropped, none kept with an added address. That came before the clarification.
+  - By the builder's own account, 42 of the removed details are stated elsewhere in the inputs, 6 partly, 8 not at
+    all, and 20 unchecked.
+  - Its 16 other fixes added an address.
+
+**B4 inputs checked:** the vault's H2-01, TSL, CB1 and CB2 knowledge notes equal `../v3/notes/`, so they may be
+overwritten.
+
+## B4: started (2026-10-23)
+
+This follows a 15-minute wait after B3 and the rulings. There are two builders: H2-01 plus TSL, and CB1 plus CB2.

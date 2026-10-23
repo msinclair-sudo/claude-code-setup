@@ -143,16 +143,18 @@ Where none says, `not stated`.
 words from the items in the entry's `from` (or the critique items it names), because that is all the checker
 sees. If the words are in a neighbouring sentence, add that sentence to `from`. The same goes for everything else
 in the entry: every setting, name or detail in the statement, `holds` or any other field comes from a sentence
-listed in `from`. If it comes from elsewhere in the note, add that sentence's address to `from`. Lint checks the
-quotes; the checker checks the rest.
+listed in `from`. If it comes from elsewhere in the note, add that sentence's address to `from`; do not delete the
+detail. Settings are content the writer needs. Lint checks the quotes; the checker checks the rest.
 
 A label covers the sentence it is in, not its neighbours: another sentence about the same source has its own
 label or none. The exception is a bullet whose only label ends it: the label covers the bullet, and detection
 makes the bullet one item. `src` shows a source's labels as the critic left them: where the critic corrects a
 source's access, class or standing as cited for this claim, `src` gives the corrected label, then
-`critic: <item>` and the note's original label as `was "..."`. Where the critic corrects the claim and not the
-source's label, the label stays and `conf` carries the correction. The same finding in two inputs is one claim
-with both trails and both `from` items.
+`critic: <item>` and the note's original label as `was "..."`. The same holds where the critic corrects the claim's
+standing and not the source's label: `src` and `conf` must agree, so `src` gives the critic's standing, marked, with
+the review's label beside it: `(AB; meas; single; critic: MB-01:C-091 was "AB; meas; repl")` beside `conf: single
+(critic: MB-01:C-091)`. A label in `src` that contradicts `conf` is a fault. The same finding in two inputs is one
+claim with both trails and both `from` items.
 
 **Which words count.** A standing is stated only by words like these, said of this claim:
 

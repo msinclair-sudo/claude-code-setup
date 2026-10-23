@@ -1,4 +1,24 @@
-# consolidate v4: improvement plan, revision 5
+# consolidate v4: improvement plan, revision 6
+
+**Revision 6 (2026-10-23, after B3).** Owner's rulings; B4 to B8 run straight through, sessions 15 minutes apart.
+- **`src` against `conf`, fixed on the builder side.** `src` shows the critic-corrected standing, marked as the
+  critic's, with the review's label beside it. The marked form is the one lint already checks:
+  `(AB; meas; single; critic: MB-01:C-091 was "AB; meas; repl")`. format.md now matches what checker.md enforces,
+  and the checker stays frozen. 16S was built before this fix and is not rebuilt.
+- **The builder rule, clarified.** A detail from a sentence not in `from` gets that sentence's address added; it is
+  not deleted. Settings are content the writer needs.
+- **B8's report adds, as information only (not gate criteria):**
+  - settings kept: the share of claims whose `holds` gives a real setting, v3 against v4, per note;
+  - for 16S, how many of the settings the builder removed were kept with an added address and how many were dropped;
+  - near-verbatim copying, v3 against v4;
+  - `stronger` and `numbers` per note.
+
+  The definitions are in `stageB/tools/notestats.py`.
+- **Early stop, checked after each rebuilt note's first pass.** Stop and report if any of these holds. The thresholds
+  were fixed before B4:
+  - a note's first-pass rate is above its re-scored v3 estimate (`stageB/baseline/results.md`, by note);
+  - pooled v4 `stronger` plus `numbers` per 100 entries is above the baseline's upper 95% bound, 3.6;
+  - a note's share of claims with a real setting falls below three quarters of its v3 share.
 
 **Revision 5 (2026-10-23), after B2.** Two owner decisions.
 - **Measurement.** Every first pass, on the v3 baseline and on v4, is two fresh checkers per entry, and a fault from

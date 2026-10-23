@@ -101,6 +101,7 @@ No trails, sentence addresses or citation keys: the knowledge note stays the aud
   valid ordering of the `needs` graph and means nothing more.
 - **Every detail comes from `from`.** Every setting, name or detail in an entry, in its statement, `holds` or any
   other field, comes from a sentence listed in its `from`. If it comes from elsewhere in the note, add that
-  sentence's address to `from`. The checker sees only those sentences, so anything else in the entry is a fault.
+  sentence's address to `from`; do not delete the detail, because settings are content the writer needs. The
+  checker sees only the sentences in `from`, so a detail without its sentence there is a fault.
 - **Gaps go back to research.** A missing or weak finding is a gap, never filled here.
 - **Keep the result notes as they are.** The knowledge note links to them; it never edits them.

@@ -164,3 +164,7 @@ T1 is complete:
 Results are by letter and are not summarised here until the owner has graded.
 
 **Next: C4** (T2, C-GHOSTFUS), after a 15-minute wait.
+
+## C4: started (2026-10-24, 07:00)
+
+T2 (C-GHOSTFUS): writer folders made, and the view generated.

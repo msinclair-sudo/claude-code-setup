@@ -82,3 +82,9 @@ the pieces were made.
 - Fact-checkers and blind readers see only letter names.
 - Each topic is one session (C3 to C5), 15 minutes apart. C6 compiles results by letter and copies the owner's
   packet to `temp/stage-C/` in the vault.
+
+## Amendment (2026-10-24, during C4)
+
+In T2, three writers saved `piece.md` to their shared working directory before moving it, and one left it there; v3's prompt does not say where to save. Each file was traced by its writer's report and its title, and moved to its own folder before collection. All four T2 pieces are distinct; T2-2A had kept its final version in a side folder.
+
+From T3, one logistics line follows the unchanged prompt: "Save both files in that folder." It changes nothing about the content asked for.

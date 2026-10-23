@@ -183,3 +183,47 @@ checker.md and kn.py are unchanged since 7b5a0b3, and the 14 tests pass.
 
 **Next: B3** (16S, MB-01 plus MB-02). The vault's 16S knowledge note equals `../v3/notes/` (the fixed v3 version),
 so the rebuild may overwrite it.
+
+## B3: done (2026-10-23), 16S
+
+This followed the 15-minute wait after B2. Files are in `rebuild/16S/`:
+- `as-built.md`, the first-pass state;
+- `final.md`, the clean note, also in the vault;
+- `packets/` and `verdicts-a/`, `verdicts-b/`;
+- `first-pass.md`;
+- `fixes-1..3.md` and `recheck-1..3/`.
+
+The tool is `tools/rebuild.py`.
+
+**The build.** One fresh builder (about 720k tokens) lint-clean at the first try, with MB-01 605/605 and MB-02
+298/298 accounted for. The note has:
+- 40 concepts, 505 claims and 55 do-not-say entries;
+- 32 gaps;
+- 256 sources.
+
+On its own initiative, the builder checked that each word was in its `from` sentences, using a script of its own,
+not the hints. It removed about 70 added settings before submitting. That is the new hard rule at work.
+
+**First pass**, two checkers per 60-entry packet, 10 packets and 20 checkers (`rebuild/16S/first-pass.md`):
+- **68 of 560 faulted (12.1%, Wilson 9.7% to 15.1%)**;
+- per 100 entries: `holds` plus `absent` 9.5, `stronger` plus `numbers` 1.8 (10 `stronger`, all listed), `conf` 0.5;
+- checker A 52, checker B 63, both 47; they agree on 539 of 560.
+
+For comparison, only, since gate B is judged on all 14 notes in B8: the 16S stratum of the re-scored v3 baseline
+was 35% with one checker.
+
+**Fixes and re-checks.** The builder fixed all 68.
+- **Round 1:** 2 of 68 still faulted (3%), both `absent`.
+- **Round 2:** 1 of 2 (extraction.8, a dropped "for relative abundance").
+- **Round 3:** clean.
+
+**Open item for the owner (the checker is frozen, so it is recorded, not changed).** format.md and checker.md
+conflict:
+- format.md: "Where the critic corrects the claim and not the source's label, the label stays and conf carries the
+  correction";
+- checker.md: "a label in `src` that contradicts `conf` is `conf`".
+
+The builder followed format.md, and chimeras.1 and copy-number.26 drew `conf` faults. It then changed `src` to the
+critic-corrected form.
+
+**Next: B4** (H2-01 plus TSL; CB1 plus CB2), after a 15-minute wait, on the owner's go.

@@ -105,5 +105,13 @@ def cmd_recheck(d, n):
                                              "\n".join(f"{i}: {v[i][1]}" for i in still) + "\n", encoding="utf-8")
 
 
+def cmd_ids(d, n):
+    """The IDs in fixes-<n>.md, comma-separated, for `kn.py packets --only`."""
+    ids = [ln.split(":", 1)[0] for ln in (Path(d) / f"fixes-{n}.md").read_text(encoding="utf-8").splitlines()
+           if LINE.match(ln)]
+    print(",".join(dict.fromkeys(ids)))
+
+
 if __name__ == "__main__":
-    {"first": lambda: cmd_first(sys.argv[2]), "recheck": lambda: cmd_recheck(sys.argv[2], sys.argv[3])}[sys.argv[1]]()
+    {"first": lambda: cmd_first(sys.argv[2]), "recheck": lambda: cmd_recheck(sys.argv[2], sys.argv[3]),
+     "ids": lambda: cmd_ids(sys.argv[2], sys.argv[3])}[sys.argv[1]]()

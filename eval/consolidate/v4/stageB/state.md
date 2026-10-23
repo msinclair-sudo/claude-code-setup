@@ -345,3 +345,41 @@ re-scored baseline for that note.
 ## B6: started (2026-10-23, 21:53)
 
 This follows a 15-minute wait after B5. One builder builds H2-04 and then H1-05, with prompts as in B4.
+
+## B6: done (2026-10-23, 22:47)
+
+| Note | Entries | First pass | v3 estimate | `stronger` + `numbers` | Settings v4/v3 | Near-copies v3, v4 | Re-checks |
+|---|---|---|---|---|---|---|---|
+| H2-04 | 142 | 21 (14.8%) | 27% | 0 | 1.00 (88% to 88%) | 39%, 45% | 1 of 21 still faulted, then 0 of 1 |
+| H1-05 | 119 | 17 (14.3%) | 52% | 3 | 0.99 (96% to 95%) | 20%, 19% | 2 of 17, then 0 of 2 |
+
+**Stop checks: none met.**
+- Both notes are below their v3 estimates.
+- Pooled `stronger` plus `numbers` over 16S and B4 to B6 is 24 in 1,620 entries: 1.5 per 100.
+- Both setting ratios are at least 0.99.
+
+**H1-05's `stronger` and `numbers` faults:**
+- other-habitats.11 dropped "mostly".
+- unit-annotation-metric.16 turned "I found no study" into "no study".
+- other-habitats.8 (`numbers`) was disputed by the builder. "About 31 of 148 reversed" and the critic's "13 deviating" are different counts, so the builder made the difference explicit in `holds`, and the re-check passed it.
+
+**Builder** (one, about 470k tokens):
+- **Before submitting:** its first every-detail pass *deleted* details that came from reference titles, against the rule. It then restored them all with addresses: 19 edits in H2-04 and 39 in H1-05.
+- **In the fixes:** most added addresses, and two restored hedges.
+- **Removals:** four details that no input sentence gives:
+  - "a review", which became "a theoretical or review paper";
+  - a critic clause that C-113 does not cover;
+  - "plant", from "plant trait ecology";
+  - "16S", from a GeoChip contrast.
+- **Round 2:** H2-04 dns.16 had quoted "independent" where the text says "near-independent". The builder corrected the quote and added two addresses.
+
+**Open items raised (for the owner; nothing changed):**
+- **A detection misfire.** H1-05 §3.4's heading "Functional redundancy as an explanation: for, against, critiques" matches the critic-title pattern. The reviewer's own text was therefore inventoried as critique items C-112 to C-128. The builder did not use them as `critic:` bases. Lint can't tell, so a `critic: C-120` basis would pass as a second reader's finding.
+- **Format gaps:**
+  - `class: search` needs a basis, which lint enforces and format.md doesn't show (raised in B4 and B5 too);
+  - a "*Conflicts:*" label heads only the first sentence of a block;
+  - critic verdict headers ("Supported.") have no field;
+  - positive second-reader verification ("figures checked against full text by the critic") has no field;
+  - source dependence (shared data or authors) has no field.
+
+**Next: B7** (H1-02 plus H1-06, one builder), after a 15-minute wait.

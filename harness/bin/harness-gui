@@ -2179,7 +2179,7 @@ function haltBanner(p) {
   if (!h) return '';
   return '<div class="halt" data-live="halt:' + esc(p.slug) + '">HALTED at ' +
     esc((h.at || '').slice(11, 16)) + ' &middot; ' + esc(h.why || '') +
-    ' &middot; nothing new starts. <code>harness resume</code> ends it.</div>';
+    ' &middot; nothing new starts. <code>harness resume</code> lifts it and starts only rank 0; <code>--all</code> starts every node.</div>';
 }
 
 function docCard(p) {

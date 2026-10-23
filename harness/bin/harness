@@ -2442,23 +2442,57 @@ def cmd_halt(a):
                 research_ensure_runner()
         except Exception:
             pass
-        told = 0
+        root = [n for n in nodes if ctx.rank(n) == 0]
+        every = getattr(a, "all", False) is True
+        halt_ring = lambda m: tree_ring(m) and (m.get("kind") == "halt"
+                                                or "HALTED" in (m.get("text") or ""))
+        told = held = 0
         for n in nodes:
             # A node that never read the halt has nothing to resume from: the
             # halt ring is withdrawn, on the delivered log, and no resume is
             # sent (log 178: the pair sat unread at a sessionless dev_2 and
             # its lead was told every turn to spawn it to read them).
-            if withdraw_rings(ctx.state, n, lambda m: tree_ring(m) and
-                              (m.get("kind") == "halt" or "HALTED" in (m.get("text") or "")),
-                              "withdrawn: the owner resumed before it was read"):
+            unread = withdraw_rings(ctx.state, n, halt_ring,
+                                    "withdrawn: the owner resumed before it was read")
+            if not every and n not in root:
+                # Owner, 2026-10-23: "a resume shouldn't start all nodes unless
+                # harness resume --all is used". The node stays stopped on
+                # purpose, so nothing resumes or wakes it (the ringer, a limit's
+                # restart, a timed start) until rank 0 or its lead spawns it.
+                if not stopped(ctx, n):
+                    stopped_path(ctx, n).parent.mkdir(parents=True, exist_ok=True)
+                    _save(stopped_path(ctx, n), {
+                        "by": "owner", "at": _now(), "resume": True,
+                        "why": "held at the resume: rank 0 starts what the owner asks for"})
+                    held += 1
                 continue
-            ring_inbox(ctx.state, n, "owner", f"the owner resumed the tree (halted at "
-                       f"{h.get('at', '')[11:16]}: {h.get('why')}). Carry on with your queue.",
-                       kind="resume")
+            if every and (stopped(ctx, n) or {}).get("resume"):
+                stopped_path(ctx, n).unlink(missing_ok=True)    # held by a quiet resume
+            if unread and (every or n not in root):
+                continue
+            text = (f"the owner resumed the tree (halted at {h.get('at', '')[11:16]}: "
+                    f"{h.get('why')}). ")
+            if every:
+                text += "Carry on with your queue."
+            else:
+                text += ("Nothing else was started: every other node is held, stopped on "
+                         "purpose, until it is spawned (harness spawn <node>; a lead starts "
+                         "its own children). The owner will tell you what to work on: start "
+                         "nothing until they do.")
+            ring_inbox(ctx.state, n, "owner", text, kind="resume")
             told += 1
-        print(f"resumed; {told} node(s) told"
-              + (f", {len(nodes) - told} had not read the halt (withdrawn)"
-                 if told < len(nodes) else ""))
+        if every:
+            print(f"resumed; {told} node(s) told"
+                  + (f", {len(nodes) - told} had not read the halt (withdrawn)"
+                     if told < len(nodes) else ""))
+        else:
+            print(f"resumed; {', '.join(root) or 'rank 0'} told, and nothing else started: "
+                  f"{held} node(s) held (stopped on purpose)"
+                  + (f", {len(nodes) - len(root) - held} already stopped"
+                     if len(nodes) - len(root) - held else "")
+                  + f".\n  Tell {', '.join(root) or 'rank 0'} what to work on: it starts "
+                    f"nodes with harness spawn <node>. harness resume --all would have "
+                    f"started every node.")
         # A tree that stood still for a day starts again current (log 139).
         try:
             for n, st, info, _ in catchup_pass(ctx, idx=load_index(ctx, refresh=True), by="owner"):
@@ -2482,7 +2516,8 @@ def cmd_halt(a):
                       "meanwhile." if ctx.rank(n) == 0 else ""),
                    kind="halt")
     print(f"halted: {why}\n  {len(nodes)} node(s) told. Nothing new starts; the running test "
-          f"finishes. harness resume ends it.")
+          f"finishes. harness resume lifts it and starts only rank 0; harness resume --all "
+          f"starts every node.")
 
 
 def direct_start(ctx, by, node):
@@ -2592,7 +2627,18 @@ def cmd_spawn(a):
         there = sessions_in(ctx, idx, n, rows)
         if there:
             who = there[0].get("name") or "?"
-            print(f"  skip {n:<12} occupied by {who}"); skipped += 1; continue
+            if stopped(ctx, n) and not a.dry_run:
+                # Held by a stop with its session still up (a quiet resume):
+                # starting it is lifting the stop and ringing that session.
+                stopped_path(ctx, n).unlink(missing_ok=True)
+                ring_inbox(ctx.state, n, here or "owner", f"{here or 'the owner'} started you "
+                           f"again: carry on with your queue.", kind="resume")
+                print(f"  woke {n:<12} its session {who} was up and held; the stop is lifted "
+                      f"and it is rung to carry on")
+                launched += 1; continue
+            print(f"  skip {n:<12} occupied by {who}"
+                  + (" (held: spawn without --dry-run lifts the stop and rings it)"
+                     if stopped(ctx, n) else "")); skipped += 1; continue
         _st = start_standing(ctx, n)
         if _st:
             # One start per node (log 161): whoever began it has a minute or
@@ -13273,6 +13319,9 @@ def cmd_wake(a):
     except Exception as e:
         print(f"{stamp} {a.task}: roster unreadable ({e}); not started"); return
     act, why = wake_plan(ctx, a.task, at, rows)
+    _n = (load_brief(ctx, a.task)[1] or {}).get("node")
+    if act and _n and stopped(ctx, _n):
+        act, why = None, f"{_n} is stopped on purpose; it starts when it is spawned"
     print(f"{stamp} {a.task}: {why}" + ("; starting it" if act else ""))
     if act:
         node = load_brief(ctx, a.task)[1]["node"]
@@ -25468,6 +25517,10 @@ def ringer_tick(ctx, S, now=None):
             state = "busy" if row.get("status") == "busy" else "idle"
         elif sid and not is_halted and not stopped(ctx, node) and turn_ended(sid):
             state = "stopped"
+        if state == "idle" and stopped(ctx, node):
+            # Held on purpose, as a quiet resume leaves a node whose session is
+            # still up: nothing wakes it until it is spawned (owner, 2026-10-23).
+            continue
         d = bell_dir(ctx, node)
         if state in ("idle", "stopped") and \
                 now - S.setdefault("_owed", {}).get(node, 0) >= NUDGE_EVERY:
@@ -26569,6 +26622,10 @@ def main():
     hl.add_argument("--ask", metavar="ID", help=argparse.SUPPRESS)
     hl.set_defaults(resume=False)
     rs = add("resume", cmd_halt)
+    rs.add_argument("--all", action="store_true",
+                    help="start every node again, each rung to carry on with its queue. "
+                         "Without it only rank 0 is rung, and every other node stays "
+                         "stopped on purpose until rank 0 or its lead spawns it")
     rs.set_defaults(resume=True, why=None, ask=None)
     rcy = add("recycle", cmd_recycle)
     rcy.add_argument("node", nargs="*", help="nodes to restart with fresh context")

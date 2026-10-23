@@ -2063,6 +2063,20 @@ class Log161(unittest.TestCase):
         self.assertIn("NOT started", out)
         self.assertIsNone(hz.start_standing(self.ctx, "dev"))
 
+    def test_spawning_a_held_node_whose_session_is_up_lifts_the_stop_and_rings_it(self):
+        hz.stopped_path(self.ctx, "dev").parent.mkdir(parents=True, exist_ok=True)
+        hz._save(hz.stopped_path(self.ctx, "dev"), {"by": "owner", "resume": True})
+        started, out = self.spawn("dev", files=[self.row("dev", "s-1")], extra=["--dry-run"])
+        self.assertIn("held: spawn without --dry-run lifts the stop", out)
+        self.assertTrue(hz.stopped(self.ctx, "dev"))
+        started, out = self.spawn("dev", files=[self.row("dev", "s-1")])
+        self.assertEqual(started, [])                                   # no second session
+        self.assertIn("woke dev", out)
+        self.assertIsNone(hz.stopped(self.ctx, "dev"))
+        rung = [json.loads(f.read_text())["text"] for f in
+                (self.ctx.dir / "doorbell" / "dev" / "inbox").glob("*.json")]
+        self.assertEqual(rung, ["main started you again: carry on with your queue."])
+
     def test_a_session_the_roster_does_not_list_still_occupies(self):
         # 2026-10-14: a second spawn of dev_migrate_1, a minute after the
         # first, printed "spawned" with the first's session running.
@@ -2656,13 +2670,55 @@ class Halt(unittest.TestCase):
         self.err = mock.patch("sys.stderr", new_callable=io.StringIO)
         self.err.start(); self.addCleanup(self.err.stop)
 
-    def halt(self, sid=None, resume=False, why="drifted"):
+    def halt(self, sid=None, resume=False, why="drifted", every=False):
         env = {"CLAUDE_CODE_SESSION_ID": sid} if sid else {}
         with mock.patch.object(hz, "Ctx", return_value=self.ctx), \
-             mock.patch.dict(os.environ, env, clear=False), redirect_stdout(io.StringIO()):
+             mock.patch.dict(os.environ, env, clear=False), redirect_stdout(io.StringIO()) as o:
             if not sid:
                 os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
-            hz.cmd_halt(mock.Mock(resume=resume, why=why, ask=None))
+            hz.cmd_halt(mock.Mock(resume=resume, why=why, ask=None, all=every))
+        return o.getvalue()
+
+    def inbox(self, n):
+        return [json.loads(f.read_text())
+                for f in sorted((self.ctx.dir / "doorbell" / n / "inbox").glob("*.json"))]
+
+    def test_a_resume_starts_only_rank_0_and_holds_the_rest(self):
+        # Owner, 2026-10-23: "a resume shouldn't start all nodes unless harness
+        # resume --all is used ... after using resume, i will tell the root lead
+        # what to do".
+        hz.stopped_path(self.ctx, "dev_1").parent.mkdir(parents=True, exist_ok=True)
+        hz._save(hz.stopped_path(self.ctx, "dev_1"), {"by": "shell", "why": "mine"})
+        self.halt()
+        for n in ("main", "dev", "dev_1"):
+            hz.MAIL().take(self.ctx.state, n, "t")
+        with mock.patch.object(hz, "testq_jobs", return_value=[]):
+            out = self.halt(resume=True)
+        self.assertIsNone(hz.halted(self.ctx))
+        (m,) = self.inbox("main")
+        self.assertEqual(m["kind"], "resume")
+        self.assertIn("start nothing until they do", m["text"])
+        self.assertEqual((self.inbox("dev"), self.inbox("dev_1")), ([], []))
+        self.assertTrue(hz.stopped(self.ctx, "dev")["resume"])
+        self.assertEqual(hz.stopped(self.ctx, "dev_1")["why"], "mine")    # the owner's own stop
+        self.assertIn("1 node(s) held (stopped on purpose), 1 already stopped", out)
+        self.assertIn("harness resume --all", out)
+        # --all starts every node, lifting what a quiet resume held, not the owner's stop.
+        self.halt()
+        for n in ("main", "dev", "dev_1"):
+            hz.MAIL().take(self.ctx.state, n, "t")
+        with mock.patch.object(hz, "testq_jobs", return_value=[]):
+            self.halt(resume=True, every=True)
+        self.assertIsNone(hz.stopped(self.ctx, "dev"))
+        self.assertEqual(hz.stopped(self.ctx, "dev_1")["why"], "mine")
+        self.assertIn("Carry on with your queue", self.inbox("dev")[-1]["text"])
+
+    def test_rank_0_is_told_even_when_it_never_read_the_halt(self):
+        self.halt()
+        with mock.patch.object(hz, "testq_jobs", return_value=[]):
+            self.halt(resume=True)
+        self.assertEqual([m.get("kind") for m in self.inbox("main")], ["resume"])
+        self.assertEqual(self.inbox("dev_1"), [])
 
     def test_only_the_owner_halts_and_every_node_is_told(self):
         with self.assertRaises(SystemExit):
@@ -2685,7 +2741,7 @@ class Halt(unittest.TestCase):
         self.halt()
         hz.MAIL().take(self.ctx.state, "dev", "t")                   # dev read its halt
         with mock.patch.object(hz, "testq_jobs", return_value=[]):
-            self.halt(resume=True)
+            self.halt(resume=True, every=True)
         inbox = lambda n: [json.loads(f.read_text())
                            for f in (self.ctx.dir / "doorbell" / n / "inbox").glob("*.json")]
         self.assertEqual(inbox("dev_1"), [])
@@ -3504,6 +3560,23 @@ class Wake(unittest.TestCase):
             hz.cmd_wake(mock.Mock(task="run", at=str(time.time() - 1)))
         self.assertEqual(run.call_args.args[0][-3:], ["recycle", "dev_1", "--when-idle"])
 
+    def test_alarm_leaves_a_node_stopped_on_purpose(self):
+        # A quiet resume holds a node until it is spawned (owner, 2026-10-23).
+        ctx = FakeCtx({"main": None, "dev_1": "main"})
+        ctx.repo = Path("/r")
+        hz.stopped_path(ctx, "dev_1").parent.mkdir(parents=True, exist_ok=True)
+        hz._save(hz.stopped_path(ctx, "dev_1"), {"by": "owner", "resume": True})
+        with mock.patch.object(hz, "Ctx", return_value=ctx), \
+             mock.patch.object(hz, "agents_json", return_value=[]), \
+             mock.patch.object(hz, "wake_plan", return_value=("start", "free")), \
+             mock.patch.object(hz, "load_brief", return_value=(None, {"node": "dev_1"})), \
+             mock.patch.object(hz, "append_inbox"), \
+             mock.patch.object(hz.subprocess, "run") as run, \
+             redirect_stdout(io.StringIO()) as o:
+            hz.cmd_wake(mock.Mock(task="run", at=str(time.time() - 1)))
+        run.assert_not_called()
+        self.assertIn("dev_1 is stopped on purpose", o.getvalue())
+
 
 class DocPairs(unittest.TestCase):
     """T18: pairs that create, move and delete, and the CLAUDE.md budget."""
@@ -4251,6 +4324,19 @@ class Ringer(unittest.TestCase):
         self.assertEqual([s for s, _ in self.sent], ["s-dev"])
         self.assertIn("1 unread message(s) for dev (from dev_1)", self.sent[0][1])
         self.assertEqual(hz.MAIL().pending(self.ctx.state, "dev"), 1)    # it never takes mail
+
+    def test_a_node_held_on_purpose_is_not_woken_though_its_session_is_up(self):
+        # Owner, 2026-10-23: after a quiet resume nothing starts a held node.
+        self.own("dev", "s-dev")
+        self.rows = [{"sessionId": "s-dev", "status": "idle", "messagingSocketPath": "/a"}]
+        hz.stopped_path(self.ctx, "dev").parent.mkdir(parents=True, exist_ok=True)
+        hz._save(hz.stopped_path(self.ctx, "dev"), {"by": "owner", "resume": True})
+        hz.ring_inbox(self.ctx.state, "dev", "dev_1", "done, please review")
+        self.tick({}, 1000)
+        self.assertEqual(self.sent, [])
+        hz.stopped_path(self.ctx, "dev").unlink()                    # spawned
+        self.tick({}, 1000)
+        self.assertEqual([s for s, _ in self.sent], ["s-dev"])
 
     def test_low_waits_for_idle_and_an_fyi_waits_longer_but_is_read(self):
         # Owner, 2026-10-11: an FYI that nothing ever prompts the session to read

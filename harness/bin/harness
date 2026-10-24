@@ -5838,26 +5838,7 @@ def cmd_mark(a):
         else:
             print(f"  It is NOT closed. {parent or 'your lead'} signs it off: "
                   f"harness mark {a.task} --close")
-        print(f"  You cannot close your own work — you cannot check it either (T4).")
-        # Nothing above this line reaches anybody. See lead_address: the record
-        # is inert until the lead takes a turn, and the lead has no reason to
-        # take one. So the last act of presenting is to say so, out loud, to a
-        # session that is running right now.
-        _tell = _rv if _review else parent
-        _lead, _lsid = lead_address(ctx, _tell)
-        if _lead:
-            print(f"\n  NOT DONE YET — tell {_tell}. It is running as '{_lead}'.")
-            print(f"  Send this before you stop, in this turn:")
-            print(f"    SendMessage(to: \"{_lead}\", message: \"{node}: '{a.task}' is "
-                  f"presented at {rec['_presented_sha'][:8]} and waiting on your "
-                  + (f"review — harness mark {_review}\")" if _review else
-                     f"sign-off — harness mark {a.task} --close\")"))
-            print(f"  The record alone does not reach it. It is read when {parent} next")
-            print(f"  takes a turn, and presenting gives it no reason to take one — which")
-            print(f"  is exactly how finished work sits invisible for half an hour.")
-        elif parent:
-            print(f"\n  {parent} is not running, so there is nobody to tell. It is on the")
-            print(f"  record:  harness status")
+        # The lead, or the reviewer, was rung above (obs 91): nothing to send.
         # What happens to this session next, said here rather than left to be
         # worked out. A member that has presented and does not know whether it is
         # continuing will fill the gap, and what it fills it with is a question.
@@ -13655,10 +13636,12 @@ def cmd_queue(a):
         deleg = [x for x in delegated(ctx, n) if not x["closed_at"]]
         # Shown, never offered. A withdrawn brief that vanished entirely would
         # have the next lead re-propose the same thing and get no answer; the
-        # point of keeping it is that somebody already decided.
+        # point of keeping it is that somebody already decided. Asked of one node:
+        # the whole tree's list had 27 of them on every call (audit C15).
         gone = [x for x in all_briefs(ctx).values()
                 if x.get("node") == n and superseded(x)
-                and not ctx.state_file("marks", tkey(x["task"]), ".json").exists()]
+                and not ctx.state_file("marks", tkey(x["task"]), ".json").exists()] \
+            if a.node else []
         if not q and not openm and not gated and not deleg and not gone:
             continue
         shown = True
@@ -14742,8 +14725,6 @@ def cmd_brief(a):
                       f"`harness blocked --decided` lists them.")
         if a.__dict__.get("report") is not None:
             brief_report(ctx, a)
-        if rev > 1:
-            print("  the previous text is gone — a brief is a plan, not a record")
         if _CLAUSE_LABEL.search(a.write) and not brief_clauses(a.write):
             print(f"  WARNING: its DONE has no clauses the harness can number ({CLAUSE_FORMS});"
                   f"\n  a lead splitting it can't use --covers (log 116). A shape it reads:"
@@ -16329,9 +16310,8 @@ def cmd_waiting(a):
     a list of stopped children needs to know which it is before it decides what
     to answer first.
 
-    It does not notify. A lead reads it when it orients, exactly like every
-    other thing that climbs — anything that interrupts a lead mid-task is a
-    message, and messages arrive out of order and are read once.
+    The node waited on reads it when it orients, and is rung once it has been
+    quiet OWED_IDLE (owed_now): a wait is owed by the other side.
     """
     ctx = Ctx(); ctx.require_enrolled()
     node, spec = ctx.node()
@@ -16464,20 +16444,19 @@ def cmd_waiting(a):
               f"(~/.claude/harness/OBSERVATIONS.md).\n  It lifts when the harness is next "
               f"installed, and you are rung then to check.")
         return
-    # The record is read at the lead's next harness command, and a lead parked on
-    # a long job runs none, so the wait sat unseen behind a 29-minute check (obs 68).
-    # Same remedy as presenting: say it, now, to the running session.
+    # A wait sat unseen behind a 29-minute check (obs 68). The owed ring reaches
+    # the node once it has been quiet OWED_IDLE; a message reaches it sooner.
     _lead, _ = lead_address(ctx, on)
     _doing = check_activity(ctx, on)
     if _doing:
         print(f"  {on} is running {_doing} and runs no harness command until it ends.")
     if _lead:
-        print(f"  The record does not reach it. Send this before you stop, in this turn:")
+        print(f"  {on} is rung once it has been quiet {OWED_IDLE // 60}m. Sooner: send this "
+              f"in this turn:")
         print(f"    SendMessage(to: \"{_lead}\", message: \"{node} is waiting on you: "
               f"{a.asked}\")")
     else:
-        print(f"  {on} is not running, so nobody is told; its parent sees the wait "
-              f"after {WAIT_STALL // 60}m.")
+        print(f"  {on} is not running; its parent sees the wait after {WAIT_STALL // 60}m.")
     if not a.still_moving:
         print(f"  Nothing was recorded as still moving, so this reads as a full stop.")
         print(f"  If it is not one, say so: harness waiting {shlex.quote(a.asked)} "
@@ -25517,9 +25496,10 @@ def read_calls(mail, node, sid=None):
 
 def wake_text(node, calls):
     who = sorted({str(m.get("from") or "?") for m in calls})
+    # The prompt hook prints the mail with this prompt (audit E10: the wake said
+    # so too, 3,448 times).
     return (f"harness ringer: {len(calls)} unread message(s) for {node} (from "
-            f"{', '.join(who)}). The harness prints them with this prompt; act on them. "
-            f"If you see none: harness doorbell --read")
+            f"{', '.join(who)}). None shown? harness doorbell --read")
 
 
 def ringer_plan(state, idle_for, mail, node, last, now, sid=None):

@@ -321,7 +321,7 @@ The gate sits at `mark` rather than at `spawn`, because the requirement is on th
 | `harness brief <task> --suggest` | the node the brief is **for** | proposes; does not change it |
 | `harness brief <task> --resolve N` | that node's lead | marks a suggestion addressed |
 
-**A brief is a plan, not provenance, and the two are kept in different files on purpose.** It is rewritten in place, the revision counter advances, and the previous text is gone — because a working document that behaves like a record is one people become afraid to correct. `harness note` is the append-only half: comments are never edited, and they survive the recycle that ends the session they answer. Both attach to the same task and neither is allowed to become the other.
+**A brief is a plan, not provenance, and the two are kept in different files on purpose.** It is rewritten in place and the revision counter advances, because a working document that behaves like a record is one people become afraid to correct. The text it replaced is kept aside, for `harness brief <task> --history`, not shown as the brief. `harness note` is the append-only half: comments are never edited, and they survive the recycle that ends the session they answer. Both attach to the same task and neither is allowed to become the other.
 
 **Comments inform; only the brief instructs.** `harness brief <task> --comment` appends context from anyone — the operator, a lead, a peer — and changes nothing about what the work is. If it *should* change the work, the lead folds it in and the revision advances. Two channels of instruction would rebuild the drip-feed this whole design exists to close, one piece at a time, so the separation is enforced by which command can write the text.
 

@@ -319,6 +319,27 @@ class Reorder(unittest.TestCase):
         self.assertEqual(e.exception.code, hz.REFUSED)
 
 
+class QueueGone(unittest.TestCase):
+    def test_a_withdrawn_brief_shows_only_when_its_node_is_asked(self):
+        # Audit 2026-10-23 (C15): every tree-wide queue listed all 27 withdrawn,
+        # never-started briefs; asked of one node, they still show, so the next
+        # lead doesn't propose them again.
+        ctx = FakeCtx({"main": None, "dev": "main"})
+        (ctx.dir / "briefs").mkdir()
+        (ctx.dir / "briefs" / "old.json").write_text(json.dumps(
+            {"task": "old", "node": "dev", "superseded_at": "2026-10-20T10:00:00+1100"}))
+        ctx.me = "main"
+        out = {}
+        for node in (None, "dev"):
+            with mock.patch.object(hz, "Ctx", return_value=ctx), \
+                 mock.patch.object(hz, "agents_json", return_value=[]), \
+                 mock.patch("sys.stdout", new_callable=io.StringIO) as o:
+                hz.cmd_queue(mock.Mock(order=None, node=node, why=None))
+            out[node] = o.getvalue()
+        self.assertNotIn("old", out[None])
+        self.assertIn("gone  old", out["dev"])
+
+
 class Reparent(unittest.TestCase):
     def test_moving_a_part_needs_move(self):
         # obs 45: --from on a revision silently moved the brief's lineage.

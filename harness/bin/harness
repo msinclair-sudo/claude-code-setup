@@ -7514,6 +7514,23 @@ def reads_print(reads):
     return out
 
 
+def with_earlier(ctx, sha, rows, arms, partial):
+    """Some arms only: the commit's other arms keep their last result (log 199:
+    a one-arm rerun replaced a nine-arm report, so a commit with nine reds read
+    1/1 passed at sign-off). Fills `rows` {name: row} in place.
+    -> (arms, partial, the earlier rows added)."""
+    earlier = earlier_rows(ctx, sha, list(rows)) if arms else []
+    for r in earlier:
+        rows[r["name"]] = r
+    if earlier:
+        every = job_arm_names(ctx, None)
+        if every and set(every) <= set(rows):
+            arms, partial = None, False
+        else:
+            arms = job_arm_names(ctx, list(rows))
+    return arms, partial, earlier
+
+
 def reusable_rows(ctx, sha, want, checks, holds):
     """{arm: row} for the arms in `want` whose last result at `sha` still stands
     (log 206): it ran to the end (no hold, timeout, exit 125 or memory kill), in
@@ -7548,11 +7565,15 @@ def check_reused(ctx, node, target, sha, arms, reused, scope, stale):
     rung to the node it was asked for and to a lead the commit was presented to."""
     who = target or node
     names = job_arm_names(ctx, list(reused))
-    rows = [reused[n] for n in names]
+    got = {n: reused[n] for n in names}
+    arms, partial, earlier = with_earlier(ctx, sha, got, arms, bool(arms) and not scope)
+    order = job_arm_names(ctx, list(got))
+    rows = [got[n] for n in order + [n for n in got if n not in order]]
     base = load_baseline(ctx)
     rep = make_check_report(who, sha, rows, sum(row_failed(r) for r in rows), base,
                             job=None, requested_by=[who], arms=arms,
-                            partial=bool(arms) and not scope, reused=names,
+                            partial=partial, reused=names,
+                            **({"earlier": [r["name"] for r in earlier]} if earlier else {}),
                             **({"by": node} if target else {}),
                             **({"scoped": scope} if scope and arms else {}),
                             **({"behind": stale} if stale else {}))
@@ -8952,21 +8973,8 @@ def testd_close(ctx, S, jid):
             o["rows"][n] = dict(job["reused"][n].get("row") or {})
             failed += not job["reused"][n].get("ok")
         partial = bool(arms) and not job.get("scope")
-        earlier = []
-        if arms:
-            # Some arms only: the commit's other arms keep their last result
-            # (log 199: a one-arm rerun replaced a nine-arm report, so a commit
-            # with nine reds read 1/1 passed at sign-off).
-            earlier = earlier_rows(ctx, sha, ran + reused)
-            for r in earlier:
-                o["rows"][r["name"]] = r
-                failed += row_failed(r)
-            if earlier:
-                every = job_arm_names(ctx, None)
-                if every and set(every) <= set(o["rows"]):
-                    arms, partial = None, False
-                else:
-                    arms = job_arm_names(ctx, list(o["rows"]))
+        arms, partial, earlier = with_earlier(ctx, sha, o["rows"], arms, partial)
+        failed += sum(row_failed(r) for r in earlier)
         order = job_arm_names(ctx, list(o["rows"]))
         names = order + [n for n in o["rows"] if n not in order]
         rows = [o["rows"][n] for n in names if n in o["rows"]]

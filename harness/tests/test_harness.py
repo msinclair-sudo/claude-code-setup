@@ -6819,6 +6819,20 @@ class ReuseAtACommit(unittest.TestCase):
         (job,) = hz.testq_jobs(self.ctx, ("queued",))
         self.assertEqual((sorted(job["tests"]), job.get("reused")), (["bad", "good"], None))
 
+    def test_a_reused_arm_asked_alone_keeps_the_commits_other_reds(self):
+        # Audit 2026-10-23 (B3): a check reused whole wrote a report of just the
+        # arms asked, so `--arms good` at a commit where bad failed read 1/1
+        # passed, log 199's bug on the reuse path.
+        self.check("dev_1")
+        self.run_queue()
+        code, out = self.check("dev", arms="good", memory="good=10M")
+        self.assertIn("nothing queued", out)
+        self.assertEqual(code, hz.REFUSED, out)
+        rep = json.loads(hz.check_report_path(self.ctx, "dev", self.sha).read_text())
+        self.assertEqual(([r["name"] for r in rep["checks"]], rep["reused"], rep["earlier"],
+                          rep["failed"], rep["passed"], rep.get("arms")),
+                         (["good", "bad"], ["good"], ["bad"], 1, False, None))
+
     def test_an_arm_whose_reads_moved_while_it_ran_is_not_reused(self):
         m = json.loads((self.repo / ".harness" / "manifest.json").read_text())
         m["checks"][0]["command"] += f"; echo more >> {self.data}"

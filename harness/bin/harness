@@ -292,11 +292,6 @@ def job_intent(row):
 FROM_NAME = re.compile(r'<cross-session-message[^>]*\bfrom-name="([^"]+)"')
 
 
-def ctx_parent(idx, node):
-    """A node's lead, from an index's nodes table."""
-    return ((idx.get("nodes") or {}).get(node) or {}).get("parent")
-
-
 def stop_detail(row, rows=None, tail=256 * 1024):
     """Which of the two stops this is, read off the session's own transcript.
 
@@ -5843,26 +5838,7 @@ def cmd_mark(a):
         else:
             print(f"  It is NOT closed. {parent or 'your lead'} signs it off: "
                   f"harness mark {a.task} --close")
-        print(f"  You cannot close your own work — you cannot check it either (T4).")
-        # Nothing above this line reaches anybody. See lead_address: the record
-        # is inert until the lead takes a turn, and the lead has no reason to
-        # take one. So the last act of presenting is to say so, out loud, to a
-        # session that is running right now.
-        _tell = _rv if _review else parent
-        _lead, _lsid = lead_address(ctx, _tell)
-        if _lead:
-            print(f"\n  NOT DONE YET — tell {_tell}. It is running as '{_lead}'.")
-            print(f"  Send this before you stop, in this turn:")
-            print(f"    SendMessage(to: \"{_lead}\", message: \"{node}: '{a.task}' is "
-                  f"presented at {rec['_presented_sha'][:8]} and waiting on your "
-                  + (f"review — harness mark {_review}\")" if _review else
-                     f"sign-off — harness mark {a.task} --close\")"))
-            print(f"  The record alone does not reach it. It is read when {parent} next")
-            print(f"  takes a turn, and presenting gives it no reason to take one — which")
-            print(f"  is exactly how finished work sits invisible for half an hour.")
-        elif parent:
-            print(f"\n  {parent} is not running, so there is nobody to tell. It is on the")
-            print(f"  record:  harness status")
+        # The lead, or the reviewer, was rung above (obs 91): nothing to send.
         # What happens to this session next, said here rather than left to be
         # worked out. A member that has presented and does not know whether it is
         # continuing will fill the gap, and what it fills it with is a question.
@@ -6414,11 +6390,6 @@ def check_report_path(ctx, node, sha):
     return ctx.state_file("checks", f"{node}-{sha}", ".json")
 
 
-def check_running_path(ctx, node):
-    """Present only while `check` runs on this node (obs 68)."""
-    return ctx.state_file("checks", f"{node}.running", ".json")
-
-
 def check_output_paths(ctx, node, arm):
     """Where an arm streams while it runs, overwritten each run (obs 69)."""
     return (ctx.state_file("checks", f"{node}-{arm}", ".out"),
@@ -6472,17 +6443,6 @@ def fmt_mem(b):
     if b is None:
         return "?"
     return f"{b / 2**30:.1f}G" if b >= 2**30 else f"{max(1, round(b / 2**20))}M"
-
-
-def mem_available():
-    """MemAvailable, in bytes (0 when unreadable)."""
-    try:
-        for line in Path("/proc/meminfo").read_text().splitlines():
-            if line.startswith("MemAvailable:"):
-                return int(line.split()[1]) * 1024
-    except OSError:
-        pass
-    return 0
 
 
 def cgroup_caps():
@@ -6633,8 +6593,6 @@ def run_arm(command, cwd, limit, outf, errf, env=None, cap=None, meter=None, how
             meter["pid"] = pr.pid
             with _ARMS_LOCK:
                 _ARMS.add(pr.pid)
-                if _ARM_HOOK[0]:
-                    _ARM_HOOK[0](sorted(_ARMS))
             end = time.time() + limit if limit else None
             try:
                 while True:
@@ -6680,8 +6638,6 @@ def run_arm(command, cwd, limit, outf, errf, env=None, cap=None, meter=None, how
             finally:
                 with _ARMS_LOCK:
                     _ARMS.discard(pr.pid)
-                    if _ARM_HOOK[0]:
-                        _ARM_HOOK[0](sorted(_ARMS))
     except Exception as ex:
         return 125, "", str(ex), False
     if how == "system" and code and not stats.exists() and not timed_out \
@@ -6784,8 +6740,6 @@ def caps_line(c):
 
 _ARMS = set()          # the arms running now, for a signal handler to kill
 _ARMS_LOCK = threading.Lock()
-_ARM_HOOK = [None]     # told the running arms' pids whenever they change (the queue records them)
-_CANCEL = [False]      # set by `harness test --cancel` on the running job
 
 
 def proc_children():
@@ -7324,9 +7278,6 @@ def run_arms(ctx, node, sha, cwd, checks, base, timeout, report, env=None, progr
     holds = live_holds(ctx)
     rows, failed, done = [], 0, []
     for i, c in enumerate(checks):
-        if _CANCEL[0]:
-            print(f"  cancelled before {c['name']}")
-            break
         c = dict(c, reads=check_reads(c, cwd, env))
         h = hold_catching(c, holds)
         if h:
@@ -7514,6 +7465,23 @@ def reads_print(reads):
     return out
 
 
+def with_earlier(ctx, sha, rows, arms, partial):
+    """Some arms only: the commit's other arms keep their last result (log 199:
+    a one-arm rerun replaced a nine-arm report, so a commit with nine reds read
+    1/1 passed at sign-off). Fills `rows` {name: row} in place.
+    -> (arms, partial, the earlier rows added)."""
+    earlier = earlier_rows(ctx, sha, list(rows)) if arms else []
+    for r in earlier:
+        rows[r["name"]] = r
+    if earlier:
+        every = job_arm_names(ctx, None)
+        if every and set(every) <= set(rows):
+            arms, partial = None, False
+        else:
+            arms = job_arm_names(ctx, list(rows))
+    return arms, partial, earlier
+
+
 def reusable_rows(ctx, sha, want, checks, holds):
     """{arm: row} for the arms in `want` whose last result at `sha` still stands
     (log 206): it ran to the end (no hold, timeout, exit 125 or memory kill), in
@@ -7548,11 +7516,15 @@ def check_reused(ctx, node, target, sha, arms, reused, scope, stale):
     rung to the node it was asked for and to a lead the commit was presented to."""
     who = target or node
     names = job_arm_names(ctx, list(reused))
-    rows = [reused[n] for n in names]
+    got = {n: reused[n] for n in names}
+    arms, partial, earlier = with_earlier(ctx, sha, got, arms, bool(arms) and not scope)
+    order = job_arm_names(ctx, list(got))
+    rows = [got[n] for n in order + [n for n in got if n not in order]]
     base = load_baseline(ctx)
     rep = make_check_report(who, sha, rows, sum(row_failed(r) for r in rows), base,
                             job=None, requested_by=[who], arms=arms,
-                            partial=bool(arms) and not scope, reused=names,
+                            partial=partial, reused=names,
+                            **({"earlier": [r["name"] for r in earlier]} if earlier else {}),
                             **({"by": node} if target else {}),
                             **({"scoped": scope} if scope and arms else {}),
                             **({"behind": stale} if stale else {}))
@@ -7713,9 +7685,6 @@ def cmd_check(a):
     if reused and set(reused) >= set(want):
         return check_reused(ctx, node, target, sha, arms, reused, scope, stale)
     asked, want = want, [n for n in want if n not in reused]
-    if any(c.get("memory") for c in checks):
-        print("note: the manifest's per-arm `memory` is retired; estimates come with the "
-              "submission (--memory)")
     est, bad = parse_estimates(a.memory, asked)      # a reused arm's estimate is no error
     missing = [n for n in want if n not in est]
     if bad or missing:
@@ -7729,8 +7698,7 @@ def cmd_check(a):
         die(REFUSED, (f"unreadable --memory part(s): {', '.join(bad)}\n           " if bad else "")
             + (f"{len(missing)} test(s) need a memory estimate, the least each may need: "
                f"{', '.join(missing)}\n" + "\n".join(hist) + "\n" if missing else "")
-            + "           Estimates go on the command line, not in the manifest (its "
-              "`memory` field is retired):\n"
+            + "           Estimates go on the command line:\n"
             + f"           e.g. --memory {','.join(sug)}"
             + ("\n           arm=? = never run: it runs alone, uncapped, and its peak is "
                "recorded for next time;\n           or give your own estimate"
@@ -8211,8 +8179,6 @@ def arm_seconds(ctx):
         files = sorted(d.glob("*.json"), key=lambda f: f.stat().st_mtime,
                        reverse=True) if d.is_dir() else []
         for f in files:
-            if f.name.endswith(".running.json"):
-                continue
             for r in report_rows(f):
                 if (isinstance(r, dict) and r.get("seconds") and not r.get("timedOut")
                         and not r.get("memoryKilled")           # cut short: not its time
@@ -8952,21 +8918,8 @@ def testd_close(ctx, S, jid):
             o["rows"][n] = dict(job["reused"][n].get("row") or {})
             failed += not job["reused"][n].get("ok")
         partial = bool(arms) and not job.get("scope")
-        earlier = []
-        if arms:
-            # Some arms only: the commit's other arms keep their last result
-            # (log 199: a one-arm rerun replaced a nine-arm report, so a commit
-            # with nine reds read 1/1 passed at sign-off).
-            earlier = earlier_rows(ctx, sha, ran + reused)
-            for r in earlier:
-                o["rows"][r["name"]] = r
-                failed += row_failed(r)
-            if earlier:
-                every = job_arm_names(ctx, None)
-                if every and set(every) <= set(o["rows"]):
-                    arms, partial = None, False
-                else:
-                    arms = job_arm_names(ctx, list(o["rows"]))
+        arms, partial, earlier = with_earlier(ctx, sha, o["rows"], arms, partial)
+        failed += sum(row_failed(r) for r in earlier)
         order = job_arm_names(ctx, list(o["rows"]))
         names = order + [n for n in o["rows"] if n not in order]
         rows = [o["rows"][n] for n in names if n in o["rows"]]
@@ -13019,24 +12972,6 @@ def delegated(ctx, node):
     return out
 
 
-def briefed_unstarted(ctx, node):
-    """Briefs written for a node that no mark has opened yet: work handed down
-    and not picked up. This is what a session STARTS on, so a node with none of
-    it is a session about to ask what it should be doing."""
-    d = ctx.state / "briefs"
-    out = []
-    for p in (sorted(d.glob("*.json")) if d.is_dir() else []):
-        try:
-            b = json.loads(p.read_text())
-        except Exception:
-            continue
-        if b.get("node") != node:
-            continue
-        if ctx.state_file("marks", p.stem, ".json").exists():
-            continue
-        out.append(p.stem)
-    return out
-
 
 WAIT_FOR = 12 * 3600
 WAIT_MAX = 7 * 86400        # --wait-for at most this: a longer wait is a decision, not a pause
@@ -13701,10 +13636,12 @@ def cmd_queue(a):
         deleg = [x for x in delegated(ctx, n) if not x["closed_at"]]
         # Shown, never offered. A withdrawn brief that vanished entirely would
         # have the next lead re-propose the same thing and get no answer; the
-        # point of keeping it is that somebody already decided.
+        # point of keeping it is that somebody already decided. Asked of one node:
+        # the whole tree's list had 27 of them on every call (audit C15).
         gone = [x for x in all_briefs(ctx).values()
                 if x.get("node") == n and superseded(x)
-                and not ctx.state_file("marks", tkey(x["task"]), ".json").exists()]
+                and not ctx.state_file("marks", tkey(x["task"]), ".json").exists()] \
+            if a.node else []
         if not q and not openm and not gated and not deleg and not gone:
             continue
         shown = True
@@ -14004,16 +13941,6 @@ def stream_report(ctx):
     return out
 
 
-def ancestors(ctx, node):
-    """The nodes above `node`, nearest first."""
-    out, seen = [], {node}
-    p = ctx.tree.get("nodes", {}).get(node, {}).get("parent")
-    while p and p not in seen:
-        out.append(p); seen.add(p)
-        p = ctx.tree["nodes"].get(p, {}).get("parent")
-    return out
-
-
 def stream_items(ctx, node):
     """Orientation's stream lines for `node`: {key: text} (log 200)."""
     out = {}
@@ -14111,7 +14038,7 @@ def brief_carry(rec, b):
 def ancestors(ctx, node):
     """The nodes above `node`, nearest first, ending at rank 0."""
     out, seen = [], {node}
-    p = ctx.tree["nodes"].get(node, {}).get("parent")
+    p = ctx.tree.get("nodes", {}).get(node, {}).get("parent")
     while p and p not in seen:
         out.append(p); seen.add(p)
         p = ctx.tree["nodes"].get(p, {}).get("parent")
@@ -14798,8 +14725,6 @@ def cmd_brief(a):
                       f"`harness blocked --decided` lists them.")
         if a.__dict__.get("report") is not None:
             brief_report(ctx, a)
-        if rev > 1:
-            print("  the previous text is gone — a brief is a plan, not a record")
         if _CLAUSE_LABEL.search(a.write) and not brief_clauses(a.write):
             print(f"  WARNING: its DONE has no clauses the harness can number ({CLAUSE_FORMS});"
                   f"\n  a lead splitting it can't use --covers (log 116). A shape it reads:"
@@ -15773,24 +15698,6 @@ def check_activity(ctx, node):
     return None
 
 
-def check_pid_alive(pid):
-    """The `check` process itself, not a Claude session: `pid_alive` asks for
-    "claude" in the command line, which a check passes only by its install path."""
-    if not isinstance(pid, int) or pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except OSError:
-        pass
-    try:
-        cmd = Path(f"/proc/{pid}/cmdline").read_bytes()
-    except OSError:
-        return True
-    return pid == os.getpid() or b"check" in cmd       # a reused pid is not
-
-
 def runner_alive(pid):
     """A test-queue runner (`harness testd`), not a reused pid."""
     if not isinstance(pid, int) or pid <= 0 or not _pid_exists(pid):
@@ -16403,9 +16310,8 @@ def cmd_waiting(a):
     a list of stopped children needs to know which it is before it decides what
     to answer first.
 
-    It does not notify. A lead reads it when it orients, exactly like every
-    other thing that climbs — anything that interrupts a lead mid-task is a
-    message, and messages arrive out of order and are read once.
+    The node waited on reads it when it orients, and is rung once it has been
+    quiet OWED_IDLE (owed_now): a wait is owed by the other side.
     """
     ctx = Ctx(); ctx.require_enrolled()
     node, spec = ctx.node()
@@ -16538,20 +16444,19 @@ def cmd_waiting(a):
               f"(~/.claude/harness/OBSERVATIONS.md).\n  It lifts when the harness is next "
               f"installed, and you are rung then to check.")
         return
-    # The record is read at the lead's next harness command, and a lead parked on
-    # a long job runs none, so the wait sat unseen behind a 29-minute check (obs 68).
-    # Same remedy as presenting: say it, now, to the running session.
+    # A wait sat unseen behind a 29-minute check (obs 68). The owed ring reaches
+    # the node once it has been quiet OWED_IDLE; a message reaches it sooner.
     _lead, _ = lead_address(ctx, on)
     _doing = check_activity(ctx, on)
     if _doing:
         print(f"  {on} is running {_doing} and runs no harness command until it ends.")
     if _lead:
-        print(f"  The record does not reach it. Send this before you stop, in this turn:")
+        print(f"  {on} is rung once it has been quiet {OWED_IDLE // 60}m. Sooner: send this "
+              f"in this turn:")
         print(f"    SendMessage(to: \"{_lead}\", message: \"{node} is waiting on you: "
               f"{a.asked}\")")
     else:
-        print(f"  {on} is not running, so nobody is told; its parent sees the wait "
-              f"after {WAIT_STALL // 60}m.")
+        print(f"  {on} is not running; its parent sees the wait after {WAIT_STALL // 60}m.")
     if not a.still_moving:
         print(f"  Nothing was recorded as still moving, so this reads as a full stop.")
         print(f"  If it is not one, say so: harness waiting {shlex.quote(a.asked)} "
@@ -19336,10 +19241,27 @@ def parse_ask_brief(text, kind=None):
     return (None, errs) if errs else (out, [])
 
 
-_REF_LINE = re.compile(r"`?([\w./~-]+\.[A-Za-z0-9]+):(\d+)(?:-\d+)?`?")
+_REF_LINE = re.compile(r"`([^`\n]+?\.[A-Za-z0-9]+):(\d+)(?:-\d+)?`"
+                       r"|(?<![\w:/.~-])([\w./~-]+\.[A-Za-z0-9]+):(\d+)(?:-\d+)?")
 _REF_SHA = re.compile(r"`([0-9a-f]{7,40})`")
 _REF_OBS = re.compile(r"\b(?:obs(?:ervation)?|log(?: entry)?|entry)\s+(\d{1,4})\b", re.I)
 _REF_QUOTE = re.compile(r"[\"“]([^\"”]{20,})[\"”]")
+
+
+def _line_refs(ln):
+    """(path, line, longer) for each path:line on a line. A backticked path may
+    hold spaces. A bare one can't follow ':' or '/' (a URL's host:port), and one
+    cut at a space (this project's own paths have them) is also tried from each
+    earlier '/' or '~' that starts a word: `longer`."""
+    for m in _REF_LINE.finditer(ln):
+        if m.group(1):
+            yield m.group(1), int(m.group(2)), []
+            continue
+        f, s = m.group(3), m.start()
+        if re.fullmatch(r"[\d.]+", f):
+            continue                                  # an address and port, not a file
+        yield f, int(m.group(4)), [ln[i:s] + f for i in range(s) if ln[i] in "/~"
+                                   and (i == 0 or ln[i - 1] in " \t`'\"(")]
 
 
 def _norm(t):
@@ -19365,7 +19287,7 @@ def _session_corpus(sid, reads_only=False):
                     out.append(x.get("text") or "")
             elif x.get("type") == "tool_use":
                 if not reads_only:
-                    out.append(json.dumps(x.get("input") or {}))
+                    out.append(json.dumps(x.get("input") or {}, ensure_ascii=False))
             elif x.get("type") == "tool_result":
                 v = x.get("content")
                 out.append(v if isinstance(v, str) else " ".join(
@@ -19420,7 +19342,8 @@ def ask_verify(path, rec, brief):
             me = os.environ.get("CLAUDE_CODE_SESSION_ID")
             corpus = " ".join(_session_corpus(x) for x in sids if x != me) + " " + (
                 _session_corpus(me, reads_only=True) if me else "") + " " + _norm(
-                json.dumps(rec.get("thread") or []) + " " + json.dumps(rec.get("chain") or []))
+                json.dumps(rec.get("thread") or [], ensure_ascii=False) + " "
+                + json.dumps(rec.get("chain") or [], ensure_ascii=False))
         return _norm(q) in corpus
 
     verified_lines = 0
@@ -19428,11 +19351,11 @@ def ask_verify(path, rec, brief):
         text = "\n".join(v) if isinstance(v, list) else str(v)
         for ln in text.splitlines():
             good = 0
-            for m in _REF_LINE.finditer(ln):
-                if line_ok(m.group(1), int(m.group(2))):
+            for f, n, longer in _line_refs(ln):
+                if line_ok(f, n) or any(line_ok(c, n) for c in longer):
                     good += 1
                 else:
-                    errs.append(f"{k}: {m.group(1)}:{m.group(2)} is not there")
+                    errs.append(f"{k}: {f}:{n} is not there")
             for m in _REF_SHA.finditer(ln):
                 if sha_ok(m.group(1)):
                     good += 1
@@ -20095,16 +20018,6 @@ def ask_show(pdir, repo, rec):
         if m.get("_node") == rec.get("asker_node") and not m.get("_closed_at"):
             print(f"\n{rec.get('asker_node')} has {m.get('_task') or f.stem} open"
                   + (f": {m['_note']}" if m.get("_note") else ""))
-
-
-def intermediary_live(repo):
-    """Is this project's intermediary running? True or False from the roster;
-    None when it cannot be read."""
-    name = intermediary_name(repo)
-    try:
-        return any(r.get("name") == name for r in live_rows(agents_json()))
-    except Exception:
-        return None
 
 
 def cmd_ask(a):
@@ -24213,7 +24126,6 @@ DOCUMENTER = "harness-documenter"
 # A run is one whole document (owner, 2026-10-06): its job is a doc path, or
 # "auto", which draws one at random (docs_pick). Opus throughout: every run
 # checks a doc's claims against the code.
-DOC_DEFAULTS = {}
 DOC_DEFAULT = ("opus", "high")
 DOCUMENTER_WRITING = ("schimel-science-writing", "google-devdocs-style")
 DOC_TRIGGER_GAP = 24 * 3600         # at most one triggered run a day
@@ -25254,8 +25166,8 @@ def documenter_cmd(pdir, repo, job="auto", model=None, effort=None, why=None):
     for d in repos:
         for q in ('"', "'") + (("",) if " " not in d else ()):
             allow += [f"Bash(git -C {q}{d}{q} {g} *)" for g in INTERMEDIARY_GIT]
-    model = model or DOC_DEFAULTS.get(job, DOC_DEFAULT)[0]
-    effort = effort or DOC_DEFAULTS.get(job, DOC_DEFAULT)[1]
+    model = model or DOC_DEFAULT[0]
+    effort = effort or DOC_DEFAULT[1]
     # Its identity goes in through --settings: a background session does not
     # inherit the launching process's environment (measured 2026-10-05).
     env = {"HARNESS_DOCUMENTER": "1", "HARNESS_PROJECT": pdir.name,
@@ -25430,10 +25342,6 @@ def cmd_documenter(a):
 # shell ended). The session reads it with `harness doorbell --read`, acts, and
 # arms it again.
 
-DOORBELL_TICK = 10              # seconds between inbox checks
-RANG_FRESH = 120                # a waiter that rang this recently has a wake on its way
-
-
 def bell_dir(ctx, node):
     d = ctx.state / "doorbell" / node
     (d / "inbox").mkdir(parents=True, exist_ok=True)
@@ -25588,9 +25496,10 @@ def read_calls(mail, node, sid=None):
 
 def wake_text(node, calls):
     who = sorted({str(m.get("from") or "?") for m in calls})
+    # The prompt hook prints the mail with this prompt (audit E10: the wake said
+    # so too, 3,448 times).
     return (f"harness ringer: {len(calls)} unread message(s) for {node} (from "
-            f"{', '.join(who)}). The harness prints them with this prompt; act on them. "
-            f"If you see none: harness doorbell --read")
+            f"{', '.join(who)}). None shown? harness doorbell --read")
 
 
 def ringer_plan(state, idle_for, mail, node, last, now, sid=None):
@@ -26079,7 +25988,6 @@ def cmd_doorbell(a):
     there is nothing to arm."""
     ctx = Ctx(); ctx.require_enrolled()
     node, _ = ctx.node()
-    d = bell_dir(ctx, node)
     sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     if isinstance(getattr(a, "again", None), int) and a.again > 0:
         # What a hook already showed, shown again (log 120): read is not the
@@ -26089,15 +25997,7 @@ def cmd_doorbell(a):
                   f"{(m.get('delivered') or '')[11:16]} at a {m.get('how')}): {m.get('text')}")
         return
     if a.read:
-        msgs = []
-        f = d / "last.json"                 # left by a waiter from before 2026-10-06
-        if f.exists():
-            try:
-                msgs = json.loads(f.read_text())
-            except Exception:
-                pass
-            f.unlink(missing_ok=True)
-        msgs += MAIL().take(ctx.state, node, "read")
+        msgs = MAIL().take(ctx.state, node, "read")
         if not msgs:
             print("nothing new: a hook already showed you what rang. If you didn't see it: "
                   "harness doorbell --again 5")

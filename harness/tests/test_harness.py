@@ -319,6 +319,27 @@ class Reorder(unittest.TestCase):
         self.assertEqual(e.exception.code, hz.REFUSED)
 
 
+class QueueGone(unittest.TestCase):
+    def test_a_withdrawn_brief_shows_only_when_its_node_is_asked(self):
+        # Audit 2026-10-23 (C15): every tree-wide queue listed all 27 withdrawn,
+        # never-started briefs; asked of one node, they still show, so the next
+        # lead doesn't propose them again.
+        ctx = FakeCtx({"main": None, "dev": "main"})
+        (ctx.dir / "briefs").mkdir()
+        (ctx.dir / "briefs" / "old.json").write_text(json.dumps(
+            {"task": "old", "node": "dev", "superseded_at": "2026-10-20T10:00:00+1100"}))
+        ctx.me = "main"
+        out = {}
+        for node in (None, "dev"):
+            with mock.patch.object(hz, "Ctx", return_value=ctx), \
+                 mock.patch.object(hz, "agents_json", return_value=[]), \
+                 mock.patch("sys.stdout", new_callable=io.StringIO) as o:
+                hz.cmd_queue(mock.Mock(order=None, node=node, why=None))
+            out[node] = o.getvalue()
+        self.assertNotIn("old", out[None])
+        self.assertIn("gone  old", out["dev"])
+
+
 class Reparent(unittest.TestCase):
     def test_moving_a_part_needs_move(self):
         # obs 45: --from on a revision silently moved the brief's lineage.
@@ -2906,6 +2927,20 @@ class AskEvidence2(unittest.TestCase):
         self.assertTrue(any("cause: the quote" in e for e in errs))           # invented
         self.assertFalse(any("checked: the quote" in e for e in errs))       # read on the chain
         self.assertTrue(any("harness: yes needs" in e for e in errs))
+
+    def test_a_path_with_spaces_and_a_url_are_read_as_they_are_written(self):
+        # Audit 2026-10-23 (F1, F2): every absolute path in biblion2 holds spaces,
+        # and was cut to "University/...", a URL's host:port read as a file, and a
+        # quote with an em dash never matched the escaped thread.
+        d = self.root / "Charles Sturt University" / "src"; d.mkdir(parents=True)
+        (d / "reduction.py").write_text("a\nb\n")
+        self.rec["thread"] = [{"to": "dev", "text": "the scan stalls — it never finishes at all"}]
+        good = "\n".join([f"{d}/reduction.py:2 holds it", f"`{d}/reduction.py:1` too",
+                          "the GUI is on http://127.0.0.1:8791 and 127.0.0.1:8791",
+                          'dev said "the scan stalls — it never finishes at all"'])
+        self.assertEqual(hz.ask_verify(self.path, self.rec, self.brief(good)), [])
+        errs = hz.ask_verify(self.path, self.rec, self.brief(f"{d}/reduction.py:9\nx\ny"))
+        self.assertTrue(any("reduction.py:9 is not there" in e for e in errs))
 
     def test_a_multi_session_chain_needs_a_question_first(self):
         b = self.brief("\n".join(["loader.py:1", "loader.py:2", "a", "b"]))
@@ -6805,6 +6840,20 @@ class ReuseAtACommit(unittest.TestCase):
         (job,) = hz.testq_jobs(self.ctx, ("queued",))
         self.assertEqual((sorted(job["tests"]), job.get("reused")), (["bad", "good"], None))
 
+    def test_a_reused_arm_asked_alone_keeps_the_commits_other_reds(self):
+        # Audit 2026-10-23 (B3): a check reused whole wrote a report of just the
+        # arms asked, so `--arms good` at a commit where bad failed read 1/1
+        # passed, log 199's bug on the reuse path.
+        self.check("dev_1")
+        self.run_queue()
+        code, out = self.check("dev", arms="good", memory="good=10M")
+        self.assertIn("nothing queued", out)
+        self.assertEqual(code, hz.REFUSED, out)
+        rep = json.loads(hz.check_report_path(self.ctx, "dev", self.sha).read_text())
+        self.assertEqual(([r["name"] for r in rep["checks"]], rep["reused"], rep["earlier"],
+                          rep["failed"], rep["passed"], rep.get("arms")),
+                         (["good", "bad"], ["good"], ["bad"], 1, False, None))
+
     def test_an_arm_whose_reads_moved_while_it_ran_is_not_reused(self):
         m = json.loads((self.repo / ".harness" / "manifest.json").read_text())
         m["checks"][0]["command"] += f"; echo more >> {self.data}"
@@ -9122,7 +9171,8 @@ class Log191to194(Log185to190):
                                 for m in self.inbox("dev_1")))
             self.assertEqual(self.run_as("dev_1", "waiting", "x", "--on", "harness", "--fyi",
                                          **self.op)[0], hz.REFUSED)
-        hz.settle_waits(self.ctx)                    # this CLI's file is newer than the wait
+        with mock.patch.object(hz, "harness_installed_at", return_value=time.time()):
+            hz.settle_waits(self.ctx)                # a CLI installed after the wait
         self.assertEqual(hz.open_waits_all(self.ctx), [])
         self.assertTrue(any("Your wait on a harness fix is lifted" in m["text"]
                             for m in self.inbox("dev_1")))

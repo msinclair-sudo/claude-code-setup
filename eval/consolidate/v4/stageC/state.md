@@ -191,3 +191,37 @@ T3 is complete: 4 pieces (each saved in its own folder, with no strays), 4 fact-
 - The owner's packet is in the vault's `temp/stage-C/`: 12 pieces, 12 blank per-piece sheets, 6 blank per-pair sheets and the marking scheme (31 files). No piece names its input.
 - The key, `usability/ab-key.sealed.md`, is unopened. It is opened only after the owner says grading is done, for scores by condition and the owner's scores against the blind readers', criterion by criterion.
 - **Blinding slip:** during C3, my messages gave the fact-check counts for T1-1A and T1-1B before I stopped reporting per-piece results. No condition was disclosed.
+
+## After grading: what to do when the owner says grading is done
+
+Nothing else is pending. Stage C is finished, and the only open step is the unsealing.
+
+1. **Check the sheets.** Confirm the owner has filled the sheets in the vault's `temp/stage-C/`:
+   - 12 piece sheets, `T<k>-<n><L>.sheet.md`, each "A<n> ... _ /3" with the `_` replaced by 0 to 3, and Part B with one of Yes, Partly or No left;
+   - 6 pair sheets, `T<k>-pair<n>.sheet.md`, with "Preferred:" left as A, B or "no preference".
+
+   If they graded elsewhere, such as a single file, read that instead and adapt.
+2. **Run** `python3 -B eval/consolidate/v4/stageC/tools/unseal.py`. It opens `usability/ab-key.sealed.md` and writes `usability/unsealed.md`:
+   - the key;
+   - owner and blind means per criterion, by condition (raw against view);
+   - fact-check counts by condition;
+   - each pair's preferred input, owner and blind, with totals;
+   - owner against blind per criterion (mean difference, same score, within 1);
+   - Part B by piece.
+
+   Unparsed sheets are listed, never guessed.
+3. **Report to the owner** per the marking scheme's "After grading":
+   - is the difference between conditions consistent across topics and across the two writer slots;
+   - where do the owner and the blind readers disagree most (re-read those pieces);
+   - v3's numbers alongside, from `../../usability/results.md`;
+   - the access findings, since the view shows no per-claim access (v5 item 4), with fact-check "access overreach" by condition;
+   - the held-out build results (`heldout/results.md`).
+4. **Commit and push.** Never merge or install. Update the memory entry `consolidate-skill-status`.
+
+**Where things are:**
+- tools in `stageC/tools/`;
+- pieces, writers' notes, fact-checks and blind sheets in `usability/{pieces,factchecks,blind}/`;
+- results by letter in `usability/results.md`;
+- writer inputs, by blind name, in the job scratch `buildC/U/`;
+- builder findings for v5 in this file, under C1a, C1b and C2;
+- the owner's rulings in `../plan.md` revision 7.

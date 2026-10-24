@@ -9150,7 +9150,8 @@ class Log191to194(Log185to190):
                                 for m in self.inbox("dev_1")))
             self.assertEqual(self.run_as("dev_1", "waiting", "x", "--on", "harness", "--fyi",
                                          **self.op)[0], hz.REFUSED)
-        hz.settle_waits(self.ctx)                    # this CLI's file is newer than the wait
+        with mock.patch.object(hz, "harness_installed_at", return_value=time.time()):
+            hz.settle_waits(self.ctx)                # a CLI installed after the wait
         self.assertEqual(hz.open_waits_all(self.ctx), [])
         self.assertTrue(any("Your wait on a harness fix is lifted" in m["text"]
                             for m in self.inbox("dev_1")))

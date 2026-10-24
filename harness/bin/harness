@@ -19336,10 +19336,27 @@ def parse_ask_brief(text, kind=None):
     return (None, errs) if errs else (out, [])
 
 
-_REF_LINE = re.compile(r"`?([\w./~-]+\.[A-Za-z0-9]+):(\d+)(?:-\d+)?`?")
+_REF_LINE = re.compile(r"`([^`\n]+?\.[A-Za-z0-9]+):(\d+)(?:-\d+)?`"
+                       r"|(?<![\w:/.~-])([\w./~-]+\.[A-Za-z0-9]+):(\d+)(?:-\d+)?")
 _REF_SHA = re.compile(r"`([0-9a-f]{7,40})`")
 _REF_OBS = re.compile(r"\b(?:obs(?:ervation)?|log(?: entry)?|entry)\s+(\d{1,4})\b", re.I)
 _REF_QUOTE = re.compile(r"[\"“]([^\"”]{20,})[\"”]")
+
+
+def _line_refs(ln):
+    """(path, line, longer) for each path:line on a line. A backticked path may
+    hold spaces. A bare one can't follow ':' or '/' (a URL's host:port), and one
+    cut at a space (this project's own paths have them) is also tried from each
+    earlier '/' or '~' that starts a word: `longer`."""
+    for m in _REF_LINE.finditer(ln):
+        if m.group(1):
+            yield m.group(1), int(m.group(2)), []
+            continue
+        f, s = m.group(3), m.start()
+        if re.fullmatch(r"[\d.]+", f):
+            continue                                  # an address and port, not a file
+        yield f, int(m.group(4)), [ln[i:s] + f for i in range(s) if ln[i] in "/~"
+                                   and (i == 0 or ln[i - 1] in " \t`'\"(")]
 
 
 def _norm(t):
@@ -19365,7 +19382,7 @@ def _session_corpus(sid, reads_only=False):
                     out.append(x.get("text") or "")
             elif x.get("type") == "tool_use":
                 if not reads_only:
-                    out.append(json.dumps(x.get("input") or {}))
+                    out.append(json.dumps(x.get("input") or {}, ensure_ascii=False))
             elif x.get("type") == "tool_result":
                 v = x.get("content")
                 out.append(v if isinstance(v, str) else " ".join(
@@ -19420,7 +19437,8 @@ def ask_verify(path, rec, brief):
             me = os.environ.get("CLAUDE_CODE_SESSION_ID")
             corpus = " ".join(_session_corpus(x) for x in sids if x != me) + " " + (
                 _session_corpus(me, reads_only=True) if me else "") + " " + _norm(
-                json.dumps(rec.get("thread") or []) + " " + json.dumps(rec.get("chain") or []))
+                json.dumps(rec.get("thread") or [], ensure_ascii=False) + " "
+                + json.dumps(rec.get("chain") or [], ensure_ascii=False))
         return _norm(q) in corpus
 
     verified_lines = 0
@@ -19428,11 +19446,11 @@ def ask_verify(path, rec, brief):
         text = "\n".join(v) if isinstance(v, list) else str(v)
         for ln in text.splitlines():
             good = 0
-            for m in _REF_LINE.finditer(ln):
-                if line_ok(m.group(1), int(m.group(2))):
+            for f, n, longer in _line_refs(ln):
+                if line_ok(f, n) or any(line_ok(c, n) for c in longer):
                     good += 1
                 else:
-                    errs.append(f"{k}: {m.group(1)}:{m.group(2)} is not there")
+                    errs.append(f"{k}: {f}:{n} is not there")
             for m in _REF_SHA.finditer(ln):
                 if sha_ok(m.group(1)):
                     good += 1

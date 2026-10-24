@@ -2907,6 +2907,20 @@ class AskEvidence2(unittest.TestCase):
         self.assertFalse(any("checked: the quote" in e for e in errs))       # read on the chain
         self.assertTrue(any("harness: yes needs" in e for e in errs))
 
+    def test_a_path_with_spaces_and_a_url_are_read_as_they_are_written(self):
+        # Audit 2026-10-23 (F1, F2): every absolute path in biblion2 holds spaces,
+        # and was cut to "University/...", a URL's host:port read as a file, and a
+        # quote with an em dash never matched the escaped thread.
+        d = self.root / "Charles Sturt University" / "src"; d.mkdir(parents=True)
+        (d / "reduction.py").write_text("a\nb\n")
+        self.rec["thread"] = [{"to": "dev", "text": "the scan stalls — it never finishes at all"}]
+        good = "\n".join([f"{d}/reduction.py:2 holds it", f"`{d}/reduction.py:1` too",
+                          "the GUI is on http://127.0.0.1:8791 and 127.0.0.1:8791",
+                          'dev said "the scan stalls — it never finishes at all"'])
+        self.assertEqual(hz.ask_verify(self.path, self.rec, self.brief(good)), [])
+        errs = hz.ask_verify(self.path, self.rec, self.brief(f"{d}/reduction.py:9\nx\ny"))
+        self.assertTrue(any("reduction.py:9 is not there" in e for e in errs))
+
     def test_a_multi_session_chain_needs_a_question_first(self):
         b = self.brief("\n".join(["loader.py:1", "loader.py:2", "a", "b"]))
         self.assertTrue(any("asked none of them" in e for e in hz.ask_verify(self.path, self.rec, b)))
